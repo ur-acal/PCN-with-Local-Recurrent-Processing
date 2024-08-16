@@ -12,15 +12,15 @@ from prednet import *
 from utils import progress_bar
 from torch.autograd import Variable
 
-def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False, train=True):
+def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
     use_cuda = True # torch.cuda.is_available()
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-    batchsize = 1
+    batchsize = 256
     root = './'
     rep = 1
     lr = 0.01
-    train_flag = train
+    solver = None
     
     models = {'PredNetBpD':PredNetBpD}
     modelname = model+'_'+str(circles)+'CLS_'+str(nesterov)+'Nes_'+str(weightDecay)+'WD_'+str(Tied)+'TIED_'+str(rep)+'REP'
@@ -46,15 +46,14 @@ def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
-    trainset = torchvision.datasets.CIFAR100(root='../data', train=True, download=True, transform=transform_train)
+    trainset = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batchsize, shuffle=True, num_workers=2)
-    testset = torchvision.datasets.CIFAR100(root='../data', train=False, download=True, transform=transform_test)
+    testset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batchsize, shuffle=False, num_workers=2)
     
     # Model
     print('==> Building model..')
-    net = models[model](num_classes=100,cls=circles,Tied=Tied, solver='SGD')
-       
+    net = models[model](num_classes=10,cls=circles,Tied=Tied, solver=solver)
     
     # Define objective function
     criterion = nn.CrossEntropyLoss()
@@ -151,18 +150,12 @@ def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=
         for param_group in optimizer.param_groups:
             param_group['lr'] /= 10
 
-    if train_flag:
-        for epoch in range(start_epoch, start_epoch+300):
-            statfile = open(logpath+'training_stats_'+modelname+'.txt', 'a+')
-            if epoch==150 or epoch==225 or epoch == 262:
-                decrease_learning_rate()       
-            train(epoch)
-            test(epoch)
-    else:
+    for epoch in range(start_epoch, start_epoch+300):
         statfile = open(logpath+'training_stats_'+modelname+'.txt', 'a+')
-        checkpoint = torch.load(checkpointpath + 'PredNetBpD_5CLS_FalseNes_0.001WD_FalseTIED_1REP_best_ckpt.t7')
-        net.load_state_dict(checkpoint['net'])
-        test(0)
+        if epoch==150 or epoch==225 or epoch == 262:
+            decrease_learning_rate()       
+        train(epoch)
+        test(epoch)
 
 if __name__ == '__main__':
-    main_cifar(train=False)
+    main_cifar()
