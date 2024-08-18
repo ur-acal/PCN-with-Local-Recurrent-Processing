@@ -16,11 +16,11 @@ def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=
     use_cuda = True # torch.cuda.is_available()
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-    batchsize = 256
+    batchsize = 1
     root = './'
     rep = 1
     lr = 0.01
-    solver = None
+    solver = 'SGD'
     
     models = {'PredNetBpD':PredNetBpD}
     modelname = model+'_'+str(circles)+'CLS_'+str(nesterov)+'Nes_'+str(weightDecay)+'WD_'+str(Tied)+'TIED_'+str(rep)+'REP'
@@ -58,7 +58,7 @@ def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=
     # Define objective function
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), momentum=0.9, lr=lr, weight_decay=weightDecay, nesterov=nesterov)
-      
+
     # Parallel computing
     if use_cuda:
         net.cuda()

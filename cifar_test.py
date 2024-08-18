@@ -38,20 +38,20 @@ class PcConvBp_SGD(nn.Module):
         weight = self.FBconv.weight.data
         expanded_weights = self.expand_weights_to_matrix(y.shape[1:], weight.permute(1, 0, 2, 3), stride=self.stride, padding=self.padding)
         expanded_weights = expanded_weights.to(y.device)
-        flattened_x = torch.flatten(x, start_dim=1).clone().detach()
+        flattened_x = x.view(1, -1).clone().detach()
 
         """
         Implement with SGD
         """
         # Initialize flattened_y as a tensor with requires_grad=True
-        num_iterations = 500
+        num_iterations = 1
         y = F.pad(y, (self.padding, self.padding, self.padding, self.padding))
-        flattened_y = torch.flatten(y, start_dim=1).clone().detach().requires_grad_(True)
+        flattened_y = y.view(1, -1).clone().detach().requires_grad_(True)
         energy_record = []
-        optimizer = torch.optim.SGD([flattened_y], lr=0.001)
+        optimizer = torch.optim.SGD([flattened_y], lr=0.01)
         for _ in range(num_iterations):
             optimizer.zero_grad()
-            energy = torch.norm(flattened_x - flattened_y @ expanded_weights.T, p=2)
+            energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
             energy.backward()
             optimizer.step()
             energy_record.append(energy.item())
@@ -165,11 +165,11 @@ class PredNetBpD(nn.Module):
 
 if __name__ == '__main__':
     batchsize = 500
-    test_ratio = 1
+    test_ratio = 0.1
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
-    testset = torchvision.datasets.CIFAR100(root='../data', train=False, download=True, transform=transform_test)
+    testset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
     num_samples = len(testset)
     subset_size = int(test_ratio * num_samples)
 
@@ -183,7 +183,7 @@ if __name__ == '__main__':
 
     # Create an instance of the PredNetBpD class
     checkpoint_weight = torch.load('checkpoint/PredNetBpD_5CLS_FalseNes_0.001WD_FalseTIED_1REP_best_ckpt.t7')
-    prednet = PredNetBpD(num_classes=100, cls=5, Tied=False)
+    prednet = PredNetBpD(num_classes=10, cls=5, Tied=False, solver='SGD')
     prednet = nn.DataParallel(prednet)
     prednet.load_state_dict(checkpoint_weight['net'])
     prednet = prednet.cuda()
