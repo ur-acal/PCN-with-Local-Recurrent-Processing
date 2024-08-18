@@ -29,7 +29,7 @@ class PcConvBp(nn.Module):
         self.cls = cls
         self.bypass = nn.Conv2d(inchan, outchan, kernel_size=1, stride=1, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, layer_idx):
         y = self.relu(self.FFconv(x))
         for _ in range(self.cls):
             y = self.FFconv(self.relu(x - self.FBconv(y))) + y
