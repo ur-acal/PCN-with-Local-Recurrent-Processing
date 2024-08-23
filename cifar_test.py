@@ -85,7 +85,21 @@ class PcConvBp_DS(nn.Module):
 
             result = dual_annealing(e_f, bounds, x0=np.squeeze(flattened_y_np), args=(flattened_x_np, expanded_weights_np), maxiter=self.num_iterations, maxfun=5)
             flattened_y = torch.tensor(result.x, dtype=torch.float32)
-        
+            
+        elif solver == 'LD':
+            expanded_weights = expanded_weights.to(y.device)
+            c = -2 * torch.sparse.mm(flattened_x, expanded_weights)
+            def LD(W, c, r1, lr=0.001):
+                # Q is  W.T @ W
+                # c is  -2 * r0 @ W
+                x = r1.squeeze(0)
+                c = c.squeeze(0)
+                for i in range(self.num_iterations):
+                    # Perform sparse matrix multiplication instead of forming Q explicitly
+                    gradient = torch.sparse.mm(expanded_weights.T, torch.sparse.mm(expanded_weights, x.unsqueeze(1))).squeeze(1) + c
+                    x = x - lr * gradient
+                return x.view(1, -1)
+            flattened_y = LD(expanded_weights, c, torch.flatten(y, start_dim=1))
         else:
             raise ValueError(f'Solver {solver} not supported')
         
@@ -159,7 +173,7 @@ class PredNetBpD(nn.Module):
                 print('No solver in used, still using convolution in recurrent layer')
                 assert layer_number is None, 'layer_number must be None if solver is None'
                 self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
-            elif solver in ['SGD', 'SA']:
+            elif solver in ['SGD', 'SA', 'LD']:
                 print(f'Solver {solver} is in use')
                 assert layer_number is not None, 'layer_number must be provided if solver is not None'
                 assert layer_number <= self.nlays, f'layer_number must be less than or equal to the number of layers: {self.nlays}'
@@ -197,8 +211,10 @@ class PredNetBpD(nn.Module):
 
 
 if __name__ == '__main__':
-    batchsize = 1
-    test_ratio = 0.001
+    batchsize = 500
+    test_ratio = 1
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f'Using device: {device}')
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
@@ -215,16 +231,16 @@ if __name__ == '__main__':
     testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=6)
 
     # Create an instance of the PredNetBpD class
-    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5CLS_FalseNes_0.001WD_FalseTIED_1REP_best_ckpt.t7')
-    prednet = PredNetBpD(num_classes=10, cls=5, Tied=False, solver='SGD', layer_number=1, num_iterations=50, train_weight=False)
+    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5CLS_FalseNes_0.001WD_FalseTIED_1REP_best_ckpt.t7', map_location=device)
+    prednet = PredNetBpD(num_classes=10, cls=5, Tied=False, solver=None, layer_number=None, num_iterations=500, train_weight=False)
     prednet = nn.DataParallel(prednet)
     prednet.load_state_dict(checkpoint_weight['net'])
-    prednet = prednet.cuda()
+    prednet = prednet.to(device)
     prednet.eval()
     total = 0
     correct = 0
     for batch_idx, (inputs, targets) in tqdm(enumerate(testloader), total=len(testloader)):
-        inputs, targets = inputs.cuda(), targets.cuda()
+        inputs, targets = inputs.to(device), targets.to(device)
         output_tensor = prednet(inputs)
         # Get the predicted class
         _, predicted = torch.max(output_tensor, 1)
