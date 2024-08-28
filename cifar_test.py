@@ -247,7 +247,7 @@ if __name__ == '__main__':
 
     # Create an instance of the PredNetBpD class
     checkpoint_weight = torch.load('checkpoint/PCN_5.t7', map_location=device)
-    prednet = PredNetBpD(num_classes=10, cls=5, Tied=False, 
+    prednet = PredNetBpD(num_classes=10, cls=0, Tied=False, 
                          solver='SGD', layer_number=1, num_iterations=50, train_weight=False,
                          noise_level=None)
     prednet = prednet.to(device)
