@@ -15,8 +15,10 @@ import numpy as np
 
 
 class PcConvBp_DS(nn.Module):
-    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, bias=False, solver='SGD', num_iterations=5, train_weight=False):
+    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, bias=False, 
+                 solver='SGD', num_iterations=5, train_weight=False, noise_level=None):
         super().__init__()
+        self.noise_level = noise_level
         self.solver = solver
         self.train_weight = train_weight
         self.num_iterations = num_iterations
@@ -27,7 +29,7 @@ class PcConvBp_DS(nn.Module):
         self.C_out = outchan
         self.FFconv = nn.Conv2d(inchan, outchan, self.kernel_size, self.stride, self.padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(outchan, inchan, self.kernel_size, self.stride, self.padding, bias=bias)
-        self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, outchan, 1, 1))])
+        # self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, outchan, 1, 1))])
         self.relu = nn.ReLU(inplace=True)
         self.cls = cls
         self.bypass = nn.Conv2d(inchan, outchan, kernel_size=1, stride=1, bias=False)
@@ -43,7 +45,12 @@ class PcConvBp_DS(nn.Module):
             expanded_weights = torch.load(f'./expanded_weights_train/expanded_weights_{layer_idx}.pt')
             expanded_weights.clone().detach().requires_grad_(True)
         else:
-            expanded_weights = torch.load(f'./expanded_weights/expanded_weights_{layer_idx}.pt')
+            expanded_weights = torch.load(f'./expanded_weights/PCN_5/expanded_weights_{layer_idx}.pt')
+            if self.noise_level is not None:
+                noise = self.noise_level * torch.randn(expanded_weights.shape) * expanded_weights
+                noise = noise.to_sparse()
+                expanded_weights += noise
+
         flattened_x = torch.flatten(x, start_dim=1).clone().detach()
         y = F.pad(y, (self.padding, self.padding, self.padding, self.padding))
         
@@ -61,7 +68,7 @@ class PcConvBp_DS(nn.Module):
                 energy = torch.norm(flattened_x - flattened_y @ expanded_weights.T, p=2)
                 energy.backward()
                 optimizer_y.step()
-
+                
             if self.train_weight:
                 for _ in range(5):
                     optimizer_w.zero_grad()
@@ -69,7 +76,7 @@ class PcConvBp_DS(nn.Module):
                     energy.backward()
                     optimizer_w.step()
                     torch.save(expanded_weights, f'./expanded_weights_train/expanded_weights_{layer_idx}.pt')
-
+            
         elif solver == 'SA':
             flattened_x_np = flattened_x.cpu().numpy()
             expanded_weights_np = expanded_weights.to_dense().numpy()
@@ -89,17 +96,20 @@ class PcConvBp_DS(nn.Module):
         elif solver == 'LD':
             expanded_weights = expanded_weights.to(y.device)
             c = -2 * torch.sparse.mm(flattened_x, expanded_weights)
-            def LD(W, c, r1, lr=0.001):
+            def LD(expanded_weights, c, r1, lr=0.001):
                 # Q is  W.T @ W
                 # c is  -2 * r0 @ W
-                x = r1.squeeze(0)
-                c = c.squeeze(0)
+                x = r1.squeeze(0).cpu()
+                c = c.squeeze(0).cpu()
                 for i in range(self.num_iterations):
                     # Perform sparse matrix multiplication instead of forming Q explicitly
                     gradient = torch.sparse.mm(expanded_weights.T, torch.sparse.mm(expanded_weights, x.unsqueeze(1))).squeeze(1) + c
                     x = x - lr * gradient
+                    del gradient
                 return x.view(1, -1)
+            expanded_weights = expanded_weights.cpu()
             flattened_y = LD(expanded_weights, c, torch.flatten(y, start_dim=1))
+            del c
         else:
             raise ValueError(f'Solver {solver} not supported')
         
@@ -158,11 +168,13 @@ class PcConvBp_DS(nn.Module):
 ''' Architecture PredNetBpD '''
 from prednet import PcConvBp
 class PredNetBpD(nn.Module):
-    def __init__(self, num_classes=10, cls=0, Tied = False, solver=None, layer_number=None, num_iterations=None, train_weight=False):
+    def __init__(self, num_classes=10, cls=0, Tied = False, 
+                 solver=None, layer_number=None, num_iterations=None, train_weight=False,
+                 noise_level=None):
         super().__init__()
-        self.ics = [3,  64, 64, 128, 128, 256, 256, 512] # input chanels
-        self.ocs = [64, 64, 128, 128, 256, 256, 512, 512] # output chanels
-        self.maxpool = [False, False, True, False, True, False, False, False] # downsample flag
+        self.ics = [ 3, 32, 64,  64, 128] # input chanels
+        self.ocs = [32, 64, 64, 128, 128] # output chanels
+        self.maxpool = [False, True, False, True, False] # downsample flag
         self.cls = cls # num of time steps
         self.nlays = len(self.ics)
 
@@ -181,14 +193,17 @@ class PredNetBpD(nn.Module):
                 for i in range(self.nlays):
                     # if i <= (layer_number-1):
                     if i == (layer_number-1):
-                        self.PcConvs.append(PcConvBp_DS(self.ics[i], self.ocs[i], cls=self.cls, solver=solver, num_iterations=num_iterations, train_weight=train_weight))
+                        self.PcConvs.append(PcConvBp_DS(self.ics[i], self.ocs[i], cls=self.cls, 
+                                                        solver=solver, num_iterations=num_iterations, train_weight=train_weight,
+                                                        noise_level=noise_level))
                     else:
                         self.PcConvs.append(PcConvBp(self.ics[i], self.ocs[i], cls=self.cls))
             else:
                 print(f'Solver {solver} not supported')
         else:
             self.PcConvs = nn.ModuleList([PcConvBpTied(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
-
+        if noise_level is not None:
+            print(f'Adding noise to the solver {solver} with noise level {noise_level}')
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.nlays)])
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
@@ -231,11 +246,18 @@ if __name__ == '__main__':
     testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=6)
 
     # Create an instance of the PredNetBpD class
-    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5CLS_FalseNes_0.001WD_FalseTIED_1REP_best_ckpt.t7', map_location=device)
-    prednet = PredNetBpD(num_classes=10, cls=5, Tied=False, solver=None, layer_number=None, num_iterations=500, train_weight=False)
-    prednet = nn.DataParallel(prednet)
-    prednet.load_state_dict(checkpoint_weight['net'])
+    checkpoint_weight = torch.load('checkpoint/PCN_5.t7', map_location=device)
+    prednet = PredNetBpD(num_classes=10, cls=5, Tied=False, 
+                         solver='SGD', layer_number=1, num_iterations=50, train_weight=False,
+                         noise_level=None)
     prednet = prednet.to(device)
+    prednet = nn.DataParallel(prednet)
+    # new_state_dict = {}
+    # for key, value in checkpoint_weight['net'].items():
+    #     new_key = key.replace('module.', '')  # Remove 'module.' prefix
+    #     new_state_dict[new_key] = value
+    # prednet.load_state_dict(new_state_dict)
+    prednet.load_state_dict(checkpoint_weight['net'])
     prednet.eval()
     total = 0
     correct = 0
