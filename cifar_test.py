@@ -29,7 +29,7 @@ class PcConvBp_DS(nn.Module):
         self.C_out = outchan
         self.FFconv = nn.Conv2d(inchan, outchan, self.kernel_size, self.stride, self.padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(outchan, inchan, self.kernel_size, self.stride, self.padding, bias=bias)
-        # self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, outchan, 1, 1))])
+        self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, outchan, 1, 1))])
         self.relu = nn.ReLU(inplace=True)
         self.cls = cls
         self.bypass = nn.Conv2d(inchan, outchan, kernel_size=1, stride=1, bias=False)
@@ -60,8 +60,8 @@ class PcConvBp_DS(nn.Module):
             expanded_weights = expanded_weights.to(y.device)
             flattened_y = torch.flatten(y, start_dim=1).clone().detach().requires_grad_(True)
             energy = 0
-            optimizer_y = torch.optim.SGD([flattened_y], lr=0.01)
-            optimizer_w = torch.optim.SGD([expanded_weights], lr=0.01) if self.train_weight else None
+            optimizer_y = torch.optim.SGD([flattened_y], lr=0.001)
+            optimizer_w = torch.optim.SGD([expanded_weights], lr=0.001) if self.train_weight else None
             for _ in range(self.num_iterations):
                 optimizer_y.zero_grad()
                 # energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
@@ -99,15 +99,14 @@ class PcConvBp_DS(nn.Module):
             def LD(expanded_weights, c, r1, lr=0.001):
                 # Q is  W.T @ W
                 # c is  -2 * r0 @ W
-                x = r1.squeeze(0).cpu()
-                c = c.squeeze(0).cpu()
+                x = r1.squeeze(0)
+                c = c.squeeze(0)
                 for i in range(self.num_iterations):
                     # Perform sparse matrix multiplication instead of forming Q explicitly
                     gradient = torch.sparse.mm(expanded_weights.T, torch.sparse.mm(expanded_weights, x.unsqueeze(1))).squeeze(1) + c
                     x = x - lr * gradient
                     del gradient
                 return x.view(1, -1)
-            expanded_weights = expanded_weights.cpu()
             flattened_y = LD(expanded_weights, c, torch.flatten(y, start_dim=1))
             del c
         else:
@@ -175,6 +174,12 @@ class PredNetBpD(nn.Module):
         self.ics = [ 3, 32, 64,  64, 128] # input chanels
         self.ocs = [32, 64, 64, 128, 128] # output chanels
         self.maxpool = [False, True, False, True, False] # downsample flag
+        # self.ics = [ 3, 32, 64] # input chanels
+        # self.ocs = [32, 64, 64] # output chanels
+        # self.maxpool = [False, True, False] # downsample flag
+        # self.ics = [3,  64, 64, 128, 128, 256, 256, 512] # input chanels
+        # self.ocs = [64, 64, 128, 128, 256, 256, 512, 512] # output chanels
+        # self.maxpool = [False, False, True, False, True, False, False, False] # downsample flag
         self.cls = cls # num of time steps
         self.nlays = len(self.ics)
 
@@ -226,7 +231,7 @@ class PredNetBpD(nn.Module):
 
 
 if __name__ == '__main__':
-    batchsize = 500
+    batchsize = 128
     test_ratio = 1
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'Using device: {device}')
@@ -246,19 +251,14 @@ if __name__ == '__main__':
     testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=6)
 
     # Create an instance of the PredNetBpD class
-    checkpoint_weight = torch.load('checkpoint/PCN_5.t7', map_location=device)
-    prednet = PredNetBpD(num_classes=10, cls=0, Tied=False, 
-                         solver='SGD', layer_number=1, num_iterations=50, train_weight=False,
+    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_5CLS_FalseNes_0.001WD_FalseTIED_2REP_best_ckpt.t7', map_location=device)
+    prednet = PredNetBpD(num_classes=10, cls=5, Tied=False,
+                         solver='SGD', layer_number=5, num_iterations=5, train_weight=False,
                          noise_level=None)
     prednet = prednet.to(device)
     prednet = nn.DataParallel(prednet)
-    # new_state_dict = {}
-    # for key, value in checkpoint_weight['net'].items():
-    #     new_key = key.replace('module.', '')  # Remove 'module.' prefix
-    #     new_state_dict[new_key] = value
-    # prednet.load_state_dict(new_state_dict)
     prednet.load_state_dict(checkpoint_weight['net'])
-    prednet.eval()
+    # prednet.eval()
     total = 0
     correct = 0
     for batch_idx, (inputs, targets) in tqdm(enumerate(testloader), total=len(testloader)):

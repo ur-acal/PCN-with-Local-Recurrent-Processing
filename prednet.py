@@ -23,7 +23,7 @@ class PcConvBp(nn.Module):
         super().__init__()
         self.FFconv = nn.Conv2d(inchan, outchan, kernel_size, stride, padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(outchan, inchan, kernel_size, stride, padding, bias=bias)
-        # self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1,outchan,1,1))])
+        self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1,outchan,1,1))])
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
         self.cls = cls
@@ -38,7 +38,81 @@ class PcConvBp(nn.Module):
 
     def la_sigmoid(self, x):
         return 0.5+0.25*x-0.0212*x**3
+
+''' Architecture PredNetBpD_5 '''
+class PredNetBpD_5(nn.Module):
+    def __init__(self, num_classes=10, cls=0, Tied = False):
+        super().__init__()
+        self.ics = [3,  32, 64, 64, 128] # input chanels
+        self.ocs = [32, 64, 64, 128, 128] # output chanels
+        self.maxpool = [False, True, False, True, False] # downsample flag
+        self.cls = cls # num of time steps
+        self.nlays = len(self.ics)
+
+        # construct PC layers
+        # Unlike PCN v1, we do not have a tied version here. We may or may not incorporate a tied version in the future.
+        if Tied == False:
+            self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+        else:
+            self.PcConvs = nn.ModuleList([PcConvBpTied(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+        self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.nlays)])
+        # Linear layer
+        self.linear = nn.Linear(self.ocs[-1], num_classes)
+        self.maxpool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.relu = nn.ReLU(inplace=True)
+        self.BNend = nn.BatchNorm2d(self.ocs[-1])
+
+    def forward(self, x):
+        for i in range(self.nlays):
+            x = self.BNs[i](x)
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
+            if self.maxpool[i]:
+                x = self.maxpool2d(x)
+
+        # classifier                
+        out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+
+''' Architecture PredNetBpD '''
+class PredNetBpD_3(nn.Module):
+    def __init__(self, num_classes=10, cls=0, Tied = False):
+        super().__init__()
+        self.ics = [3,  32, 64] # input chanels
+        self.ocs = [32, 64, 64] # output chanels
+        self.maxpool = [False, True, False] # downsample flag
+        self.cls = cls # num of time steps
+        self.nlays = len(self.ics)
+
+        # construct PC layers
+        # Unlike PCN v1, we do not have a tied version here. We may or may not incorporate a tied version in the future.
+        if Tied == False:
+            self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+        else:
+            self.PcConvs = nn.ModuleList([PcConvBpTied(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+        self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.nlays)])
+        # Linear layer
+        self.linear = nn.Linear(self.ocs[-1], num_classes)
+        self.maxpool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.relu = nn.ReLU(inplace=True)
+        self.BNend = nn.BatchNorm2d(self.ocs[-1])
+
+    def forward(self, x):
+        for i in range(self.nlays):
+            x = self.BNs[i](x)
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
+            if self.maxpool[i]:
+                x = self.maxpool2d(x)
+
+        # classifier                
+        out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
     
+
 class PcConvBp_SGD(nn.Module):
     def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, bias=False):
         super().__init__()

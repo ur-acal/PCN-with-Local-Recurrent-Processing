@@ -12,17 +12,16 @@ from prednet import *
 from utils import progress_bar
 from torch.autograd import Variable
 
-def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
+def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
     use_cuda = True # torch.cuda.is_available()
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-    batchsize = 1
+    batchsize = 512
     root = './'
     rep = 1
     lr = 0.01
-    solver = 'SGD'
     
-    models = {'PredNetBpD':PredNetBpD}
+    models = {'PredNetBpD_3':PredNetBpD_3}
     modelname = model+'_'+str(circles)+'CLS_'+str(nesterov)+'Nes_'+str(weightDecay)+'WD_'+str(Tied)+'TIED_'+str(rep)+'REP'
     
     # clearn folder
@@ -53,7 +52,7 @@ def main_cifar(model='PredNetBpD', circles=5, gpunum=1, Tied=False, weightDecay=
     
     # Model
     print('==> Building model..')
-    net = models[model](num_classes=10,cls=circles,Tied=Tied, solver=solver)
+    net = models[model](num_classes=10,cls=circles,Tied=Tied)
     
     # Define objective function
     criterion = nn.CrossEntropyLoss()
