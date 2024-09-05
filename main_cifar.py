@@ -12,7 +12,7 @@ from prednet import *
 from utils import progress_bar
 from torch.autograd import Variable
 
-def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
+def main_cifar(model='PredNetBpD_5', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
     use_cuda = True # torch.cuda.is_available()
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
@@ -21,7 +21,7 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
     rep = 1
     lr = 0.01
     
-    models = {'PredNetBpD_3':PredNetBpD_3}
+    models = {'PredNetBpD_5':PredNetBpD_5}
     modelname = model+'_'+str(circles)+'CLS_'+str(nesterov)+'Nes_'+str(weightDecay)+'WD_'+str(Tied)+'TIED_'+str(rep)+'REP'
     
     # clearn folder
@@ -87,6 +87,8 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
                 inputs, targets = inputs.cuda(), targets.cuda()
             optimizer.zero_grad()
             inputs, targets = Variable(inputs), Variable(targets)
+
+            breakpoint()
             outputs = net(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
@@ -137,10 +139,10 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
             'acc': acc,
             'epoch': epoch,
         }
-        torch.save(state, checkpointpath + modelname + '_last_ckpt.t7')
+        torch.save(state, checkpointpath + modelname + '_last2_ckpt.t7')
         if acc >= best_acc:
             print('Saving..')
-            torch.save(state, checkpointpath + modelname + '_best_ckpt.t7')
+            torch.save(state, checkpointpath + modelname + '_best2_ckpt.t7')
             best_acc = acc
         
     # Set adaptive learning rates

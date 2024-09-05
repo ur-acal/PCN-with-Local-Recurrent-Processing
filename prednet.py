@@ -19,7 +19,7 @@ class features2(nn.Module):
         return y
 
 class PcConvBp(nn.Module):
-    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, bias=False):
+    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=5, bias=False):
         super().__init__()
         self.FFconv = nn.Conv2d(inchan, outchan, kernel_size, stride, padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(outchan, inchan, kernel_size, stride, padding, bias=bias)
@@ -29,7 +29,7 @@ class PcConvBp(nn.Module):
         self.cls = cls
         self.bypass = nn.Conv2d(inchan, outchan, kernel_size=1, stride=1, bias=False)
 
-    def forward(self, x, layer_idx):
+    def forward(self, x, layer_idx=None):
         y = self.relu(self.FFconv(x))
         for _ in range(self.cls):
             y = self.FFconv(self.relu(x - self.FBconv(y))) + y
@@ -114,10 +114,19 @@ class PredNetBpD_3(nn.Module):
     
 
 class PcConvBp_SGD(nn.Module):
-    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, bias=False):
+    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, 
+                 cls=0, bias=False, 
+                 num_iterations=10, 
+                 lr=1, 
+                 direct_gradient=True,
+                 use_conv = False):
         super().__init__()
         self.padding = padding
+        self.use_conv = use_conv
+        self.num_iterations = num_iterations
         self.stride = stride
+        self.direct_gradient = direct_gradient
+        self.lr = lr
         self.kernel_size = kernel_size
         self.FFconv = nn.Conv2d(inchan, outchan, self.kernel_size, self.stride, self.padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(outchan, inchan, self.kernel_size, self.stride, self.padding, bias=bias)
@@ -128,30 +137,41 @@ class PcConvBp_SGD(nn.Module):
 
     def forward(self, x):
         y = self.relu(self.FFconv(x))
-        y, energies = self.find_optimal_r(x, y)
+        if self.num_iterations > 0:
+            if self.use_conv:
+                y, energies = self.find_optimal_r_conv(x, y)
+            else:
+                y, energies = self.find_optimal_r(x, y)
+            self.energies = energies
         y = y + self.bypass(x)
         return y
 
     def find_optimal_r(self, x, y):
         weight = self.FBconv.weight.data
-        expanded_weights = self.expand_weights_to_matrix(y.shape[1:], weight.permute(1, 0, 2, 3), stride=self.stride, padding=self.padding)
-        expanded_weights = expanded_weights.to(y.device)
-        flattened_x = x.view(1, -1).clone().detach()
-
+        self.expanded_weights = self.expand_weights_to_matrix(y.shape[1:], weight.permute(1, 0, 2, 3), stride=self.stride, padding=self.padding)
+        weight = self.FFconv.weight.data
+        expanded_weightsff = self.expand_weights_to_matrix(y.shape[1:], weight.permute(1, 0, 2, 3), stride=self.stride, padding=self.padding).to(y.device)
+        expanded_weights = self.expanded_weights.to(y.device)
+        flattened_x = torch.flatten(x, start_dim=1).clone().detach().requires_grad_(False)
         """
         Implement with SGD
         """
         # Initialize flattened_y as a tensor with requires_grad=True
-        num_iterations = 1
+        num_iterations = self.num_iterations
         y = F.pad(y, (self.padding, self.padding, self.padding, self.padding))
-        flattened_y = y.view(1, -1).clone().detach().requires_grad_(True)
+        flattened_y = torch.flatten(y, start_dim=1).clone().detach()#.requires_grad_(True)
+        if not self.direct_gradient:
+            flattened_y.requires_grad_(True)
         energy_record = []
-        optimizer = torch.optim.SGD([flattened_y], lr=0.01)
+        optimizer = torch.optim.SGD([flattened_y], lr=self.lr)
         for _ in range(num_iterations):
             optimizer.zero_grad()
             energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
-            energy.backward()
-            optimizer.step()
+            if self.direct_gradient:
+                flattened_y += self.lr * (flattened_x - flattened_y @ expanded_weights.T) @ expanded_weights
+            else:
+                energy.backward()
+                optimizer.step()
             energy_record.append(energy.item())
 
         # Reshape the flattened_y to the original shape
@@ -163,11 +183,36 @@ class PcConvBp_SGD(nn.Module):
         # Cut off the padding area
         optimal_y = optimal_y[:, :, self.padding:-self.padding, self.padding:-self.padding]
         optimal_y = optimal_y.to(y.device)
-
+        print(energy_record[-3:])
         return optimal_y.detach(), energy_record
+    
+    def find_optimal_r_conv(self, x, y):
+    
+        """
+        Implement with SGD
+        """
+        # Initialize flattened_y as a tensor with requires_grad=True
+        num_iterations = self.num_iterations
+        if not self.direct_gradient:
+            y = y.requires_grad_(False)
+            optimizer = torch.optim.SGD([y], lr=self.lr)
+        energy_record = []
+        for _ in range(num_iterations):
+            error = x-self.FBconv(y)
+            energy = torch.norm(error)**2
+            if self.direct_gradient:
+                y += self.lr * self.FFconv(x - self.FBconv(y))
+            else:
+                optimizer.zero_grad()
+                energy.backward()
+                optimizer.step()
+            energy_record.append(energy.item())
+
+        return y.detach(), energy_record
 
     def Energy_Function(self, x, W, y):
-        energy = -2* x @ W @ y.T + y @ (W.T @ W) @ y.T
+        # energy = (-2* x @ W @ y.T + (y @ W.T) @ (W @ y.T))
+        energy = torch.norm(x - y @ W.T , p=2)**2
         return energy
     
     def expand_weights_to_matrix(self, input_shape, weight_tensor, stride=1, padding=0):
@@ -221,7 +266,7 @@ class PredNetBpE(nn.Module):
         self.ics =     [    3,   64,   64,  128,  128,  128,  128,  256,  256,  256,  512,  512] # input chanels
         self.ocs =     [   64,   64,  128,  128,  128,  128,  256,  256,  256,  512,  512,  512] # output chanels
         self.maxpool = [False,False, True,False, True,False, True,False,False, True,False,False] # downsample flag
-        self.cls = cls # num of time steps
+        self.cls = cls # num of time steps2d
         self.nlays = len(self.ics)
 
         self.baseconv = features2(self.ics[0], self.ocs[0])
@@ -255,7 +300,7 @@ class PredNetBpE(nn.Module):
 
 ''' Architecture PredNetBpD '''
 class PredNetBpD(nn.Module):
-    def __init__(self, num_classes=10, cls=0, Tied = False, solver=None):
+    def __init__(self, num_classes=10, cls=0, Tied = False, solver='SGD'):
         super().__init__()
         self.ics = [3,  64, 64, 128, 128, 256, 256, 512] # input chanels
         self.ocs = [64, 64, 128, 128, 256, 256, 512, 512] # output chanels
@@ -297,7 +342,50 @@ class PredNetBpD(nn.Module):
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
+    ''' Architecture PredNetBpD '''
+class PredNetBpDBW(nn.Module):
+    def __init__(self, num_classes=10, cls=0, Tied = False, solver='SGD'):
+        super().__init__()
+        self.ics = [1,  16, 16] # input chanels
+        self.ocs = [16, 16, 32] # output chanels
+        self.maxpool = [False, False, True, False, True, False, False, False] # downsample flag
+        self.cls = cls # num of time steps
+        self.nlays = len(self.ics)
 
+        # construct PC layers
+        # Unlike PCN v1, we do not have a tied version here. We may or may not incorporate a tied version in the future.
+        if Tied == False:
+            if solver is None:
+                print('No solver in used, still using convolution in recurrent layer')
+                self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+            elif solver == 'SGD':
+                print(f'Solver {solver} is in use')
+                self.PcConvs = nn.ModuleList([PcConvBp_SGD(1, 16, cls=self.cls, num_iterations=1000, use_conv=False)])
+                self.PcConvs.extend([PcConvBp_SGD(self.ics[i], self.ocs[i], cls=self.cls, num_iterations=1000, use_conv=False) for i in range(1, self.nlays)])
+            else:
+                print(f'Solver {solver} not supported')
+        else:
+            self.PcConvs = nn.ModuleList([PcConvBpTied(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+
+        self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.nlays)])
+        # Linear layer
+        self.linear = nn.Linear(self.ocs[-1], num_classes)
+        self.maxpool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.relu = nn.ReLU(inplace=True)
+        self.BNend = nn.BatchNorm2d(self.ocs[-1])
+
+    def forward(self, x):
+        for i in range(self.nlays):
+            x = self.BNs[i](x)
+            x = self.PcConvs[i](x)  # ReLU + Conv
+            if self.maxpool[i]:
+                x = self.maxpool2d(x)
+
+        # classifier                
+        out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
 ''' Architecture PredNetBpC '''
 class PredNetBpC(nn.Module):
     def __init__(self, num_classes=10, cls=0, Tied = False):

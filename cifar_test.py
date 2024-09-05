@@ -59,14 +59,19 @@ class PcConvBp_DS(nn.Module):
             # Initialize flattened_y as a tensor with requires_grad=True
             expanded_weights = expanded_weights.to(y.device)
             flattened_y = torch.flatten(y, start_dim=1).clone().detach().requires_grad_(True)
+            flattened_y.retain_grad()
             energy = 0
             optimizer_y = torch.optim.SGD([flattened_y], lr=0.001)
             optimizer_w = torch.optim.SGD([expanded_weights], lr=0.001) if self.train_weight else None
             for _ in range(self.num_iterations):
                 optimizer_y.zero_grad()
                 # energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
-                energy = torch.norm(flattened_x - flattened_y @ expanded_weights.T, p=2)
+                # energy = torch.norm(flattened_x - flattened_y @ expanded_weights.T, p=2)
+                # energy = (flattened_x - flattened_y @ expanded_weights.T).T.mm(flattened_x - flattened_y @ expanded_weights.T)
+                
+                breakpoint()
                 energy.backward()
+                grad = flattened_y.grad
                 optimizer_y.step()
                 
             if self.train_weight:
@@ -96,7 +101,7 @@ class PcConvBp_DS(nn.Module):
         elif solver == 'LD':
             expanded_weights = expanded_weights.to(y.device)
             c = -2 * torch.sparse.mm(flattened_x, expanded_weights)
-            def LD(expanded_weights, c, r1, lr=0.001):
+            def LD(expanded_weights, c, r1, lr=0.001, r0=None):
                 # Q is  W.T @ W
                 # c is  -2 * r0 @ W
                 x = r1.squeeze(0)
@@ -105,9 +110,11 @@ class PcConvBp_DS(nn.Module):
                     # Perform sparse matrix multiplication instead of forming Q explicitly
                     gradient = torch.sparse.mm(expanded_weights.T, torch.sparse.mm(expanded_weights, x.unsqueeze(1))).squeeze(1) + c
                     x = x - lr * gradient
+                    error = torch.norm(r0 - expanded_weights.T @ x, p=2)
+                    breakpoint()
                     del gradient
                 return x.view(1, -1)
-            flattened_y = LD(expanded_weights, c, torch.flatten(y, start_dim=1))
+            flattened_y = LD(expanded_weights, c, torch.flatten(y, start_dim=1), r0=flattened_x)
             del c
         else:
             raise ValueError(f'Solver {solver} not supported')
@@ -125,7 +132,7 @@ class PcConvBp_DS(nn.Module):
         return optimal_y.detach()
 
     def Energy_Function(self, x, W, y):
-        energy = torch.sqrt(x @ x.T -2* x @ W @ y.T + y @ (W.T @ W) @ y.T)
+        energy = torch.sqrt(x @ x.T -2* x @ W @ y.T + (y @ W.T) @ (W @ y.T))
         return energy
     
     def expand_weights_to_matrix(self, input_shape, weight_tensor, stride=1, padding=0):
@@ -162,7 +169,40 @@ class PcConvBp_DS(nn.Module):
         expanded_weights = torch.sparse_coo_tensor(indices, values, size=size)
 
         return expanded_weights
-    
+def expand_weights_to_matrix(input_shape, weight_tensor, stride=1, padding=0):
+    C_in, H_in, W_in = input_shape
+    C_out, _, K, _ = weight_tensor.shape
+
+    # Compute output dimensions
+    H_out = (H_in + 2 * padding - K) // stride + 1
+    W_out = (W_in + 2 * padding - K) // stride + 1
+
+    # List to store sparse indices and values
+    indices = []
+    values = []
+
+    for c_out in range(C_out):
+        for h in range(H_out):
+            for w in range(W_out):
+                start_h = h * stride
+                start_w = w * stride
+                filter_idx = c_out * H_out * W_out + h * W_out + w
+                for c_in in range(C_in):
+                    for i in range(K):
+                        for j in range(K):
+                            input_idx = (c_in * (H_in + 2 * padding) + (start_h + i)) * (W_in + 2 * padding) + (start_w + j)
+                            value = weight_tensor[c_out, c_in, i, j].item()
+                            if value != 0:
+                                indices.append([filter_idx, input_idx])
+                                values.append(value)
+    # Convert to sparse tensor
+    indices = torch.tensor(indices, dtype=torch.long).t()
+    values = torch.tensor(values, dtype=torch.float32)
+    size = (C_out * H_out * W_out, C_in * (H_in + 2 * padding) * (W_in + 2 * padding))
+    expanded_weights = torch.sparse_coo_tensor(indices, values, size=size)
+
+    return expanded_weights
+
     
 ''' Architecture PredNetBpD '''
 from prednet import PcConvBp
@@ -251,7 +291,7 @@ if __name__ == '__main__':
     testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=6)
 
     # Create an instance of the PredNetBpD class
-    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_5CLS_FalseNes_0.001WD_FalseTIED_2REP_best_ckpt.t7', map_location=device)
+    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_5CLS_FalseNes_0.001WD_FalseTIED_1REP_best_ckpt.t7', map_location=device)
     prednet = PredNetBpD(num_classes=10, cls=5, Tied=False,
                          solver='SGD', layer_number=5, num_iterations=5, train_weight=False,
                          noise_level=None)
