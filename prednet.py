@@ -19,7 +19,7 @@ class features2(nn.Module):
         return y
 
 class PcConvBp(nn.Module):
-    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, bias=False):
+    def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, bias=False, lr = 1):
         super().__init__()
         self.FFconv = nn.Conv2d(inchan, outchan, kernel_size, stride, padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(outchan, inchan, kernel_size, stride, padding, bias=bias)
@@ -27,12 +27,13 @@ class PcConvBp(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
         self.cls = cls
+        self.lr = lr
         self.bypass = nn.Conv2d(inchan, outchan, kernel_size=1, stride=1, bias=False)
 
     def forward(self, x, layer_idx):
         y = self.relu(self.FFconv(x))
         for _ in range(self.cls):
-            y = self.FFconv(self.relu(x - self.FBconv(y))) + y
+            y = self.lr * self.FFconv(self.relu(x - self.FBconv(y))) + y
         y = y + self.bypass(x)
         return y
 
@@ -41,7 +42,7 @@ class PcConvBp(nn.Module):
 
 ''' Architecture PredNetBpD_5 '''
 class PredNetBpD_5(nn.Module):
-    def __init__(self, num_classes=10, cls=0, Tied = False):
+    def __init__(self, num_classes=10, cls=0, Tied = False, lr=1):
         super().__init__()
         self.ics = [3,  32, 64, 64, 128] # input chanels
         self.ocs = [32, 64, 64, 128, 128] # output chanels
@@ -52,7 +53,7 @@ class PredNetBpD_5(nn.Module):
         # construct PC layers
         # Unlike PCN v1, we do not have a tied version here. We may or may not incorporate a tied version in the future.
         if Tied == False:
-            self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+            self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls, lr=lr) for i in range(self.nlays)])
         else:
             self.PcConvs = nn.ModuleList([PcConvBpTied(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.nlays)])
