@@ -7,21 +7,23 @@ import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torchvision
 import torchvision.transforms as transforms
+from sklearn.datasets import load_digits
 import argparse
 from prednet import *
 from utils import progress_bar
 from torch.autograd import Variable
+from torch.utils.data import TensorDataset, random_split
 
-def main_cifar(model='PredNetBpD_5', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
-    use_cuda = True # torch.cuda.is_available()
+def main_cifar(model='PredNetBpDBW', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
+    use_cuda = False # torch.cuda.is_available()
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-    batchsize = 512
+    batchsize = 64
     root = './'
     rep = 1
     lr = 0.01
     
-    models = {'PredNetBpD_5':PredNetBpD_5}
+    models = {'PredNetBpDBW':PredNetBpDBW}
     modelname = model+'_'+str(circles)+'CLS_'+str(nesterov)+'Nes_'+str(weightDecay)+'WD_'+str(Tied)+'TIED_'+str(rep)+'REP'
     
     # clearn folder
@@ -45,14 +47,21 @@ def main_cifar(model='PredNetBpD_5', circles=5, gpunum=1, Tied=False, weightDeca
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
-    trainset = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+    dset = load_digits(return_X_y=True)
+    xtensor = torch.tensor(dset[0]).float()
+    xtensor = xtensor.reshape((xtensor.shape[0], 1, 8, 8))
+    ytensor = torch.tensor(dset[1]).to(torch.int64)
+    trainset, testset = random_split(TensorDataset(xtensor, ytensor), lengths=[0.8, 0.2])
+    trainset.dataset.transform = transform_train
+    testset.dataset.transform = transform_test
+    breakpoint()
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batchsize, shuffle=True, num_workers=2)
-    testset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+    # testset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batchsize, shuffle=False, num_workers=2)
     
     # Model
     print('==> Building model..')
-    net = models[model](num_classes=10,cls=circles,Tied=Tied)
+    net = models[model](num_classes=10,cls=circles,Tied=Tied, solver='SGD')
     
     # Define objective function
     criterion = nn.CrossEntropyLoss()
@@ -87,7 +96,6 @@ def main_cifar(model='PredNetBpD_5', circles=5, gpunum=1, Tied=False, weightDeca
                 inputs, targets = inputs.cuda(), targets.cuda()
             optimizer.zero_grad()
             inputs, targets = Variable(inputs), Variable(targets)
-
             outputs = net(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
@@ -150,7 +158,7 @@ def main_cifar(model='PredNetBpD_5', circles=5, gpunum=1, Tied=False, weightDeca
         for param_group in optimizer.param_groups:
             param_group['lr'] /= 10
 
-    for epoch in range(start_epoch, start_epoch+300):
+    for epoch in range(start_epoch, start_epoch+10):
         statfile = open(logpath+'training_stats_'+modelname+'.txt', 'a+')
         if epoch==150 or epoch==225 or epoch == 262:
             decrease_learning_rate()       

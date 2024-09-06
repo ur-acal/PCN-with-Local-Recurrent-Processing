@@ -28,7 +28,7 @@ class PcConvBp_DS(nn.Module):
         self.C_in = inchan
         self.C_out = outchan
         self.FFconv = nn.Conv2d(inchan, outchan, self.kernel_size, self.stride, self.padding, bias=bias)
-        self.FBconv = nn.ConvTranspose2d(outchan, inchan, self.kernel_size, self.stride, self.padding, bias=bias)
+        # self.FBconv = nn.ConvTranspose2d(outchan, inchan, self.kernel_size, self.stride, self.padding, bias=bias)
         self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, outchan, 1, 1))])
         self.relu = nn.ReLU(inplace=True)
         self.cls = cls
@@ -52,7 +52,7 @@ class PcConvBp_DS(nn.Module):
                 expanded_weights += noise
 
         flattened_x = torch.flatten(x, start_dim=1).clone().detach()
-        y = F.pad(y, (self.padding, self.padding, self.padding, self.padding))
+        # y = F.pad(y, (self.padding, self.padding, self.padding, self.padding))
         
         if solver == 'SGD':
             """ Implement with SGD """
@@ -99,23 +99,29 @@ class PcConvBp_DS(nn.Module):
             flattened_y = torch.tensor(result.x, dtype=torch.float32)
             
         elif solver == 'LD':
-            expanded_weights = expanded_weights.to(y.device)
-            c = -2 * torch.sparse.mm(flattened_x, expanded_weights)
-            def LD(expanded_weights, c, r1, lr=0.001, r0=None):
+            def LD(r0, r1, lr=0.01, sd0=0.5, sd1=0.1):
                 # Q is  W.T @ W
                 # c is  -2 * r0 @ W
-                x = r1.squeeze(0)
-                c = c.squeeze(0)
-                for i in range(self.num_iterations):
-                    # Perform sparse matrix multiplication instead of forming Q explicitly
-                    gradient = torch.sparse.mm(expanded_weights.T, torch.sparse.mm(expanded_weights, x.unsqueeze(1))).squeeze(1) + c
-                    x = x - lr * gradient
-                    error = torch.norm(r0 - expanded_weights.T @ x, p=2)
-                    breakpoint()
-                    del gradient
-                return x.view(1, -1)
-            flattened_y = LD(expanded_weights, c, torch.flatten(y, start_dim=1), r0=flattened_x)
-            del c
+                with torch.no_grad():
+                    mom = 0.99
+                    x = r0.clone().detach()
+                    y = r1.clone().detach()
+                    prev_y = y.clone().detach()
+                    sd = torch.linspace(sd0, sd1, self.num_iterations)
+                    for i in range(self.num_iterations):
+                        # Perform sparse matrix multiplication instead of forming Q explicitly
+                        error = self.relu(x - 
+                                          nn.functional.conv_transpose2d(weight=self.FFconv.weight, 
+                                                                         input=y, padding=1))
+                        prev_y_temp = y.clone().detach()
+                        y += lr * self.FFconv(error)# + np.sqrt(2 * lr) * sd[i] * torch.randn_like(y)
+                        prev_y = prev_y_temp
+                        # energy = torch.norm(error, p=2)
+
+                        # del gradient
+                    return y
+            optimal_y = LD(x, y)
+            return optimal_y
         else:
             raise ValueError(f'Solver {solver} not supported')
         
@@ -291,9 +297,9 @@ if __name__ == '__main__':
     testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=6)
 
     # Create an instance of the PredNetBpD class
-    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_5CLS_FalseNes_0.001WD_FalseTIED_1REP_best_ckpt.t7', map_location=device)
+    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_5CLS_FalseNes_0.001WD_FalseTIED_7REP_best2_ckpt.t7', map_location=device)
     prednet = PredNetBpD(num_classes=10, cls=5, Tied=False,
-                         solver='SGD', layer_number=5, num_iterations=5, train_weight=False,
+                         solver='LD', layer_number=5, num_iterations=10000, train_weight=False,
                          noise_level=None)
     prednet = prednet.to(device)
     prednet = nn.DataParallel(prednet)

@@ -22,7 +22,7 @@ class PcConvBp(nn.Module):
     def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=5, bias=False):
         super().__init__()
         self.FFconv = nn.Conv2d(inchan, outchan, kernel_size, stride, padding, bias=bias)
-        self.FBconv = nn.ConvTranspose2d(outchan, inchan, kernel_size, stride, padding, bias=bias)
+        # self.FBconv = nn.ConvTranspose2d(outchan, inchan, kernel_size, stride, padding, bias=bias)
         self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1,outchan,1,1))])
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
@@ -32,7 +32,10 @@ class PcConvBp(nn.Module):
     def forward(self, x, layer_idx=None):
         y = self.relu(self.FFconv(x))
         for _ in range(self.cls):
-            y = self.FFconv(self.relu(x - self.FBconv(y))) + y
+            # y = self.FFconv(self.relu(x - self.FBconv(y))) + y
+            e = self.relu(x - 
+                          nn.functional.conv_transpose2d(weight=self.FFconv.weight, input=y, padding=1))
+            y = self.FFconv(e) + y
         y = y + self.bypass(x)
         return y
 
@@ -198,10 +201,10 @@ class PcConvBp_SGD(nn.Module):
             optimizer = torch.optim.SGD([y], lr=self.lr)
         energy_record = []
         for _ in range(num_iterations):
-            error = x-self.FBconv(y)
+            error = x-nn.functional.conv_transpose2d(weight=self.FFconv.weight, input=y, padding=1)
             energy = torch.norm(error)**2
             if self.direct_gradient:
-                y += self.lr * self.FFconv(x - self.FBconv(y))
+                y += self.lr * self.FFconv(error)
             else:
                 optimizer.zero_grad()
                 energy.backward()
@@ -360,8 +363,8 @@ class PredNetBpDBW(nn.Module):
                 self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
             elif solver == 'SGD':
                 print(f'Solver {solver} is in use')
-                self.PcConvs = nn.ModuleList([PcConvBp_SGD(1, 16, cls=self.cls, num_iterations=1000, use_conv=False)])
-                self.PcConvs.extend([PcConvBp_SGD(self.ics[i], self.ocs[i], cls=self.cls, num_iterations=1000, use_conv=False) for i in range(1, self.nlays)])
+                self.PcConvs = nn.ModuleList([PcConvBp_SGD(1, 16, cls=self.cls, lr=0.1, num_iterations=1000, use_conv=True)])
+                self.PcConvs.extend([PcConvBp_SGD(self.ics[i], self.ocs[i], cls=self.cls, lr=0.1, num_iterations=1000, use_conv=True) for i in range(1, self.nlays)])
             else:
                 print(f'Solver {solver} not supported')
         else:
