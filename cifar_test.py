@@ -38,8 +38,9 @@ class PcConvBp_DS(nn.Module):
         self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)
 
     def forward(self, x, layer_idx):
-        self.noise_ff
+        noise_ff = (self.noise_ff_matrix.to(device=self.FFconv.weight.device) + 1) * self.FFconv.weight
         y = self.relu(self.FFconv(x))
+        # y = self.relu(torch.conv2d(x, noise_ff, padding=self.FFconv.padding))
         y = self.find_optimal_r(x, y, layer_idx, solver=self.solver)
         y = y + self.bypass(x)
         return y
@@ -50,6 +51,8 @@ class PcConvBp_DS(nn.Module):
         #     expanded_weights.clone().detach().requires_grad_(True)
         # else:
         #     expanded_weights = torch.load(f'./expanded_weights/PCN_5/expanded_weights_{layer_idx}.pt')
+        noise_ff = (self.noise_ff_matrix.to(device=self.FFconv.weight.device) + 1) * self.FFconv.weight
+        noise_fb = self.FBconv.weight * (1 + self.noise_fb_matrix.to(device=self.FFconv.weight.device))
         expanded_weights = None
         flattened_x = torch.flatten(x, start_dim=1).clone().detach()
         if solver == 'SGD':
@@ -254,9 +257,6 @@ class PredNetBpD(nn.Module):
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
     def forward(self, x):
-
-        # noise_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
-        # noise_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight
         for i in range(self.nlays):
             x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
@@ -271,8 +271,8 @@ class PredNetBpD(nn.Module):
 
 
 if __name__ == '__main__':
-    batchsize = 128
-    test_ratio = 0.1
+    batchsize =512
+    test_ratio = 1
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'Using device: {device}')
     transform_test = transforms.Compose([
@@ -288,29 +288,36 @@ if __name__ == '__main__':
     test_subset = Subset(testset, subset_indices)
 
     # Create a DataLoader for the subset
-    testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=6)
+    testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=2)
 
     # Create an instance of the PredNetBpD class
-    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_3REP_last_ckpt.t7', map_location=device)
-    prednet = PredNetBpD(num_classes=10, cls=30, Tied=False,
-                         noise_level=1000,
-                         solver='LD', layer_number=[], num_iterations=4000, train_weight=False)
-    prednet = prednet.to(device)
-    prednet = nn.DataParallel(prednet)
-    prednet.load_state_dict(checkpoint_weight['net'])
-    # prednet.eval()
-    total = 0
-    correct = 0
+    
+    # checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_0CLS_FalseNes_0.001WD_FalseTIED_1REP_last_ckpt_no_recurr.t7', map_location=device)
+    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_4REP_best_ckpt.t7', map_location=device)
+    for noise_level in [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]:
+        trials = 10 if noise_level > 0 else 1
+        for t in range(trials):
+            prednet = PredNetBpD(num_classes=10, cls=30, Tied=False,
+                                noise_level=noise_level,
+                                solver='LD', layer_number=[0, 1, 2, 3, 4], num_iterations=3000, train_weight=False)
+            prednet = prednet.to(device)
+            prednet = nn.DataParallel(prednet)
+            prednet.load_state_dict(checkpoint_weight['net'])
+            prednet.eval()
+            total = 0
+            correct = 0
+            
+            for batch_idx, (inputs, targets) in tqdm(enumerate(testloader), total=len(testloader), disable=True):
+                inputs, targets = inputs.to(device), targets.to(device)
+                with torch.no_grad():
+                    output_tensor = prednet(inputs)
+                
+                # Get the predicted class
+                _, predicted = torch.max(output_tensor, 1)
+                total += targets.size(0)
+                correct += (predicted == targets).sum().item()
+                # print(f' Temporary Accuracy: {100 * correct / total:.2f}%')
 
-    for batch_idx, (inputs, targets) in tqdm(enumerate(testloader), total=len(testloader)):
-        inputs, targets = inputs.to(device), targets.to(device)
-        output_tensor = prednet(inputs)
-        # Get the predicted class
-        _, predicted = torch.max(output_tensor, 1)
-        total += targets.size(0)
-        correct += (predicted == targets).sum().item()
-        print(f' Temporary Accuracy: {100 * correct / total:.2f}%')
-
-    # Calculate the accuracy
-    accuracy = 100 * correct / total
-    print(f'Test Accuracy: {accuracy:.2f}%')
+            # Calculate the accuracy
+            accuracy = 100 * correct / total
+            print(f'Test Accuracy at noise level {noise_level}: {accuracy:.2f}%')
