@@ -255,8 +255,8 @@ class PredNetBpD(nn.Module):
 
     def forward(self, x):
 
-        noise_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
-        noise_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight
+        # noise_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
+        # noise_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight
         for i in range(self.nlays):
             x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
