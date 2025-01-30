@@ -307,7 +307,7 @@ if __name__ == '__main__':
             total = 0
             correct = 0
             
-            for batch_idx, (inputs, targets) in tqdm(enumerate(testloader), total=len(testloader), disable=True):
+            for batch_idx, (inputs, targets) in tqdm(enumerate(testloader), total=len(testloader), disable=False):
                 inputs, targets = inputs.to(device), targets.to(device)
                 with torch.no_grad():
                     output_tensor = prednet(inputs)
