@@ -12,7 +12,7 @@ from prednet import *
 from utils import progress_bar
 from torch.autograd import Variable
 
-def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
+def main_cifar(model='PredNetBpD_5', circles=5, gpunum=1, Tied=False, weightDecay=1e-3, nesterov=False):
     use_cuda = True # torch.cuda.is_available()
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
@@ -21,7 +21,7 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
     rep = 1
     lr = 0.01
     
-    models = {'PredNetBpD_3':PredNetBpD_3}
+    models = {'PredNetBpD_5': PredNetBpD_5}
     modelname = model+'_'+str(circles)+'CLS_'+str(nesterov)+'Nes_'+str(weightDecay)+'WD_'+str(Tied)+'TIED_'+str(rep)+'REP'
     
     # clearn folder
@@ -48,11 +48,13 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
     trainset = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batchsize, shuffle=True, num_workers=2)
     testset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=batchsize, shuffle=False, num_workers=2)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, num_workers=2)
     
     # Model
     print('==> Building model..')
-    net = models[model](num_classes=10,cls=circles,Tied=Tied)
+    net = models[model](num_classes=10,cls=circles,Tied=Tied,lr=0.01)
+    
+    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_4REP_best_ckpt.t7', map_location='cuda')
     
     # Define objective function
     criterion = nn.CrossEntropyLoss()
@@ -63,7 +65,13 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
         net.cuda()
         net = torch.nn.DataParallel(net, device_ids=range(gpunum))
         cudnn.benchmark = True
-    
+        
+    net.load_state_dict(checkpoint_weight['net'])
+    import numpy as np
+    model_parameters = filter(lambda p: p.requires_grad, net.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+
+    breakpoint()
     # item() is a recent addition, so this helps with backward compatibility.
     def to_python_float(t):
         if hasattr(t, 'item'):
@@ -137,10 +145,11 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
             'acc': acc,
             'epoch': epoch,
         }
-        torch.save(state, checkpointpath + modelname + '_last_ckpt.t7')
+
+        torch.save(state, checkpointpath + modelname + '_last_ckpt2.t7')
         if acc >= best_acc:
             print('Saving..')
-            torch.save(state, checkpointpath + modelname + '_best_ckpt.t7')
+            torch.save(state, checkpointpath + modelname + '_best_ckpt2.t7')
             best_acc = acc
         
     # Set adaptive learning rates
@@ -152,9 +161,8 @@ def main_cifar(model='PredNetBpD_3', circles=5, gpunum=1, Tied=False, weightDeca
     for epoch in range(start_epoch, start_epoch+300):
         statfile = open(logpath+'training_stats_'+modelname+'.txt', 'a+')
         if epoch==150 or epoch==225 or epoch == 262:
-            decrease_learning_rate()       
-        train(epoch)
+            decrease_learning_rate()
         test(epoch)
 
 if __name__ == '__main__':
-    main_cifar()
+    main_cifar(circles=30)
