@@ -13,6 +13,76 @@ import torch.nn as nn
 import torch.nn.init as init
 
 
+def save_expanded_weights(pcn_model, sample_imgs, save_to):
+    y_ = sample_imgs.clone()
+    for layer_idx, pc_conv in enumerate(pcn_model.PcConvs):
+        y_ = pc_conv.relu(pc_conv.FFconv(y_))
+        weights_ = pc_conv.FBconv.weight.data.cpu()
+        # fb weights
+        expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3), stride=pc_conv.stride,
+                                                     padding=pc_conv.padding, flip_weight=False)
+        torch.save(expanded_weights_, os.path.join(save_to, 'expanded_weights_layer_fb_{}.pt'.format(layer_idx + 1)))
+        expanded_weights_flip_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3), stride=pc_conv.stride,
+                                                          padding=pc_conv.padding, flip_weight=False)
+        torch.save(expanded_weights_flip_, os.path.join(save_to, 'expanded_weights_layer_fb_{}_flip.pt'.format(layer_idx + 1)))
+
+        # ff weights
+        expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], pc_conv.FFconv.weight.data.cpu(),
+                                                          stride=pc_conv.stride,
+                                                          padding=pc_conv.padding, flip_weight=False)
+        torch.save(expanded_weights_,
+                   os.path.join(save_to, 'expanded_weights_layer_ff_{}.pt'.format(layer_idx + 1)))
+
+        # bypass weights
+        expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], pc_conv.bypass.weight.data.cpu(),
+                                                          stride=pc_conv.stride,
+                                                          padding=pc_conv.padding, flip_weight=False)
+        torch.save(expanded_weights_,
+                   os.path.join(save_to, 'expanded_weights_layer_bp_{}.pt'.format(layer_idx + 1)))
+        if pcn_model.maxpool[layer_idx]:
+            y_ = pcn_model.maxpool2d(y_)
+
+
+def expand_weights_to_matrix(input_shape, weight_tensor, stride=1, padding=0, flip_weight=False):
+    if flip_weight:
+        weight_tensor = weight_tensor.flip([2, 3])
+
+    C_in, H_in, W_in = input_shape
+    C_out, _, K, _ = weight_tensor.shape
+
+    # Compute output dimensions
+    H_out = (H_in + 2 * padding - K) // stride + 1
+    W_out = (W_in + 2 * padding - K) // stride + 1
+
+    # List to store sparse indices and values
+    indices = []
+    values = []
+
+    for c_out in range(C_out):
+        for h in range(H_out):
+            for w in range(W_out):
+                start_h = h * stride
+                start_w = w * stride
+                filter_idx = c_out * H_out * W_out + h * W_out + w
+                for c_in in range(C_in):
+                    for i in range(K):
+                        for j in range(K):
+                            # c_in * (H_in + 2 * padding) * (W_in + 2 * padding)
+                            # + (start_h + i) * (W_in + 2 * padding) + (start_w + j)
+                            input_idx = (c_in * (H_in + 2 * padding) + (start_h + i)) * (W_in + 2 * padding) + (start_w + j)
+                            value = weight_tensor[c_out, c_in, i, j].item()
+                            if value != 0:
+                                indices.append([filter_idx, input_idx])
+                                values.append(value)
+    # Convert to sparse tensor
+    indices = torch.tensor(indices, dtype=torch.long).t()
+    values = torch.tensor(values, dtype=torch.float32)
+    size = (C_out * H_out * W_out, C_in * (H_in + 2 * padding) * (W_in + 2 * padding))
+    expanded_weights = torch.sparse_coo_tensor(indices, values, size=size)
+
+    return expanded_weights
+
+
 def get_mean_and_std(dataset):
     '''Compute the mean and std value of dataset.'''
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=2)

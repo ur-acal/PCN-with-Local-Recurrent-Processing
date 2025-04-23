@@ -12,11 +12,12 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from scipy.optimize import dual_annealing
 import numpy as np
+from utils import expand_weights_to_matrix, save_expanded_weights
 
 
 class PcConvBp_DS(nn.Module):
     def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, cls=0, lr=1e-2, bias=False, 
-                 solver='SGD', num_iterations=5, train_weight=False, noise_level=None):
+                 solver='SGD', num_iterations=5, train_weight=False, noise_level=None, weight_path=None, layer_idx=None):
         super().__init__()
         self.noise_level = noise_level
         self.solver = solver
@@ -37,6 +38,10 @@ class PcConvBp_DS(nn.Module):
         self.noise_ff_matrix = torch.randn_like(self.FFconv.weight) * (0.0 if noise_level is None else noise_level)
         self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)
 
+        self.weight_path = weight_path
+        self.layer_idx = layer_idx
+        self._load_expanded_weights()
+
     def forward(self, x, layer_idx):
         noise_ff = (self.noise_ff_matrix.to(device=self.FFconv.weight.device) + 1) * self.FFconv.weight
         y = self.relu(self.FFconv(x))
@@ -45,15 +50,13 @@ class PcConvBp_DS(nn.Module):
         y = y + self.bypass(x)
         return y
 
-    def find_optimal_r(self, x, y, layer_idx, solver):
-        # if self.train_weight:
-        #     expanded_weights = torch.load(f'./expanded_weights_train/expanded_weights_{layer_idx}.pt')
-        #     expanded_weights.clone().detach().requires_grad_(True)
-        # else:
-        #     expanded_weights = torch.load(f'./expanded_weights/PCN_5/expanded_weights_{layer_idx}.pt')
+    def find_optimal_r(self, x, y, layer_idx, solver, w_type=None):
         noise_ff = (self.noise_ff_matrix.to(device=self.FFconv.weight.device) + 1) * self.FFconv.weight
         noise_fb = self.FBconv.weight * (1 + self.noise_fb_matrix.to(device=self.FFconv.weight.device))
-        expanded_weights = None
+
+        if w_type is not None:
+            assert w_type in {"fb", "fb_flip", "ff", "bp"}
+        expanded_weights = self.expanded_weights.get(w_type, "fb_flip")
         flattened_x = torch.flatten(x, start_dim=1).clone().detach()
         if solver == 'SGD':
             """ Implement with SGD """
@@ -62,13 +65,12 @@ class PcConvBp_DS(nn.Module):
             expanded_weights = expanded_weights.to(y.device)
             flattened_y = torch.flatten(y, start_dim=1).clone().detach().requires_grad_(True)
             flattened_y.retain_grad()
-            energy = 0
             optimizer_y = torch.optim.SGD([flattened_y], lr=0.001)
             optimizer_w = torch.optim.SGD([expanded_weights], lr=0.001) if self.train_weight else None
             for _ in range(self.num_iterations):
                 optimizer_y.zero_grad()
-                # energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
-                energy = torch.norm(( (flattened_x - flattened_y @ expanded_weights.T) @ expanded_weights) , p=2)
+                energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
+                # energy = torch.norm(( (flattened_x - flattened_y @ expanded_weights.T) @ expanded_weights) , p=2)
                 # energy = (flattened_x - flattened_y @ expanded_weights.T).T.mm(flattened_x - flattened_y @ expanded_weights.T)
                 
                 energy.backward()
@@ -131,122 +133,55 @@ class PcConvBp_DS(nn.Module):
         
         return optimal_y.detach()
 
-    def Energy_Function(self, x, W, y):
+    def _load_expanded_weights(self):
+        fb_weight = torch.load(os.path.join(self.weight_path, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)))
+        fb_weight_flip = torch.load(
+            os.path.join(self.weight_path, 'expanded_weights_layer_fb_{}_flip.pt'.format(self.layer_idx + 1)))
+        ff_weight = torch.load(
+            os.path.join(self.weight_path, 'expanded_weights_layer_ff_{}.pt'.format(self.layer_idx + 1)))
+        bp_weight = torch.load(
+            os.path.join(self.weight_path, 'expanded_weights_layer_bp_{}.pt'.format(self.layer_idx + 1)))
+        self.expanded_weights = {"fb": fb_weight, "fb_flip": fb_weight_flip, "ff": ff_weight, "bp": bp_weight}
+
+    @staticmethod
+    def Energy_Function(x, W, y):
         energy = torch.sqrt(x @ x.T -2* x @ W @ y.T + (y @ W.T) @ (W @ y.T))
         return energy
-    
-    def expand_weights_to_matrix(self, input_shape, weight_tensor, stride=1, padding=0):
-        C_in, H_in, W_in = input_shape
-        C_out, _, K, _ = weight_tensor.shape
-
-        # Compute output dimensions
-        H_out = (H_in + 2 * padding - K) // stride + 1
-        W_out = (W_in + 2 * padding - K) // stride + 1
-
-        # List to store sparse indices and values
-        indices = []
-        values = []
-
-        for c_out in range(C_out):
-            for h in range(H_out):
-                for w in range(W_out):
-                    start_h = h * stride
-                    start_w = w * stride
-                    filter_idx = c_out * H_out * W_out + h * W_out + w
-                    for c_in in range(C_in):
-                        for i in range(K):
-                            for j in range(K):
-                                input_idx = (c_in * (H_in + 2 * padding) + (start_h + i)) * (W_in + 2 * padding) + (start_w + j)
-                                value = weight_tensor[c_out, c_in, i, j].item()
-                                if value != 0:
-                                    indices.append([filter_idx, input_idx])
-                                    values.append(value)
-
-        # Convert to sparse tensor
-        indices = torch.tensor(indices, dtype=torch.long).t()
-        values = torch.tensor(values, dtype=torch.float32)
-        size = (C_out * H_out * W_out, C_in * (H_in + 2 * padding) * (W_in + 2 * padding))
-        expanded_weights = torch.sparse_coo_tensor(indices, values, size=size)
-
-        return expanded_weights
-def expand_weights_to_matrix(input_shape, weight_tensor, stride=1, padding=0):
-    C_in, H_in, W_in = input_shape
-    C_out, _, K, _ = weight_tensor.shape
-
-    # Compute output dimensions
-    H_out = (H_in + 2 * padding - K) // stride + 1
-    W_out = (W_in + 2 * padding - K) // stride + 1
-
-    # List to store sparse indices and values
-    indices = []
-    values = []
-
-    for c_out in range(C_out):
-        for h in range(H_out):
-            for w in range(W_out):
-                start_h = h * stride
-                start_w = w * stride
-                filter_idx = c_out * H_out * W_out + h * W_out + w
-                for c_in in range(C_in):
-                    for i in range(K):
-                        for j in range(K):
-                            input_idx = (c_in * (H_in + 2 * padding) + (start_h + i)) * (W_in + 2 * padding) + (start_w + j)
-                            value = weight_tensor[c_out, c_in, i, j].item()
-                            if value != 0:
-                                indices.append([filter_idx, input_idx])
-                                values.append(value)
-    # Convert to sparse tensor
-    indices = torch.tensor(indices, dtype=torch.long).t()
-    values = torch.tensor(values, dtype=torch.float32)
-    size = (C_out * H_out * W_out, C_in * (H_in + 2 * padding) * (W_in + 2 * padding))
-    expanded_weights = torch.sparse_coo_tensor(indices, values, size=size)
-
-    return expanded_weights
 
     
 ''' Architecture PredNetBpD '''
 from prednet import PcConvBp
 class PredNetBpD(nn.Module):
-    def __init__(self, num_classes=10, cls=0, Tied = False, 
+    def __init__(self, num_classes=10, cls=0, lr=1e-2,
                  solver=None, layer_number=None, num_iterations=None, train_weight=False,
-                 noise_level=None):
+                 noise_level=None, weight_path=None):
         super().__init__()
         self.ics = [ 3, 32, 64,  64, 128] # input chanels
         self.ocs = [32, 64, 64, 128, 128] # output chanels
         self.maxpool = [False, True, False, True, False] # downsample flag
-        # self.ics = [ 3, 32, 64] # input chanels
-        # self.ocs = [32, 64, 64] # output chanels
-        # self.maxpool = [False, True, False] # downsample flag
-        # self.ics = [3,  64, 64, 128, 128, 256, 256, 512] # input chanels
-        # self.ocs = [64, 64, 128, 128, 256, 256, 512, 512] # output chanels
-        # self.maxpool = [False, False, True, False, True, False, False, False] # downsample flag
         self.cls = cls # num of time steps
         self.nlays = len(self.ics)
 
         # construct PC layers
-        # Unlike PCN v1, we do not have a tied version here. We may or may not incorporate a tied version in the future.
-        if Tied == False:
-            if solver is None:
-                print('No solver in used, still using convolution in recurrent layer')
-                assert layer_number is None, 'layer_number must be None if solver is None'
-                self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls, lr=0.01) for i in range(self.nlays)])
-            elif solver in ['SGD', 'SA', 'LD']:
-                print(f'Solver {solver} is in use')
-                assert layer_number is not None, 'layer_number must be provided if solver is not None'
-                assert set(layer_number).issubset(range(self.nlays)), f'layer_numbers must be less than or equal to the number of layers: {self.nlays}'
-                self.PcConvs = nn.ModuleList()
-                for i in range(self.nlays):
-                    # if i <= (layer_number-1):
-                    if i in layer_number:
-                        self.PcConvs.append(PcConvBp_DS(self.ics[i], self.ocs[i], cls=self.cls, 
-                                                        solver=solver, num_iterations=num_iterations, train_weight=train_weight,
-                                                        noise_level=noise_level))
-                    else:
-                        self.PcConvs.append(PcConvBp(self.ics[i], self.ocs[i], cls=self.cls, lr=1e-2))
-            else:
-                print(f'Solver {solver} not supported')
+        if solver is None:
+            print('No solver in used, still using convolution in recurrent layer')
+            assert layer_number is None, 'layer_number must be None if solver is None'
+            self.PcConvs = nn.ModuleList([PcConvBp(self.ics[i], self.ocs[i], cls=self.cls, lr=0.01) for i in range(self.nlays)])
+        elif solver in ['SGD', 'SA', 'LD']:
+            print(f'Solver {solver} is in use')
+            assert layer_number is not None, 'layer_number must be provided if solver is not None'
+            assert set(layer_number).issubset(range(self.nlays)), f'layer_numbers must be less than or equal to the number of layers: {self.nlays}'
+            self.PcConvs = nn.ModuleList()
+            for i in range(self.nlays):
+                # if i <= (layer_number-1):
+                if i in layer_number:
+                    self.PcConvs.append(PcConvBp_DS(self.ics[i], self.ocs[i], cls=self.cls, lr=lr,
+                                                    solver=solver, num_iterations=num_iterations, train_weight=train_weight,
+                                                    noise_level=noise_level, weight_path=weight_path, layer_idx=i))
+                else:
+                    self.PcConvs.append(PcConvBp(self.ics[i], self.ocs[i], cls=self.cls, lr=1e-2))
         else:
-            self.PcConvs = nn.ModuleList([PcConvBpTied(self.ics[i], self.ocs[i], cls=self.cls) for i in range(self.nlays)])
+            print(f'Solver {solver} not supported')
         if noise_level is not None:
             print(f'Adding noise to the solver {solver} with noise level {noise_level}')
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.nlays)])
@@ -290,14 +225,24 @@ if __name__ == '__main__':
     # Create a DataLoader for the subset
     testloader = torch.utils.data.DataLoader(test_subset, batch_size=batchsize, shuffle=False, num_workers=2)
 
-    # Create an instance of the PredNetBpD class
-    
+    # Save expanded weights
+    model_path = 'checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_4REP_best_ckpt.t7'
     # checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_0CLS_FalseNes_0.001WD_FalseTIED_1REP_last_ckpt_no_recurr.t7', map_location=device)
-    checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_4REP_best_ckpt.t7', map_location=device)
+    checkpoint_weight = torch.load(model_path, map_location=device)
+    prednet = PredNetBpD(num_classes=10, cls=30, lr=1e-2,
+                         noise_level=0,
+                         solver='LD', layer_number=[0, 1, 2, 3, 4], num_iterations=3000, train_weight=False)
+    prednet = prednet.to(device)
+    prednet = nn.DataParallel(prednet)
+    prednet.load_state_dict(checkpoint_weight['net'])
+    sample_imgs, _ = next(iter(testloader))
+    save_expanded_weights(prednet, sample_imgs.to(device), "expanded_weights/" + model_path.split('/')[-1].split('.t7')[0])
+
+    # noise experiments
     for noise_level in [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]:
-        trials = 10 if noise_level > 0 else 1
+        trials = 3 if noise_level > 0 else 1
         for t in range(trials):
-            prednet = PredNetBpD(num_classes=10, cls=30, Tied=False,
+            prednet = PredNetBpD(num_classes=10, cls=30, lr=1e-2,
                                 noise_level=noise_level,
                                 solver='LD', layer_number=[0, 1, 2, 3, 4], num_iterations=3000, train_weight=False)
             prednet = prednet.to(device)
