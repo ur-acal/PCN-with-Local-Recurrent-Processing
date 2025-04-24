@@ -13,36 +13,6 @@ import torch.nn as nn
 import torch.nn.init as init
 
 
-def save_expanded_weights(pcn_model, sample_imgs, save_to):
-    y_ = sample_imgs.clone()
-    for layer_idx, pc_conv in enumerate(pcn_model.PcConvs):
-        y_ = pc_conv.relu(pc_conv.FFconv(y_))
-        weights_ = pc_conv.FBconv.weight.data.cpu()
-        # fb weights
-        expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3), stride=pc_conv.stride,
-                                                     padding=pc_conv.padding, flip_weight=False)
-        torch.save(expanded_weights_, os.path.join(save_to, 'expanded_weights_layer_fb_{}.pt'.format(layer_idx + 1)))
-        expanded_weights_flip_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3), stride=pc_conv.stride,
-                                                          padding=pc_conv.padding, flip_weight=False)
-        torch.save(expanded_weights_flip_, os.path.join(save_to, 'expanded_weights_layer_fb_{}_flip.pt'.format(layer_idx + 1)))
-
-        # ff weights
-        expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], pc_conv.FFconv.weight.data.cpu(),
-                                                          stride=pc_conv.stride,
-                                                          padding=pc_conv.padding, flip_weight=False)
-        torch.save(expanded_weights_,
-                   os.path.join(save_to, 'expanded_weights_layer_ff_{}.pt'.format(layer_idx + 1)))
-
-        # bypass weights
-        expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], pc_conv.bypass.weight.data.cpu(),
-                                                          stride=pc_conv.stride,
-                                                          padding=pc_conv.padding, flip_weight=False)
-        torch.save(expanded_weights_,
-                   os.path.join(save_to, 'expanded_weights_layer_bp_{}.pt'.format(layer_idx + 1)))
-        if pcn_model.maxpool[layer_idx]:
-            y_ = pcn_model.maxpool2d(y_)
-
-
 def expand_weights_to_matrix(input_shape, weight_tensor, stride=1, padding=0, flip_weight=False):
     if flip_weight:
         weight_tensor = weight_tensor.flip([2, 3])

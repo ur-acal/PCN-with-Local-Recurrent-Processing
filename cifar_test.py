@@ -12,13 +12,13 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from scipy.optimize import dual_annealing
 import numpy as np
-from utils import expand_weights_to_matrix, save_expanded_weights
+from utils import expand_weights_to_matrix
 import matplotlib.pyplot as plt
 
 class PcConvBp_DS(nn.Module):
     def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, lr=1e-2, bias=False,
-                 solver='SGD', num_iterations=5, train_weight=False, noise_level=None, weight_path=None,
-                 layer_idx=None, plot_path=None):
+                 solver='SGD', num_iterations=5, train_weight=False, noise_level=None, weight=None,
+                 layer_idx=None, plot_path=None, w_type="fb_flip"):
         super().__init__()
         self.noise_level = noise_level
         self.solver = solver
@@ -38,33 +38,40 @@ class PcConvBp_DS(nn.Module):
         self.noise_ff_matrix = torch.randn_like(self.FFconv.weight) * (0.0 if noise_level is None else noise_level)
         self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)
 
+        self.w_type = w_type
         self.plot_path = plot_path
-        self.weight_path = weight_path
+        self.weight = weight
         self.layer_idx = layer_idx
-        self._load_expanded_weights(noise_level)
+        if isinstance(weight, str):
+            self._load_expanded_weights(noise_level)
+        elif weight is not None:
+            pass
+            # self._set_weights(weight)
 
-    def forward(self, x, layer_idx, w_type="fb_flip"):
+    def forward(self, x, layer_idx, w_type_used=None):
         # Todo: should we add noise to bypass and ff convolution?
         noise_ff = (self.noise_ff_matrix.to(device=self.FFconv.weight.device) + 1) * self.FFconv.weight
         y = self.relu(self.FFconv(x))
         # y = self.relu(torch.conv2d(x, noise_ff, padding=self.FFconv.padding))
-        y = self.find_optimal_r(x, y, layer_idx, solver=self.solver, w_type=w_type)
+        y = self.find_optimal_r(x, y, layer_idx, w_type_used, solver=self.solver)
         y = y + self.bypass(x)
         return y
 
-    def find_optimal_r(self, x, y, layer_idx, solver, w_type=None):
+    def find_optimal_r(self, x, y, layer_idx, w_type_used, solver):
         noise_ff = (self.noise_ff_matrix.to(device=self.FFconv.weight.device) + 1) * self.FFconv.weight
         noise_fb = self.FBconv.weight * (1 + self.noise_fb_matrix.to(device=self.FFconv.weight.device))
 
-        if w_type is not None:
-            assert w_type in {"fb", "fb_flip", "ff", "bp"}
-        expanded_weights = self.expanded_weights.get(w_type, "fb_flip")
-        flattened_x = torch.flatten(x, start_dim=1).clone().detach()
+        if w_type_used is not None:
+            assert w_type_used in {"fb", "fb_flip", "ff", "bp"}
+        else:
+            w_type_used = self.w_type
+        expanded_weights = self.expanded_weights.get(w_type_used, None)
+        flattened_x = torch.flatten(x, start_dim=1).clone().detach().requires_grad_(True)
         if solver == 'SGD':
             """ Implement with SGD """
             y = F.pad(y, (self.padding, self.padding, self.padding, self.padding))
             # Initialize flattened_y as a tensor with requires_grad=True
-            expanded_weights = expanded_weights.to(y.device)
+            expanded_weights = expanded_weights.to(y.device).requires_grad_(True)
             flattened_y = torch.flatten(y, start_dim=1).clone().detach().requires_grad_(True)
             flattened_y.retain_grad()
             optimizer_y = torch.optim.SGD([flattened_y], lr=self.lr)
@@ -72,7 +79,10 @@ class PcConvBp_DS(nn.Module):
             energy_list = []
             for _ in range(self.num_iterations):
                 optimizer_y.zero_grad()
-                energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
+                # print("layer_idx: {}, Iteration: {}".format(layer_idx, _))
+                energy = torch.norm(flattened_x - flattened_y @ expanded_weights.T, p=2).requires_grad_(True)
+                # print("energy requires grad:", energy.requires_grad)
+                # energy = self.Energy_Function(flattened_x, expanded_weights, flattened_y)
                 # energy = torch.norm(( (flattened_x - flattened_y @ expanded_weights.T) @ expanded_weights) , p=2)
                 # energy = (flattened_x - flattened_y @ expanded_weights.T).T.mm(flattened_x - flattened_y @ expanded_weights.T)
                 
@@ -90,7 +100,7 @@ class PcConvBp_DS(nn.Module):
 
             if self.plot_path is not None:
                 plot_save_path = os.path.join(self.plot_path,
-                                         'pcn_loss_layer_{}_{}_lr_{}.pdf'.format(layer_idx, w_type, self.lr))
+                                         'pcn_loss_layer_{}_{}_lr_{}.pdf'.format(layer_idx, w_type_used, self.lr))
                 self.plot_and_save(energy_list, plot_save_path, plot_title=None)
             
         elif solver == 'SA':
@@ -142,18 +152,27 @@ class PcConvBp_DS(nn.Module):
         return optimal_y.detach()
 
     def _load_expanded_weights(self, noise_level):
-        fb_weight = torch.load(os.path.join(self.weight_path, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)))
-        fb_weight_flip = torch.load(
-            os.path.join(self.weight_path, 'expanded_weights_layer_fb_{}_flip.pt'.format(self.layer_idx + 1)))
-        ff_weight = torch.load(
-            os.path.join(self.weight_path, 'expanded_weights_layer_ff_{}.pt'.format(self.layer_idx + 1)))
-        bp_weight = torch.load(
-            os.path.join(self.weight_path, 'expanded_weights_layer_bp_{}.pt'.format(self.layer_idx + 1)))
-        self.expanded_weights = {"fb": fb_weight, "fb_flip": fb_weight_flip, "ff": ff_weight, "bp": bp_weight}
+        if self.w_type == "fb":
+            expanded_weights = torch.load(
+                os.path.join(self.weight, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)), weights_only=True)
+        elif self.w_type == "fb_flip":
+            expanded_weights = torch.load(
+                os.path.join(self.weight, 'expanded_weights_layer_fb_{}_flip.pt'.format(self.layer_idx + 1)), weights_only=True)
+        elif self.w_type == "ff":
+            expanded_weights = torch.load(
+                os.path.join(self.weight, 'expanded_weights_layer_ff_{}.pt'.format(self.layer_idx + 1)), weights_only=True)
+        elif self.w_type == "bp":
+            expanded_weights = torch.load(
+                os.path.join(self.weight, 'expanded_weights_layer_bp_{}.pt'.format(self.layer_idx + 1)), weights_only=True)
+        else:
+            expanded_weights = torch.load(
+                os.path.join(self.weight, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)),
+                weights_only=True)
+
         if noise_level is not None:
-            for _w_type, _weight in self.expanded_weights.items():
-                noise_ = torch.randn_like(_weight) * noise_level
-                self.expanded_weights[_w_type] = _weight * (1 + noise_)
+            noise_ = torch.randn(expanded_weights.shape) * noise_level
+            expanded_weights = expanded_weights * (1 + noise_)
+        self.expanded_weights = {self.w_type: expanded_weights}
 
     @staticmethod
     def Energy_Function(x, W, y):
@@ -184,7 +203,7 @@ from prednet import PcConvBp
 class PredNetBpD(nn.Module):
     def __init__(self, num_classes=10, cls=0, lr=1e-4,
                  solver=None, layer_number=None, num_iterations=None, train_weight=False,
-                 noise_level=None, weight_path=None, plot_path=None, pcn_weight_type="fb_flip"):
+                 noise_level=None, pc_weight=None, plot_path=None, pcn_weight_type="fb_flip"):
         super().__init__()
         self.ics = [ 3, 32, 64,  64, 128] # input chanels
         self.ocs = [32, 64, 64, 128, 128] # output chanels
@@ -209,8 +228,8 @@ class PredNetBpD(nn.Module):
                 if i in layer_number:
                     self.PcConvs.append(PcConvBp_DS(self.ics[i], self.ocs[i], lr=lr,
                                                     solver=solver, num_iterations=num_iterations, train_weight=train_weight,
-                                                    noise_level=noise_level, weight_path=weight_path, layer_idx=i,
-                                                    plot_path=plot_path))
+                                                    noise_level=noise_level, weight=pc_weight, layer_idx=i,
+                                                    plot_path=plot_path, w_type=pcn_weight_type))
                 else:
                     self.PcConvs.append(PcConvBp(self.ics[i], self.ocs[i], cls=self.cls, lr=1e-2))
         else:
@@ -227,10 +246,7 @@ class PredNetBpD(nn.Module):
     def forward(self, x):
         for i in range(self.nlays):
             x = self.BNs[i](x)
-            if self.solver in ['SGD', 'SA', 'LD']:
-                x = self.PcConvs[i](x, i, self.pcn_weight_type)  # ReLU + Conv
-            else:
-                x = self.PcConvs[i](x, i)
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.maxpool[i]:
                 x = self.maxpool2d(x)
 
@@ -239,6 +255,37 @@ class PredNetBpD(nn.Module):
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
+
+    def save_expanded_weights(self, sample_imgs, save_to):
+        x_ = sample_imgs.clone()
+        for layer_idx, pc_conv in enumerate(self.PcConvs):
+            y_ = pc_conv.relu(pc_conv.FFconv(x_))
+            weights_ = pc_conv.FBconv.weight.data.cpu()
+            # fb weights
+            expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3), stride=pc_conv.stride,
+                                                         padding=pc_conv.padding, flip_weight=False)
+            torch.save(expanded_weights_, os.path.join(save_to, 'expanded_weights_layer_fb_{}.pt'.format(layer_idx + 1)))
+            expanded_weights_flip_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3).flip([2, 3]),
+                                                              stride=pc_conv.stride,
+                                                              padding=pc_conv.padding, flip_weight=False)
+            torch.save(expanded_weights_flip_, os.path.join(save_to, 'expanded_weights_layer_fb_{}_flip.pt'.format(layer_idx + 1)))
+
+            # ff weights
+            expanded_weights_ = expand_weights_to_matrix(x_.shape[1:], pc_conv.FFconv.weight.data.cpu(),
+                                                              stride=pc_conv.stride,
+                                                              padding=pc_conv.padding, flip_weight=False)
+            torch.save(expanded_weights_,
+                       os.path.join(save_to, 'expanded_weights_layer_ff_{}.pt'.format(layer_idx + 1)))
+
+            # bypass weights
+            expanded_weights_ = expand_weights_to_matrix(x_.shape[1:], pc_conv.bypass.weight.data.cpu(),
+                                                              stride=pc_conv.stride,
+                                                              padding=pc_conv.padding, flip_weight=False)
+            torch.save(expanded_weights_,
+                       os.path.join(save_to, 'expanded_weights_layer_bp_{}.pt'.format(layer_idx + 1)))
+            if self.maxpool[layer_idx]:
+                y_ = self.maxpool2d(y_)
+            x_ = y_
 
 
 if __name__ == '__main__':
@@ -264,35 +311,42 @@ if __name__ == '__main__':
     # Load model
     model_path = 'checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_4REP_best_ckpt.t7'
     # checkpoint_weight = torch.load('checkpoint/PredNetBpD_5_0CLS_FalseNes_0.001WD_FalseTIED_1REP_last_ckpt_no_recurr.t7', map_location=device)
-    checkpoint_weight = torch.load(model_path, map_location=device)
+    checkpoint_weight = torch.load(model_path, map_location=device) # weights_only=False
     prednet = PredNetBpD(num_classes=10, cls=30, lr=1e-2,
                          noise_level=0,
-                         solver='LD', layer_number=[0, 1, 2, 3, 4], num_iterations=3000, train_weight=False)
+                         solver='LD', layer_number=[0, 1, 2, 3, 4], num_iterations=30, train_weight=False)
     prednet = prednet.to(device)
     prednet = nn.DataParallel(prednet)
     prednet.load_state_dict(checkpoint_weight['net'])
+    prednet = prednet.module
 
-    # Save expanded weights (optional)
-    save_weight = True
+    # Save expanded weights (optional), run only once and then set to false
+    save_weight = False
     weight_path = os.path.join("expanded_weights", model_path.split('/')[-1].split('.t7')[0])
     plot_loss_path = os.path.join("loss_plot", model_path.split('/')[-1].split('.t7')[0])
     if save_weight:
         sample_imgs, _ = next(iter(testloader))
-        save_expanded_weights(prednet, sample_imgs.to(device), weight_path)
+        # save_expanded_weights(prednet, sample_imgs.to(device), weight_path)
+        prednet.save_expanded_weights(sample_imgs.to(device), weight_path)
         exit(0)
 
     # noise experiments
     for noise_level in [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]:
         trials = 3 if noise_level > 0 else 1
         for t in range(trials):
-            prednet = PredNetBpD(num_classes=10, cls=30, lr=1e-4,
+            cur_plot_path = os.path.join(plot_loss_path, "noise_level_{}".format(noise_level))
+            os.makedirs(cur_plot_path, exist_ok=True)
+            if t > 0:
+                cur_plot_path = None
+            prednet = PredNetBpD(num_classes=10, cls=30, lr=1e-2,
                                  noise_level=noise_level, solver='SGD',
-                                 layer_number=[0, 1, 2, 3, 4], num_iterations=3000,
-                                 train_weight=False,
-                                 weight_path=weight_path, plot_path=plot_loss_path)
+                                 layer_number=[0, 1, 2, 3, 4], num_iterations=30,
+                                 train_weight=False, pcn_weight_type="fb_flip",
+                                 pc_weight=weight_path, plot_path=cur_plot_path)
             prednet = prednet.to(device)
             prednet = nn.DataParallel(prednet)
             prednet.load_state_dict(checkpoint_weight['net'])
+            # prednet = prednet.module
             prednet.eval()
             total = 0
             correct = 0

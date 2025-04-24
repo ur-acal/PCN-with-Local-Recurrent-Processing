@@ -23,3 +23,7 @@ dist/
 # Other
 *.DS_Store
 .idea/
+
+loss_plot/
+expanded_weights/
+
