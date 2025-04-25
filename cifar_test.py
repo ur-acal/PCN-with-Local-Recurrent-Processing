@@ -116,7 +116,7 @@ class PcConvBp_DS(nn.Module):
                                          'pcn_loss_layer_{}_{}_lr_{}.pdf'.format(layer_idx, w_type_used, self.lr))
                 self.plot_and_save(energy_list, plot_save_path,
                                    plot_title="PCN loss vs iteration using SGD and {} (layer {})".format(
-                                       layer_idx, w_type_used))
+                                       w_type_used, layer_idx))
             
         elif solver == 'SA':
             expanded_weights = self.expanded_weights.get(w_type_used, None).to(y.device)

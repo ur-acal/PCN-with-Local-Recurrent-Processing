@@ -27,7 +27,7 @@ def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=
     net_ = load_and_prepare_model(model_path, device, model_struct, **kwargs)
     # Save expanded weights
     weight_path = os.path.join(weight_dir, model_path.split('/')[-1].split(model_suffix)[0])
-    os.makedirs(weight_dir, exist_ok=True)
+    os.makedirs(weight_path, exist_ok=True)
     # save_expanded_weights(prednet, sample_imgs.to(device), weight_path)
     net_.save_expanded_weights(sample_imgs.to(device), weight_path)
 
@@ -41,7 +41,7 @@ def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=Pred
     kwargs.update({"plot_path": loss_plot_dir})
     net_ = load_and_prepare_model(model_path, device, model_struct, **kwargs)
     net_.eval()
-    _ = net_(sample_imgs)
+    _ = net_(sample_imgs.to(device))
 
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PredNetBpD,
@@ -54,7 +54,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             # reinitialize net with different noise during each trial
             params_ = deepcopy(kwargs)
             params_.update({"noise_level": noise_level})
-            net_ = load_and_prepare_model(model_path, device, model_struct, **kwargs)
+            net_ = load_and_prepare_model(model_path, device, model_struct, **params_)
             net_.eval()
             total = 0
             correct = 0
@@ -100,21 +100,24 @@ if __name__ == '__main__':
     expanded_weight_path = os.path.join(weight_dir_, model_path_.split('/')[-1].split(".t7")[0])
 
     # save and expand models
-    expand_and_save = True
+    expand_and_save = False
     if expand_and_save:
         model_params = {"num_classes": 10, "cls": 30, "lr": 1e-2, "noise_level": 0, "solver": 'LD',
                         "layer_number": [0, 1, 2, 3, 4], "num_iterations": 30, "train_weight": False}
-        expand_and_save_weights(next(iter(test_loader)), model_path=model_path_, device=device,
+        expand_and_save_weights(next(iter(test_loader))[0], model_path=model_path_, device=device,
                                 weight_dir=weight_dir_, **model_params)
 
     # plot noise level 0
-    test_no_noise = True
+    test_no_noise = False
     if test_no_noise:
         model_params = {"num_classes": 10, "cls": 30, "lr": 1e-2, "noise_level": 0, "solver": 'LD',
                         "layer_number": [0, 1, 2, 3, 4], "num_iterations": 30, "train_weight": False,
                         "pcn_weight_type": "fb", "use_relu": False,
                         "pc_weight": expanded_weight_path}
-        plot_layer_pcn_loss(next(iter(test_loader)), model_path=model_path_, device=device,
+        plot_layer_pcn_loss(next(iter(test_loader))[0], model_path=model_path_, device=device,
+                            loss_plot_dir=loss_plot_dir_, **model_params)
+        model_params.update({"solver": "SGD"})
+        plot_layer_pcn_loss(next(iter(test_loader))[0], model_path=model_path_, device=device,
                             loss_plot_dir=loss_plot_dir_, **model_params)
 
     # noise experiments
