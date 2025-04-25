@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 class PcConvBp_DS(nn.Module):
     def __init__(self, inchan, outchan, kernel_size=3, stride=1, padding=1, lr=1e-2, bias=False,
                  solver='SGD', num_iterations=5, train_weight=False, noise_level=None, weight=None,
-                 layer_idx=None, plot_path=None, w_type="fb_flip", noise_to_all=True):
+                 layer_idx=None, plot_path=None, w_type="fb_flip", noise_to_ff=True, noise_to_bp=True):
         super().__init__()
         self.noise_level = noise_level
         self.solver = solver
@@ -40,7 +40,8 @@ class PcConvBp_DS(nn.Module):
         self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)
         self.noise_bp_matrix = torch.randn_like(self.bypass.weight) * (0.0 if noise_level is None else noise_level)
 
-        self.noise_to_all = noise_to_all
+        self.noise_to_ff = noise_to_ff
+        self.noise_to_bp = noise_to_bp
         self.w_type = w_type
         self.plot_path = plot_path
         self.weight = weight
@@ -53,17 +54,19 @@ class PcConvBp_DS(nn.Module):
 
     def forward(self, x, layer_idx, w_type_used=None, use_relu=True):
         # Todo: should we add noise to bypass and ff convolution?
-        if not self.noise_to_all:
-            y = self.relu(self.FFconv(x))
-            y = self.find_optimal_r(x, y, layer_idx, w_type_used, use_relu, solver=self.solver)
-            y = y + self.bypass(x)
-        else:
+        if self.noise_to_ff:
             noise_ff = (self.noise_ff_matrix.to(device=self.FFconv.weight.device) + 1) * self.FFconv.weight
             y = self.relu(torch.conv2d(x, noise_ff, padding=self.FFconv.padding))
-            y = self.find_optimal_r(x, y, layer_idx, w_type_used, use_relu, solver=self.solver)
-
+        else:
+            y = self.relu(self.FFconv(x))
+        # injected noise inside find_optimal_r
+        y = self.find_optimal_r(x, y, layer_idx, w_type_used, use_relu, solver=self.solver)
+        if self.noise_to_bp:
             noise_bp = (self.noise_bp_matrix.to(device=self.bypass.weight.device) + 1) * self.bypass.weight
             y = y + torch.conv2d(x, noise_bp, padding=self.bypass.padding)
+        else:
+            y = y + self.bypass(x)
+
         return y
 
     def find_optimal_r(self, x, y, layer_idx, w_type_used, use_relu, solver):
@@ -149,11 +152,15 @@ class PcConvBp_DS(nn.Module):
                         if use_relu:
                             error = self.relu(x - torch.conv_transpose2d(y, noise_fb, padding=self.FBconv.padding))
                         else:
+                            # same as flattened_x - flattened_y_ @ expanded_weights.T
+                            # if expanded_weights has the same noise as the noise_fb
+                            # and it is expanded with noise_fb's last two dim flipped
                             error = x - torch.conv_transpose2d(y, noise_fb, padding=self.FBconv.padding)
 
                         if w_type_used == "ff":
                             y += lr * torch.conv2d(error, noise_ff, padding=self.FFconv.padding)# + np.sqrt(2 * lr) * sd[i] * torch.randn_like(y)
                         else:
+                            # no need to flip the noise_fb
                             y += lr * torch.conv2d(error, noise_fb, padding=self.FFconv.padding)
                         flattened_y_ = torch.flatten(F.pad(y, (self.padding, self.padding, self.padding, self.padding)), start_dim=1)
                         # using 8 ms >> ff and fb time. This step is time-consuming
@@ -248,7 +255,7 @@ class PredNetBpD(nn.Module):
     def __init__(self, num_classes=10, cls=0, lr=1e-4,
                  solver=None, layer_number=None, num_iterations=None, train_weight=False,
                  noise_level=None, pc_weight=None, plot_path=None, pcn_weight_type="fb_flip",
-                 use_relu=True, noise_to_all=False):
+                 use_relu=True, noise_to_ff=False, noise_to_bp=False):
         super().__init__()
         self.ics = [ 3, 32, 64,  64, 128] # input chanels
         self.ocs = [32, 64, 64, 128, 128] # output chanels
@@ -275,7 +282,8 @@ class PredNetBpD(nn.Module):
                     self.PcConvs.append(PcConvBp_DS(self.ics[i], self.ocs[i], lr=lr,
                                                     solver=solver, num_iterations=num_iterations, train_weight=train_weight,
                                                     noise_level=noise_level, weight=pc_weight, layer_idx=i,
-                                                    plot_path=plot_path, w_type=pcn_weight_type, noise_to_all=noise_to_all))
+                                                    plot_path=plot_path, w_type=pcn_weight_type,
+                                                    noise_to_ff=noise_to_ff, noise_to_bp=noise_to_bp))
                 else:
                     self.PcConvs.append(PcConvBp(self.ics[i], self.ocs[i], cls=self.cls, lr=1e-2))
         else:
@@ -380,32 +388,36 @@ if __name__ == '__main__':
         exit(0)
 
     # plot noise level 0
-    test_no_noise = False
+    test_no_noise = True
     if test_no_noise:
-        test_no_noise = True
         cur_plot_path = os.path.join(plot_loss_path, "noise_level_{}".format(0))
         noise_level_zero = [
-            PredNetBpD(num_classes=10, cls=30, lr=1e-2,
-                                 noise_level=0, solver='SGD',
-                                 layer_number=[0, 1, 2, 3, 4], num_iterations=30,
-                                 train_weight=False, pcn_weight_type="fb_flip",
-                                 pc_weight=weight_path, plot_path=cur_plot_path),
-            PredNetBpD(num_classes=10, cls=30, lr=1e-2,
-                             noise_level=0, solver='LD',
-                             layer_number=[0, 1, 2, 3, 4], num_iterations=30,
-                             train_weight=False, pcn_weight_type="ff",
-                             pc_weight=weight_path, plot_path=cur_plot_path, use_relu=True),
-            PredNetBpD(num_classes=10, cls=30, lr=1e-2,
-                             noise_level=0, solver='LD',
-                             layer_number=[0, 1, 2, 3, 4], num_iterations=30,
-                             train_weight=False, pcn_weight_type="ff",
-                             pc_weight=weight_path, plot_path=cur_plot_path, use_relu=False),
-            PredNetBpD(num_classes=10, cls=30, lr=1e-2,
-                             noise_level=0, solver='LD',
-                             layer_number=[0, 1, 2, 3, 4], num_iterations=30,
-                             train_weight=False, pcn_weight_type="fb",
-                             pc_weight=weight_path, plot_path=cur_plot_path, use_relu=True),
+            # PredNetBpD(num_classes=10, cls=30, lr=1e-2,
+            #                      noise_level=0, solver='SGD',
+            #                      layer_number=[0, 1, 2, 3, 4], num_iterations=30,
+            #                      train_weight=False, pcn_weight_type="fb_flip",
+            #                      pc_weight=weight_path, plot_path=cur_plot_path),
+            # PredNetBpD(num_classes=10, cls=30, lr=1e-2,
+            #                  noise_level=0, solver='LD',
+            #                  layer_number=[0, 1, 2, 3, 4], num_iterations=30,
+            #                  train_weight=False, pcn_weight_type="ff",
+            #                  pc_weight=weight_path, plot_path=cur_plot_path, use_relu=True),
+            # PredNetBpD(num_classes=10, cls=30, lr=1e-2,
+            #                  noise_level=0, solver='LD',
+            #                  layer_number=[0, 1, 2, 3, 4], num_iterations=30,
+            #                  train_weight=False, pcn_weight_type="ff",
+            #                  pc_weight=weight_path, plot_path=cur_plot_path, use_relu=False),
+            # PredNetBpD(num_classes=10, cls=30, lr=1e-2,
+            #                  noise_level=0, solver='LD',
+            #                  layer_number=[0, 1, 2, 3, 4], num_iterations=30,
+            #                  train_weight=False, pcn_weight_type="fb",
+            #                  pc_weight=weight_path, plot_path=cur_plot_path, use_relu=True),
+
             # in theory this should be the same as sgd with fb
+            # but their noise are added differently
+            # also, the sgd method add more noise to the expanded weights because
+            # expanded weights have many duplicated kernel weights, each added
+            # with different noise
             PredNetBpD(num_classes=10, cls=30, lr=1e-2,
                              noise_level=0, solver='LD',
                              layer_number=[0, 1, 2, 3, 4], num_iterations=30,
@@ -459,7 +471,7 @@ if __name__ == '__main__':
                                  layer_number=[0, 1, 2, 3, 4], num_iterations=30,
                                  train_weight=False, pcn_weight_type="ff",
                                  pc_weight=weight_path, plot_path=None, use_relu=True,
-                                 noise_to_all=True)
+                                 noise_to_ff=False, noise_to_bp=True)
             prednet = prednet.to(device)
             prednet = nn.DataParallel(prednet)
             prednet.load_state_dict(checkpoint_weight['net'])
