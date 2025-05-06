@@ -11,41 +11,41 @@ from copy import deepcopy
 from cifar_test import PredNetBpD
 
 
-def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, **kwargs):
+def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, data_parallel=True, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
     net_ = model_struct(**kwargs)
     net_ = net_.to(device)
-    net_ = nn.DataParallel(net_)
+    if data_parallel:
+        net_ = nn.DataParallel(net_)
     net_.load_state_dict(checkpoint_weight['net'])
     net_ = net_.module
     return net_
 
 
 def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD,
-                            weight_dir="expanded_weights", model_suffix=".t7", **kwargs):
+                            data_parallel=True, weight_dir="expanded_weights", model_suffix=".t7", **kwargs):
     # Load model
-    net_ = load_and_prepare_model(model_path, device, model_struct, **kwargs)
+    net_ = load_and_prepare_model(model_path, device, model_struct, data_parallel, **kwargs)
     # Save expanded weights
     weight_path = os.path.join(weight_dir, model_path.split('/')[-1].split(model_suffix)[0])
     os.makedirs(weight_path, exist_ok=True)
-    # save_expanded_weights(prednet, sample_imgs.to(device), weight_path)
     net_.save_expanded_weights(sample_imgs.to(device), weight_path)
 
 
 def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD,
-                        loss_plot_dir="loss_plot", model_suffix=".t7", **kwargs):
+                        data_parallel=True, loss_plot_dir="loss_plot", model_suffix=".t7", **kwargs):
     noise_level = kwargs.get("noise_level", 0.0)
     loss_plot_dir = os.path.join(
         loss_plot_dir, model_path.split('/')[-1].split(model_suffix)[0], "noise_level_{}".format(noise_level))
     os.makedirs(loss_plot_dir, exist_ok=True)
     kwargs.update({"plot_path": loss_plot_dir})
-    net_ = load_and_prepare_model(model_path, device, model_struct, **kwargs)
+    net_ = load_and_prepare_model(model_path, device, model_struct, data_parallel, **kwargs)
     net_.eval()
     _ = net_(sample_imgs.to(device))
 
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PredNetBpD,
-                         noisy_trials=10, **kwargs):
+                         data_parallel=True, noisy_trials=10, **kwargs):
     noise_acc = {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
@@ -54,7 +54,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             # reinitialize net with different noise during each trial
             params_ = deepcopy(kwargs)
             params_.update({"noise_level": noise_level})
-            net_ = load_and_prepare_model(model_path, device, model_struct, **params_)
+            net_ = load_and_prepare_model(model_path, device, model_struct, data_parallel, **params_)
             net_.eval()
             total = 0
             correct = 0
@@ -86,7 +86,7 @@ if __name__ == '__main__':
     print(f'Using device: {device}')
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)), ])
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
     test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
     num_samples = len(test_set)
 

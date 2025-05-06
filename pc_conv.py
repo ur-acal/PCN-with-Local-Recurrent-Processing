@@ -108,7 +108,7 @@ class PCConvNoisy(nn.Module):
                 y = y + self.BPconv(x)
         return y
 
-    def find_optimal_r(self, x, y, layer_idx, w_type_used, use_relu):
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
         # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
         # of the model and before calling forward
         for _ in range(self.num_iterations):
