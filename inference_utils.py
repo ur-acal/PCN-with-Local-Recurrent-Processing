@@ -95,8 +95,8 @@ if __name__ == '__main__':
 
     # set different model initialization parameters here
     model_path_ = "checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_4REP_best_ckpt.t7"
-    weight_dir_ = "exp_weight_test_"
-    loss_plot_dir_ = "loss_plt_test_"
+    weight_dir_ = "expanded_weights"
+    loss_plot_dir_ = "loss_plot"
     expanded_weight_path = os.path.join(weight_dir_, model_path_.split('/')[-1].split(".t7")[0])
 
     # save and expand models
