@@ -9,11 +9,11 @@ from utils import expand_weights_to_matrix
 
 
 class PCNet(nn.Module):
-    def __init__(self, inp_channels, out_channels, num_classes=10, pc_conv_layer=PCConv, **kwargs):
+    def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, **kwargs):
         super().__init__()
         self.ics = inp_channels # input channels
         self.ocs = out_channels # output channels
-        self.max_pool = [False, True, False, True, False] # downsample flag
+        self.max_pool = max_pool # downsample flag
         self.num_layers = len(self.ics)
 
         # PC recurrent layers

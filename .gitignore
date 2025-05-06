@@ -26,4 +26,6 @@ dist/
 
 loss_plot/
 expanded_weights/
+saved_ckpt/
+logs/
 

@@ -12,7 +12,7 @@ from pc_model import PCNet
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
-                 batch_size=128, optim_type=torch.optim.Adam, weight_decay=1e-3,
+                 batch_size=512, optim_type=torch.optim.Adam, weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -90,7 +90,7 @@ class TrainerCiFar(object):
                 inputs, labels = data
 
                 # move the data to GPU
-                inputs, labels = inputs.to(self.device).permute(1, 0, 2), labels.to(self.device)
+                inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                 # calculate outputs by running inputs through the network
                 outputs = self.model(inputs)

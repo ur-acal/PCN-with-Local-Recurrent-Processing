@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 
 class PCConv(nn.Module):
-    def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=0, bias=False, lr=1,
+    def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=0, bias=False, lr=1e-2,
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True):
         super().__init__()
         self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride, padding, bias=bias)
