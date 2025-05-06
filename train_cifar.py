@@ -19,7 +19,7 @@ def get_args():
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--batch_size",    type=int,   default=512)
-    p.add_argument("--optim",         type=str,   choices=["SGD","Adam"], default="Adam",
+    p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="Adam",
                    help="optimizer")
     p.add_argument("--weight_decay",  type=float, default=1e-3)
     p.add_argument("--learning_rate", type=float, default=0.01)
@@ -36,7 +36,7 @@ def get_args():
     p.add_argument("--kernel_size",   type=int, default=3)
     p.add_argument("--stride",        type=int, default=1)
     p.add_argument("--padding",       type=int, default=1)
-    p.add_argument("--cls",           type=int, default=5)
+    p.add_argument("--cls",           type=int, default=30)
     p.add_argument("--bias",          action="store_true")
     p.add_argument("--lr_pc",       type=float, default=0.01,
                    help="PC layer recurrent learning rate")
@@ -49,8 +49,8 @@ def get_args():
 def _constr_model_name(args, rep=1):
     name_dict = {str(True): "with", str(False): "no"}
     model_name = 'PPCN' + '_' + str(args.cls) + 'CLS_' + str(args.weight_decay) + 'WD_' \
-                 + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BP_tied_' \
-                 + name_dict[str(args.bypass)] + 'BP' + name_dict[str(args.relu_between)] + 'Relu_' \
+                 + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
+                 + name_dict[str(args.bypass)] + 'BP_' + name_dict[str(args.relu_between)] + 'Relu_' \
                  + str(rep) + 'REP'
     return model_name
 
@@ -92,7 +92,10 @@ def main():
 
     total_params = sum(p.numel() for p in model.parameters())
     model_name = get_model_name(args)
-    print("Total number of parameters: {}".format(total_params))
+    print("input channels: {}".format(model.ics))
+    print("output channels: {}".format(model.ocs))
+    print("max pooling: {}".format(model.max_pool))
+    print("Total number of parameters: {}".format(total_params / 1e6))
     print("Model name: {}".format(model_name))
 
     trainer = TrainerCiFar(

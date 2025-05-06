@@ -5,7 +5,6 @@ import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.optimize import dual_annealing
 import numpy as np
 from utils import expand_weights_to_matrix
 import matplotlib.pyplot as plt
@@ -17,20 +16,21 @@ class PCConv(nn.Module):
         super().__init__()
         self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride, padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
+        self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, out_chan, 1, 1))])
         self.relu = nn.ReLU(inplace=True)
         self.cls = cls
         self.lr = lr
-        self.BPconv = None
+        self.bypass = None
         self.relu_between = relu_between
 
         if bypass:
-            self.BPconv = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
+            self.bypass = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
         if tie_weights:
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
         if tie_bp and bypass:
-            self.BPconv.weight = self.FBconv.weight
-            self.BPconv.bias = self.BPconv.bias
+            self.bypass.weight = self.FBconv.weight
+            self.bypass.bias = self.bypass.bias
 
     def forward(self, x, layer_idx=None):
         y = self.relu(self.FFconv(x))
@@ -39,8 +39,8 @@ class PCConv(nn.Module):
                 y = self.lr * self.FFconv(self.relu(x - self.FBconv(y))) + y
             else:
                 y = self.lr * self.FFconv(x - self.FBconv(y)) + y
-        if self.BPconv is not None:
-            y = y + self.BPconv(x)
+        if self.bypass is not None:
+            y = y + self.bypass(x)
         return y
 
 

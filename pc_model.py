@@ -17,31 +17,31 @@ class PCNet(nn.Module):
         self.num_layers = len(self.ics)
 
         # PC recurrent layers
-        self.PCConv_layers = nn.ModuleList(
+        self.PcConvs = nn.ModuleList(
             [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], **kwargs) for i in range(self.num_layers)])
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.num_layers)])
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
         self.relu = nn.ReLU(inplace=True)
-        self.BN_end = nn.BatchNorm2d(self.ocs[-1])
+        self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
     def forward(self, x):
         for i in range(self.num_layers):
             x = self.BNs[i](x)
-            x = self.PCConv_layers[i](x, i)  # ReLU + Conv
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
 
         # classifier
-        out = F.avg_pool2d(self.relu(self.BN_end(x)), x.size(-1))
+        out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
 
     def save_expanded_weights(self, sample_imgs, save_to):
         x_ = sample_imgs.clone()
-        for layer_idx, pc_conv in enumerate(self.PCConv_layers):
+        for layer_idx, pc_conv in enumerate(self.PcConvs):
             y_ = pc_conv.relu(pc_conv.FFconv(x_))
             weights_ = pc_conv.FBconv.weight.data.cpu()
             # fb weights

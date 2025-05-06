@@ -10,7 +10,7 @@ for tie_w in true false; do
           continue
         fi
 
-        EXP="tw_${tie_w}_tb_${tie_bp}_r_${relu}_b_${bypass}"
+        EXP="tw_${tie_w}_tbp_${tie_bp}_relu_${relu}_bp_${bypass}"
         LOGDIR=./logs/"${EXP}"
         mkdir -p "${LOGDIR}"
 
@@ -31,4 +31,5 @@ done
 echo "All runs completed."
 
 # launch in this way:
-# nohup bash run_multiple.sh > /dev/null 2>&1 &
+# nohup bash run_multiple.sh > ./logs/master_single.log 2>&1 &
+# tail -f ./logs/run_multiple.log

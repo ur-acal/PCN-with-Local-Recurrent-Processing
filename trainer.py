@@ -8,14 +8,14 @@ import torchvision.transforms as transforms
 import argparse
 import tqdm
 
-from pc_model import PCNet
-
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type=torch.optim.Adam, weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        print('----- Using {} device -----'.format(self.device))
+
         model = model.to(self.device)
         self.model = model
         self.model_name = model_name
@@ -36,10 +36,11 @@ class TrainerCiFar(object):
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch()
-            val_acc, _, _ = self.evaluate()
+            train_acc, _, _ = self.evaluate(self.train_dataloader)
+            val_acc, _, _ = self.evaluate(self.val_dataloader)
             train_loss_list.append(train_loss)
             val_acc_list.append(val_acc)
-            print("Validation acc: {}".format(val_acc))
+            print("Validation acc: {}, Train acc: {}".format(val_acc, train_acc))
             if val_acc > best_acc:
                 best_acc = val_acc
                 self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
@@ -79,14 +80,14 @@ class TrainerCiFar(object):
         running_loss /= n_samples
         return running_loss
 
-    def evaluate(self):
+    def evaluate(self, dataloader):
         correct = 0
         total = 0
         running_loss = 0.0
         pred_list, label_list = [], []
         with torch.no_grad():
             self.model.eval()
-            for data in self.val_dataloader:
+            for data in dataloader:
                 inputs, labels = data
 
                 # move the data to GPU
