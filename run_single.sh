@@ -19,12 +19,12 @@ mkdir -p "${LOGDIR}"
 
 python train_cifar.py \
   --optim         "SGD" \
-  --num_epochs    50 \
+  --num_epochs    300 \
   --inp_channels  3  32 64 64  128 \
   --out_channels  32 64 64 128 128 \
   --max_pool      0  1  0  1   0 \
-  --lr_pc         0.01 \
-  --cls           30 \
+  --lr_pc         1 \
+  --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \

@@ -23,7 +23,7 @@ class TrainerCiFar(object):
         self.optimizer = optim_type(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         # Reuse the LR schedule epoch as before
         # Todo: Change the scheduler to some more flexible one
-        self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer, milestones=[150, 225, 262])
+        self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer, milestones=[80, 122, 150, 225, 262]) # [150, 225, 262]
         self.loss_fn = loss_fn
         self.batch_size = batch_size
         self.num_epochs = num_epochs
@@ -44,6 +44,7 @@ class TrainerCiFar(object):
             if val_acc > best_acc:
                 best_acc = val_acc
                 self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
+            self.scheduler.step()
         self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
         return train_loss_list, val_acc_list
 
@@ -65,7 +66,6 @@ class TrainerCiFar(object):
             loss = self.loss_fn(outputs, labels)
             loss.backward()
             self.optimizer.step()
-            self.scheduler.step()
 
             # Update running loss and compute average loss
             running_loss += loss.item() * inputs.size(0)
