@@ -4,20 +4,30 @@
 # 1. with tied bp and with/without relu in between
 # 2. without tied bp and with/without relu in between
 
+EPOCH=2
+
 for tie_bp in true false; do
-  for relu in true false; do
+  for relu in false true; do
     for bypass in true false; do
+      # run experiments that are most hardware-friendly first
+      # tie FF/FB with no relu, remove bypass or tie bypass with FF
+
+      if [ "$tie_bp" = "false" ] && [ "$bypass" = "true" ] && [ "$relu" = "true" ]; then
+        echo "----- Skipping tie_bp=false & bypass=true & relu=true -----"
+        continue
+      fi
+
       if [ "$tie_bp" = "true" ] && [ "$bypass" = "false" ]; then
         echo "----- Skipping tie_bp=true & bypass=false -----"
         continue
       fi
-      EXP="tw_true_tbp_${tie_bp}_relu_${relu}_bp_${bypass}"
+      EXP="tw_true_tbp_${tie_bp}_relu_${relu}_bp_${bypass}_${EPOCH}_epochs"
       LOGDIR="./logs/${EXP}"
       mkdir -p "${LOGDIR}"
       echo "=== Running ${EXP} at $(date) ==="
       python train_cifar.py \
         --optim         "SGD" \
-        --num_epochs    300 \
+        --num_epochs    "${EPOCH}" \
         --inp_channels  3  32 32 64 64 64  128 128 128 \
         --out_channels  32 32 64 64 64 128 128 128 256 \
         --max_pool      0  0  1  0  0  1   0   0   0   \

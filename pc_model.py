@@ -11,6 +11,9 @@ from utils import expand_weights_to_matrix
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, **kwargs):
         super().__init__()
+        args_dropped = {"self", "__class__", "pc_conv_layer"}
+        self.init_args = {k: v for k, v in locals().items() if k not in args_dropped}
+
         self.ics = inp_channels # input channels
         self.ocs = out_channels # output channels
         self.max_pool = max_pool # downsample flag
@@ -25,6 +28,7 @@ class PCNet(nn.Module):
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
         self.relu = nn.ReLU(inplace=True)
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
+
 
     def forward(self, x):
         for i in range(self.num_layers):

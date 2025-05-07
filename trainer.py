@@ -33,6 +33,7 @@ class TrainerCiFar(object):
     def train(self):
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0
+        best_model_path = None
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch()
@@ -44,10 +45,13 @@ class TrainerCiFar(object):
             if val_acc > best_acc:
                 best_acc = val_acc
                 best_epoch = epoch + 1
-                self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
+                best_model_path = self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
             self.scheduler.step()
-        self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
-        print("----- Train finished, Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
+        _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
+        print("----- Train finished, Model Name: {} -----".format(self.model_name))
+        print("----- Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
+        print("----- Model path: {} -----".format(best_model_path))
+        print("--------------------------------------------------------------------------")
         return train_loss_list, val_acc_list
 
     def train_one_epoch(self):
@@ -118,10 +122,13 @@ class TrainerCiFar(object):
         save_pth_path = os.path.join(str(save_to), self.model_name + suffix)
         state = {
             'net': self.model.state_dict(),
+            'init_args': self.model.init_args,
+            'net_type': self.model.__class__.__name__,
             'acc': acc,
             'epoch': epoch,
         }
         torch.save(state, save_pth_path)
+        return save_pth_path
 
     def _get_optimizer(self, optim_type, lr, weight_decay):
         if optim_type == "SGD":
