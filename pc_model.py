@@ -11,8 +11,7 @@ from utils import expand_weights_to_matrix
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, **kwargs):
         super().__init__()
-        args_dropped = {"self", "__class__", "pc_conv_layer"}
-        self.init_args = {k: v for k, v in locals().items() if k not in args_dropped}
+        self.init_args = self._get_init_args(inp_channels, out_channels, max_pool, num_classes, **kwargs)
 
         self.ics = inp_channels # input channels
         self.ocs = out_channels # output channels
@@ -77,3 +76,17 @@ class PCNet(nn.Module):
             if self.max_pool[layer_idx]:
                 y_ = self.max_pool2d(y_)
             x_ = y_
+
+    @staticmethod
+    def _get_init_args(inp_channels, out_channels, max_pool, num_classes, **kwargs):
+        init_args = {
+            "model_args": {
+                "inp_channels": inp_channels,
+                "out_channels": out_channels,
+                "max_pool": max_pool,
+                "num_classes": num_classes,
+            },
+            "kwargs": kwargs
+        }
+        return init_args
+

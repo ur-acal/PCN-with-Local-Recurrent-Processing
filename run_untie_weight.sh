@@ -4,7 +4,7 @@
 # 1. without bp and with/without relu in between
 # 2. with bp but with bp weights tied with ff/fb and with/without relu in between
 
-EPOCH=2
+EPOCH=150
 
 for tie_bp in true false; do
   for relu in true false; do

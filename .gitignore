@@ -29,4 +29,5 @@ expanded_weights/
 saved_ckpt/
 logs/
 run_single_*.sh
+test_model__.py
 

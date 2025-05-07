@@ -4,7 +4,7 @@
 # 1. with tied bp and with/without relu in between
 # 2. without tied bp and with/without relu in between
 
-EPOCH=2
+EPOCH=150
 
 for tie_bp in true false; do
   for relu in false true; do
