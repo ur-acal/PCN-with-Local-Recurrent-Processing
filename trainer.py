@@ -10,7 +10,7 @@ import tqdm
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
-                 batch_size=512, optim_type=torch.optim.Adam, weight_decay=1e-3,
+                 batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -20,7 +20,7 @@ class TrainerCiFar(object):
         self.model = model
         self.model_name = model_name
         self.save_path = save_path
-        self.optimizer = optim_type(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        self.optimizer = self._get_optimizer(optim_type, lr=learning_rate, weight_decay=weight_decay)
         # Reuse the LR schedule epoch as before
         # Todo: Change the scheduler to some more flexible one
         self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer, milestones=[80, 122, 150, 225, 262]) # [150, 225, 262]
@@ -32,7 +32,7 @@ class TrainerCiFar(object):
 
     def train(self):
         train_loss_list, val_acc_list = [], []
-        best_acc, val_acc = 0.0, 0.0
+        best_acc, val_acc, best_epoch = 0.0, 0.0, 0
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch()
@@ -43,9 +43,11 @@ class TrainerCiFar(object):
             print("Validation acc: {}, Train acc: {}".format(val_acc, train_acc))
             if val_acc > best_acc:
                 best_acc = val_acc
+                best_epoch = epoch + 1
                 self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
             self.scheduler.step()
         self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
+        print("----- Train finished, Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
         return train_loss_list, val_acc_list
 
     def train_one_epoch(self):
@@ -120,6 +122,14 @@ class TrainerCiFar(object):
             'epoch': epoch,
         }
         torch.save(state, save_pth_path)
+
+    def _get_optimizer(self, optim_type, lr, weight_decay):
+        if optim_type == "SGD":
+            return optim.SGD(self.model.parameters(), momentum=0.9, lr=lr, weight_decay=weight_decay, nesterov=False)
+        elif optim_type == "Adam":
+            return optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+        else:
+            raise ValueError("Unknown optimizer: {}".format(optim_type))
 
     def _prepare_cifar(self):
         """

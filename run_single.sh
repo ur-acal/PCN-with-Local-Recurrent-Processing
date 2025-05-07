@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 
-#EXP="tw_false_tbp_false_relu_true_bp_false"
-#LOGDIR=./logs/"${EXP}"
+#EXP="tw_false_tbp_false_relu_true_bp_true_sanity_check" # verified with 0.91 val acc
+#LOGDIR="./logs/${EXP}"
 #mkdir -p "${LOGDIR}"
 #
 #python train_cifar.py \
-#  --num_epochs    5 \
+#  --optim         "SGD" \
+#  --num_epochs    300 \
+#  --inp_channels  3  32 64 64  128 \
+#  --out_channels  32 64 64 128 128 \
+#  --max_pool      0  1  0  1   0 \
+#  --lr_pc         1 \
+#  --cls           5 \
 #  --tie_weights   "false" \
 #  --tie_bp        "false" \
 #  --relu_between  "true" \
-#  --bypass        "false" \
+#  --bypass        "true" \
 #  2>&1 | tee "${LOGDIR}/train.log"
 
 
-EXP="tw_false_tbp_false_relu_true_bp_true_sanity_check"
-LOGDIR=./logs/"${EXP}"
+EXP="tw_false_tbp_false_relu_true_bp_true_9_layer" # ~10M params
+LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
 python train_cifar.py \
   --optim         "SGD" \
   --num_epochs    300 \
-  --inp_channels  3  32 64 64  128 \
-  --out_channels  32 64 64 128 128 \
-  --max_pool      0  1  0  1   0 \
   --lr_pc         1 \
   --cls           5 \
   --tie_weights   "false" \

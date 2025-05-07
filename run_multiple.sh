@@ -11,11 +11,19 @@ for tie_w in true false; do
         fi
 
         EXP="tw_${tie_w}_tbp_${tie_bp}_relu_${relu}_bp_${bypass}"
-        LOGDIR=./logs/"${EXP}"
+        LOGDIR="./logs/${EXP}"
         mkdir -p "${LOGDIR}"
 
         echo "=== Running ${EXP} at $(date) ==="
+
         python train_cifar.py \
+          --optim         "SGD" \
+          --num_epochs    300 \
+          --inp_channels  3  32 64 64  128 \
+          --out_channels  32 64 64 128 128 \
+          --max_pool      0  1  0  1   0 \
+          --lr_pc         1 \
+          --cls           5 \
           --tie_weights   "${tie_w}" \
           --tie_bp        "${tie_bp}" \
           --relu_between  "${relu}" \

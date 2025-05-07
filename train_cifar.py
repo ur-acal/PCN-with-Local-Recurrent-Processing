@@ -48,10 +48,10 @@ def get_args():
 
 def _constr_model_name(args, rep=1):
     name_dict = {str(True): "with", str(False): "no"}
-    model_name = 'PPCN' + '_' + str(args.cls) + 'CLS_' + str(args.weight_decay) + 'WD_' \
+    model_name = 'PPCN' + '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_'+ str(args.weight_decay) + 'WD_' \
                  + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
                  + name_dict[str(args.bypass)] + 'BP_' + name_dict[str(args.relu_between)] + 'Relu_' \
-                 + str(rep) + 'REP'
+                 + str(len(args.inp_channels)) + "Layers_" + str(rep) + 'REP'
     return model_name
 
 def get_model_name(args):
@@ -68,7 +68,7 @@ def main():
     args = get_args()
 
     # map optimizer name -> class
-    optim_type = getattr(optim, args.optim)
+    # optim_type = getattr(optim, args.optim)
     loss_fn = nn.CrossEntropyLoss()
 
     # build model
@@ -97,13 +97,16 @@ def main():
     print("max pooling: {}".format(model.max_pool))
     print("Total number of parameters: {}".format(total_params / 1e6))
     print("Model name: {}".format(model_name))
+    print("----- Printing out model parameter names: -----")
+    for name, param in model.named_parameters():
+        print("name: {}, shape: {}, param count: {}".format(name, param.shape, param.numel()))
 
     trainer = TrainerCiFar(
         model         = model,
         model_name    = model_name,
         save_path     = args.save_path,
         batch_size    = args.batch_size,
-        optim_type    = optim_type,
+        optim_type    = args.optim,
         weight_decay  = args.weight_decay,
         loss_fn       = loss_fn,
         learning_rate = args.learning_rate,

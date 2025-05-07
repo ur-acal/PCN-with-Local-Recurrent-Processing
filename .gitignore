@@ -28,4 +28,5 @@ loss_plot/
 expanded_weights/
 saved_ckpt/
 logs/
+run_single_*.sh
 
