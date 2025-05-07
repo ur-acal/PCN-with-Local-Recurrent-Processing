@@ -23,14 +23,13 @@ class PCConv(nn.Module):
         self.bypass = None
         self.relu_between = relu_between
 
-        if bypass:
-            self.bypass = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
         if tie_weights:
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
-        if tie_bp and bypass:
-            self.bypass.weight = self.FBconv.weight
-            self.bypass.bias = self.bypass.bias
+        if not tie_bp and bypass:
+            self.bypass = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
+        elif tie_bp and bypass:
+            self.bypass = self.FFconv
 
     def forward(self, x, layer_idx=None):
         y = self.relu(self.FFconv(x))
