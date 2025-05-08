@@ -20,7 +20,7 @@ class PCNet(nn.Module):
 
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
-            [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], **kwargs) for i in range(self.num_layers)])
+            [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], layer_idx=i, **kwargs) for i in range(self.num_layers)])
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.num_layers)])
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
@@ -67,8 +67,8 @@ class PCNet(nn.Module):
                        os.path.join(save_to, 'expanded_weights_layer_ff_{}.pt'.format(layer_idx + 1)))
 
             # bypass weights
-            if pc_conv.BPconv is not None:
-                expanded_weights_ = expand_weights_to_matrix(x_.shape[1:], pc_conv.BPconv.weight.data.cpu(),
+            if pc_conv.bypass is not None:
+                expanded_weights_ = expand_weights_to_matrix(x_.shape[1:], pc_conv.bypass.weight.data.cpu(),
                                                              stride=pc_conv.stride,
                                                              padding=pc_conv.padding, flip_weight=False)
                 torch.save(expanded_weights_,
@@ -76,6 +76,12 @@ class PCNet(nn.Module):
             if self.max_pool[layer_idx]:
                 y_ = self.max_pool2d(y_)
             x_ = y_
+
+    def add_noise(self):
+        for pc_conv in self.PcConvs:
+            if hasattr(pc_conv, "add_noise"):
+                pc_conv.add_noise()
+        # Todo: Add noise for BN and linear
 
     @staticmethod
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, **kwargs):

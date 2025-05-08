@@ -31,46 +31,49 @@ def parse_args():
                         help="Directory containing the saved model checkpoint")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
-    parser.add_argument("--noise_level", type=float, default=None,
-                        help="Noise level to apply")
     parser.add_argument("--weight", type=str, default=None,
-                        help="Path to a weight override (.pth file), or leave None")
-    parser.add_argument("--layer_idx", type=int, default=None,
-                        help="Which layer index to inject noise into")
+                        help="The large dir that holds expanded weights")
     parser.add_argument("--plot_path", type=str, default=None,
-                        help="Where to save any diagnostic plots")
+                        help="Where to save the PCN loss plot")
     parser.add_argument("--w_type", type=str, default="fb_flip",
                         help="Type of weight perturbation")
     parser.add_argument("--noise_to_ff", type=lambda v: v.lower() in ('yes','true','t','1'),
-                        default=True, help="Noise to feed-forward?")
+                        default=True, help="Noise to the first feed-forward")
     parser.add_argument("--noise_to_bp", type=lambda v: v.lower() in ('yes','true','t','1'),
-                        default=True, help="Noise to bypass?")
+                        default=True, help="Noise to bypass")
     return parser.parse_args()
 
 def run_test():
     args = parse_args()
-    noisy_args = ["noise_level", "weight", "layer_idx", "plot_path", "w_type", "noise_to_ff", "noise_to_bp"]
+    noisy_args = ["w_type", "noise_to_ff", "noise_to_bp"] # skip plotting for noisy exp
     print("Running test with parameters:")
     noisy_params = {}
     for name, val in vars(args).items():
         print(f"  {name}: {val}")
         if name in noisy_args:
             noisy_params[name] = val
+    noisy_params["weight"] = os.path.join(args.weight, args.model_name)
+    # noise_level and plot_path are passed in separately when calling the plot function or noise_exp function
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     test_dataloader = get_test_data()
-    ckpt_path = os.path.join(args.model_dir, args.model_name)
-    ckpt = torch.load(str(ckpt_path), map_location=device)
-    model = PCNet(pc_conv_layer=PCConv,
-                   **ckpt["init_args"]["model_args"],
-                   **ckpt["init_args"]["kwargs"])
-    model.load_state_dict(ckpt["net"])
+    ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
+
+    with torch.no_grad():
+        # works with saved init_args
+        expand_and_save_weights(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
+                                model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                                weight_dir=args.weight, model_name=args.model_name)
+        # plot_path specified inside
+        plot_layer_pcn_loss(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
+                            model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                            loss_plot_dir=args.plot_path, model_name=args.model_name)
+
+        # specify noise level inside, plot path omitted
+        noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
+        run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
+                             model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                             device=device, noisy_trials=5, **noisy_params)
 
 if __name__ == "__main__":
     run_test()
-
-def run_test():
-    noisy_params = {
-        "noise_level": None, "weight": None, "layer_idx": None,
-        "plot_path": None, "w_type": "fb_flip",
-        "noise_to_ff": True, "noise_to_bp": True}

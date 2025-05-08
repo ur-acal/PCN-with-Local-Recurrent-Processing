@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision
 import os
+import inspect
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -9,43 +10,82 @@ from tqdm import tqdm
 from copy import deepcopy
 
 from cifar_test import PredNetBpD
+from pc_model import PCNet
+from pc_conv import PCConv, PCConvNoisy
 
 
-def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, data_parallel=True, **kwargs):
+def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
+                           data_parallel=True, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
-    net_ = model_struct(**kwargs)
+
+    # check if model_struct is the old model defined or the new one
+    sig = inspect.signature(model_struct.__init__)
+    init_kwargs = dict(kwargs)
+    if "pc_conv_layer" in sig.parameters and pc_conv_layer is not None:
+        init_kwargs["pc_conv_layer"] = pc_conv_layer
+
+    # check if model init kwargs are stored in checkpoint, instead of passing in as arguments
+    if "init_args" in checkpoint_weight:
+        # if yes, then kwargs should contain only the parameters related to noise
+        init_kwargs = {
+            **init_kwargs,
+            **checkpoint_weight["init_args"]["model_args"],
+            **checkpoint_weight["init_args"]["kwargs"]
+        }
+
+    net_ = model_struct(**init_kwargs)
     net_ = net_.to(device)
     if data_parallel:
         net_ = nn.DataParallel(net_)
-    net_.load_state_dict(checkpoint_weight['net'])
-    net_ = net_.module
+        net_.load_state_dict(checkpoint_weight['net'])
+        net_ = net_.module
+    else:
+        net_.load_state_dict(checkpoint_weight['net'])
+
+    # Add noise
+    if hasattr(net_, "add_noise"):
+        net_.add_noise()
+    print("----- Model loaded -----")
     return net_
 
 
-def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD,
-                            data_parallel=True, weight_dir="expanded_weights", model_suffix=".t7", **kwargs):
+def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
+                            data_parallel=True, weight_dir="expanded_weights", model_suffix=".pt", model_name=None, **kwargs):
+    print("----- Start to expand and save weights -----")
     # Load model
-    net_ = load_and_prepare_model(model_path, device, model_struct, data_parallel, **kwargs)
+    net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **kwargs)
     # Save expanded weights
-    weight_path = os.path.join(weight_dir, model_path.split('/')[-1].split(model_suffix)[0])
+    if model_name is not None:
+        weight_path = os.path.join(weight_dir, model_name)
+    else:
+        weight_path = os.path.join(weight_dir, model_path.split('/')[-1].split(model_suffix)[0])
+    if os.path.isdir(weight_path) and any(os.scandir(weight_path)):
+        print("When running expand_and_save_weights, found expanded weights under {}".format(weight_path))
+        return
     os.makedirs(weight_path, exist_ok=True)
     net_.save_expanded_weights(sample_imgs.to(device), weight_path)
+    print("----- weights expanded and saved -----")
 
 
-def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD,
-                        data_parallel=True, loss_plot_dir="loss_plot", model_suffix=".t7", **kwargs):
+def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
+                        data_parallel=True, loss_plot_dir="loss_plot", model_suffix=".t7", model_name=None, **kwargs):
+    print("----- Start to plot layer PCN loss -----")
     noise_level = kwargs.get("noise_level", 0.0)
-    loss_plot_dir = os.path.join(
-        loss_plot_dir, model_path.split('/')[-1].split(model_suffix)[0], "noise_level_{}".format(noise_level))
+    if model_name is not None:
+        loss_plot_dir = os.path.join(loss_plot_dir, model_name, "noise_level_{}".format(noise_level))
+    else:
+        loss_plot_dir = os.path.join(
+            loss_plot_dir, model_path.split('/')[-1].split(model_suffix)[0], "noise_level_{}".format(noise_level))
     os.makedirs(loss_plot_dir, exist_ok=True)
     kwargs.update({"plot_path": loss_plot_dir})
-    net_ = load_and_prepare_model(model_path, device, model_struct, data_parallel, **kwargs)
+    net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **kwargs)
     net_.eval()
     _ = net_(sample_imgs.to(device))
+    print("----- Loss is plotted -----")
 
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PredNetBpD,
-                         data_parallel=True, noisy_trials=10, **kwargs):
+                         pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None, **kwargs):
     noise_acc = {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
@@ -54,7 +94,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             # reinitialize net with different noise during each trial
             params_ = deepcopy(kwargs)
             params_.update({"noise_level": noise_level})
-            net_ = load_and_prepare_model(model_path, device, model_struct, data_parallel, **params_)
+            net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **params_)
             net_.eval()
             total = 0
             correct = 0
@@ -77,7 +117,10 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
         noise_acc[noise_level] = avg_acc
         print("Average test acc over {} trials is {}".format(trials, avg_acc))
     print("-------- Final Result --------")
-    print(noise_acc)
+    print("-------- Model name: {} --------".format(model_name))
+    for _nl, _acc in noise_acc.items():
+        print("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc * 100))
+    print("-------- Noisy experiment finished --------")
 
 
 if __name__ == '__main__':

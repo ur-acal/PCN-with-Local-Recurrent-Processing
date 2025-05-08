@@ -11,8 +11,8 @@ import matplotlib.pyplot as plt
 
 
 class PCConv(nn.Module):
-    def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=0, bias=False, lr=1e-2,
-                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True):
+    def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
+                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None):
         super().__init__()
         self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride, padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
@@ -45,10 +45,11 @@ class PCConv(nn.Module):
 
 class PCConvNoisy(nn.Module):
     def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
-                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True,
-                 noise_level=None, weight=None, layer_idx=None, plot_path=None, w_type="fb_flip",
+                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
+                 noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
                  noise_to_ff=True, noise_to_bp=True):
         super().__init__()
+        print("Initializing PC layer {} with noise level: {}".format(layer_idx, noise_level))
         self.noise_level = noise_level
         self.padding = padding
         self.stride = stride
@@ -58,6 +59,7 @@ class PCConvNoisy(nn.Module):
 
         self.FFconv = nn.Conv2d(inp_chan, out_chan, self.kernel_size, self.stride, self.padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, self.kernel_size, self.stride, self.padding, bias=bias)
+        self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, out_chan, 1, 1))])
         self.bypass = None
         self.relu_between = relu_between
 
@@ -91,13 +93,13 @@ class PCConvNoisy(nn.Module):
         elif weight is not None:
             pass
 
-    def forward(self, x, layer_idx, w_type_used=None, use_relu=True):
+    def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
         if self.noise_to_ff:
             y = self.relu(torch.conv2d(x, self.noisy_ff, padding=self.FFconv.padding))
         else:
             y = self.relu(self.FFconv(x))
         # injected noise inside find_optimal_r
-        y = self.find_optimal_r(x, y, layer_idx, w_type_used, use_relu)
+        y = self.find_optimal_r(x, y, self.layer_idx, w_type_used, use_relu)
         if self.bypass is not None:
             if self.noise_to_bp:
                 y = y + torch.conv2d(x, self.noisy_bp, padding=self.bypass.padding)
@@ -179,7 +181,8 @@ class PCConvNoisy(nn.Module):
             expanded_weights = expanded_weights * (1 + noise_)
         self.expanded_weights = {self.w_type: expanded_weights}
 
-        if self.solver == "LD":
+        # if self.solver == "LD":
+        if self.w_type != "fb":
             self.expanded_weights.update({"fb": torch.load(
                 os.path.join(self.weight, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)),
                 weights_only=True)})

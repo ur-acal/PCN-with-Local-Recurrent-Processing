@@ -12,15 +12,20 @@ for tie_bp in true false; do
       # run experiments that are most hardware-friendly first
       # tie FF/FB with no relu, remove bypass or tie bypass with FF
 
-      if [ "$tie_bp" = "false" ] && [ "$bypass" = "true" ] && [ "$relu" = "true" ]; then
-        echo "----- Skipping tie_bp=false & bypass=true & relu=true -----"
+      if ! [[ "$tie_bp" = "false" && "$bypass" = "true" && "$relu" = "true" ]]; then
+        echo "----- Running tie_bp=false & bypass=true & relu=true only -----"
         continue
       fi
 
-      if [ "$tie_bp" = "true" ] && [ "$bypass" = "false" ]; then
-        echo "----- Skipping tie_bp=true & bypass=false -----"
-        continue
-      fi
+#      if [ "$tie_bp" = "false" ] && [ "$bypass" = "true" ] && [ "$relu" = "true" ]; then
+#        echo "----- Skipping tie_bp=false & bypass=true & relu=true -----"
+#        continue
+#      fi
+
+#      if [ "$tie_bp" = "true" ] && [ "$bypass" = "false" ]; then
+#        echo "----- Skipping tie_bp=true & bypass=false -----"
+#        continue
+#      fi
       EXP="tw_true_tbp_${tie_bp}_relu_${relu}_bp_${bypass}_${EPOCH}_epochs"
       LOGDIR="./logs/${EXP}"
       mkdir -p "${LOGDIR}"
