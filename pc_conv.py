@@ -44,13 +44,12 @@ class PCConv(nn.Module):
 
 
 class PCConvNoisy(nn.Module):
-    def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, lr=1e-2, bias=False,
-                 num_iterations=5, train_weight=False, noise_level=None, weight=None,
-                 layer_idx=None, plot_path=None, w_type="fb_flip", noise_to_ff=True, noise_to_bp=True,
-                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True):
+    def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
+                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True,
+                 noise_level=None, weight=None, layer_idx=None, plot_path=None, w_type="fb_flip",
+                 noise_to_ff=True, noise_to_bp=True):
         super().__init__()
         self.noise_level = noise_level
-        self.train_weight = train_weight
         self.padding = padding
         self.stride = stride
         self.kernel_size = kernel_size
@@ -59,19 +58,18 @@ class PCConvNoisy(nn.Module):
 
         self.FFconv = nn.Conv2d(inp_chan, out_chan, self.kernel_size, self.stride, self.padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, self.kernel_size, self.stride, self.padding, bias=bias)
-        self.BPconv = None
+        self.bypass = None
         self.relu_between = relu_between
 
-        if bypass:
-            self.BPconv = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
         self.tie_weights = tie_weights
         if tie_weights:
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
         self.tie_bp = tie_bp
-        if tie_bp and bypass:
-            self.BPconv.weight = self.FBconv.weight
-            self.BPconv.bias = self.FBconv.bias
+        if not tie_bp and bypass:
+            self.bypass = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
+        elif tie_bp and bypass:
+            self.bypass = self.FFconv
 
         # noise related
         self.noise_ff_matrix, self.noise_fb_matrix, self.noise_bp_matrix = None, None, None
@@ -79,7 +77,7 @@ class PCConvNoisy(nn.Module):
         self._init_noise(noise_level)
 
         self.relu = nn.ReLU(inplace=True)
-        self.num_iterations = num_iterations
+        self.cls = cls
         self.lr = lr
 
         self.noise_to_ff = noise_to_ff
@@ -100,17 +98,17 @@ class PCConvNoisy(nn.Module):
             y = self.relu(self.FFconv(x))
         # injected noise inside find_optimal_r
         y = self.find_optimal_r(x, y, layer_idx, w_type_used, use_relu)
-        if self.BPconv is not None:
+        if self.bypass is not None:
             if self.noise_to_bp:
-                y = y + torch.conv2d(x, self.noisy_bp, padding=self.BPconv.padding)
+                y = y + torch.conv2d(x, self.noisy_bp, padding=self.bypass.padding)
             else:
-                y = y + self.BPconv(x)
+                y = y + self.bypass(x)
         return y
 
     def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
         # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
         # of the model and before calling forward
-        for _ in range(self.num_iterations):
+        for _ in range(self.cls):
             if self.relu_between:
                 error = self.relu(x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))
             else:
@@ -122,7 +120,8 @@ class PCConvNoisy(nn.Module):
         # tie weights processed in self.add_noise()
         self.noise_ff_matrix = torch.randn_like(self.FFconv.weight) * (0.0 if noise_level is None else noise_level)
         self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)
-        self.noise_bp_matrix = torch.randn_like(self.BPconv.weight) * (0.0 if noise_level is None else noise_level)
+        if self.bypass is not None:
+            self.noise_bp_matrix = torch.randn_like(self.bypass.weight) * (0.0 if noise_level is None else noise_level)
 
     def tie_weights_impl(self):
         """
@@ -133,10 +132,10 @@ class PCConvNoisy(nn.Module):
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
 
-        if self.tie_bp and self.BPconv is not None:
+        if self.tie_bp and self.bypass is not None:
             self.noisy_bp = self.noisy_fb
-            self.BPconv.weight = self.FBconv.weight
-            self.BPconv.bias = self.FBconv.bias
+            self.bypass.weight = self.FFconv.weight
+            self.bypass.bias = self.FFconv.bias
 
     def add_noise(self):
         """
@@ -145,11 +144,11 @@ class PCConvNoisy(nn.Module):
         """
         self.noise_ff_matrix = self.noise_ff_matrix.to(device=self.FFconv.weight.device)
         self.noise_fb_matrix = self.noise_fb_matrix.to(device=self.FBconv.weight.device)
-        self.noise_bp_matrix = self.noise_bp_matrix.to(device=self.BPconv.weight.device)
+        self.noise_bp_matrix = self.noise_bp_matrix.to(device=self.bypass.weight.device)
 
         self.noisy_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight
         self.noisy_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
-        self.noisy_bp = (self.noise_bp_matrix + 1) * self.BPconv.weight
+        self.noisy_bp = (self.noise_bp_matrix + 1) * self.bypass.weight
 
         self.tie_weights_impl()
 
