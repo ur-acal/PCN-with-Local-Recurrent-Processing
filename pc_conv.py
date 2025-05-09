@@ -135,7 +135,7 @@ class PCConvNoisy(nn.Module):
             self.FFconv.bias = self.FBconv.bias
 
         if self.tie_bp and self.bypass is not None:
-            self.noisy_bp = self.noisy_fb
+            self.noisy_bp = self.noisy_ff
             self.bypass.weight = self.FFconv.weight
             self.bypass.bias = self.FFconv.bias
 
