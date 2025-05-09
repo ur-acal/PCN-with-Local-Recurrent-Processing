@@ -119,7 +119,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
     print("-------- Final Result --------")
     print("-------- Model name: {} --------".format(model_name))
     for _nl, _acc in noise_acc.items():
-        print("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc * 100))
+        print("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
     print("-------- Noisy experiment finished --------")
 
 

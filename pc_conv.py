@@ -49,7 +49,7 @@ class PCConvNoisy(nn.Module):
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
                  noise_to_ff=True, noise_to_bp=True):
         super().__init__()
-        print("Initializing PC layer {} with noise level: {}".format(layer_idx, noise_level))
+        # print("Initializing PC layer {} with noise level: {}".format(layer_idx, noise_level))
         self.noise_level = noise_level
         self.padding = padding
         self.stride = stride
@@ -146,11 +146,14 @@ class PCConvNoisy(nn.Module):
         """
         self.noise_ff_matrix = self.noise_ff_matrix.to(device=self.FFconv.weight.device)
         self.noise_fb_matrix = self.noise_fb_matrix.to(device=self.FBconv.weight.device)
-        self.noise_bp_matrix = self.noise_bp_matrix.to(device=self.bypass.weight.device)
 
         self.noisy_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight
         self.noisy_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
-        self.noisy_bp = (self.noise_bp_matrix + 1) * self.bypass.weight
+
+        if self.bypass is not None:
+            self.noise_bp_matrix = self.noise_bp_matrix.to(device=self.bypass.weight.device)
+            self.noisy_bp = (self.noise_bp_matrix + 1) * self.bypass.weight
+
 
         self.tie_weights_impl()
 
