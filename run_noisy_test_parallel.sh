@@ -1,52 +1,93 @@
 #!/usr/bin/env bash
-# run_test_parallel_grouped.sh
+set -eu
+trap '' HUP   # ignore hangup so the children survive
 
-trap '' HUP
+# ─────────────── fixed params ───────────────
+export MODEL_DIR="./saved_ckpt"
+export WEIGHT_PATH="./expanded_weights"
+export PLOT_PATH="./loss_plot"
+export W_TYPE="fb_flip"
+export NOISE_TO_FF=true
+export NOISE_TO_BP=true
 
-# fixed parameters
-MODEL_DIR="./saved_ckpt"
-WEIGHT_PATH="./expanded_weights"
-PLOT_PATH="./loss_plot"
-W_TYPE="fb_flip"
-NOISE_TO_FF=true
-NOISE_TO_BP=true
+#######################################################
+# change the log names here to identify each run
+#######################################################
+export BASE_LOGDIR="./logs/noisy_test"
+MASTER_LOG="$BASE_LOGDIR/master_0509.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_0509.log"
 
-# list of model names
+# ─────────────── model list ───────────────
 MODEL_NAMES=(
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_withRelu_5Layers_2REP" # newly added, retrained baseline
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_5Layers_1REP" # 5 layer no relu
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_withRelu_9Layers_2REP" # newly added
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_noRelu_7Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_7Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_noRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP" # no log before
   "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_withRelu_9Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_noRelu_9Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_noRelu_9Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_noRelu_9Layers_2REP" # no log before
   "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_withRelu_9Layers_2REP"
 )
 
-BASE_LOGDIR="./logs/noisy_test"
-#############################
-# modify the log name here:
-#############################
-MASTER_LOG="$BASE_LOGDIR/master_0508_noisy_exp.log"
-
+# ─────────────── prepare logs ───────────────
 mkdir -p "$BASE_LOGDIR"
 > "$MASTER_LOG"
+> "$JOB_LOG"
+for name in "${MODEL_NAMES[@]}"; do
+  mkdir -p "$BASE_LOGDIR/$name"
+  > "$BASE_LOGDIR/$name/job.log"
+done
 
-# ─────────────────────────────────────────────────────────────────
-# GNU parallel invocation:
+# ─────────────── helper function ───────────────
+run_model(){
+  local name="$1"
+  set -o pipefail
+  python -u run_test.py \
+    --model_name  "$name" \
+    --model_dir   "$MODEL_DIR" \
+    --weight      "$WEIGHT_PATH" \
+    --plot_path   "$PLOT_PATH" \
+    --w_type      "$W_TYPE" \
+    --noise_to_ff "$NOISE_TO_FF" \
+    --noise_to_bp "$NOISE_TO_BP" \
+    2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
+}
+export -f run_model
+
+echo "Tail master with: tail -f $MASTER_LOG"
+
+# ─────────────── run in parallel ───────────────
 parallel \
-  --jobs 4               \
-  --keep-order           \
-  "python run_test.py --model_name {} --model_dir '$MODEL_DIR' \
-     --weight '$WEIGHT_PATH' --plot_path '$PLOT_PATH' --w_type '$W_TYPE' \
-     --noise_to_ff $NOISE_TO_FF --noise_to_bp $NOISE_TO_BP \
-    2>&1 | tee '$BASE_LOGDIR/{}/job.log'" \
-  ::: "${MODEL_NAMES[@]}" \
-  >> "$MASTER_LOG" 2>&1 &
-# ─────────────────────────────────────────────────────────────────
+  --jobs 3 \
+  --joblog "$JOB_LOG" \
+  --keep-order \
+  run_model {} \
+  ::: "${MODEL_NAMES[@]}"
 
-echo "Launched all jobs (max 4)."
-echo "Grouped master log at: $MASTER_LOG"
-echo "Run: tail -f $MASTER_LOG"
+echo "All jobs finished — merging logs into $MASTER_LOG"
+
+# ─────────────── merge logs sequentially ───────────────
+: >"$MASTER_LOG"
+for name in "${MODEL_NAMES[@]}"; do
+  printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
+  if ! grep -A 11 "Final Result " \
+             "$BASE_LOGDIR/$name/job.log" >>"$MASTER_LOG"; then
+     echo "[Final Result not found]" >>"$MASTER_LOG"
+  fi
+  printf '\n\n' >>"$MASTER_LOG"
+done
+
+echo "All summaries written to $MASTER_LOG"
+
+#######################################################
+# running
+# nohup bash run_noisy_test_parallel.sh > logs/run_script_output/launcher.out 2>&1 &
+# tail -f logs/run_script_output/launcher.out
+# After the run is finished, the master_log file will be printed out
+# then cat master_log
+#######################################################
