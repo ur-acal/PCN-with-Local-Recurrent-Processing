@@ -7,6 +7,9 @@ import numpy as np
 from pc_conv import PCConv, PCConvNoisy
 from utils import expand_weights_to_matrix
 
+import logging
+log = logging.getLogger(__name__)
+
 
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, **kwargs):

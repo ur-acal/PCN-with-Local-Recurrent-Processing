@@ -9,10 +9,14 @@ import numpy as np
 from utils import expand_weights_to_matrix
 import matplotlib.pyplot as plt
 
+import logging
+log = logging.getLogger(__name__)
+
 
 class PCConv(nn.Module):
     def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
-                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None):
+                 tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
+                 relu_bp=False, use_pc=True):
         super().__init__()
         self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride, padding, bias=bias)
         self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
@@ -22,30 +26,57 @@ class PCConv(nn.Module):
         self.lr = lr
         self.bypass = None
         self.relu_between = relu_between
+        self.relu_bp = relu_bp
+        self.use_pc = use_pc
 
         if tie_weights:
+            log.info("Tie the weights of FF and FB")
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
         if not tie_bp and bypass:
+            log.info("With independent Bypass convolution")
             self.bypass = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
         elif tie_bp and bypass:
+            log.info("Tie the weights of Bypass and FF")
             self.bypass = self.FFconv
 
+        self.layer_idx = layer_idx
+
     def forward(self, x, layer_idx=None):
+        log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
+        # Initializer of recurrent
         y = self.relu(self.FFconv(x))
+
+        # PC recurrent
+        if self.use_pc:
+            log.info("USE PC")
+            y = self.find_optimal_r(x, y, layer_idx)
+
+        # Bypass convolution
+        if self.bypass is not None:
+            if self.relu_bp:
+                log.info("USE ReLU after BP")
+                y = y + self.relu(self.bypass(x))
+            else:
+                log.info("DO NOT USE ReLU after BP")
+                y = y + self.bypass(x)
+        return y
+
+    def find_optimal_r(self, x, y, layer_idx=None):
         for _ in range(self.cls):
             if self.relu_between:
+                log.info("USE ReLU between FF/FB")
                 y = self.lr * self.FFconv(self.relu(x - self.FBconv(y))) + y
             else:
+                log.info("DO NOT USE ReLU between FF/FB")
                 y = self.lr * self.FFconv(x - self.FBconv(y)) + y
-        if self.bypass is not None:
-            y = y + self.bypass(x)
         return y
 
 
 class PCConvNoisy(nn.Module):
     def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
+                 relu_bp=False, use_pc=True, # below are parameters in Noisy PCConv only
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
                  noise_to_ff=True, noise_to_bp=True):
         super().__init__()
@@ -62,15 +93,20 @@ class PCConvNoisy(nn.Module):
         self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, out_chan, 1, 1))])
         self.bypass = None
         self.relu_between = relu_between
+        self.relu_bp = relu_bp
+        self.use_pc = use_pc
 
         self.tie_weights = tie_weights
         if tie_weights:
+            log.info("Tie the weights of FF and FB")
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
         self.tie_bp = tie_bp
         if not tie_bp and bypass:
+            log.info("With independent Bypass convolution")
             self.bypass = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=1, bias=False)
         elif tie_bp and bypass:
+            log.info("Tie the weights of Bypass and FF")
             self.bypass = self.FFconv
 
         # noise related
@@ -94,17 +130,35 @@ class PCConvNoisy(nn.Module):
             pass
 
     def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
+        log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
         if self.noise_to_ff:
+            log.info("USE noisy_ff")
             y = self.relu(torch.conv2d(x, self.noisy_ff, padding=self.FFconv.padding))
         else:
+            log.info("USE non-noisy FF")
             y = self.relu(self.FFconv(x))
-        # injected noise inside find_optimal_r
-        y = self.find_optimal_r(x, y, self.layer_idx, w_type_used, use_relu)
-        if self.bypass is not None:
+
+        # PC recurrent
+        if self.use_pc:
+            log.info("USE PC")
+            # injected noise inside find_optimal_r
+            y = self.find_optimal_r(x, y, self.layer_idx, w_type_used, use_relu)
+
+        # Bypass convolution
+        if self.bypass is not None and not self.relu_bp:
             if self.noise_to_bp:
+                log.info("DO NOT USE ReLU after BP and use noisy_bp")
                 y = y + torch.conv2d(x, self.noisy_bp, padding=self.bypass.padding)
             else:
+                log.info("DO NOT USE ReLU after BP and use non-noisy BP")
                 y = y + self.bypass(x)
+        if self.bypass is not None and self.relu_bp:
+            if self.noise_to_bp:
+                log.info("USE ReLU after BP and use noisy_bp")
+                y = y + self.relu(torch.conv2d(x, self.noisy_bp, padding=self.bypass.padding))
+            else:
+                log.info("USE ReLU after BP and use non-noisy BP")
+                y = y + self.relu(self.bypass(x))
         return y
 
     def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
@@ -112,8 +166,10 @@ class PCConvNoisy(nn.Module):
         # of the model and before calling forward
         for _ in range(self.cls):
             if self.relu_between:
+                log.info("USE ReLU between FF/FB")
                 error = self.relu(x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))
             else:
+                log.info("DO NOT USE ReLU between FF/FB")
                 error = x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
             y += self.lr * torch.conv2d(error, self.noisy_ff, padding=self.FFconv.padding)
         return y
@@ -130,11 +186,13 @@ class PCConvNoisy(nn.Module):
         Call this or add_noise after the weight is loaded
         """
         if self.tie_weights:
+            log.info("After noise added, tie the weights of FF/FB")
             self.noisy_ff = self.noisy_fb
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
 
         if self.tie_bp and self.bypass is not None:
+            log.info("After noise added, Tie the weights of Bypass and FF")
             self.noisy_bp = self.noisy_ff
             self.bypass.weight = self.FFconv.weight
             self.bypass.bias = self.FFconv.bias
@@ -144,6 +202,7 @@ class PCConvNoisy(nn.Module):
         Call this or tie_weights_impl after the weight is loaded.
         :return: None
         """
+        log.info("Add noise to FF/FB")
         self.noise_ff_matrix = self.noise_ff_matrix.to(device=self.FFconv.weight.device)
         self.noise_fb_matrix = self.noise_fb_matrix.to(device=self.FBconv.weight.device)
 
@@ -151,6 +210,7 @@ class PCConvNoisy(nn.Module):
         self.noisy_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
 
         if self.bypass is not None:
+            log.info("Add noise to Bypass")
             self.noise_bp_matrix = self.noise_bp_matrix.to(device=self.bypass.weight.device)
             self.noisy_bp = (self.noise_bp_matrix + 1) * self.bypass.weight
 

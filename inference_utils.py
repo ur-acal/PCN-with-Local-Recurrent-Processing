@@ -63,6 +63,7 @@ def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=
         print("When running expand_and_save_weights, found expanded weights under {}".format(weight_path))
         return
     os.makedirs(weight_path, exist_ok=True)
+    net_.eval()
     net_.save_expanded_weights(sample_imgs.to(device), weight_path)
     print("----- weights expanded and saved -----")
 

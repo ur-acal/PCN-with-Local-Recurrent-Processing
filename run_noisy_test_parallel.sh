@@ -90,4 +90,5 @@ echo "All summaries written to $MASTER_LOG"
 # tail -f logs/run_script_output/launcher.out
 # After the run is finished, the master_log file will be printed out
 # then cat master_log
+# then use shell_utils/parse_noise_logs.py to convert the log into csv
 #######################################################

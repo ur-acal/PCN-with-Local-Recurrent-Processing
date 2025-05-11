@@ -1,6 +1,7 @@
 import torch
 import os
 import argparse
+import logging
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
@@ -44,13 +45,17 @@ def get_args():
     p.add_argument("--tie_bp",        type=str2bool, default=False)
     p.add_argument("--relu_between",  type=str2bool, default=False)
     p.add_argument("--bypass",        type=str2bool, default=False)
+    p.add_argument("--relu_bp", type=str2bool, default=False)
+    p.add_argument("--use_pc", type=str2bool, default=True)
+    p.add_argument("--test_only", type=str2bool, default=False)
     return p.parse_args()
 
 def _constr_model_name(args, rep=1):
     name_dict = {str(True): "with", str(False): "no"}
     model_name = 'PPCN' + '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_'+ str(args.weight_decay) + 'WD_' \
                  + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
-                 + name_dict[str(args.bypass)] + 'BP_' + name_dict[str(args.relu_between)] + 'Relu_' \
+                 + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
+                 + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
                  + str(len(args.inp_channels)) + "Layers_" + str(rep) + 'REP'
     return model_name
 
@@ -88,6 +93,8 @@ def main():
         tie_bp        = args.tie_bp,
         relu_between  = args.relu_between,
         bypass        = args.bypass,
+        relu_bp       = args.relu_bp,
+        use_pc        = args.use_pc,
     )
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -112,6 +119,12 @@ def main():
         learning_rate = args.learning_rate,
         num_epochs    = args.num_epochs,
     )
+    if args.test_only:
+        logging.basicConfig(
+            level=logging.INFO,
+        )
+        _ = model(next(iter(trainer.train_dataloader))[0])
+
     trainer.train()
 
 if __name__ == "__main__":
