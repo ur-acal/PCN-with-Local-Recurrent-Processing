@@ -119,11 +119,14 @@ def main():
         learning_rate = args.learning_rate,
         num_epochs    = args.num_epochs,
     )
+
     if args.test_only:
         logging.basicConfig(
             level=logging.INFO,
         )
-        _ = model(next(iter(trainer.train_dataloader))[0])
+        _ = model(next(iter(trainer.train_dataloader))[0].to(trainer.device))
+        logging.info("Test model forward only. Exit without training the model.")
+        exit(0)
 
     trainer.train()
 
