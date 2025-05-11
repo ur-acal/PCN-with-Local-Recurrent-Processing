@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="5l_30cls_baseline_and_pc_removed_exp_0510"
+EXP="5l_30cls_baseline_and_pc_removed_exp_0511"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -46,7 +46,7 @@ python train_cifar.py \
   --relu_between  "false" \
   --bypass        "false" \
   --use_pc        "false" \
-  2>&1 | tee "${LOGDIR}/train_yes_no_no_no_noPC.log"
+2>&1 | tee "${LOGDIR}/train_yes_no_no_no_noPC.log"
 
 #EXP="tw_false_tbp_false_relu_true_bp_true_9_layer" # ~10M params
 #LOGDIR="./logs/${EXP}"
@@ -65,6 +65,10 @@ python train_cifar.py \
 
 echo "Completed."
 
+############################################################
 # launch in this way:
 # nohup bash run_single.sh > ./logs/master_single.log 2>&1 &
 # tail -f ./logs/master_single.log
+# after train finished
+# cat ./logs/master_single.log | grep "Train finished" -A 3
+############################################################

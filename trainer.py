@@ -49,6 +49,7 @@ class TrainerCiFar(object):
             self.scheduler.step()
         _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
+        print("----- Total number of parameters: {} M -----".format(sum(p.numel() for p in self.model.parameters()) / 1e6))
         print("----- Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
         print("----- Model path: {} -----".format(best_model_path))
         print("--------------------------------------------------------------------------")

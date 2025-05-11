@@ -19,7 +19,7 @@ class PCConv(nn.Module):
                  relu_bp=False, use_pc=True):
         super().__init__()
         self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride, padding, bias=bias)
-        self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
+        self.FBconv = None
         self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, out_chan, 1, 1))])
         self.relu = nn.ReLU(inplace=True)
         self.cls = cls
@@ -29,7 +29,10 @@ class PCConv(nn.Module):
         self.relu_bp = relu_bp
         self.use_pc = use_pc
 
-        if tie_weights:
+        if use_pc:
+            log.info("Use PC, initialize FBconv")
+            self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
+        if tie_weights and use_pc:
             log.info("Tie the weights of FF and FB")
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
@@ -89,15 +92,18 @@ class PCConvNoisy(nn.Module):
         self.C_out = out_chan
 
         self.FFconv = nn.Conv2d(inp_chan, out_chan, self.kernel_size, self.stride, self.padding, bias=bias)
-        self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, self.kernel_size, self.stride, self.padding, bias=bias)
+        self.FBconv = None
         self.b0 = nn.ParameterList([nn.Parameter(torch.zeros(1, out_chan, 1, 1))])
         self.bypass = None
         self.relu_between = relu_between
         self.relu_bp = relu_bp
         self.use_pc = use_pc
 
+        if use_pc:
+            log.info("Use PC, initialize FBconv")
+            self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
         self.tie_weights = tie_weights
-        if tie_weights:
+        if tie_weights and use_pc:
             log.info("Tie the weights of FF and FB")
             self.FFconv.weight = self.FBconv.weight
             self.FFconv.bias = self.FBconv.bias
@@ -177,7 +183,8 @@ class PCConvNoisy(nn.Module):
     def _init_noise(self, noise_level):
         # tie weights processed in self.add_noise()
         self.noise_ff_matrix = torch.randn_like(self.FFconv.weight) * (0.0 if noise_level is None else noise_level)
-        self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)
+        if self.use_pc:
+            self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)
         if self.bypass is not None:
             self.noise_bp_matrix = torch.randn_like(self.bypass.weight) * (0.0 if noise_level is None else noise_level)
 
@@ -185,7 +192,7 @@ class PCConvNoisy(nn.Module):
         """
         Call this or add_noise after the weight is loaded
         """
-        if self.tie_weights:
+        if self.tie_weights and self.use_pc:
             log.info("After noise added, tie the weights of FF/FB")
             self.noisy_ff = self.noisy_fb
             self.FFconv.weight = self.FBconv.weight
@@ -204,16 +211,17 @@ class PCConvNoisy(nn.Module):
         """
         log.info("Add noise to FF/FB")
         self.noise_ff_matrix = self.noise_ff_matrix.to(device=self.FFconv.weight.device)
-        self.noise_fb_matrix = self.noise_fb_matrix.to(device=self.FBconv.weight.device)
-
         self.noisy_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight
-        self.noisy_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
+
+        if self.use_pc:
+            log.info("Add noise to FB")
+            self.noise_fb_matrix = self.noise_fb_matrix.to(device=self.FBconv.weight.device)
+            self.noisy_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
 
         if self.bypass is not None:
             log.info("Add noise to Bypass")
             self.noise_bp_matrix = self.noise_bp_matrix.to(device=self.bypass.weight.device)
             self.noisy_bp = (self.noise_bp_matrix + 1) * self.bypass.weight
-
 
         self.tie_weights_impl()
 

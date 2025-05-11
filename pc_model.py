@@ -49,18 +49,19 @@ class PCNet(nn.Module):
         x_ = sample_imgs.clone()
         for layer_idx, pc_conv in enumerate(self.PcConvs):
             y_ = pc_conv.relu(pc_conv.FFconv(x_))
-            weights_ = pc_conv.FBconv.weight.data.cpu()
             # fb weights
-            expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3),
-                                                         stride=pc_conv.stride,
-                                                         padding=pc_conv.padding, flip_weight=False)
-            torch.save(expanded_weights_,
-                       os.path.join(save_to, 'expanded_weights_layer_fb_{}.pt'.format(layer_idx + 1)))
-            expanded_weights_flip_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3).flip([2, 3]),
-                                                              stride=pc_conv.stride,
-                                                              padding=pc_conv.padding, flip_weight=False)
-            torch.save(expanded_weights_flip_,
-                       os.path.join(save_to, 'expanded_weights_layer_fb_{}_flip.pt'.format(layer_idx + 1)))
+            if pc_conv.FBconv is not None:
+                weights_ = pc_conv.FBconv.weight.data.cpu()
+                expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3),
+                                                             stride=pc_conv.stride,
+                                                             padding=pc_conv.padding, flip_weight=False)
+                torch.save(expanded_weights_,
+                           os.path.join(save_to, 'expanded_weights_layer_fb_{}.pt'.format(layer_idx + 1)))
+                expanded_weights_flip_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3).flip([2, 3]),
+                                                                  stride=pc_conv.stride,
+                                                                  padding=pc_conv.padding, flip_weight=False)
+                torch.save(expanded_weights_flip_,
+                           os.path.join(save_to, 'expanded_weights_layer_fb_{}_flip.pt'.format(layer_idx + 1)))
 
             # ff weights
             expanded_weights_ = expand_weights_to_matrix(x_.shape[1:], pc_conv.FFconv.weight.data.cpu(),
