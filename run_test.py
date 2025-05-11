@@ -3,6 +3,7 @@ import torch.nn as nn
 import torchvision
 import os
 import argparse
+import logging
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -41,6 +42,8 @@ def parse_args():
                         default=True, help="Noise to the first feed-forward")
     parser.add_argument("--noise_to_bp", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=True, help="Noise to bypass")
+    parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
+                        default=False)
     return parser.parse_args()
 
 def run_test():
@@ -60,6 +63,17 @@ def run_test():
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
 
     with torch.no_grad():
+        if args.test_only:
+            logging.basicConfig(level=logging.INFO)
+            logging.info("Running one forward pass for model: {}".format(args.model_name))
+            noisy_params["noise_level"] = 0.4
+            noisy_params["weight"] = None
+            net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
+                                          pc_conv_layer=PCConvNoisy, data_parallel=False, **noisy_params)
+            net_.eval()
+            _ = net_(next(iter(test_dataloader))[0].to(device)[:128])
+            exit(0)
+
         # works with saved init_args
         expand_and_save_weights(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
                                 model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,

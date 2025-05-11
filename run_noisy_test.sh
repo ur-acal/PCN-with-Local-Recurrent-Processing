@@ -2,7 +2,9 @@
 # run_test.sh
 ##########################################
 # set model_name here
-MODEL_NAME="PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP"
+#MODEL_NAME="PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP"
+#MODEL_NAME="PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noRelu_noBP_noReluBP_noPC_9Layers_1REP"
+MODEL_NAME="PPCN_30CLS_0.01LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_1REP"
 ##########################################
 
 # noisy parameters
@@ -24,6 +26,7 @@ nohup python run_test.py \
   --w_type      "$W_TYPE"       \
   --noise_to_ff $NOISE_TO_FF    \
   --noise_to_bp $NOISE_TO_BP    \
+  --test_only   "true"          \
   > "${LOGDIR}/master_test.log" 2>&1 &
 
 echo "Started (PID $!) – logging to ${LOGDIR}/master_test.log"
