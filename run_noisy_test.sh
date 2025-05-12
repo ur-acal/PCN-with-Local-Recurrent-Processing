@@ -4,7 +4,7 @@
 # set model_name here
 #MODEL_NAME="PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP"
 #MODEL_NAME="PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noRelu_noBP_noReluBP_noPC_9Layers_1REP"
-MODEL_NAME="PPCN_30CLS_0.01LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_1REP"
+MODEL_NAME="PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noRelu_withBP_withReluBP_withPC_9Layers_1REP"
 ##########################################
 
 # noisy parameters
@@ -18,7 +18,7 @@ NOISE_TO_BP=true
 LOGDIR="./logs/noisy_test/${MODEL_NAME}"
 mkdir -p "${LOGDIR}"
 echo "Launching run_test.py for model '$MODEL_NAME' at $(date)…"
-nohup python run_test.py \
+nohup python -u run_test.py \
   --model_dir   "$MODEL_DIR"    \
   --model_name  "$MODEL_NAME"   \
   --weight      "$WEIGHT_PATH"  \

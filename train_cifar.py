@@ -71,6 +71,8 @@ def get_model_name(args):
 
 def main():
     args = get_args()
+    if args.test_only:
+        logging.basicConfig(level=logging.INFO)
 
     # map optimizer name -> class
     # optim_type = getattr(optim, args.optim)
@@ -99,14 +101,14 @@ def main():
 
     total_params = sum(p.numel() for p in model.parameters())
     model_name = get_model_name(args)
-    print("input channels: {}".format(model.ics))
-    print("output channels: {}".format(model.ocs))
-    print("max pooling: {}".format(model.max_pool))
-    print("Total number of parameters: {}".format(total_params / 1e6))
-    print("Model name: {}".format(model_name))
-    print("----- Printing out model parameter names: -----")
+    logging.warning("input channels: {}".format(model.ics))
+    logging.warning("output channels: {}".format(model.ocs))
+    logging.warning("max pooling: {}".format(model.max_pool))
+    logging.warning("Total number of parameters: {}".format(total_params / 1e6))
+    logging.warning("Model name: {}".format(model_name))
+    logging.info("----- Printing out model parameter names: -----")
     for name, param in model.named_parameters():
-        print("name: {}, shape: {}, param count: {}".format(name, param.shape, param.numel()))
+        logging.info("name: {}, shape: {}, param count: {}".format(name, param.shape, param.numel()))
 
     trainer = TrainerCiFar(
         model         = model,
@@ -121,9 +123,6 @@ def main():
     )
 
     if args.test_only:
-        logging.basicConfig(
-            level=logging.INFO,
-        )
         _ = model(next(iter(trainer.train_dataloader))[0].to(trainer.device))
         logging.info("Test model forward only. Exit without training the model.")
         exit(0)

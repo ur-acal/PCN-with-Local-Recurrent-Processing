@@ -48,11 +48,14 @@ def parse_args():
 
 def run_test():
     args = parse_args()
+    if args.test_only:
+        # set level in the very beginning before calling logging.warning, otherwise the line below will not work
+        logging.basicConfig(level=logging.INFO)
     noisy_args = ["w_type", "noise_to_ff", "noise_to_bp"] # skip plotting for noisy exp
-    print("Running test with parameters:")
+    logging.warning("Running test with parameters:")
     noisy_params = {}
     for name, val in vars(args).items():
-        print(f"  {name}: {val}")
+        logging.warning(f"  {name}: {val}")
         if name in noisy_args:
             noisy_params[name] = val
     noisy_params["weight"] = os.path.join(args.weight, args.model_name)
@@ -62,16 +65,18 @@ def run_test():
     test_dataloader = get_test_data()
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
 
+    # DO NOT USE print with logging, the outputs of the two will be out-of-order
+    # IF have to use, run with python -u run_test.py
     with torch.no_grad():
         if args.test_only:
-            logging.basicConfig(level=logging.INFO)
-            logging.info("Running one forward pass for model: {}".format(args.model_name))
+            logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
             noisy_params["noise_level"] = 0.4
             noisy_params["weight"] = None
             net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                           pc_conv_layer=PCConvNoisy, data_parallel=False, **noisy_params)
             net_.eval()
             _ = net_(next(iter(test_dataloader))[0].to(device)[:128])
+            logging.info("Output shape: {}".format(_.shape))
             exit(0)
 
         # works with saved init_args

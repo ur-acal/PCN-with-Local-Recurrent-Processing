@@ -13,6 +13,9 @@ from cifar_test import PredNetBpD
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy
 
+import logging
+log = logging.getLogger(__name__)
+
 
 def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
                            data_parallel=True, **kwargs):
@@ -45,7 +48,7 @@ def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, pc_conv_
     # Add noise
     if hasattr(net_, "add_noise"):
         net_.add_noise()
-    print("----- Model loaded -----")
+    log.warning("----- Model loaded -----")
     return net_
 
 
