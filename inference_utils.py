@@ -3,6 +3,7 @@ import torch.nn as nn
 import torchvision
 import os
 import inspect
+import sys
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -15,6 +16,12 @@ from pc_conv import PCConv, PCConvNoisy
 
 import logging
 log = logging.getLogger(__name__)
+log.propagate = False
+
+# attach a handler that only prints the message
+handler = logging.StreamHandler(sys.stderr)
+handler.setFormatter(logging.Formatter("%(message)s"))
+log.addHandler(handler)
 
 
 def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
@@ -54,7 +61,7 @@ def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, pc_conv_
 
 def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
                             data_parallel=True, weight_dir="expanded_weights", model_suffix=".pt", model_name=None, **kwargs):
-    print("----- Start to expand and save weights -----")
+    log.warning("----- Start to expand and save weights -----")
     # Load model
     net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **kwargs)
     # Save expanded weights
@@ -63,17 +70,17 @@ def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=
     else:
         weight_path = os.path.join(weight_dir, model_path.split('/')[-1].split(model_suffix)[0])
     if os.path.isdir(weight_path) and any(os.scandir(weight_path)):
-        print("When running expand_and_save_weights, found expanded weights under {}".format(weight_path))
+        log.warning("When running expand_and_save_weights, found expanded weights under {}".format(weight_path))
         return
     os.makedirs(weight_path, exist_ok=True)
     net_.eval()
     net_.save_expanded_weights(sample_imgs.to(device), weight_path)
-    print("----- weights expanded and saved -----")
+    log.warning("----- weights expanded and saved -----")
 
 
 def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
                         data_parallel=True, loss_plot_dir="loss_plot", model_suffix=".t7", model_name=None, **kwargs):
-    print("----- Start to plot layer PCN loss -----")
+    log.warning("----- Start to plot layer PCN loss -----")
     noise_level = kwargs.get("noise_level", 0.0)
     if model_name is not None:
         loss_plot_dir = os.path.join(loss_plot_dir, model_name, "noise_level_{}".format(noise_level))
@@ -85,7 +92,7 @@ def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=Pred
     net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **kwargs)
     net_.eval()
     _ = net_(sample_imgs.to(device))
-    print("----- Loss is plotted -----")
+    log.warning("----- Loss is plotted -----")
 
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PredNetBpD,
@@ -116,21 +123,21 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             # Calculate the accuracy
             accuracy = 100 * correct / total
             acc_list.append(accuracy)
-            print(f'Test Accuracy at noise level {noise_level}: {accuracy:.2f}%')
+            log.warning(f'Test Accuracy at noise level {noise_level}: {accuracy:.2f}%')
         avg_acc = sum(acc_list) / len(acc_list)
         noise_acc[noise_level] = avg_acc
-        print("Average test acc over {} trials is {}".format(trials, avg_acc))
-    print("-------- Final Result --------")
-    print("-------- Model name: {} --------".format(model_name))
+        log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
+    log.warning("-------- Final Result --------")
+    log.warning("-------- Model name: {} --------".format(model_name))
     for _nl, _acc in noise_acc.items():
-        print("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
-    print("-------- Noisy experiment finished --------")
+        log.warning("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
+    log.warning("-------- Noisy experiment finished --------")
 
 
 if __name__ == '__main__':
     batch_size = 4096 * 2
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f'Using device: {device}')
+    log.warning(f'Using device: {device}')
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])

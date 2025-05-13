@@ -226,11 +226,11 @@ class PCConvNoisy(nn.Module):
         self.tie_weights_impl()
 
     def _load_expanded_weights(self, noise_level):
-        if self.w_type == "fb":
+        if self.w_type == "fb" and self.use_pc:
             expanded_weights = torch.load(
                 os.path.join(self.weight, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)),
                 weights_only=True)
-        elif self.w_type == "fb_flip":
+        elif self.w_type == "fb_flip" and self.use_pc:
             expanded_weights = torch.load(
                 os.path.join(self.weight, 'expanded_weights_layer_fb_{}_flip.pt'.format(self.layer_idx + 1)),
                 weights_only=True)
@@ -243,8 +243,9 @@ class PCConvNoisy(nn.Module):
                 os.path.join(self.weight, 'expanded_weights_layer_bp_{}.pt'.format(self.layer_idx + 1)),
                 weights_only=True)
         else:
+            # default set as ff weight. If we don't use pc, there is no fb weight
             expanded_weights = torch.load(
-                os.path.join(self.weight, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)),
+                os.path.join(self.weight, 'expanded_weights_layer_ff_{}.pt'.format(self.layer_idx + 1)),
                 weights_only=True)
 
         if noise_level is not None:
@@ -253,7 +254,7 @@ class PCConvNoisy(nn.Module):
         self.expanded_weights = {self.w_type: expanded_weights}
 
         # if self.solver == "LD":
-        if self.w_type != "fb":
+        if self.w_type != "fb" and self.use_pc:
             self.expanded_weights.update({"fb": torch.load(
                 os.path.join(self.weight, 'expanded_weights_layer_fb_{}.pt'.format(self.layer_idx + 1)),
                 weights_only=True)})

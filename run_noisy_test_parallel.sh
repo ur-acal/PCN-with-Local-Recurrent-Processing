@@ -14,8 +14,8 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0511.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_0511.log"
+MASTER_LOG="$BASE_LOGDIR/master_0512_old_baseline.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_0512_old_baseline.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
@@ -55,7 +55,7 @@ echo "Tail master with: tail -f $MASTER_LOG"
 
 # ─────────────── run in parallel ───────────────
 parallel \
-  --jobs 3 \
+  --jobs 1 \
   --joblog "$JOB_LOG" \
   --keep-order \
   run_model {} \
