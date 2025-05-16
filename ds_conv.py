@@ -63,7 +63,7 @@ class BRIMSolver(nn.Module):
 
 
 class DSConvBlock(BRIMSolver):
-    def __init__(self, conv_layer: nn.Conv2d, n_blocks=1, pvt_noise_level=0, pvt_noise=None, **kwargs):
+    def __init__(self, conv_layer: nn.Conv2d, n_blocks=1, pvt_noise_level=None, pvt_noise=None, **kwargs):
         super().__init__(**kwargs)
         # Todo: Do annealing or not in DSConvBlock
         self.weight = conv_layer.weight.data
@@ -71,24 +71,47 @@ class DSConvBlock(BRIMSolver):
         self.C_in = self.weight.shape[1]
         self.C_out = self.weight.shape[0]
         self.kernel_size = self.weight.shape[-1]
+        self.padding = conv_layer.padding
         self.weight = self.weight.view(self.C_out, -1)
 
         self.y_len = self.C_out
         self.x_len = self.C_in * self.kernel_size * self.kernel_size
-        self.n_blocks = n_blocks
 
         # noise related
         self.pvt_noise_level = pvt_noise_level
         self.pvt_noise = pvt_noise
 
-        self._constr_cu()
+        # Construct J; If there are multiple compute blocks and need to initialize noise, set n_blocks also
+        self._constr_cu(n_blocks)
+
+    def forward(self, x=None):
+        _bs, _, _h, _w = x.shape
+        x = F.unfold(x, self.kernel_size, padding=self.padding)
+        spin = self.init_spin(x)
+        spin = self.solve(spin)
+        return spin[:, :self.y_len, :].view(_bs, self.y_len, _h, _w)
 
     def solve(self, spin):
+        if self.n_blocks == 1:
+            spin = self._solve_one_block(self.J_list[0], spin)
+        else:
+            workload = self._dist_workload(spin)
+            spin_res = []
+            # Todo: How to get rid of the for loop
+            for i in range(self.n_blocks):
+                _start_idx, _end_idx = workload[i]
+                # Each compute block computes the same position on every batch
+                cur_spin = self._solve_one_block(self.J_list[i], spin[:, :, _start_idx:_end_idx])
+                spin_res.append(cur_spin)
+            spin = torch.cat(spin_res, dim=-1)
+        return spin
+
+    def _solve_one_block(self, J, spin):
         current_scale = self.scale_start
         for i in range(int(self.annealing_steps)):
             # calculate noise and gradient
             noise_ = current_scale * torch.randn_like(spin) * self.noise_std
-            grad_ = (self.t_step / self.brim_c) * torch.matmul(self.J, spin)
+            grad_ = (self.t_step / self.brim_c) * torch.matmul(J, spin)
 
             # clamp x; Assume there are no thermal noise added to the clamped x
             grad_[:, self.y_len:, :] = 0.0
@@ -101,7 +124,20 @@ class DSConvBlock(BRIMSolver):
             current_scale += self.scale_step
         return spin
 
-    def _constr_cu(self):
+    def _dist_workload(self, spin):
+        annealing_round = spin.shape[-1]
+        compute_per_block = annealing_round // self.n_blocks
+        rem_compute = annealing_round % self.n_blocks
+        workload = []
+        start_idx = 0
+        for i in range(self.n_blocks):
+            # distribute rem_compute to the first rem_compute blocks
+            extra_work = 1 if i < rem_compute else 0
+            workload.append((start_idx, start_idx + compute_per_block + extra_work))
+            start_idx += compute_per_block + extra_work
+        return workload
+
+    def _constr_cu(self, n_blocks):
         # Need to divide generated CU matrix, i.e. J, by self.brim_r
         # J = [[-I,  W]]
         #     [[W.T, 0]]
@@ -118,13 +154,14 @@ class DSConvBlock(BRIMSolver):
             # pvt_noise has the same shape as J
             self.J_list.append(self.J * (1 + self.pvt_noise.to(self.device)))
         elif self.pvt_noise_level is not None:
-            for i in range(self.n_blocks):
+            for i in range(n_blocks):
                 pvt_noise_ = torch.randn_like(self.J) * self.pvt_noise_level
                 self.J_list.append(self.J * (1 + pvt_noise_.to(self.device)))
         else:
             # We consider n_blocks > 1 only when we are using pvt_noise_level to generate noise.
             # If there is no mismatch, one compute block is enough for simulation.
             self.J_list.append(self.J)
+        self.n_blocks = len(self.J_list)
 
 
     def init_spin(self, x):
@@ -136,11 +173,11 @@ class DSConvBlock(BRIMSolver):
 class DSPcRecurrentBlock(DSConvBlock):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._constr_cu()
+        self._constr_cu(kwargs.get("n_blocks", 1))
         # Todo: 1. Use fully expanded weights of fb_flipped and flatten x and y
         #       2. Try to use block method to optimize the linear least squares problem
 
-    def _constr_cu(self):
+    def _constr_cu(self, n_blocks):
         # Need to divide generated CU matrix, i.e. J, by self.brim_r
         # J = [[-W.T @ W,   W]]
         #     [[W.T,        0]]
