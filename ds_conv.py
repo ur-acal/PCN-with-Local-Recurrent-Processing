@@ -5,16 +5,70 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-class DSConv(nn.Module):
-    """
-    Implementing forward pass of normal convolutional layer using gradient descent.
-    """
-    def __init__(self, conv_layer: nn.Conv2d, n_block=1, **kwargs):
-        super().__init__()
-        pass
+from pc_conv import PCConvNoisy
 
-    def forward(self, x):
-        pass
+import logging
+log = logging.getLogger(__name__)
+
+class PCConvDS(PCConvNoisy):
+    """
+    Implementing forward pass of PC convolutional layer using LD.
+    """
+    def __init__(self, n_blocks=1, pvt_noise=None, **kwargs):
+        super().__init__(**kwargs)
+        self.pvt_noise = pvt_noise
+        self.n_blocks = n_blocks
+
+        if kwargs.get("use_pc", False):
+            self.FBconv_inv = nn.Conv2d(kwargs["out_chan"], kwargs["inp_chan"],
+                                        kwargs["kernel_size"], kwargs["stride"],
+                                        kwargs["padding"], bias=kwargs["bias"])
+
+    def _init_ds_conv_block(self):
+        """
+        *** Must call this after the weights are loaded. ***
+        PVT Noise or mismatch will be added when initialize the DSConvBlock, whose J_list will have noisy matrices.
+        """
+        self.tie_weights_impl()
+        self.FFconvDS = DSConvBlock(self.FFconv, self.n_blocks, pvt_noise=self.pvt_noise,
+                                    pvt_noise_level=self.noise_level)
+        if self.use_pc:
+            self.FBconv_inv.weight.data = self.FBconv.weight.data.flip([2, 3])
+            self.FBconvDS = DSConvBlock(self.FBconv_inv, self.n_blocks, pvt_noise=self.pvt_noise,
+                                        pvt_noise_level=self.noise_level)
+        if self.bypass is not None:
+            self.BPconvDS = DSConvBlock(self.bypass, self.n_blocks, pvt_noise=self.pvt_noise,
+                                        pvt_noise_level=self.noise_level)
+
+    def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
+        log.info("--- Forward in DS PC layer: {} ---".format(self.layer_idx))
+        y = self.relu(self.FFconvDS(x))
+
+        # PC recurrent
+        if self.use_pc:
+            log.info("USE PC")
+            # injected noise inside find_optimal_r
+            y = self.find_optimal_r(x, y, self.layer_idx, w_type_used, use_relu)
+
+        # Bypass convolution
+        if self.bypass is not None and not self.relu_bp:
+            log.info("DO NOT USE ReLU after BP DS")
+            y = y + self.BPconvDS(x)
+        if self.bypass is not None and self.relu_bp:
+            log.info("USE ReLU after BP DS")
+            y = y + self.relu(self.BPconvDS(x))
+        return y
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
+        for _ in range(self.cls):
+            if self.relu_between:
+                log.info("USE ReLU between FF/FB DS")
+                error = self.relu(x - self.FBconvDS(y))
+            else:
+                log.info("DO NOT USE ReLU between FF/FB DS")
+                error = x - self.FBconvDS(y)
+            y += self.lr * self.FFconvDS(error)
+        return y
 
 
 class BRIMSolver(nn.Module):
