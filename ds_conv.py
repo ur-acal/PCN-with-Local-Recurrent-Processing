@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 class PCConvDS(PCConvNoisy):
     """
-    Implementing forward pass of PC convolutional layer using LD.
+    Implementing forward pass of PC convolutional layer using LD based on MVM method.
     """
     def __init__(self, n_blocks=1, pvt_noise=None, **kwargs):
         super().__init__(**kwargs)
@@ -33,6 +33,7 @@ class PCConvDS(PCConvNoisy):
         self.FFconvDS = DSConvBlock(self.FFconv, self.n_blocks, pvt_noise=self.pvt_noise,
                                     pvt_noise_level=self.noise_level)
         if self.use_pc:
+            # Todo: Verify this is true
             self.FBconv_inv.weight.data = self.FBconv.weight.data.flip([2, 3])
             self.FBconvDS = DSConvBlock(self.FBconv_inv, self.n_blocks, pvt_noise=self.pvt_noise,
                                         pvt_noise_level=self.noise_level)
@@ -207,14 +208,11 @@ class DSConvBlock(BRIMSolver):
             #       for each layer. If we have multiple compute blocks, how should we do HIL training?
             # pvt_noise has the same shape as J
             self.J_list.append(self.J * (1 + self.pvt_noise.to(self.device)))
-        elif self.pvt_noise_level is not None:
-            for i in range(n_blocks):
-                pvt_noise_ = torch.randn_like(self.J) * self.pvt_noise_level
-                self.J_list.append(self.J * (1 + pvt_noise_.to(self.device)))
         else:
-            # We consider n_blocks > 1 only when we are using pvt_noise_level to generate noise.
-            # If there is no mismatch, one compute block is enough for simulation.
-            self.J_list.append(self.J)
+            pvt_noise_level = self.pvt_noise_level if self.pvt_noise_level is not None else 0.0
+            for i in range(n_blocks):
+                pvt_noise_ = torch.randn_like(self.J) * pvt_noise_level
+                self.J_list.append(self.J * (1 + pvt_noise_.to(self.device)))
         self.n_blocks = len(self.J_list)
 
 
