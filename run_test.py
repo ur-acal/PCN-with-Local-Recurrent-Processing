@@ -42,6 +42,10 @@ def parse_args():
                         default=True, help="Noise to the first feed-forward")
     parser.add_argument("--noise_to_bp", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=True, help="Noise to bypass")
+    parser.add_argument("--tie_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="Tie the noise of FB to that of FF")
+    parser.add_argument("--tie_noise_bp", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="Tie the noise of Bypass to that of FF")
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -51,7 +55,7 @@ def run_test():
     if args.test_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
         logging.basicConfig(level=logging.INFO)
-    noisy_args = ["w_type", "noise_to_ff", "noise_to_bp"] # skip plotting for noisy exp
+    noisy_args = ["w_type", "noise_to_ff", "noise_to_bp", "tie_noise", "tie_noise_bp"] # skip plotting for noisy exp
     logging.warning("Running test with parameters:")
     noisy_params = {}
     for name, val in vars(args).items():

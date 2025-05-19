@@ -7,7 +7,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 
-from pc_conv import PCConv, PCConvNoisy
+from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from pc_model import PCNet
 from trainer import TrainerCiFar
 
@@ -47,6 +47,10 @@ def get_args():
     p.add_argument("--bypass",        type=str2bool, default=False)
     p.add_argument("--relu_bp", type=str2bool, default=False)
     p.add_argument("--use_pc", type=str2bool, default=True)
+    p.add_argument("--tie_method", type=str, choices=["kernel_random", "random", None], default=None,
+                   help="method used to select positions in the kernel to tie between FF/FB")
+    p.add_argument("--tie_frac", type=float, default=1.0,
+                   help="fraction to tie weights of FF/FB")
     p.add_argument("--test_only", type=str2bool, default=False)
     return p.parse_args()
 
@@ -56,7 +60,11 @@ def _constr_model_name(args, rep=1):
                  + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
                  + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
                  + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
-                 + str(len(args.inp_channels)) + "Layers_" + str(rep) + 'REP'
+                 + str(len(args.inp_channels)) + "Layers"
+
+    if args.tie_method is not None:
+        model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
+    model_name = model_name + "_" + str(rep) + 'REP'
     return model_name
 
 def get_model_name(args):
@@ -78,13 +86,18 @@ def main():
     # optim_type = getattr(optim, args.optim)
     loss_fn = nn.CrossEntropyLoss()
 
+    # Select PCConv Module to use
+    pc_conv_mod = PCConv
+    if args.tie_method is not None:
+        pc_conv_mod = PartialTiedPCConv
+
     # build model
     model = PCNet(
         inp_channels  = args.inp_channels,
         out_channels  = args.out_channels,
         max_pool      = args.max_pool,
         num_classes   = args.num_classes,
-        pc_conv_layer = PCConv,
+        pc_conv_layer = pc_conv_mod,
         kernel_size   = args.kernel_size,
         stride        = args.stride,
         padding       = args.padding,
@@ -97,6 +110,8 @@ def main():
         bypass        = args.bypass,
         relu_bp       = args.relu_bp,
         use_pc        = args.use_pc,
+        tie_method    = args.tie_method,
+        tie_frac      = args.tie_frac,
     )
 
     total_params = sum(p.numel() for p in model.parameters())

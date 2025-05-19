@@ -29,7 +29,6 @@ class PCConvDS(PCConvNoisy):
         *** Must call this after the weights are loaded. ***
         PVT Noise or mismatch will be added when initialize the DSConvBlock, whose J_list will have noisy matrices.
         """
-        self.noisy_fb, self.noisy_ff = None, None # not used, compatible with PCConvNoisy
         self.tie_weights_impl()
         self.FFconvDS = DSConvBlock(self.FFconv, self.n_blocks, pvt_noise=self.pvt_noise,
                                     pvt_noise_level=self.noise_level)
