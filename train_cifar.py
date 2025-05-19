@@ -86,33 +86,34 @@ def main():
     # optim_type = getattr(optim, args.optim)
     loss_fn = nn.CrossEntropyLoss()
 
+    model_args = {
+        "inp_channels": args.inp_channels,
+        "out_channels": args.out_channels,
+        "max_pool": args.max_pool,
+        "num_classes": args.num_classes,
+        "kernel_size": args.kernel_size,
+        "stride": args.stride,
+        "padding": args.padding,
+        "cls": args.cls,
+        "bias": args.bias,
+        "lr": args.lr_pc,
+        "tie_weights": args.tie_weights,
+        "tie_bp": args.tie_bp,
+        "relu_between": args.relu_between,
+        "bypass": args.bypass,
+        "relu_bp": args.relu_bp,
+        "use_pc": args.use_pc,
+    }
+
     # Select PCConv Module to use
     pc_conv_mod = PCConv
     if args.tie_method is not None:
         pc_conv_mod = PartialTiedPCConv
+        model_args.update({"tie_method": args.tie_method, "tie_frac": args.tie_frac})
+    model_args.update({"pc_conv_layer": pc_conv_mod})
 
     # build model
-    model = PCNet(
-        inp_channels  = args.inp_channels,
-        out_channels  = args.out_channels,
-        max_pool      = args.max_pool,
-        num_classes   = args.num_classes,
-        pc_conv_layer = pc_conv_mod,
-        kernel_size   = args.kernel_size,
-        stride        = args.stride,
-        padding       = args.padding,
-        cls           = args.cls,
-        bias          = args.bias,
-        lr            = args.lr_pc,
-        tie_weights   = args.tie_weights,
-        tie_bp        = args.tie_bp,
-        relu_between  = args.relu_between,
-        bypass        = args.bypass,
-        relu_bp       = args.relu_bp,
-        use_pc        = args.use_pc,
-        tie_method    = args.tie_method,
-        tie_frac      = args.tie_frac,
-    )
+    model = PCNet(**model_args)
 
     total_params = sum(p.numel() for p in model.parameters())
     model_name = get_model_name(args)

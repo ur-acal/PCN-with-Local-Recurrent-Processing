@@ -1,12 +1,16 @@
 import os
+import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
+import torch.nn.utils.parametrize as P
 import torchvision
 import torchvision.transforms as transforms
 import argparse
 import tqdm
+
+from pc_model import PCNet
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
@@ -117,10 +121,45 @@ class TrainerCiFar(object):
         accuracy = correct / total
         return accuracy, torch.cat(label_list), torch.cat(pred_list)
 
+    def _save_then_load(self, save_to):
+        model_class = self.model.__class__
+        tmp_sd = {
+            'net': self.model.state_dict(),
+            'init_args': self.model.init_args,
+        }
+        tmp_sp = os.path.join(str(save_to), "__tmp_model.pth")
+        torch.save(tmp_sd, tmp_sp)
+        tmp_sd = torch.load(tmp_sp)
+        decoupled_model = model_class(
+            {**tmp_sd['init_args']['model_args'], **tmp_sd['init_args']['kwargs']}).to(self.device)
+        decoupled_model.load_state_dict(tmp_sd['net'])
+        return decoupled_model
+
     def _save_model_ckpt(self, acc, epoch, suffix=""):
         save_to = os.path.join(self.save_path, self.model_name)
         os.makedirs(save_to, exist_ok=True)
         save_pth_path = os.path.join(str(save_to), self.model_name + suffix)
+
+        # Need to save then the load the model to totally decouple the parameterization
+        flat_model = self._save_then_load(save_to)
+        parametrize_flag = False
+        for _mod in flat_model.modules():
+            if P.is_parametrized(_mod):
+                parametrize_flag = True
+                P.remove_parametrizations(_mod, "weight", leave_parametrized=True) # Keep the parametrized res
+        if parametrize_flag:
+            flat_state = {
+                'net': flat_model.state_dict(),
+                'init_args': self.model.init_args,
+                'net_type': self.model.__class__.__name__,
+                'acc': acc,
+                'epoch': epoch,
+            }
+            # save the flat model with the same name as before
+            torch.save(flat_state, save_pth_path)
+            # modify the model name with "full_param" to save the model with full parametrization
+            save_pth_path = os.path.join(str(save_to), self.model_name + "_full_param" + suffix)
+
         state = {
             'net': self.model.state_dict(),
             'init_args': self.model.init_args,

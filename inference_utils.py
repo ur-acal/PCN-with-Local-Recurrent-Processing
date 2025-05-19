@@ -26,6 +26,7 @@ log.addHandler(handler)
 
 def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
                            data_parallel=True, **kwargs):
+    # Todo: When loading the model, filter out unused init_args that does not exist in pc_conv_layer, e.g. tie_frac...
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
 
     # check if model_struct is the old model defined or the new one
