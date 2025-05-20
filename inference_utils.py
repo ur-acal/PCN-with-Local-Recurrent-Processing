@@ -24,25 +24,36 @@ handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
 
-def load_and_prepare_model(model_path, device, model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
-                           data_parallel=True, **kwargs):
+def filter_args(module_class, arg_dict):
+    if module_class is None:
+        return
+    sig = inspect.signature(module_class.__init__)
+    remove_args = []
+    for mod_arg in arg_dict:
+        if mod_arg not in sig.parameters:
+            log.info(f"{mod_arg} need to be removed for {module_class.__name__}")
+            remove_args.append(mod_arg)
+    for mod_arg in remove_args:
+        arg_dict.pop(mod_arg)
+
+
+def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
+                           data_parallel=False, **kwargs):
     # Todo: When loading the model, filter out unused init_args that does not exist in pc_conv_layer, e.g. tie_frac...
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
+    model_args = checkpoint_weight["init_args"]["model_args"]
+    mod_args = checkpoint_weight["init_args"]["kwargs"]
 
-    # check if model_struct is the old model defined or the new one
+    # filter out unused init arguments
+    filter_args(model_struct, model_args)
+    filter_args(pc_conv_layer, mod_args) if pc_conv_layer is not None else log.info("pc_conv_layer not specified")
+
+    # check if we should use pc_conv_layer defined in the model loaded or the one passed in
     sig = inspect.signature(model_struct.__init__)
-    init_kwargs = dict(kwargs)
     if "pc_conv_layer" in sig.parameters and pc_conv_layer is not None:
-        init_kwargs["pc_conv_layer"] = pc_conv_layer
+        model_args["pc_conv_layer"] = pc_conv_layer
 
-    # check if model init kwargs are stored in checkpoint, instead of passing in as arguments
-    if "init_args" in checkpoint_weight:
-        # if yes, then kwargs should contain only the parameters related to noise
-        init_kwargs = {
-            **init_kwargs,
-            **checkpoint_weight["init_args"]["model_args"],
-            **checkpoint_weight["init_args"]["kwargs"]
-        }
+    init_kwargs = {**kwargs, **model_args, **mod_args}
 
     net_ = model_struct(**init_kwargs)
     net_ = net_.to(device)
