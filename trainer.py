@@ -131,7 +131,7 @@ class TrainerCiFar(object):
         torch.save(tmp_sd, tmp_sp)
         tmp_sd = torch.load(tmp_sp)
         decoupled_model = model_class(
-            {**tmp_sd['init_args']['model_args'], **tmp_sd['init_args']['kwargs']}).to(self.device)
+            **{**tmp_sd['init_args']['model_args'], **tmp_sd['init_args']['kwargs']}).to(self.device)
         decoupled_model.load_state_dict(tmp_sd['net'])
         return decoupled_model
 

@@ -31,4 +31,5 @@ logs/
 run_single_*.sh
 test_model__.py
 shell_utils/parse_res/
+*.ipynb
 

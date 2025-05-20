@@ -6,9 +6,10 @@
 
 EPOCH=150
 
-for tie_bp in true false; do
-  for relu in true false; do
-    for bypass in true false; do
+relu="true"
+for tie_bp in true; do
+  for tie_frac in 0.12 0.23 0.34 0.45 0.56 0.67 0.78 0.89 1.0; do
+    for bypass in true; do
       if [ "$tie_bp" = "false" ] && [ "$bypass" = "true" ] && [ "$relu" = "true" ]; then
         echo "----- Skipping tie_bp=false & bypass=true & relu=true -----"
         continue
@@ -34,6 +35,8 @@ for tie_bp in true false; do
         --tie_bp        "${tie_bp}" \
         --relu_between  "${relu}" \
         --bypass        "${bypass}" \
+        --tie_method    "kernel_random" \
+        --tie_frac      "${tie_frac}" \
         2>&1 | tee "${LOGDIR}/train.log"
       echo ">>> Finished ${EXP} at $(date) <<<"
     done
@@ -43,5 +46,5 @@ done
 echo "Completed."
 
 # launch in this way:
-# nohup bash run_single.sh > ./logs/master_single.log 2>&1 &
+# nohup bash run_untie_weight.sh > ./logs/master_single.log 2>&1 &
 # tail -f ./logs/master_single.log

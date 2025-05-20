@@ -12,7 +12,7 @@ from copy import deepcopy
 
 from cifar_test import PredNetBpD
 from pc_model import PCNet
-from pc_conv import PCConv, PCConvNoisy
+from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 
 import logging
 log = logging.getLogger(__name__)
