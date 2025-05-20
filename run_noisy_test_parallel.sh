@@ -53,7 +53,6 @@ run_model(){
     --noise_to_bp  "$NOISE_TO_BP" \
     --tie_noise    "false" \
     --tie_noise_bp "false" \
-    --test_only    "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
