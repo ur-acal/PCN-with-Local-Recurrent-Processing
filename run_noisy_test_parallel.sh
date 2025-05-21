@@ -14,8 +14,8 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0519_tie_partial_random_kernel.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0519_tie_partial_random_kernel.log"
+MASTER_LOG="$BASE_LOGDIR/master_0519_tie_partial_random_kernel_and_rerun_No2_6.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0519_tie_partial_random_kernel_and_rerun_No2_6.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
@@ -28,6 +28,12 @@ MODEL_NAMES=(
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.78TieFrac_1REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.89TieFrac_1REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_1.0TieFrac_1REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP" # No.6, run three times
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP" # No.2, run three times
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
 )
 
 # ─────────────── prepare logs ───────────────

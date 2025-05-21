@@ -96,7 +96,7 @@ def run_test():
         noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
         run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
                              model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
-                             device=device, noisy_trials=10, model_name=args.model_name, **noisy_params)
+                             device=device, noisy_trials=20, model_name=args.model_name, **noisy_params)
 
 if __name__ == "__main__":
     run_test()

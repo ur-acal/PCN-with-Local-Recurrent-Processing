@@ -83,7 +83,9 @@ class PCNet(nn.Module):
 
     def add_noise(self):
         for pc_conv in self.PcConvs:
-            if hasattr(pc_conv, "add_noise"):
+            if hasattr(pc_conv, "init_ds_conv_block"):
+                pc_conv.init_ds_conv_block()
+            elif hasattr(pc_conv, "add_noise"):
                 pc_conv.add_noise()
         # Todo: Add noise for BN and linear
 

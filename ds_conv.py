@@ -18,13 +18,11 @@ class PCConvDS(PCConvNoisy):
         super().__init__(**kwargs)
         self.pvt_noise = pvt_noise
         self.n_blocks = n_blocks
+        self.kwargs = kwargs
 
-        if kwargs.get("use_pc", False):
-            self.FBconv_inv = nn.Conv2d(kwargs["out_chan"], kwargs["inp_chan"],
-                                        kwargs["kernel_size"], kwargs["stride"],
-                                        kwargs["padding"], bias=kwargs["bias"])
+        self.FFconvDS, self.FBconvDS, self.BPconvDS = None, None, None
 
-    def _init_ds_conv_block(self):
+    def init_ds_conv_block(self):
         """
         *** Must call this after the weights are loaded. ***
         PVT Noise or mismatch will be added when initialize the DSConvBlock, whose J_list will have noisy matrices.
@@ -33,8 +31,11 @@ class PCConvDS(PCConvNoisy):
         self.FFconvDS = DSConvBlock(self.FFconv, self.n_blocks, pvt_noise=self.pvt_noise,
                                     pvt_noise_level=self.noise_level)
         if self.use_pc:
-            self.FBconv_inv.weight.data = self.FBconv.weight.data.permute([1,0,2,3]).flip([2, 3])
-            self.FBconvDS = DSConvBlock(self.FBconv_inv, self.n_blocks, pvt_noise=self.pvt_noise,
+            fb_conv_inv = nn.Conv2d(self.kwargs["out_chan"], self.kwargs["inp_chan"],
+                                    self.kwargs["kernel_size"], self.kwargs["stride"],
+                                    self.kwargs["padding"], bias=self.kwargs["bias"])
+            fb_conv_inv.weight.data = self.FBconv.weight.data.permute([1, 0, 2, 3]).flip([2, 3])
+            self.FBconvDS = DSConvBlock(fb_conv_inv, self.n_blocks, pvt_noise=self.pvt_noise,
                                         pvt_noise_level=self.noise_level)
         if self.bypass is not None:
             self.BPconvDS = DSConvBlock(self.bypass, self.n_blocks, pvt_noise=self.pvt_noise,
@@ -72,7 +73,7 @@ class PCConvDS(PCConvNoisy):
 
 
 class BRIMSolver(nn.Module):
-    def __init__(self, brim_r=300e3, brim_c=49e-15, t_step=2.2e-11, t_stop=2.2e-5, scale_start=2.2, scale_end=0.6,
+    def __init__(self, brim_r=300e3, brim_c=49e-15, t_step=1.5e-11, t_stop=1e-7, scale_start=0.02, scale_end=0.02,
                  clip_spin=True, J=None, h=None, n_var=20):
         super().__init__()
         self.brim_r = brim_r
@@ -126,7 +127,7 @@ class DSConvBlock(BRIMSolver):
         self.C_out = self.weight.shape[0]
         self.kernel_size = self.weight.shape[-1]
         self.padding = conv_layer.padding
-        self.weight = self.weight.view(self.C_out, -1)
+        self.weight = self.weight.reshape(self.C_out, -1)
 
         self.y_len = self.C_out
         self.x_len = self.C_in * self.kernel_size * self.kernel_size
