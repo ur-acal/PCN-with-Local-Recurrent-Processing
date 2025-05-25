@@ -24,15 +24,34 @@ handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
 
+def collect_init_args(module_class):
+    all_args = set()
+    for cls in module_class.__mro__:
+        if cls is object:
+            continue
+        try:
+            sig = inspect.signature(cls.__init__)
+        except (ValueError, TypeError):
+            continue
+
+        for name, param in sig.parameters.items():
+            if name == "self":
+                continue
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            all_args.add(name)
+    return all_args
+
+
 def filter_args(module_class, arg_dict):
     if module_class is None:
         return
-    sig = inspect.signature(module_class.__init__)
-    remove_args = []
+    arg_set = collect_init_args(module_class)
+    remove_args = set()
     for mod_arg in arg_dict:
-        if mod_arg not in sig.parameters:
+        if mod_arg not in arg_set:
             log.info(f"{mod_arg} need to be removed for {module_class.__name__}")
-            remove_args.append(mod_arg)
+            remove_args.add(mod_arg)
     for mod_arg in remove_args:
         arg_dict.pop(mod_arg)
 

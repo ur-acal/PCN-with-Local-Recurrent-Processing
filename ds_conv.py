@@ -14,12 +14,13 @@ class PCConvDS(PCConvNoisy):
     """
     Implementing forward pass of PC convolutional layer using LD based on MVM method.
     """
-    def __init__(self, n_blocks=1, pvt_noise=None, **kwargs):
+    def __init__(self, n_blocks=1, pvt_noise=None, fast=True, **kwargs):
         super().__init__(**kwargs)
         self.pvt_noise = pvt_noise
         self.n_blocks = n_blocks
         self.kwargs = kwargs
 
+        self.ds_conv_blk = DSConvBlockFast if fast else DSConvBlock
         self.FFconvDS, self.FBconvDS, self.BPconvDS = None, None, None
 
     def init_ds_conv_block(self):
@@ -28,18 +29,18 @@ class PCConvDS(PCConvNoisy):
         PVT Noise or mismatch will be added when initialize the DSConvBlock, whose J_list will have noisy matrices.
         """
         self.tie_weights_impl()
-        self.FFconvDS = DSConvBlock(self.FFconv, self.n_blocks, pvt_noise=self.pvt_noise,
-                                    pvt_noise_level=self.noise_level)
+        self.FFconvDS = self.ds_conv_blk(conv_layer=self.FFconv, n_blocks=self.n_blocks,
+                                         pvt_noise=self.pvt_noise, pvt_noise_level=self.noise_level)
         if self.use_pc:
             fb_conv_inv = nn.Conv2d(self.kwargs["out_chan"], self.kwargs["inp_chan"],
                                     self.kwargs["kernel_size"], self.kwargs["stride"],
                                     self.kwargs["padding"], bias=self.kwargs["bias"])
             fb_conv_inv.weight.data = self.FBconv.weight.data.permute([1, 0, 2, 3]).flip([2, 3])
-            self.FBconvDS = DSConvBlock(fb_conv_inv, self.n_blocks, pvt_noise=self.pvt_noise,
-                                        pvt_noise_level=self.noise_level)
+            self.FBconvDS = self.ds_conv_blk(conv_layer=fb_conv_inv, n_blocks=self.n_blocks,
+                                             pvt_noise=self.pvt_noise, pvt_noise_level=self.noise_level)
         if self.bypass is not None:
-            self.BPconvDS = DSConvBlock(self.bypass, self.n_blocks, pvt_noise=self.pvt_noise,
-                                        pvt_noise_level=self.noise_level)
+            self.BPconvDS = self.ds_conv_blk(conv_layer=self.bypass, n_blocks=self.n_blocks,
+                                             pvt_noise=self.pvt_noise, pvt_noise_level=self.noise_level)
 
     def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
         log.info("--- Forward in DS PC layer: {} ---".format(self.layer_idx))
@@ -118,7 +119,7 @@ class BRIMSolver(nn.Module):
 
 
 class DSConvBlock(BRIMSolver):
-    def __init__(self, conv_layer: nn.Conv2d, n_blocks=1, pvt_noise_level=None, pvt_noise=None, **kwargs):
+    def __init__(self, conv_layer: nn.Conv2d, n_blocks=1, pvt_noise_level=None, pvt_noise=None, x_noise=True, **kwargs):
         super().__init__(**kwargs)
         # Todo: Do annealing or not in DSConvBlock
         self.weight = conv_layer.weight.data
@@ -135,6 +136,7 @@ class DSConvBlock(BRIMSolver):
         # noise related
         self.pvt_noise_level = pvt_noise_level
         self.pvt_noise = pvt_noise
+        self.x_noise = x_noise
 
         # Construct J; If there are multiple compute blocks and need to initialize noise, set n_blocks also
         self._constr_cu(n_blocks)
@@ -165,15 +167,30 @@ class DSConvBlock(BRIMSolver):
         current_scale = self.scale_start
         for i in range(int(self.annealing_steps)):
             # calculate noise and gradient
+            if i - 777 == 0:
+                st = time.time()
             noise_ = current_scale * torch.randn_like(spin) * self.noise_std
+            if i - 777 == 0:
+                log.info("Random sample using: {} s".format(time.time() - st))
+                st = time.time()
             grad_ = (self.t_step / self.brim_c) * torch.matmul(J, spin)
+            if i - 777 == 0:
+                log.info("Calculate gradient using: {} s".format(time.time() - st))
+                st = time.time()
 
             # clamp x; Assume there are no thermal noise added to the clamped x
             grad_[:, self.y_len:, :] = 0.0
-            noise_[:, self.y_len:, :] = 0.0
+            if not self.x_noise:
+                noise_[:, self.y_len:, :] = 0.0
+            if i - 777 == 0:
+                log.info("Zero out gradient using: {} s".format(time.time() - st))
+                st = time.time()
 
             # update spin
             spin = spin + grad_ + noise_
+            if i - 777 == 0:
+                log.info("Update spin using: {} s".format(time.time() - st))
+                st = time.time()
             if self.clip_spin:
                 spin = torch.clamp(spin, -1, 1)
             current_scale += self.scale_step
@@ -215,11 +232,86 @@ class DSConvBlock(BRIMSolver):
                 self.J_list.append(self.J * (1 + pvt_noise_.to(self.device)))
         self.n_blocks = len(self.J_list)
 
-
     def init_spin(self, x):
         # x is expected to have shape (BS, C_in * Ker * Ker, H * W)
         y_ = 2 * torch.rand(x.shape[0], self.y_len, x.shape[-1], device=self.device) - 1
         return torch.cat([y_, x], dim=1)
+
+
+class DSConvBlockFast(DSConvBlock):
+    def __init__(self, J_list=None, **kwargs):
+        super().__init__(**kwargs)
+        if J_list is not None:
+            # Use the passed in J_list instead of the reinitialized J_list
+            self.J_list = J_list
+        # Construct I and W list
+        self._constr_cu_fast()
+
+    def forward(self, x=None):
+        _bs, _, _h, _w = x.shape
+        x = F.unfold(x, self.kernel_size, padding=self.padding)
+        spin_y, spin_x = self.init_spin(x)
+        spin_y = self.solve_fast(spin_y, spin_x)
+        return spin_y.view(_bs, self.y_len, _h, _w)
+
+    def solve_fast(self, spin_y, spin_x):
+        if self.n_blocks == 1:
+            spin_y = self._solve_one_block_fast(self.neg_I_list[0], self.W_list[0], spin_y, spin_x)
+        else:
+            workload = self._dist_workload(spin_y)
+            spin_res = []
+            # Todo: How to get rid of the for loop
+            for i in range(self.n_blocks):
+                _start_idx, _end_idx = workload[i]
+                # Each compute block computes the same position on every batch
+                cur_spin = self._solve_one_block_fast(self.neg_I_list[0], self.W_list[0],
+                                                      spin_y[:, :, _start_idx:_end_idx],
+                                                      spin_x[:, :, _start_idx:_end_idx])
+                spin_res.append(cur_spin)
+            spin_y = torch.cat(spin_res, dim=-1)
+        return spin_y
+
+    def _solve_one_block_fast(self, neg_I, W, spin_y, spin_x):
+        current_scale = self.scale_start
+        for i in range(int(self.annealing_steps)):
+            # calculate noise and gradient
+            if i - 777 == 0:
+                st = time.time()
+            y_noise_ = current_scale * torch.randn_like(spin_y) * self.noise_std
+            if i - 777 == 0:
+                log.info("Random sample using: {} s".format(time.time() - st))
+                st = time.time()
+            y_grad_ = torch.matmul(neg_I, spin_y) + torch.matmul(W, spin_x)
+            if i - 777 == 0:
+                log.info("Calculate gradient using: {} s".format(time.time() - st))
+                st = time.time()
+
+            # update spin
+            spin_y = spin_y + y_grad_ + y_noise_
+            if self.x_noise:
+                x_noise_ = current_scale * torch.randn_like(spin_x) * self.noise_std
+                spin_x = spin_x + x_noise_
+            if i - 777 == 0:
+                log.info("Update spin using: {} s".format(time.time() - st))
+                st = time.time()
+            if self.clip_spin:
+                spin_y = torch.clamp(spin_y, -1, 1)
+                spin_x = torch.clamp(spin_x, -1, 1)
+            current_scale += self.scale_step
+        return spin_y
+
+    def _constr_cu_fast(self):
+        # _constr_cu of parent class called before
+        tc_const = self.t_step / self.brim_c
+        self.neg_I_list, self.W_list = [], []
+        for J in self.J_list:
+            self.neg_I_list.append(tc_const * J[:self.y_len, :self.y_len])
+            self.W_list.append(tc_const * (J[:self.y_len, self.y_len:] + J[self.y_len:, :self.y_len].t()) / 2)
+
+    def init_spin(self, x):
+        # x is expected to have shape (BS, C_in * Ker * Ker, H * W)
+        y_ = 2 * torch.rand(x.shape[0], self.y_len, x.shape[-1], device=self.device) - 1
+        return y_, x
 
 
 class DSPcRecurrentBlock(DSConvBlock):
