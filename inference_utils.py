@@ -57,7 +57,7 @@ def filter_args(module_class, arg_dict):
 
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
-                           data_parallel=False, **kwargs):
+                           data_parallel=False, noise_to_bn=False, noise_to_linear=False, **kwargs):
     # Todo: When loading the model, filter out unused init_args that does not exist in pc_conv_layer, e.g. tie_frac...
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
@@ -85,16 +85,34 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
     # Add noise
     if hasattr(net_, "add_noise"):
-        net_.add_noise()
+        clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
+        clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
+        net_.add_noise(noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear)
+        noise_level = net_.noise_level
+        if noise_level > 0.0:
+            for _name, _p in net_.named_parameters():
+                if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
+                    assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
+                elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
+                    assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
+
+            if noise_to_bn:
+                # adding noise to running mean and variance of batch norm
+                for _name, _buf in net_.named_buffers():
+                    if _name.endswith(('running_mean', 'running_var')):
+                        assert torch.allclose(_buf, torch.zeros_like(_buf)) or not torch.allclose(_buf, clean_buffs[_name])
+        log.warning("----- Noise added, sanity check passed -----")
     log.warning("----- Model loaded -----")
     return net_
 
 
-def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
-                            data_parallel=True, weight_dir="expanded_weights", model_suffix=".pt", model_name=None, **kwargs):
+def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=PCNet, pc_conv_layer=PCConvNoisy,
+                            data_parallel=True, weight_dir="expanded_weights", model_suffix=".pt", model_name=None,
+                            noise_to_bn=False, noise_to_linear=False, **kwargs):
     log.warning("----- Start to expand and save weights -----")
     # Load model
-    net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **kwargs)
+    net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
+                                  noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear, **kwargs)
     # Save expanded weights
     if model_name is not None:
         weight_path = os.path.join(weight_dir, model_name)
@@ -109,8 +127,9 @@ def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=
     log.warning("----- weights expanded and saved -----")
 
 
-def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PredNetBpD, pc_conv_layer=PCConvNoisy,
-                        data_parallel=True, loss_plot_dir="loss_plot", model_suffix=".t7", model_name=None, **kwargs):
+def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PCNet, pc_conv_layer=PCConvNoisy,
+                        data_parallel=True, loss_plot_dir="loss_plot", model_suffix=".t7", model_name=None,
+                        noise_to_bn=False, noise_to_linear=False, **kwargs):
     log.warning("----- Start to plot layer PCN loss -----")
     noise_level = kwargs.get("noise_level", 0.0)
     if model_name is not None:
@@ -120,14 +139,16 @@ def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=Pred
             loss_plot_dir, model_path.split('/')[-1].split(model_suffix)[0], "noise_level_{}".format(noise_level))
     os.makedirs(loss_plot_dir, exist_ok=True)
     kwargs.update({"plot_path": loss_plot_dir})
-    net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **kwargs)
+    net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
+                                  noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear, **kwargs)
     net_.eval()
     _ = net_(sample_imgs.to(device))
     log.warning("----- Loss is plotted -----")
 
 
-def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PredNetBpD,
-                         pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None, **kwargs):
+def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
+                         pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
+                         noise_to_bn=False, noise_to_linear=False, **kwargs):
     noise_acc = {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
@@ -136,7 +157,8 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             # reinitialize net with different noise during each trial
             params_ = deepcopy(kwargs)
             params_.update({"noise_level": noise_level})
-            net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel, **params_)
+            net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
+                                          noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear, **params_)
             net_.eval()
             total = 0
             correct = 0

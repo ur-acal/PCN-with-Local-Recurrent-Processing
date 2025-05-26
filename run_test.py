@@ -46,6 +46,10 @@ def parse_args():
                         default=False, help="Tie the noise of FB to that of FF")
     parser.add_argument("--tie_noise_bp", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False, help="Tie the noise of Bypass to that of FF")
+    parser.add_argument("--noise_to_bn", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="Noise to batch norm for PCN")
+    parser.add_argument("--noise_to_linear", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="Noise to linear layer for PCN")
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -77,7 +81,9 @@ def run_test():
             noisy_params["noise_level"] = 0.4
             noisy_params["weight"] = None
             net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
-                                          pc_conv_layer=PCConvNoisy, data_parallel=False, **noisy_params)
+                                          pc_conv_layer=PCConvNoisy, data_parallel=False,
+                                          noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
+                                          **noisy_params)
             net_.eval()
             _ = net_(next(iter(test_dataloader))[0].to(device)[:128])
             logging.info("Output shape: {}".format(_.shape))
@@ -86,17 +92,20 @@ def run_test():
         # works with saved init_args
         expand_and_save_weights(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
                                 model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                                noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                 weight_dir=args.weight, model_name=args.model_name)
         # plot_path specified inside
         plot_layer_pcn_loss(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
                             model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                            noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                             loss_plot_dir=args.plot_path, model_name=args.model_name)
 
         # specify noise level inside, plot path omitted
         noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
         run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
                              model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
-                             device=device, noisy_trials=20, model_name=args.model_name, **noisy_params)
+                             device=device, noisy_trials=20, model_name=args.model_name,
+                             noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear, **noisy_params)
 
 if __name__ == "__main__":
     run_test()

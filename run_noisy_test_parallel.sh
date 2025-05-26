@@ -19,21 +19,19 @@ JOB_LOG="$BASE_LOGDIR/parallel_job_master_0519_tie_partial_random_kernel_and_rer
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.12TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.23TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.34TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.45TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.56TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.67TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.78TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_0.89TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_kernel_randomTieMethod_1.0TieFrac_1REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP" # No.6, run three times
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_withRelu_5Layers_2REP" # retrained baseline
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_5Layers_1REP" # 5 layer no relu
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_withRelu_9Layers_2REP" # newly added
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP" # No.2, run three times
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_noRelu_7Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_7Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_noRelu_7Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP" # no log before
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_withRelu_9Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_noRelu_9Layers_2REP"
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_noRelu_9Layers_2REP" # no log before
+  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_withRelu_9Layers_2REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -50,15 +48,18 @@ run_model(){
   local name="$1"
   set -o pipefail
   python -u run_test.py \
-    --model_name   "$name" \
-    --model_dir    "$MODEL_DIR" \
-    --weight       "$WEIGHT_PATH" \
-    --plot_path    "$PLOT_PATH" \
-    --w_type       "$W_TYPE" \
-    --noise_to_ff  "$NOISE_TO_FF" \
-    --noise_to_bp  "$NOISE_TO_BP" \
-    --tie_noise    "false" \
-    --tie_noise_bp "false" \
+    --model_name      "$name" \
+    --model_dir       "$MODEL_DIR" \
+    --weight          "$WEIGHT_PATH" \
+    --plot_path       "$PLOT_PATH" \
+    --w_type          "$W_TYPE" \
+    --noise_to_ff     "$NOISE_TO_FF" \
+    --noise_to_bp     "$NOISE_TO_BP" \
+    --tie_noise       "false" \
+    --tie_noise_bp    "false" \
+    --noise_to_bn     "true" \
+    --noise_to_linear "true" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model

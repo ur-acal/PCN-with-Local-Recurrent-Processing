@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, **kwargs):
         super().__init__()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.init_args = self._get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, **kwargs)
 
         self.ics = inp_channels # input channels
@@ -31,6 +32,7 @@ class PCNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
+        self.noise_level = kwargs.get("noise_level", 0.0)
 
     def forward(self, x):
         for i in range(self.num_layers):
@@ -81,13 +83,35 @@ class PCNet(nn.Module):
                 y_ = self.max_pool2d(y_)
             x_ = y_
 
-    def add_noise(self):
+    def _apply_noise(self, p):
+        noise_ = torch.randn_like(p, device=self.device, requires_grad=False) * self.noise_level
+        p.mul_(1 + noise_)
+
+    def add_noise(self, noise_to_bn=False, noise_to_linear=False):
+        self.noise_level = self.PcConvs[0].noise_level
         for pc_conv in self.PcConvs:
             if hasattr(pc_conv, "init_ds_conv_block"):
                 pc_conv.init_ds_conv_block()
             elif hasattr(pc_conv, "add_noise"):
                 pc_conv.add_noise()
         # Todo: Add noise for BN and linear
+        with torch.no_grad():
+            for _name, _p in self.named_parameters():
+                if "conv" in _name.lower() and "pc" not in _name.lower():
+                    self._apply_noise(_p)
+                if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
+                    log.info("Adding noise to batch norm")
+                    self._apply_noise(_p)
+                elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
+                    log.info("Adding noise to linear layer")
+                    self._apply_noise(_p)
+
+            if noise_to_bn:
+                # adding noise to running mean and variance of batch norm
+                for _name, _buf in self.named_buffers():
+                    if _name.endswith(('running_mean', 'running_var')):
+                        log.info("Adding noise to running mean and variance")
+                        self._apply_noise(_buf)
 
     @staticmethod
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, **kwargs):
