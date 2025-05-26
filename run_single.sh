@@ -1,52 +1,51 @@
 #!/usr/bin/env bash
 
-EXP="5l_30cls_baseline_and_pc_removed_exp_0511"
+EXP="7l_5cls_baseline_0526"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
 python train_cifar.py \
   --optim         "SGD" \
   --num_epochs    150 \
-  --inp_channels  3  32 64 64  128 \
-  --out_channels  32 64 64 128 128 \
-  --max_pool      0  1  0  1   0 \
-  --lr_pc         0.01 \
-  --cls           30 \
-  --tie_weights   "false" \
-  --tie_bp        "false" \
-  --relu_between  "true" \
-  --bypass        "true" \
-  2>&1 | tee "${LOGDIR}/train_baseline_5l_30cls.log"
-
-python train_cifar.py \
-  --optim         "SGD" \
-  --num_epochs    150 \
-  --inp_channels  3  32 64 64  128 \
-  --out_channels  32 64 64 128 128 \
-  --max_pool      0  1  0  1   0 \
+  --inp_channels  3  32 32 64 64  128 128 \
+  --out_channels  32 32 64 64 128 128 128 \
+  --max_pool      0  0  1  0  1   0   0   \
   --lr_pc         1 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
-  --use_pc        "false" \
-  2>&1 | tee "${LOGDIR}/train_baseline_noPC_5l.log"
+  2>&1 | tee "${LOGDIR}/train.log"
 
-python train_cifar.py \
-  --optim         "SGD" \
-  --num_epochs    150 \
-  --inp_channels  3  32 32 64 64 64  128 128 128 \
-  --out_channels  32 32 64 64 64 128 128 128 256 \
-  --max_pool      0  0  1  0  0  1   0   0   0   \
-  --lr_pc         1 \
-  --cls           5 \
-  --tie_weights   "true" \
-  --tie_bp        "false" \
-  --relu_between  "false" \
-  --bypass        "false" \
-  --use_pc        "false" \
-2>&1 | tee "${LOGDIR}/train_yes_no_no_no_noPC.log"
+#python train_cifar.py \
+#  --optim         "SGD" \
+#  --num_epochs    150 \
+#  --inp_channels  3  32 64 64  128 \
+#  --out_channels  32 64 64 128 128 \
+#  --max_pool      0  1  0  1   0 \
+#  --lr_pc         0.01 \
+#  --cls           30 \
+#  --tie_weights   "false" \
+#  --tie_bp        "false" \
+#  --relu_between  "true" \
+#  --bypass        "true" \
+#  2>&1 | tee "${LOGDIR}/train_baseline_5l_30cls.log"
+
+#python train_cifar.py \
+#  --optim         "SGD" \
+#  --num_epochs    150 \
+#  --inp_channels  3  32 32 64 64 64  128 128 128 \
+#  --out_channels  32 32 64 64 64 128 128 128 256 \
+#  --max_pool      0  0  1  0  0  1   0   0   0   \
+#  --lr_pc         1 \
+#  --cls           5 \
+#  --tie_weights   "true" \
+#  --tie_bp        "false" \
+#  --relu_between  "false" \
+#  --bypass        "false" \
+#  --use_pc        "false" \
+#2>&1 | tee "${LOGDIR}/train_yes_no_no_no_noPC.log"
 
 #EXP="tw_false_tbp_false_relu_true_bp_true_9_layer" # ~10M params
 #LOGDIR="./logs/${EXP}"

@@ -23,18 +23,19 @@ export BASE_LOGDIR="./logs/noisy_test"
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_withRelu_5Layers_2REP" # retrained baseline
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_5Layers_1REP" # 5 layer no relu
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_withRelu_9Layers_2REP" # newly added
+  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # 7 layer baseline
+#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_5Layers_1REP" # 5 layer no relu
+#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_withRelu_9Layers_2REP" # newly added
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_noRelu_7Layers_2REP"
+#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_noRelu_7Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_noRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP" # no log before
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_withRelu_9Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_noRelu_9Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_noRelu_9Layers_2REP" # no log before
-  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_withRelu_9Layers_2REP"
+#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_7Layers_2REP"
+#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_noRelu_7Layers_2REP"
+#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP" # no log before
+#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_withRelu_9Layers_2REP"
+#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_noRelu_9Layers_2REP"
+#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_noRelu_9Layers_2REP" # no log before
+#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_withRelu_9Layers_2REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -68,6 +69,7 @@ run_model(){
     --tie_noise_bp    "false" \
     --noise_to_bn     "$noise_to_bn" \
     --noise_to_linear "$noise_to_linear" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
@@ -92,10 +94,8 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
       --jobs 2 \
       --joblog "$JOB_LOG" \
       --keep-order \
-      run_model {1} {2} {3} \
-      ::: "${MODEL_NAMES[@]}" \
-      ::: "${NOISE_TO_BN_VALUES[@]}" \
-      ::: "${NOISE_TO_LINEAR_VALUES[@]}"
+      run_model {1} "$noise_to_bn" "$noise_to_linear" \
+      ::: "${MODEL_NAMES[@]}"
 
     echo "All jobs finished — merging logs into $MASTER_LOG"
 
