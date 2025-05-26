@@ -51,11 +51,6 @@ run_model(){
   local noise_to_bn="$2"
   local noise_to_linear="$3"
 
-  # skip the case where both are false
-  if [[ "$noise_to_bn" == "false" && "$noise_to_linear" == "false" ]]; then
-    return
-  fi
-
   set -o pipefail
   python -u run_test.py \
     --model_name      "$name" \
@@ -69,7 +64,6 @@ run_model(){
     --tie_noise_bp    "false" \
     --noise_to_bn     "$noise_to_bn" \
     --noise_to_linear "$noise_to_linear" \
-    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
@@ -77,9 +71,9 @@ export -f run_model
 # ─────────────── loop over BN / Linear noise toggles ───────────────
 for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
   for noise_to_linear in "${NOISE_TO_LINEAR_VALUES[@]}"; do
-    if [[ "$noise_to_bn" == "false" && "$noise_to_linear" == "false" ]]; then
-      continue
-    fi
+#    if [[ "$noise_to_bn" == "false" && "$noise_to_linear" == "false" ]]; then
+#      continue
+#    fi
 
     MASTER_LOG="$BASE_LOGDIR/master_0526_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
     JOB_LOG="$BASE_LOGDIR/parallel_0526_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
@@ -91,7 +85,7 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
 
     # ─────────────── run in parallel ───────────────
     parallel \
-      --jobs 2 \
+      --jobs 4 \
       --joblog "$JOB_LOG" \
       --keep-order \
       run_model {1} "$noise_to_bn" "$noise_to_linear" \

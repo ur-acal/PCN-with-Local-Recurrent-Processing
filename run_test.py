@@ -55,6 +55,9 @@ def parse_args():
     return parser.parse_args()
 
 def run_test():
+    expand_weights = False
+    loss_plot = False
+
     args = parse_args()
     if args.test_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
@@ -66,7 +69,7 @@ def run_test():
         logging.warning(f"  {name}: {val}")
         if name in noisy_args:
             noisy_params[name] = val
-    noisy_params["weight"] = os.path.join(args.weight, args.model_name)
+    noisy_params["weight"] = os.path.join(args.weight, args.model_name) if expand_weights else None
     # noise_level and plot_path are passed in separately when calling the plot function or noise_exp function
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -90,15 +93,17 @@ def run_test():
             exit(0)
 
         # works with saved init_args
-        expand_and_save_weights(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
+        if expand_weights:
+            expand_and_save_weights(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
+                                    model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                                    noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
+                                    weight_dir=args.weight, model_name=args.model_name)
+        # plot_path specified inside
+        if loss_plot:
+            plot_layer_pcn_loss(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
                                 model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
                                 noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                                weight_dir=args.weight, model_name=args.model_name)
-        # plot_path specified inside
-        plot_layer_pcn_loss(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
-                            model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
-                            noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                            loss_plot_dir=args.plot_path, model_name=args.model_name)
+                                loss_plot_dir=args.plot_path, model_name=args.model_name)
 
         # specify noise level inside, plot path omitted
         noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
