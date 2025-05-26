@@ -10,12 +10,15 @@ export W_TYPE="fb_flip"
 export NOISE_TO_FF=true
 export NOISE_TO_BP=true
 
+# ─────────────── noise toggles ───────────────
+NOISE_TO_BN_VALUES=("true" "false")
+NOISE_TO_LINEAR_VALUES=("true" "false")
+
 #######################################################
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0519_tie_partial_random_kernel_and_rerun_No2_6.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0519_tie_partial_random_kernel_and_rerun_No2_6.log"
+# MASTER_LOG and JOB_LOG will be set per noise combination
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
@@ -36,8 +39,6 @@ MODEL_NAMES=(
 
 # ─────────────── prepare logs ───────────────
 mkdir -p "$BASE_LOGDIR"
-> "$MASTER_LOG"
-> "$JOB_LOG"
 for name in "${MODEL_NAMES[@]}"; do
   mkdir -p "$BASE_LOGDIR/$name"
   > "$BASE_LOGDIR/$name/job.log"
@@ -46,6 +47,14 @@ done
 # ─────────────── helper function ───────────────
 run_model(){
   local name="$1"
+  local noise_to_bn="$2"
+  local noise_to_linear="$3"
+
+  # skip the case where both are false
+  if [[ "$noise_to_bn" == "false" && "$noise_to_linear" == "false" ]]; then
+    return
+  fi
+
   set -o pipefail
   python -u run_test.py \
     --model_name      "$name" \
@@ -57,41 +66,57 @@ run_model(){
     --noise_to_bp     "$NOISE_TO_BP" \
     --tie_noise       "false" \
     --tie_noise_bp    "false" \
-    --noise_to_bn     "true" \
-    --noise_to_linear "true" \
-    --test_only       "true" \
+    --noise_to_bn     "$noise_to_bn" \
+    --noise_to_linear "$noise_to_linear" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
 
-echo "Tail master with: tail -f $MASTER_LOG"
+# ─────────────── loop over BN / Linear noise toggles ───────────────
+for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
+  for noise_to_linear in "${NOISE_TO_LINEAR_VALUES[@]}"; do
+    if [[ "$noise_to_bn" == "false" && "$noise_to_linear" == "false" ]]; then
+      continue
+    fi
 
-# ─────────────── run in parallel ───────────────
-parallel \
-  --jobs 2 \
-  --joblog "$JOB_LOG" \
-  --keep-order \
-  run_model {} \
-  ::: "${MODEL_NAMES[@]}"
+    MASTER_LOG="$BASE_LOGDIR/master_0526_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    JOB_LOG="$BASE_LOGDIR/parallel_0526_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
 
-echo "All jobs finished — merging logs into $MASTER_LOG"
+    > "$MASTER_LOG"
+    > "$JOB_LOG"
 
-# ─────────────── merge logs sequentially ───────────────
-: >"$MASTER_LOG"
-for name in "${MODEL_NAMES[@]}"; do
-  printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
-  if ! grep -A 11 "Final Result " \
-             "$BASE_LOGDIR/$name/job.log" >>"$MASTER_LOG"; then
-     echo "[Final Result not found]" >>"$MASTER_LOG"
-  fi
-  printf '\n\n' >>"$MASTER_LOG"
+    echo "Tail master with: tail -f $MASTER_LOG"
+
+    # ─────────────── run in parallel ───────────────
+    parallel \
+      --jobs 2 \
+      --joblog "$JOB_LOG" \
+      --keep-order \
+      run_model {1} {2} {3} \
+      ::: "${MODEL_NAMES[@]}" \
+      ::: "${NOISE_TO_BN_VALUES[@]}" \
+      ::: "${NOISE_TO_LINEAR_VALUES[@]}"
+
+    echo "All jobs finished — merging logs into $MASTER_LOG"
+
+    # ─────────────── merge logs sequentially ───────────────
+    : >"$MASTER_LOG"
+    for name in "${MODEL_NAMES[@]}"; do
+      printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
+      if ! grep -A 11 "Final Result " \
+                "$BASE_LOGDIR/$name/job.log" >>"$MASTER_LOG"; then
+        echo "[Final Result not found]" >>"$MASTER_LOG"
+      fi
+      printf '\n\n' >>"$MASTER_LOG"
+    done
+
+    echo "All summaries written to $MASTER_LOG"
+  done
 done
-
-echo "All summaries written to $MASTER_LOG"
 
 #######################################################
 # running
-# nohup bash run_noisy_test_parallel.sh > logs/run_script_output/launcher.out 2>&1 &
+# nohup bash run_loop_noisy_test_parallel.sh > logs/run_script_output/launcher.out 2>&1 &
 # tail -f logs/run_script_output/launcher.out
 # After the run is finished, the master_log file will be printed out
 # then cat master_log

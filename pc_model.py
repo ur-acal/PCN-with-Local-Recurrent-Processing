@@ -33,6 +33,7 @@ class PCNet(nn.Module):
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
         self.noise_level = kwargs.get("noise_level", 0.0)
+        self.noise_level = 0.0 if self.noise_level is None else self.noise_level
 
     def forward(self, x):
         for i in range(self.num_layers):
@@ -88,7 +89,6 @@ class PCNet(nn.Module):
         p.mul_(1 + noise_)
 
     def add_noise(self, noise_to_bn=False, noise_to_linear=False):
-        self.noise_level = self.PcConvs[0].noise_level
         for pc_conv in self.PcConvs:
             if hasattr(pc_conv, "init_ds_conv_block"):
                 pc_conv.init_ds_conv_block()
