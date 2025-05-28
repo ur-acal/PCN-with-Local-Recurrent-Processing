@@ -25,25 +25,22 @@ class PCNet(nn.Module):
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
             [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], layer_idx=i, **kwargs) for i in range(self.num_layers)])
-        self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.num_layers)])
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
         self.relu = nn.ReLU(inplace=True)
-        self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
         self.noise_level = kwargs.get("noise_level", 0.0)
         self.noise_level = 0.0 if self.noise_level is None else self.noise_level
 
     def forward(self, x):
         for i in range(self.num_layers):
-            x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
 
         # classifier
-        out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
+        out = F.avg_pool2d(self.relu(x), x.size(-1))
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out

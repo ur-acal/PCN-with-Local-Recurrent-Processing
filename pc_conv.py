@@ -31,6 +31,9 @@ class PCConv(nn.Module):
         self.relu_bp = relu_bp
         self.use_pc = use_pc
 
+        self.bn_start = nn.BatchNorm2d(out_chan)
+        self.bn_end = nn.BatchNorm2d(out_chan) if bypass else None
+
         if use_pc:
             log.info("Use PC, initialize FBconv")
             self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
@@ -50,7 +53,7 @@ class PCConv(nn.Module):
     def forward(self, x, layer_idx=None):
         log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
         # Initializer of recurrent
-        y = self.relu(self.FFconv(x))
+        y = self.relu(self.bn_start(self.FFconv(x)))
 
         # PC recurrent
         if self.use_pc:
@@ -61,10 +64,10 @@ class PCConv(nn.Module):
         if self.bypass is not None:
             if self.relu_bp:
                 log.info("USE ReLU after BP")
-                y = y + self.relu(self.bypass(x))
+                y = self.relu(y + self.bn_end(self.bypass(x))) # add ReLU to the sum result
             else:
                 log.info("DO NOT USE ReLU after BP")
-                y = y + self.bypass(x)
+                y = y + self.bn_end(self.bypass(x))
         return y
 
     def find_optimal_r(self, x, y, layer_idx=None):
