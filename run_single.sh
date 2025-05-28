@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="7l_5cls_baseline_0526"
+EXP="bn_after_conv_0528"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -16,21 +16,49 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
-  2>&1 | tee "${LOGDIR}/train.log"
+  2>&1 | tee "${LOGDIR}/train_7l_baseline.log"
 
-#python train_cifar.py \
-#  --optim         "SGD" \
-#  --num_epochs    150 \
-#  --inp_channels  3  32 64 64  128 \
-#  --out_channels  32 64 64 128 128 \
-#  --max_pool      0  1  0  1   0 \
-#  --lr_pc         0.01 \
-#  --cls           30 \
-#  --tie_weights   "false" \
-#  --tie_bp        "false" \
-#  --relu_between  "true" \
-#  --bypass        "true" \
-#  2>&1 | tee "${LOGDIR}/train_baseline_5l_30cls.log"
+python train_cifar.py \
+  --optim         "SGD" \
+  --num_epochs    150 \
+  --inp_channels  3  32 64 64  128 \
+  --out_channels  32 64 64 128 128 \
+  --max_pool      0  1  0  1   0 \
+  --lr_pc         1 \
+  --cls           5 \
+  --tie_weights   "false" \
+  --tie_bp        "false" \
+  --relu_between  "true" \
+  --bypass        "true" \
+  2>&1 | tee "${LOGDIR}/train_5l_baseline.log"
+
+python train_cifar.py \
+  --optim         "SGD" \
+  --num_epochs    150 \
+  --inp_channels  3  32 32 64 64  128 128 \
+  --out_channels  32 32 64 64 128 128 128 \
+  --max_pool      0  0  1  0  1   0   0   \
+  --lr_pc         1 \
+  --cls           5 \
+  --tie_weights   "false" \
+  --tie_bp        "false" \
+  --relu_between  "true" \
+  --bypass        "false" \
+  2>&1 | tee "${LOGDIR}/train_untie_No_2.log"
+
+python train_cifar.py \
+  --optim         "SGD" \
+  --num_epochs    150 \
+  --inp_channels  3  32 32 64 64  128 128 \
+  --out_channels  32 32 64 64 128 128 128 \
+  --max_pool      0  0  1  0  1   0   0   \
+  --lr_pc         1 \
+  --cls           5 \
+  --tie_weights   "false" \
+  --tie_bp        "true" \
+  --relu_between  "true" \
+  --bypass        "true" \
+  2>&1 | tee "${LOGDIR}/train_untie_No_6.log"
 
 #python train_cifar.py \
 #  --optim         "SGD" \

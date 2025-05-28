@@ -56,7 +56,8 @@ def get_args():
 
 def _constr_model_name(args, rep=1):
     name_dict = {str(True): "with", str(False): "no"}
-    model_name = 'PPCN' + '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_'+ str(args.weight_decay) + 'WD_' \
+    model_name = 'PPCN' + '_BN_after_Conv' \
+                 + '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_' + str(args.weight_decay) + 'WD_' \
                  + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
                  + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
                  + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
@@ -141,6 +142,7 @@ def main():
     if args.test_only:
         _ = model(next(iter(trainer.train_dataloader))[0].to(trainer.device))
         logging.info("Test model forward only. Exit without training the model.")
+        logging.info(_)
         exit(0)
 
     trainer.train()

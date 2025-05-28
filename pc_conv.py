@@ -31,7 +31,10 @@ class PCConv(nn.Module):
         self.relu_bp = relu_bp
         self.use_pc = use_pc
 
-        self.bn_start = nn.BatchNorm2d(out_chan)
+        self.bn_ff = nn.BatchNorm2d(out_chan)
+        self.bn_fb = nn.BatchNorm2d(inp_chan)
+        self.bn_ff_list = nn.ModuleList([nn.BatchNorm2d(out_chan) for _ in range(cls)])
+        self.bn_fb_list = nn.ModuleList([nn.BatchNorm2d(inp_chan) for _ in range(cls)])
         self.bn_end = nn.BatchNorm2d(out_chan) if bypass else None
 
         if use_pc:
@@ -53,7 +56,7 @@ class PCConv(nn.Module):
     def forward(self, x, layer_idx=None):
         log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
         # Initializer of recurrent
-        y = self.relu(self.bn_start(self.FFconv(x)))
+        y = self.relu(self.bn_ff(self.FFconv(x)))
 
         # PC recurrent
         if self.use_pc:
@@ -71,13 +74,15 @@ class PCConv(nn.Module):
         return y
 
     def find_optimal_r(self, x, y, layer_idx=None):
-        for _ in range(self.cls):
+        for i in range(self.cls):
             if self.relu_between:
                 log.info("USE ReLU between FF/FB")
-                y = self.lr * self.FFconv(self.relu(x - self.FBconv(y))) + y
+                # y = self.lr * self.bn_ff_list[i](self.FFconv(self.relu(x - self.bn_fb_list[i](self.FBconv(y))))) + y
+                y = self.lr * self.bn_ff(self.FFconv(self.relu(x - self.bn_fb(self.FBconv(y))))) + y
             else:
                 log.info("DO NOT USE ReLU between FF/FB")
-                y = self.lr * self.FFconv(x - self.FBconv(y)) + y
+                # y = self.lr * self.bn_ff_list[i](self.FFconv(x - self.bn_fb_list[i](self.FBconv(y)))) + y
+                y = self.lr * self.bn_ff(self.FFconv(x - self.bn_fb(self.FBconv(y)))) + y
         return y
 
 
