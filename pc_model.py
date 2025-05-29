@@ -15,7 +15,8 @@ class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, first_bn=True, **kwargs):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.init_args = self._get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, **kwargs)
+        self.init_args = self._get_init_args(
+            inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, **kwargs)
 
         self.ics = inp_channels # input channels
         self.ocs = out_channels # output channels
@@ -117,7 +118,7 @@ class PCNet(nn.Module):
                         self._apply_noise(_buf)
 
     @staticmethod
-    def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, **kwargs):
+    def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, **kwargs):
         init_args = {
             "model_args": {
                 "inp_channels": inp_channels,
@@ -125,6 +126,7 @@ class PCNet(nn.Module):
                 "max_pool": max_pool,
                 "num_classes": num_classes,
                 "pc_conv_layer": pc_conv_layer,
+                "first_bn": first_bn,
             },
             "kwargs": kwargs
         }
