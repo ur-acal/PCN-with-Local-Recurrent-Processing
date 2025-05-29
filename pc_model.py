@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 
 class PCNet(nn.Module):
-    def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, **kwargs):
+    def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, first_bn=True, **kwargs):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.init_args = self._get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, **kwargs)
@@ -26,6 +26,8 @@ class PCNet(nn.Module):
         self.PcConvs = nn.ModuleList(
             [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], layer_idx=i, **kwargs) for i in range(self.num_layers)])
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.num_layers)])
+        if not first_bn:
+            self.BNs[0] = nn.Identity()
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
