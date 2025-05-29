@@ -78,11 +78,15 @@ class PCConv(nn.Module):
             if self.relu_between:
                 log.info("USE ReLU between FF/FB")
                 # y = self.lr * self.bn_ff_list[i](self.FFconv(self.relu(x - self.bn_fb_list[i](self.FBconv(y))))) + y
-                y = self.lr * self.bn_ff(self.FFconv(self.relu(x - self.bn_fb(self.FBconv(y))))) + y
+                # y = self.lr * self.bn_ff(self.FFconv(self.relu(x - self.bn_fb(self.FBconv(y))))) + y
+                y = self.lr * self.FFconv(self.relu(x - self.FBconv(y))) + y
+                y = self.bn_ff(y)
             else:
                 log.info("DO NOT USE ReLU between FF/FB")
                 # y = self.lr * self.bn_ff_list[i](self.FFconv(x - self.bn_fb_list[i](self.FBconv(y)))) + y
-                y = self.lr * self.bn_ff(self.FFconv(x - self.bn_fb(self.FBconv(y)))) + y
+                # y = self.lr * self.bn_ff(self.FFconv(x - self.bn_fb(self.FBconv(y)))) + y
+                y = self.lr * self.FFconv(x - self.FBconv(y)) + y
+                y = self.bn_ff(y)
         return y
 
 

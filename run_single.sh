@@ -16,6 +16,7 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
+  --test_only     "true" \
   2>&1 | tee "${LOGDIR}/train_7l_baseline.log"
 
 python train_cifar.py \

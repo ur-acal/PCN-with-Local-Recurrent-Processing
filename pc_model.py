@@ -36,7 +36,11 @@ class PCNet(nn.Module):
 
     def forward(self, x):
         for i in range(self.num_layers):
-            # x = self.BNs[i](x)
+            if i == 0:
+                x_bn = self.BNs[i](x)
+                log.info("Before the first PcConv layer, mean: {} std: {} before BNs[0]; mean: {} std: {} after BNs[0]".format(
+                    x.mean(), x.std(), x_bn.mean(), x_bn.std()
+                ))
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
