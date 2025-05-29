@@ -215,6 +215,7 @@ class PCConvNoisy(nn.Module):
         Call this or tie_weights_impl after the weight is loaded.
         :return: None
         """
+        self._init_noise(self.noise_level)
         log.info("Add noise to FF/FB")
         self.noise_ff_matrix = self.noise_ff_matrix.to(device=self.FFconv.weight.device)
         self.noisy_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight

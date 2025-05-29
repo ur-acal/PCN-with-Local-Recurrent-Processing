@@ -11,8 +11,9 @@ from tqdm import tqdm
 from copy import deepcopy
 
 from cifar_test import PredNetBpD
-from pc_model import PCNet
+from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
+from bn_fuse import fuse_bn_recursively
 
 import logging
 log = logging.getLogger(__name__)
@@ -57,19 +58,22 @@ def filter_args(module_class, arg_dict):
 
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
-                           data_parallel=False, noise_to_bn=False, noise_to_linear=False, **kwargs):
-    # Todo: When loading the model, filter out unused init_args that does not exist in pc_conv_layer, e.g. tie_frac...
+                           data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
+
+    # Get model used
+    sd_model_struct = checkpoint_weight.get("net_type", None)
+    model_struct = PCN_CLASSES[sd_model_struct] if sd_model_struct else model_struct
+    log.warning("----- Using :{} model -----".format(model_struct.__name__))
 
     # filter out unused init arguments
     filter_args(model_struct, model_args)
     filter_args(pc_conv_layer, mod_args) if pc_conv_layer is not None else log.info("pc_conv_layer not specified")
 
     # check if we should use pc_conv_layer defined in the model loaded or the one passed in
-    sig = inspect.signature(model_struct.__init__)
-    if "pc_conv_layer" in sig.parameters and pc_conv_layer is not None:
+    if "pc_conv_layer" in collect_init_args(model_struct) and pc_conv_layer is not None:
         model_args["pc_conv_layer"] = pc_conv_layer
 
     init_kwargs = {**kwargs, **model_args, **mod_args}
@@ -82,6 +86,12 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         net_ = net_.module
     else:
         net_.load_state_dict(checkpoint_weight['net'])
+
+    # No batch normalization for each convolutional layers in PcConv layers
+    # If there is any, then need to change the _init_noise function
+    if fuse_bn:
+        net_.eval()
+        net_ = fuse_bn_recursively(net_)
 
     # Add noise
     if hasattr(net_, "add_noise"):
@@ -101,7 +111,7 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                 for _name, _buf in net_.named_buffers():
                     if _name.endswith(('running_mean', 'running_var')):
                         assert torch.allclose(_buf, torch.zeros_like(_buf)) or not torch.allclose(_buf, clean_buffs[_name])
-        log.warning("----- Noise added, sanity check passed -----")
+            log.warning("----- Noise added, sanity check passed -----")
     log.warning("----- Model loaded -----")
     return net_
 

@@ -8,14 +8,8 @@ import torch.nn.functional as F
 import numpy as np
 
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
-from pc_model import PCNet, PCNetWithMiddleConv
+from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from trainer import TrainerCiFar
-
-PCN_CLASSES = {
-    "PCNet": PCNet,
-    "PCNetWithMiddleConv": PCNetWithMiddleConv,
-    None: PCNet,
-}
 
 
 def str2bool(v):

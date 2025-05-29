@@ -11,7 +11,7 @@ from tqdm import tqdm
 from copy import deepcopy
 
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
-from pc_model import PCNet
+from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from inference_utils import load_and_prepare_model, expand_and_save_weights, plot_layer_pcn_loss, run_noise_experiment
 
 

@@ -156,3 +156,10 @@ class PCNetWithMiddleConv(PCNet):
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
+
+
+PCN_CLASSES = {
+    "PCNet": PCNet,
+    "PCNetWithMiddleConv": PCNetWithMiddleConv,
+    None: PCNet,
+}
