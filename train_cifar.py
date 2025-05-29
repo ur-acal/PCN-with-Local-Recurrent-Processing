@@ -8,8 +8,15 @@ import torch.nn.functional as F
 import numpy as np
 
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
-from pc_model import PCNet
+from pc_model import PCNet, PCNetWithMiddleConv
 from trainer import TrainerCiFar
+
+PCN_CLASSES = {
+    "PCNet": PCNet,
+    "PCNetWithMiddleConv": PCNetWithMiddleConv,
+    None: PCNet,
+}
+
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
@@ -47,6 +54,8 @@ def get_args():
     p.add_argument("--bypass",        type=str2bool, default=False)
     p.add_argument("--relu_bp", type=str2bool, default=False)
     p.add_argument("--use_pc", type=str2bool, default=True)
+    p.add_argument("--first_bn", type=str2bool, default=True)
+    p.add_argument("--pcn", type=str, choices=["PCNet", "PCNetWithMiddleConv", None], default=None)
     p.add_argument("--tie_method", type=str, choices=["kernel_random", "random", None], default=None,
                    help="method used to select positions in the kernel to tie between FF/FB")
     p.add_argument("--tie_frac", type=float, default=1.0,
@@ -56,11 +65,16 @@ def get_args():
 
 def _constr_model_name(args, rep=1):
     name_dict = {str(True): "with", str(False): "no"}
-    model_name = 'PPCN' + '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_'+ str(args.weight_decay) + 'WD_' \
-                 + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
-                 + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
-                 + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
-                 + str(len(args.inp_channels)) + "Layers"
+    model_name = 'PPCN'
+    if args.pcn is not None and args.pcn != "PCNet":
+        model_name = model_name + "_" + args.pcn
+    if not args.first_bn:
+        model_name = model_name + "_No1stBN"
+    model_name += '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_'+ str(args.weight_decay) + 'WD_' \
+                  + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
+                  + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
+                  + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
+                  + str(len(args.inp_channels)) + "Layers"
 
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
@@ -103,6 +117,7 @@ def main():
         "bypass": args.bypass,
         "relu_bp": args.relu_bp,
         "use_pc": args.use_pc,
+        "first_bn": args.first_bn,
     }
 
     # Select PCConv Module to use
@@ -112,8 +127,12 @@ def main():
         model_args.update({"tie_method": args.tie_method, "tie_frac": args.tie_frac})
     model_args.update({"pc_conv_layer": pc_conv_mod})
 
+    # Select PCNet model to use
+    pcn_model = PCN_CLASSES.get(args.pcn, PCNet)
+    logging.warning("----- Using PCN model: {} -----".format(pcn_model.__name__))
+
     # build model
-    model = PCNet(**model_args)
+    model = pcn_model(**model_args)
 
     total_params = sum(p.numel() for p in model.parameters())
     model_name = get_model_name(args)

@@ -27,6 +27,7 @@ class PCNet(nn.Module):
             [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], layer_idx=i, **kwargs) for i in range(self.num_layers)])
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.num_layers)])
         if not first_bn:
+            logging.warning("Drop the first BN layer")
             self.BNs[0] = nn.Identity()
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
@@ -129,3 +130,27 @@ class PCNet(nn.Module):
         }
         return init_args
 
+
+class PCNetWithMiddleConv(PCNet):
+    def __init__(self, mid_kernel=1, **kwargs):
+        super().__init__(**kwargs)
+        self.mid_convs = nn.ModuleList([
+            nn.Conv2d(self.ics[i], self.ics[i], kernel_size=mid_kernel,
+                      stride=1, padding=0, bias=False) for i in range(self.num_layers)
+        ])
+        self.mid_convs.append(
+            nn.Conv2d(self.ocs[-1], self.ocs[-1], kernel_size=mid_kernel, stride=1, padding=0, bias=False))
+
+    def forward(self, x):
+        for i in range(self.num_layers):
+            x = self.mid_convs[i](x)
+            x = self.BNs[i](x)
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
+            if self.max_pool[i]:
+                x = self.max_pool2d(x)
+
+        # classifier
+        out = F.avg_pool2d(self.relu(self.BNend(self.mid_convs[-1](x))), x.size(-1))
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
