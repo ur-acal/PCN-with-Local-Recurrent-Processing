@@ -14,8 +14,8 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0529_fuse_bn_middle_conv.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0529_fuse_bn_middle_conv.log"
+MASTER_LOG="$BASE_LOGDIR/master_0529_fuse_bn_middle_conv_noise_conv_only.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0529_fuse_bn_middle_conv_noise_conv_only.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
@@ -48,9 +48,9 @@ run_model(){
     --noise_to_bp     "$NOISE_TO_BP" \
     --tie_noise       "false" \
     --tie_noise_bp    "false" \
-    --noise_to_bn     "true" \
-    --noise_to_linear "true" \
-    --test_only       "true" \
+    --noise_to_bn     "false" \
+    --noise_to_linear "false" \
+    --fuse_bn         "false" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model

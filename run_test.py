@@ -50,6 +50,8 @@ def parse_args():
                         default=False, help="Noise to batch norm for PCN")
     parser.add_argument("--noise_to_linear", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False, help="Noise to linear layer for PCN")
+    parser.add_argument("--fuse_bn", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=True, help="Fuse batch norm into conv")
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -86,7 +88,7 @@ def run_test():
             net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                           pc_conv_layer=PCConvNoisy, data_parallel=False,
                                           noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                                          **noisy_params)
+                                          fuse_bn=args.fuse_bn, **noisy_params)
             net_.eval()
             _ = net_(next(iter(test_dataloader))[0].to(device)[:128])
             logging.info("Output shape: {}".format(_.shape))
@@ -110,7 +112,8 @@ def run_test():
         run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
                              model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
                              device=device, noisy_trials=20, model_name=args.model_name,
-                             noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear, **noisy_params)
+                             noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
+                             fuse_bn=args.fuse_bn, **noisy_params)
 
 if __name__ == "__main__":
     run_test()

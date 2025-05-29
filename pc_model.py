@@ -102,6 +102,7 @@ class PCNet(nn.Module):
         with torch.no_grad():
             for _name, _p in self.named_parameters():
                 if "conv" in _name.lower() and "pc" not in _name.lower():
+                    log.info("Adding noise to conv layer: {}".format(_name))
                     self._apply_noise(_p)
                 if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to batch norm")

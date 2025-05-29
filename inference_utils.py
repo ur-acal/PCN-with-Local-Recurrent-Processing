@@ -158,7 +158,7 @@ def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PCNe
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
-                         noise_to_bn=False, noise_to_linear=False, **kwargs):
+                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, **kwargs):
     noise_acc = {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
@@ -168,7 +168,8 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             params_ = deepcopy(kwargs)
             params_.update({"noise_level": noise_level})
             net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
-                                          noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear, **params_)
+                                          noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
+                                          fuse_bn=fuse_bn, **params_)
             net_.eval()
             total = 0
             correct = 0
