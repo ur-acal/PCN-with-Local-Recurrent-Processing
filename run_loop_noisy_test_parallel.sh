@@ -14,25 +14,26 @@ export NOISE_TO_BP=true
 NOISE_TO_BN_VALUES=("true" "false")
 NOISE_TO_LINEAR_VALUES=("true" "false")
 
-#######################################################
-# change the log names here to identify each run
-#######################################################
 export BASE_LOGDIR="./logs/noisy_test"
 # MASTER_LOG and JOB_LOG will be set per noise combination
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_withRelu_5Layers_2REP" # retrained baseline
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # 7 layer baseline
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_4REP"
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_4REP"
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_3REP"
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_4REP"
 )
 
 # ─────────────── prepare logs ───────────────
 mkdir -p "$BASE_LOGDIR"
-for name in "${MODEL_NAMES[@]}"; do
-  mkdir -p "$BASE_LOGDIR/$name"
-  > "$BASE_LOGDIR/$name/job.log"
+for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
+  for noise_to_linear in "${NOISE_TO_LINEAR_VALUES[@]}"; do
+    for name in "${MODEL_NAMES[@]}"; do
+      mkdir -p "$BASE_LOGDIR/${name}_bn_${noise_to_bn}_linear_${noise_to_linear}"
+      > "$BASE_LOGDIR/${name}_bn_${noise_to_bn}_linear_${noise_to_linear}/job.log"
+    done
+  done
 done
 
 # ─────────────── helper function ───────────────
@@ -57,8 +58,8 @@ run_model(){
     --noise_to_bn     "$noise_to_bn" \
     --noise_to_linear "$noise_to_linear" \
     --fuse_bn         "$noise_to_bn" \
-    --diff_noise      "true" \
-    2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
+    --diff_noise      "false" \
+    2>&1 | tee -a "$BASE_LOGDIR/${name}_bn_${noise_to_bn}_linear_${noise_to_linear}/job.log"
 }
 export -f run_model
 
@@ -72,8 +73,8 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
     ##########################################################################################
     # Modify log name here before each run
     ##########################################################################################
-    MASTER_LOG="$BASE_LOGDIR/master_diff_noise_0529_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
-    JOB_LOG="$BASE_LOGDIR/parallel_diff_noise_0529_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    MASTER_LOG="$BASE_LOGDIR/master_mid_conv_ker_3_0530_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    JOB_LOG="$BASE_LOGDIR/parallel_mid_conv_ker_3_0530_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
 
     > "$MASTER_LOG"
     > "$JOB_LOG"
@@ -82,7 +83,7 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
 
     # ─────────────── run in parallel ───────────────
     parallel \
-      --jobs 2 \
+      --jobs 4 \
       --joblog "$JOB_LOG" \
       --keep-order \
       run_model {1} "$noise_to_bn" "$noise_to_linear" \
@@ -95,7 +96,7 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
     for name in "${MODEL_NAMES[@]}"; do
       printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
       if ! grep -A 11 "Final Result " \
-                "$BASE_LOGDIR/$name/job.log" >>"$MASTER_LOG"; then
+                "$BASE_LOGDIR/${name}_bn_${noise_to_bn}_linear_${noise_to_linear}/job.log" >>"$MASTER_LOG"; then
         echo "[Final Result not found]" >>"$MASTER_LOG"
       fi
       printf '\n\n' >>"$MASTER_LOG"
