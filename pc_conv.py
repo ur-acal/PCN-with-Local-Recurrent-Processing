@@ -83,7 +83,7 @@ class PCConvNoisy(nn.Module):
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
                  relu_bp=False, use_pc=True, # below are parameters in Noisy PCConv only
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
-                 noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False):
+                 noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False):
         super().__init__()
         log.info("Initializing PC layer {} with noise level: {}".format(layer_idx, noise_level))
         self.noise_level = noise_level
@@ -118,6 +118,7 @@ class PCConvNoisy(nn.Module):
             self.bypass = self.FFconv
 
         # noise related
+        self.diff_noise = diff_noise
         self.tie_noise = tie_noise
         self.tie_noise_bp = tie_noise_bp
         self.noise_ff_matrix, self.noise_fb_matrix, self.noise_bp_matrix = None, None, None
@@ -171,10 +172,19 @@ class PCConvNoisy(nn.Module):
                 y = y + self.relu(self.bypass(x))
         return y
 
+    def _gen_noisy_weight(self, p):
+        noise_ = torch.randn_like(p, device=p.device,
+                                  requires_grad=False) * (0.0 if self.noise_level is None else self.noise_level)
+        return p * (1 + noise_)
+
     def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
         # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
         # of the model and before calling forward
         for _ in range(self.cls):
+            if self.diff_noise:
+                log.info("Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
             if self.relu_between:
                 log.info("USE ReLU between FF/FB")
                 error = self.relu(x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))

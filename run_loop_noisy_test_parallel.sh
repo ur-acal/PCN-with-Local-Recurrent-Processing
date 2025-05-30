@@ -24,18 +24,8 @@ export BASE_LOGDIR="./logs/noisy_test"
 MODEL_NAMES=(
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_withRelu_5Layers_2REP" # retrained baseline
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # 7 layer baseline
-#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_5Layers_1REP" # 5 layer no relu
-#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_withRelu_9Layers_2REP" # newly added
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
-#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_noRelu_7Layers_2REP"
   "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
-#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_noRelu_7Layers_2REP"
-#  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_noRelu_7Layers_2REP"
-#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_noRelu_9Layers_2REP" # no log before
-#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_withBPtied_withBP_withRelu_9Layers_2REP"
-#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_withBP_noRelu_9Layers_2REP"
-#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_noRelu_9Layers_2REP" # no log before
-#  "PPCN_5CLS_1.0LRPC_0.001WD_withTied_noBPtied_noBP_withRelu_9Layers_2REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -50,7 +40,9 @@ run_model(){
   local name="$1"
   local noise_to_bn="$2"
   local noise_to_linear="$3"
-
+  ########################################
+  # only fuse_bn when noise is added to bn
+  ########################################
   set -o pipefail
   python -u run_test.py \
     --model_name      "$name" \
@@ -64,6 +56,8 @@ run_model(){
     --tie_noise_bp    "false" \
     --noise_to_bn     "$noise_to_bn" \
     --noise_to_linear "$noise_to_linear" \
+    --fuse_bn         "$noise_to_bn" \
+    --diff_noise      "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
@@ -75,8 +69,11 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
 #      continue
 #    fi
 
-    MASTER_LOG="$BASE_LOGDIR/master_0526_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
-    JOB_LOG="$BASE_LOGDIR/parallel_0526_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    ##########################################################################################
+    # Modify log name here before each run
+    ##########################################################################################
+    MASTER_LOG="$BASE_LOGDIR/master_diff_noise_0529_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    JOB_LOG="$BASE_LOGDIR/parallel_diff_noise_0529_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
 
     > "$MASTER_LOG"
     > "$JOB_LOG"
@@ -85,7 +82,7 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
 
     # ─────────────── run in parallel ───────────────
     parallel \
-      --jobs 4 \
+      --jobs 2 \
       --joblog "$JOB_LOG" \
       --keep-order \
       run_model {1} "$noise_to_bn" "$noise_to_linear" \

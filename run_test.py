@@ -50,6 +50,8 @@ def parse_args():
                         default=False, help="Noise to batch norm for PCN")
     parser.add_argument("--noise_to_linear", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False, help="Noise to linear layer for PCN")
+    parser.add_argument("--diff_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="If True, set different noise for each FF/FB call in recurrence")
     parser.add_argument("--fuse_bn", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True, help="Fuse batch norm into conv")
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
@@ -64,7 +66,7 @@ def run_test():
     if args.test_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
         logging.basicConfig(level=logging.INFO)
-    noisy_args = ["w_type", "noise_to_ff", "noise_to_bp", "tie_noise", "tie_noise_bp"] # skip plotting for noisy exp
+    noisy_args = ["w_type", "noise_to_ff", "noise_to_bp", "tie_noise", "tie_noise_bp", "diff_noise"] # skip plotting for noisy exp
     logging.warning("Running test with parameters:")
     noisy_params = {}
     for name, val in vars(args).items():

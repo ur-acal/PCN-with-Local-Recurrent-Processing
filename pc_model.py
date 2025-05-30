@@ -135,17 +135,19 @@ class PCNet(nn.Module):
 
 
 class PCNetWithMiddleConv(PCNet):
-    def __init__(self, mid_kernel=1, **kwargs):
+    def __init__(self, mid_kernel=3, **kwargs):
         super().__init__(**kwargs)
         self.mid_convs = nn.ModuleList([
             nn.Conv2d(self.ics[i], self.ics[i], kernel_size=mid_kernel,
-                      stride=1, padding=0, bias=False) for i in range(self.num_layers)
+                      stride=1, padding=(mid_kernel-1)//2, bias=False) for i in range(self.num_layers)
         ])
         self.mid_convs.append(
-            nn.Conv2d(self.ocs[-1], self.ocs[-1], kernel_size=mid_kernel, stride=1, padding=0, bias=False))
+            nn.Conv2d(self.ocs[-1], self.ocs[-1], kernel_size=mid_kernel,
+                      stride=1, padding=(mid_kernel-1)//2, bias=False))
 
     def forward(self, x):
         for i in range(self.num_layers):
+            log.info("layer {} shape: {}".format(i, x.shape))
             x = self.mid_convs[i](x)
             x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
