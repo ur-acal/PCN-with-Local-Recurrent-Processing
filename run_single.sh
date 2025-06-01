@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="pcn_with_mid_conv_and_kernel_sz_3_0529"
+EXP="pcn_no_bn_0530"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -10,13 +10,13 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
-  --pcn           "PCNetWithMiddleConv" \
+  --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_7l_baseline.log"
 
 python train_cifar.py \
@@ -25,13 +25,13 @@ python train_cifar.py \
   --inp_channels  3  32 64 64  128 \
   --out_channels  32 64 64 128 128 \
   --max_pool      0  1  0  1   0 \
-  --lr_pc         1 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
-  --pcn           "PCNetWithMiddleConv" \
+  --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_5l_baseline.log"
 
 python train_cifar.py \
@@ -40,13 +40,13 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "false" \
-  --pcn           "PCNetWithMiddleConv" \
+  --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_No_2.log"
 
 python train_cifar.py \
@@ -55,13 +55,13 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "true" \
   --relu_between  "true" \
   --bypass        "true" \
-  --pcn           "PCNetWithMiddleConv" \
+  --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_No_6.log"
 
 #python train_cifar.py \

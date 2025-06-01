@@ -41,13 +41,12 @@ class PCNet(nn.Module):
 
     def forward(self, x):
         for i in range(self.num_layers):
-            x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
 
         # classifier
-        out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
+        out = F.avg_pool2d(self.relu(x), x.size(-1))
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out

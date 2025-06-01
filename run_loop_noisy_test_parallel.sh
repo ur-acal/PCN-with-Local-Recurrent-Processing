@@ -19,10 +19,10 @@ export BASE_LOGDIR="./logs/noisy_test"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_4REP"
-  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_4REP"
-  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_3REP"
-  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_4REP"
+  "PPCN_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_1REP"
+  "PPCN_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_1REP"
+  "PPCN_5CLS_0.06LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP"
+  "PPCN_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -73,8 +73,8 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
     ##########################################################################################
     # Modify log name here before each run
     ##########################################################################################
-    MASTER_LOG="$BASE_LOGDIR/master_mid_conv_ker_3_0530_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
-    JOB_LOG="$BASE_LOGDIR/parallel_mid_conv_ker_3_0530_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    MASTER_LOG="$BASE_LOGDIR/master_no_bn_0531_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    JOB_LOG="$BASE_LOGDIR/parallel_no_bn_0531_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
 
     > "$MASTER_LOG"
     > "$JOB_LOG"
@@ -83,7 +83,7 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
 
     # ─────────────── run in parallel ───────────────
     parallel \
-      --jobs 4 \
+      --jobs 2 \
       --joblog "$JOB_LOG" \
       --keep-order \
       run_model {1} "$noise_to_bn" "$noise_to_linear" \
