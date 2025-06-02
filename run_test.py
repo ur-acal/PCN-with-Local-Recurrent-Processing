@@ -11,7 +11,7 @@ from tqdm import tqdm
 from copy import deepcopy
 
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
-from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
+from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, expand_and_save_weights, plot_layer_pcn_loss, run_noise_experiment
 
 
@@ -54,6 +54,8 @@ def parse_args():
                         default=False, help="If True, set different noise for each FF/FB call in recurrence")
     parser.add_argument("--fuse_bn", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True, help="Fuse batch norm into conv")
+    parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
+                   default=None)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -76,6 +78,10 @@ def run_test():
     noisy_params["weight"] = os.path.join(args.weight, args.model_name) if expand_weights else None
     # noise_level and plot_path are passed in separately when calling the plot function or noise_exp function
 
+    # Get pc_conv_layer to use
+    pc_conv = PC_CONV_CLASS.get(args.pc_conv, PCConvNoisy)
+    logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     test_dataloader = get_test_data()
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
@@ -88,31 +94,32 @@ def run_test():
             noisy_params["noise_level"] = 0.4
             noisy_params["weight"] = None
             net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
-                                          pc_conv_layer=PCConvNoisy, data_parallel=False,
+                                          pc_conv_layer=pc_conv, data_parallel=False,
                                           noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                           fuse_bn=args.fuse_bn, **noisy_params)
             net_.eval()
             _ = net_(next(iter(test_dataloader))[0].to(device)[:128])
             logging.info("Output shape: {}".format(_.shape))
+            logging.info(_)
             exit(0)
 
         # works with saved init_args
         if expand_weights:
             expand_and_save_weights(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
-                                    model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                                    model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
                                     noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                     weight_dir=args.weight, model_name=args.model_name)
         # plot_path specified inside
         if loss_plot:
             plot_layer_pcn_loss(next(iter(test_dataloader))[0], model_path=ckpt_path, device=device,
-                                model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                                model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
                                 noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                 loss_plot_dir=args.plot_path, model_name=args.model_name)
 
         # specify noise level inside, plot path omitted
         noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
         run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
-                             model_struct=PCNet, pc_conv_layer=PCConvNoisy, data_parallel=False,
+                             model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
                              device=device, noisy_trials=20, model_name=args.model_name,
                              noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                              fuse_bn=args.fuse_bn, **noisy_params)

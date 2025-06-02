@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="pcn_with_mid_conv_and_kernel_sz_3_0529"
+EXP="plain_ff_fb_res_pcn_0601"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -16,8 +16,39 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
-  --pcn           "PCNetWithMiddleConv" \
-  2>&1 | tee "${LOGDIR}/train_middle_conv_7l_baseline.log"
+  --pc_conv       "PlainFFFBConvResFixedX" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_7l_baseline.log"
+
+python train_cifar.py \
+  --optim         "SGD" \
+  --num_epochs    150 \
+  --inp_channels  3  32 32 64 64  128 128 \
+  --out_channels  32 32 64 64 128 128 128 \
+  --max_pool      0  0  1  0  1   0   0   \
+  --lr_pc         1 \
+  --cls           5 \
+  --tie_weights   "false" \
+  --tie_bp        "false" \
+  --relu_between  "true" \
+  --bypass        "true" \
+  --pc_conv       "PlainFFFBConvRes" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_7l_baseline.log"
+
+# 5l-baseline
+python train_cifar.py \
+  --optim         "SGD" \
+  --num_epochs    150 \
+  --inp_channels  3  32 64 64  128 \
+  --out_channels  32 64 64 128 128 \
+  --max_pool      0  1  0  1   0 \
+  --lr_pc         1 \
+  --cls           5 \
+  --tie_weights   "false" \
+  --tie_bp        "false" \
+  --relu_between  "true" \
+  --bypass        "true" \
+  --pc_conv       "PlainFFFBConvResFixedX" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_5l_baseline.log"
 
 python train_cifar.py \
   --optim         "SGD" \
@@ -31,8 +62,24 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
-  --pcn           "PCNetWithMiddleConv" \
-  2>&1 | tee "${LOGDIR}/train_middle_conv_5l_baseline.log"
+  --pc_conv       "PlainFFFBConvRes" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_5l_baseline.log"
+
+# No 2
+python train_cifar.py \
+  --optim         "SGD" \
+  --num_epochs    150 \
+  --inp_channels  3  32 32 64 64  128 128 \
+  --out_channels  32 32 64 64 128 128 128 \
+  --max_pool      0  0  1  0  1   0   0   \
+  --lr_pc         1 \
+  --cls           5 \
+  --tie_weights   "false" \
+  --tie_bp        "false" \
+  --relu_between  "true" \
+  --bypass        "false" \
+  --pc_conv       "PlainFFFBConvResFixedX" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_No_2.log"
 
 python train_cifar.py \
   --optim         "SGD" \
@@ -46,8 +93,24 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "false" \
-  --pcn           "PCNetWithMiddleConv" \
-  2>&1 | tee "${LOGDIR}/train_middle_conv_No_2.log"
+  --pc_conv       "PlainFFFBConvRes" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2.log"
+
+# No 6
+python train_cifar.py \
+  --optim         "SGD" \
+  --num_epochs    150 \
+  --inp_channels  3  32 32 64 64  128 128 \
+  --out_channels  32 32 64 64 128 128 128 \
+  --max_pool      0  0  1  0  1   0   0   \
+  --lr_pc         1 \
+  --cls           5 \
+  --tie_weights   "false" \
+  --tie_bp        "true" \
+  --relu_between  "true" \
+  --bypass        "true" \
+  --pc_conv       "PlainFFFBConvResFixedX" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_No_6.log"
 
 python train_cifar.py \
   --optim         "SGD" \
@@ -61,8 +124,8 @@ python train_cifar.py \
   --tie_bp        "true" \
   --relu_between  "true" \
   --bypass        "true" \
-  --pcn           "PCNetWithMiddleConv" \
-  2>&1 | tee "${LOGDIR}/train_middle_conv_No_6.log"
+  --pc_conv       "PlainFFFBConvRes" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_6.log"
 
 #python train_cifar.py \
 #  --optim         "SGD" \
