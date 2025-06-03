@@ -11,7 +11,7 @@ export NOISE_TO_FF=true
 export NOISE_TO_BP=true
 
 # ─────────────── noise toggles ───────────────
-NOISE_TO_BN_VALUES=("false")
+NOISE_TO_BN_VALUES=("true" "false")
 NOISE_TO_LINEAR_VALUES=("true" "false")
 
 export BASE_LOGDIR="./logs/noisy_test"
@@ -19,10 +19,10 @@ export BASE_LOGDIR="./logs/noisy_test"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_1REP"
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_1REP"
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP"
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP"
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_1REP" # retrained baseline
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_1REP" # No 2
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # No 6
+  "PPCN_PCNetWithMiddleConv_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # 7 layer baseline
 )
 
 # ─────────────── prepare logs ───────────────
@@ -58,8 +58,7 @@ run_model(){
     --noise_to_bn     "$noise_to_bn" \
     --noise_to_linear "$noise_to_linear" \
     --fuse_bn         "$noise_to_bn" \
-    --pc_conv         "PlainFFFBConvResFixedXNoisy" \
-    --diff_noise      "false" \
+    --diff_noise      "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_bn_${noise_to_bn}_linear_${noise_to_linear}/job.log"
 }
 export -f run_model
@@ -74,8 +73,8 @@ for noise_to_bn in "${NOISE_TO_BN_VALUES[@]}"; do
     ##########################################################################################
     # Modify log name here before each run
     ##########################################################################################
-    MASTER_LOG="$BASE_LOGDIR/master_plain_ff_fb_res_fixX_0602_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
-    JOB_LOG="$BASE_LOGDIR/parallel_plain_ff_fb_res_fixX_0602_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    MASTER_LOG="$BASE_LOGDIR/master_diff_noise_fuse_bn_mid_conv_0602_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
+    JOB_LOG="$BASE_LOGDIR/parallel_diff_noise_fuse_bn_mid_conv_0602_job_bn_${noise_to_bn}_linear_${noise_to_linear}.log"
 
     > "$MASTER_LOG"
     > "$JOB_LOG"
