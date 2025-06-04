@@ -13,6 +13,7 @@ from copy import deepcopy
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, expand_and_save_weights, plot_layer_pcn_loss, run_noise_experiment
+from inference_utils import run_lr_cls_experiment
 
 
 def get_test_data():
@@ -56,6 +57,8 @@ def parse_args():
                         default=True, help="Fuse batch norm into conv")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
+    parser.add_argument("--noisy_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=True)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -116,13 +119,23 @@ def run_test():
                                 noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                 loss_plot_dir=args.plot_path, model_name=args.model_name)
 
-        # specify noise level inside, plot path omitted
-        noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
-        run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
-                             model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
-                             device=device, noisy_trials=20, model_name=args.model_name,
-                             noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                             fuse_bn=args.fuse_bn, **noisy_params)
+        # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
+        noise_level_list_ = [0, 0.1, .20, .30, .40]
+        noisy_trials = 20
+        if not args.noisy_test:
+            scale_factor = [1, 2, 4, 6, 8, 10, 12, 16]
+            _ = run_lr_cls_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
+                                      model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
+                                      device=device, noisy_trials=noisy_trials, model_name=args.model_name,
+                                      noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
+                                      fuse_bn=args.fuse_bn, scale_factor=scale_factor, **noisy_params)
+        else:
+            # specify noise level inside, plot path omitted
+            _ = run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
+                                     model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
+                                     device=device, noisy_trials=noisy_trials, model_name=args.model_name,
+                                     noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
+                                     fuse_bn=args.fuse_bn, **noisy_params)
 
 if __name__ == "__main__":
     run_test()

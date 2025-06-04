@@ -85,7 +85,8 @@ class PCConvNoisy(nn.Module):
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
                  noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False):
         super().__init__()
-        log.info("Initializing PC layer {} with noise level: {}".format(layer_idx, noise_level))
+        log.warning("Initializing PC layer {} with noise level: {}, cycles: {}, LR PC: {}".format(
+            layer_idx, noise_level, cls, lr))
         self.noise_level = noise_level
         self.padding = padding
         self.stride = stride

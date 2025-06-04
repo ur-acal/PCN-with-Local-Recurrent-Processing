@@ -181,5 +181,4 @@ PC_CONV_CLASS = {
     "PlainFFFBConvResNoisy": PlainFFFBConvResNoisy,
     "PlainFFFBConvResFixedXNoisy": PlainFFFBConvResFixedXNoisy,
     "PCConvDS": PCConvDS,
-    None: PCConv,
 }

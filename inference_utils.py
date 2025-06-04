@@ -1,9 +1,12 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
 import os
 import inspect
 import sys
+import pickle
+import matplotlib.pyplot as plt
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -76,7 +79,8 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
     if "pc_conv_layer" in collect_init_args(model_struct) and pc_conv_layer is not None:
         model_args["pc_conv_layer"] = pc_conv_layer
 
-    init_kwargs = {**kwargs, **model_args, **mod_args}
+    init_kwargs = {**model_args, **mod_args}
+    init_kwargs.update(kwargs) # overwritten the loaded args with passed in kwargs (if overlapping keys exist)
 
     net_ = model_struct(**init_kwargs)
     net_ = net_.to(device)
@@ -156,6 +160,77 @@ def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PCNe
     log.warning("----- Loss is plotted -----")
 
 
+def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
+                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
+                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
+                          scale_factor=None, plot_path="loss_plot/lr_cls_acc", **kwargs):
+    cycles, lr_pc = 5.0, 1.0 # default setting
+    if isinstance(model_name, str):
+        cycles = float(model_name.split("CLS")[0].split("_")[-1])
+        lr_pc = float(model_name.split("LRPC")[0].split("_")[-1])
+    log.warning("----- Model cycles: {}, LR PC: {} -----".format(cycles, lr_pc))
+    scale_factor = scale_factor if scale_factor is not None else [1, 2, 4, 8, 10, 16, 20, 32, 50]
+    sf_acc_dict, cls_list = {}, []
+    for _sf in scale_factor:
+        cur_cls, cur_lr_pc = int(cycles * _sf), lr_pc / _sf
+        assert np.allclose(cur_cls * cur_lr_pc, cycles * lr_pc)
+        log.warning("----- Current cycles: {}, LR PC: {} -----".format(cur_cls, cur_lr_pc))
+        params_ = deepcopy(kwargs)
+        params_.update({"cls": cur_cls, "lr": cur_lr_pc})
+        cur_noise_acc = run_noise_experiment(model_path, test_loader, noise_level_list=noise_level_list,
+                                 model_struct=model_struct, pc_conv_layer=pc_conv_layer, data_parallel=data_parallel,
+                                 device=device, noisy_trials=noisy_trials, model_name=model_name,
+                                 noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
+                                 fuse_bn=fuse_bn, **params_)
+        sf_acc_dict[cur_cls] = [cur_noise_acc[_nl] for _nl in noise_level_list]
+        cls_list.append(cur_cls)
+    noise_acc_dict = {}
+    log.warning("-------- Final Result --------")
+    log.warning("-------- Model name: {} --------".format(model_name))
+    for i, _noise_level in enumerate(noise_level_list):
+        noise_acc_dict[_noise_level] = (cls_list, [sf_acc_dict[_][i] for _ in cls_list])
+        log.warning("Noise level: {}, cycles list: {}, Acc: {}".format(_noise_level, cls_list,
+                                                          ["{:.2f}%".format(_) for _ in noise_acc_dict[_noise_level][1]]))
+    plot_acc_diff_cls(noise_acc_dict, plot_path, model_name, cycles, lr_pc)
+    log.warning("-------- Scaling cycles and lr experiment finished --------")
+
+
+def plot_acc_diff_cls(noise_acc_dict, plot_path, model_name, cycles, lr_pc):
+    save_dir = os.path.join(plot_path, model_name)
+    os.makedirs(save_dir, exist_ok=True)
+    plt.rcParams['font.family'] = 'Times New Roman'
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    noise_level_list = list(noise_acc_dict.keys())
+    cls_list = noise_acc_dict[noise_level_list[0]][0]
+
+    for cur_nl in sorted(noise_level_list):
+        cur_tup = noise_acc_dict[cur_nl]
+        label = f"pvt noise level = {cur_nl}"
+        ax.plot(cur_tup[0], cur_tup[1], label=label)
+
+    ax.set_xlabel("Number of cycles")
+    ax.set_ylabel("Accuracy (%)")
+    ax.grid(True)
+
+    # place legend to the right
+    ax.legend(
+        loc='upper left',
+        bbox_to_anchor=(1.02, 1),
+        borderaxespad=0,
+        prop={'family': 'Times New Roman'}
+    )
+    title = "Model trained with cycles = {}, lr pc = {}".format(cycles, lr_pc)
+    ax.set_title(title)
+
+    # make room on the right for the legend
+    fig.tight_layout(rect=(0.0, 0.0, 0.8, 1.0))
+    fig.savefig(os.path.join(str(save_dir), "cls_vs_acc_noiseList_{}_clsList_{}.pdf".format(noise_level_list, cls_list)),
+                format="pdf", bbox_inches="tight")
+    with open(os.path.join(str(save_dir), "noise_acc_dict.pkl"), "wb") as fp:
+        pickle.dump(noise_acc_dict, fp)
+
+
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True, **kwargs):
@@ -196,6 +271,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
     for _nl, _acc in noise_acc.items():
         log.warning("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
     log.warning("-------- Noisy experiment finished --------")
+    return noise_acc
 
 
 if __name__ == '__main__':
