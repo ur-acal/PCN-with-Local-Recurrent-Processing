@@ -7,8 +7,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 
-from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
-from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
+from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv, PlainFFFBConv
+from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
 
 
@@ -49,7 +49,10 @@ def get_args():
     p.add_argument("--relu_bp", type=str2bool, default=False)
     p.add_argument("--use_pc", type=str2bool, default=True)
     p.add_argument("--first_bn", type=str2bool, default=True)
-    p.add_argument("--pcn", type=str, choices=["PCNet", "PCNetWithMiddleConv", None], default=None)
+    p.add_argument("--pcn", type=str, choices=["PCNet", "PCNetWithMiddleConv", None],
+                   default=None)
+    p.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys()) + [None],
+                        default=None)
     p.add_argument("--tie_method", type=str, choices=["kernel_random", "random", None], default=None,
                    help="method used to select positions in the kernel to tie between FF/FB")
     p.add_argument("--tie_frac", type=float, default=1.0,
@@ -62,6 +65,8 @@ def _constr_model_name(args, rep=1):
     model_name = 'PPCN'
     if args.pcn is not None and args.pcn != "PCNet":
         model_name = model_name + "_" + args.pcn
+    elif args.pc_conv is not None:
+        model_name += "_" + args.pc_conv
     if not args.first_bn:
         model_name = model_name + "_No1stBN"
     model_name += '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_'+ str(args.weight_decay) + 'WD_' \
@@ -116,10 +121,13 @@ def main():
 
     # Select PCConv Module to use
     pc_conv_mod = PCConv
-    if args.tie_method is not None:
+    if args.pc_conv is not None:
+        pc_conv_mod = PC_CONV_CLASS.get(args.pc_conv, PCConv)
+    elif args.tie_method is not None:
         pc_conv_mod = PartialTiedPCConv
         model_args.update({"tie_method": args.tie_method, "tie_frac": args.tie_frac})
     model_args.update({"pc_conv_layer": pc_conv_mod})
+    logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv_mod.__name__))
 
     # Select PCNet model to use
     pcn_model = PCN_CLASSES.get(args.pcn, PCNet)
@@ -154,6 +162,7 @@ def main():
     if args.test_only:
         _ = model(next(iter(trainer.train_dataloader))[0].to(trainer.device))
         logging.info("Test model forward only. Exit without training the model.")
+        logging.info("Result: {}".format(_))
         exit(0)
 
     trainer.train()

@@ -4,7 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from pc_conv import PCConv, PCConvNoisy
+from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy
+from pc_conv import PlainFFFBConvRes, PlainFFFBConvResFixedX
+from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
+from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
 
 import logging
@@ -164,4 +167,17 @@ PCN_CLASSES = {
     "PCNet": PCNet,
     "PCNetWithMiddleConv": PCNetWithMiddleConv,
     None: PCNet,
+}
+
+PC_CONV_CLASS = {
+    "PCConv": PCConv,
+    "PlainFFFBConv": PlainFFFBConv,
+    "PlainFFFBConvRes": PlainFFFBConvRes,
+    "PlainFFFBConvResFixedX": PlainFFFBConvResFixedX,
+    # noisy pc conv
+    "PCConvNoisy": PCConvNoisy,
+    "PlainFFFBConvNoisy": PlainFFFBConvNoisy,
+    "PlainFFFBConvResNoisy": PlainFFFBConvResNoisy,
+    "PlainFFFBConvResFixedXNoisy": PlainFFFBConvResFixedXNoisy,
+    "PCConvDS": PCConvDS,
 }

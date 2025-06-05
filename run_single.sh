@@ -16,9 +16,11 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
+  --pc_conv       "PCConv" \
   --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_7l_baseline.log"
 
+# 5l-baseline
 python train_cifar.py \
   --optim         "SGD" \
   --num_epochs    150 \
@@ -31,9 +33,11 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
+  --pc_conv       "PCConv" \
   --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_5l_baseline.log"
 
+# No 2
 python train_cifar.py \
   --optim         "SGD" \
   --num_epochs    150 \
@@ -46,9 +50,11 @@ python train_cifar.py \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "false" \
+  --pc_conv       "PCConv" \
   --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_No_2.log"
 
+# No 6
 python train_cifar.py \
   --optim         "SGD" \
   --num_epochs    150 \
@@ -61,6 +67,7 @@ python train_cifar.py \
   --tie_bp        "true" \
   --relu_between  "true" \
   --bypass        "true" \
+  --pc_conv       "PCConv" \
   --pcn           "PCNet" \
   2>&1 | tee "${LOGDIR}/train_middle_conv_No_6.log"
 

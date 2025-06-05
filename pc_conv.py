@@ -85,7 +85,8 @@ class PCConvNoisy(nn.Module):
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
                  noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False):
         super().__init__()
-        log.info("Initializing PC layer {} with noise level: {}".format(layer_idx, noise_level))
+        log.warning("Initializing PC layer {} with noise level: {}, cycles: {}, LR PC: {}".format(
+            layer_idx, noise_level, cls, lr))
         self.noise_level = noise_level
         self.padding = padding
         self.stride = stride
@@ -344,3 +345,108 @@ class PartialTiedPCConv(PCConv):
             raise NotImplementedError
 
         P.register_parametrization(self.FFconv, "weight", TieSubset(self.FBconv.weight, mask))
+
+
+class PlainFFFBConv(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None):
+        for _ in range(self.cls):
+            if self.relu_between:
+                log.info("Calling PlainFFFB conv; USE ReLU between FF/FB")
+                y = self.relu(self.FFconv(self.relu(self.FBconv(y))))
+            else:
+                log.info("Calling PlainFFFB conv; DO NOT USE ReLU between FF/FB")
+                y = self.FFconv(self.FBconv(y))
+        return y
+
+
+class PlainFFFBConvNoisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
+        # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
+        # of the model and before calling forward
+        for _ in range(self.cls):
+            if self.diff_noise:
+                log.info("Calling PlainFFFB conv; Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            if self.relu_between:
+                log.info("Calling PlainFFFB conv; USE ReLU between FF/FB")
+                y = self.relu(torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))
+                y = self.relu(torch.conv2d(y, self.noisy_ff, padding=self.FFconv.padding))
+            else:
+                log.info("Calling PlainFFFB conv; DO NOT USE ReLU between FF/FB")
+                y = torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
+                y = torch.conv2d(y, self.noisy_ff, padding=self.FFconv.padding)
+        return y
+
+
+class PlainFFFBConvResFixedX(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None, add_x=True):
+        # outside of find_optimal_r, y = self.relu(self.FFconv(x))
+        y = self.lr * self.FBconv(y) + x
+        # now y = x + lr * W_FB(relu(W_FF * x))
+        for _ in range(self.cls - 1):
+            if add_x:
+                log.info("Calling PlainFFFB conv; SAME x used for residual connection.")
+                y = x + self.lr * self.FBconv(self.relu(self.FFconv(y)))
+            else:
+                log.info("Calling PlainFFFB conv; DIFFERENT y used for residual connection.")
+                y = y + self.lr * self.FBconv(self.relu(self.FFconv(y)))
+        y = self.relu(self.FFconv(y))
+        return y
+
+
+class PlainFFFBConvResFixedXNoisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None, add_x=True):
+        # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
+        # of the model and before calling forward
+        y = x + self.lr * torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
+        for _ in range(self.cls - 1):
+            if self.diff_noise:
+                log.info("Calling PlainFFFB conv; Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            if add_x:
+                log.info("Calling PlainFFFB conv; SAME x used for residual connection.")
+                y = x + self.lr * torch.conv_transpose2d(
+                    self.relu(torch.conv2d(y, self.noisy_ff, padding=self.FFconv.padding)),
+                    self.noisy_fb, padding=self.FBconv.padding)
+            else:
+                log.info("Calling PlainFFFB conv; DIFFERENT y used for residual connection.")
+                y = y + self.lr * torch.conv_transpose2d(
+                    self.relu(torch.conv2d(y, self.noisy_ff, padding=self.FFconv.padding)),
+                    self.noisy_fb, padding=self.FBconv.padding)
+        if self.diff_noise:
+            log.info("Calling PlainFFFB conv; Set different noise at each cycle")
+            self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+        y = self.relu(torch.conv2d(y, self.noisy_ff, padding=self.FFconv.padding))
+        return y
+
+
+class PlainFFFBConvRes(PlainFFFBConvResFixedX):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None, add_x=False):
+        y = super().find_optimal_r(x, y, layer_idx, add_x)
+        return y
+
+
+class PlainFFFBConvResNoisy(PlainFFFBConvResFixedXNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None, add_x=False):
+        y = super().find_optimal_r(x, y, layer_idx, w_type_used, use_relu, add_x)
+        return y

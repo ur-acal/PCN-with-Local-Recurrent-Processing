@@ -58,7 +58,7 @@ run_model(){
     --noise_to_bn     "$noise_to_bn" \
     --noise_to_linear "$noise_to_linear" \
     --fuse_bn         "$noise_to_bn" \
-    --diff_noise      "false" \
+    --diff_noise      "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_bn_${noise_to_bn}_linear_${noise_to_linear}/job.log"
 }
 export -f run_model
