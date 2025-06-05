@@ -14,15 +14,15 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0604_cls_lr_noise_conv_linear.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0604_cls_lr_noise_conv_linear.log"
+MASTER_LOG="$BASE_LOGDIR/master_0605_cls_lr_fffb_res_noise_conv_linear.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0605_cls_lr_fffb_res_noise_conv_linear.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withBP_withRelu_5Layers_2REP" # retrained baseline
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_noBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withBP_withRelu_7Layers_2REP"
-  "PPCN_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # 7 layer baseline
+  "PPCN_PlainFFFBConvRes_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_1REP" # retrained baseline
+  "PPCN_PlainFFFBConvRes_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_1REP"
+  "PPCN_PlainFFFBConvRes_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP"
+  "PPCN_PlainFFFBConvRes_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # 7 layer baseline
 )
 
 # ─────────────── prepare logs ───────────────
@@ -52,6 +52,7 @@ run_model(){
     --noise_to_linear "true" \
     --fuse_bn         "false" \
     --noisy_test      "false" \
+    --pc_conv         "PlainFFFBConvResNoisy" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model

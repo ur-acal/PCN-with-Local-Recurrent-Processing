@@ -185,7 +185,7 @@ def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu
         sf_acc_dict[cur_cls] = [cur_noise_acc[_nl] for _nl in noise_level_list]
         cls_list.append(cur_cls)
     noise_acc_dict = {}
-    log.warning("-------- Final Result --------")
+    log.warning("-------- Cycles LR PC experiment finished. Final Result --------")
     log.warning("-------- Model name: {} --------".format(model_name))
     for i, _noise_level in enumerate(noise_level_list):
         noise_acc_dict[_noise_level] = (cls_list, [sf_acc_dict[_][i] for _ in cls_list])

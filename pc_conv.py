@@ -391,15 +391,15 @@ class PlainFFFBConvResFixedX(PCConv):
 
     def find_optimal_r(self, x, y, layer_idx=None, add_x=True):
         # outside of find_optimal_r, y = self.relu(self.FFconv(x))
-        y = self.FBconv(y) + x
-        # now y = x + W_FB(relu(W_FF * x))
+        y = self.lr * self.FBconv(y) + x
+        # now y = x + lr * W_FB(relu(W_FF * x))
         for _ in range(self.cls - 1):
             if add_x:
                 log.info("Calling PlainFFFB conv; SAME x used for residual connection.")
-                y = x + self.FBconv(self.relu(self.FFconv(y)))
+                y = x + self.lr * self.FBconv(self.relu(self.FFconv(y)))
             else:
                 log.info("Calling PlainFFFB conv; DIFFERENT y used for residual connection.")
-                y = y + self.FBconv(self.relu(self.FFconv(y)))
+                y = y + self.lr * self.FBconv(self.relu(self.FFconv(y)))
         y = self.relu(self.FFconv(y))
         return y
 
@@ -411,7 +411,7 @@ class PlainFFFBConvResFixedXNoisy(PCConvNoisy):
     def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None, add_x=True):
         # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
         # of the model and before calling forward
-        y = x + torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
+        y = x + self.lr * torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
         for _ in range(self.cls - 1):
             if self.diff_noise:
                 log.info("Calling PlainFFFB conv; Set different noise at each cycle")
@@ -419,12 +419,12 @@ class PlainFFFBConvResFixedXNoisy(PCConvNoisy):
                 self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
             if add_x:
                 log.info("Calling PlainFFFB conv; SAME x used for residual connection.")
-                y = x + torch.conv_transpose2d(
+                y = x + self.lr * torch.conv_transpose2d(
                     self.relu(torch.conv2d(y, self.noisy_ff, padding=self.FFconv.padding)),
                     self.noisy_fb, padding=self.FBconv.padding)
             else:
                 log.info("Calling PlainFFFB conv; DIFFERENT y used for residual connection.")
-                y = y + torch.conv_transpose2d(
+                y = y + self.lr * torch.conv_transpose2d(
                     self.relu(torch.conv2d(y, self.noisy_ff, padding=self.FFconv.padding)),
                     self.noisy_fb, padding=self.FBconv.padding)
         if self.diff_noise:
