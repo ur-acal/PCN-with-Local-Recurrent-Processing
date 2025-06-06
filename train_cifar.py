@@ -49,7 +49,7 @@ def get_args():
     p.add_argument("--relu_bp", type=str2bool, default=False)
     p.add_argument("--use_pc", type=str2bool, default=True)
     p.add_argument("--first_bn", type=str2bool, default=True)
-    p.add_argument("--pcn", type=str, choices=["PCNet", "PCNetWithMiddleConv", None],
+    p.add_argument("--pcn", type=str, choices=list(PCN_CLASSES.keys()) + [None],
                    default=None)
     p.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys()) + [None],
                         default=None)

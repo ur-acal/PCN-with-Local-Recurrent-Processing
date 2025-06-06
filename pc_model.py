@@ -136,6 +136,26 @@ class PCNet(nn.Module):
         }
         return init_args
 
+class PCNetNoBatchNorm(PCNet):
+    """
+    A No-BatchNorm version of PCNet.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.BNs, self.BNend = None, None
+
+    def forward(self, x):
+        for i in range(self.num_layers):
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
+            if self.max_pool[i]:
+                x = self.max_pool2d(x)
+
+        # classifier
+        out = F.avg_pool2d(self.relu(x), x.size(-1))
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
 
 class PCNetWithMiddleConv(PCNet):
     def __init__(self, mid_kernel=3, **kwargs):
@@ -167,6 +187,7 @@ class PCNetWithMiddleConv(PCNet):
 PCN_CLASSES = {
     "PCNet": PCNet,
     "PCNetWithMiddleConv": PCNetWithMiddleConv,
+    "PCNetNoBatchNorm": PCNetNoBatchNorm,
     None: PCNet,
 }
 

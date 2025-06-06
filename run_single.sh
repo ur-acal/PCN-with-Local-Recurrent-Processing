@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="plain_ff_fb_res_pcn_0601"
+EXP="plain_ff_fb_res_no_bn_pcn_0606"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -10,14 +10,15 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
   --pc_conv       "PlainFFFBConvResFixedX" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_7l_baseline.log"
+  --pcn           "PCNetNoBatchNorm" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fixX_7l_baseline.log"
 
 python train_cifar.py \
   --optim         "SGD" \
@@ -25,13 +26,14 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
   --pc_conv       "PlainFFFBConvRes" \
+  --pcn           "PCNetNoBatchNorm" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_7l_baseline.log"
 
 # 5l-baseline
@@ -41,14 +43,15 @@ python train_cifar.py \
   --inp_channels  3  32 64 64  128 \
   --out_channels  32 64 64 128 128 \
   --max_pool      0  1  0  1   0 \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
   --pc_conv       "PlainFFFBConvResFixedX" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_5l_baseline.log"
+  --pcn           "PCNetNoBatchNorm" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fixX_5l_baseline.log"
 
 python train_cifar.py \
   --optim         "SGD" \
@@ -56,13 +59,14 @@ python train_cifar.py \
   --inp_channels  3  32 64 64  128 \
   --out_channels  32 64 64 128 128 \
   --max_pool      0  1  0  1   0 \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "true" \
   --pc_conv       "PlainFFFBConvRes" \
+  --pcn           "PCNetNoBatchNorm" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_5l_baseline.log"
 
 # No 2
@@ -72,14 +76,15 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "false" \
   --pc_conv       "PlainFFFBConvResFixedX" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_No_2.log"
+  --pcn           "PCNetNoBatchNorm" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fixX_No_2.log"
 
 python train_cifar.py \
   --optim         "SGD" \
@@ -87,13 +92,14 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --relu_between  "true" \
   --bypass        "false" \
   --pc_conv       "PlainFFFBConvRes" \
+  --pcn           "PCNetNoBatchNorm" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_2.log"
 
 # No 6
@@ -103,14 +109,15 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "true" \
   --relu_between  "true" \
   --bypass        "true" \
   --pc_conv       "PlainFFFBConvResFixedX" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_fix_res_No_6.log"
+  --pcn           "PCNetNoBatchNorm" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_fixX_No_6.log"
 
 python train_cifar.py \
   --optim         "SGD" \
@@ -118,13 +125,14 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         1 \
+  --lr_pc         0.02 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "true" \
   --relu_between  "true" \
   --bypass        "true" \
   --pc_conv       "PlainFFFBConvRes" \
+  --pcn           "PCNetNoBatchNorm" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_6.log"
 
 #python train_cifar.py \
