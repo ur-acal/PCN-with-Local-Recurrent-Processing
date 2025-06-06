@@ -16,7 +16,7 @@ class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
-                 learning_rate=0.01, num_epochs=300):
+                 learning_rate=0.01, num_epochs=300, warmup_epoch=5):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -27,10 +27,13 @@ class TrainerCiFar(object):
         self.optimizer = self._get_optimizer(optim_type, lr=learning_rate, weight_decay=weight_decay)
         # Reuse the LR schedule epoch as before
         # Todo: Change the scheduler to some more flexible one
+        if warmup_epoch > 0:
+            self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.1, total_iters=10)
         self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer, milestones=[80, 122, 150, 225, 262]) # [150, 225, 262]
         self.loss_fn = loss_fn
         self.batch_size = batch_size
         self.num_epochs = num_epochs
+        self.warmup_epoch = warmup_epoch
 
         self._prepare_cifar()
 
@@ -40,7 +43,7 @@ class TrainerCiFar(object):
         best_model_path = None
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
-            train_loss = self.train_one_epoch()
+            train_loss = self.train_one_epoch(epoch)
             train_acc, _, _ = self.evaluate(self.train_dataloader)
             val_acc, _, _ = self.evaluate(self.val_dataloader)
             train_loss_list.append(train_loss)
@@ -59,7 +62,7 @@ class TrainerCiFar(object):
         print("--------------------------------------------------------------------------")
         return train_loss_list, val_acc_list
 
-    def train_one_epoch(self):
+    def train_one_epoch(self, epoch):
         self.model.train()
         running_loss, n_samples = 0.0, 0
         progress_bar = tqdm.tqdm(enumerate(self.train_dataloader),
@@ -85,9 +88,16 @@ class TrainerCiFar(object):
             # Update the tqdm progress bar with current iteration and loss
             progress_bar.set_postfix({
                 "Iter": f"{_i + 1}/{len(self.train_dataloader)}",
-                "Loss": f"{avg_loss:.4f}"
+                "Loss": f"{avg_loss:.4f}",
+                "LR": self.optimizer.param_groups[0]["lr"]
             })
 
+            if epoch < self.warmup_epoch:
+                self.warmup_scheduler.step()
+
+        if epoch < self.warmup_epoch - 1:
+            self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.1,
+                                                                total_iters=10)
         running_loss /= n_samples
         return running_loss
 

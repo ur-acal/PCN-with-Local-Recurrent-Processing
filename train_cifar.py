@@ -64,8 +64,8 @@ def _constr_model_name(args, rep=1):
     name_dict = {str(True): "with", str(False): "no"}
     model_name = 'PPCN'
     if args.pcn is not None and args.pcn != "PCNet":
-        model_name = model_name + "_" + args.pcn
-    elif args.pc_conv is not None:
+        model_name = args.pcn
+    if args.pc_conv is not None:
         model_name += "_" + args.pc_conv
     if not args.first_bn:
         model_name = model_name + "_No1stBN"
