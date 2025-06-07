@@ -16,7 +16,7 @@ class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
-                 learning_rate=0.01, num_epochs=300, warmup_epoch=5):
+                 learning_rate=0.01, num_epochs=300, warmup_epoch=0):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 

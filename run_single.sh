@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="plain_ff_fb_res_no_bn_pcn_0606"
+EXP="no_bn_0.06LRPC_no_warmup_0607_plain_ff_fb_res"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -26,7 +26,7 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         0.02 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
@@ -43,7 +43,7 @@ python train_cifar.py \
   --inp_channels  3  32 64 64  128 \
   --out_channels  32 64 64 128 128 \
   --max_pool      0  1  0  1   0 \
-  --lr_pc         0.02 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
@@ -59,7 +59,7 @@ python train_cifar.py \
   --inp_channels  3  32 64 64  128 \
   --out_channels  32 64 64 128 128 \
   --max_pool      0  1  0  1   0 \
-  --lr_pc         0.02 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
@@ -76,7 +76,7 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         0.02 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
@@ -92,7 +92,7 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         0.02 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "false" \
@@ -109,7 +109,7 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         0.02 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "true" \
@@ -125,7 +125,7 @@ python train_cifar.py \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
-  --lr_pc         0.02 \
+  --lr_pc         0.06 \
   --cls           5 \
   --tie_weights   "false" \
   --tie_bp        "true" \

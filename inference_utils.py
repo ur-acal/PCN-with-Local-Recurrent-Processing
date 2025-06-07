@@ -172,11 +172,16 @@ def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu
     scale_factor = scale_factor if scale_factor is not None else [1, 2, 4, 8, 10, 16, 20, 32, 50]
     sf_acc_dict, cls_list = {}, []
     for _sf in scale_factor:
-        cur_cls, cur_lr_pc = int(cycles * _sf), lr_pc / _sf
-        assert np.allclose(cur_cls * cur_lr_pc, cycles * lr_pc)
-        log.warning("----- Current cycles: {}, LR PC: {} -----".format(cur_cls, cur_lr_pc))
         params_ = deepcopy(kwargs)
-        params_.update({"cls": cur_cls, "lr": cur_lr_pc})
+        if _sf == 0:
+            log.warning("----- Test without PC recurrent -----")
+            params_.update({"call_pc": False})
+            cur_cls = 0
+        else:
+            cur_cls, cur_lr_pc = int(cycles * _sf), lr_pc / _sf
+            assert np.allclose(cur_cls * cur_lr_pc, cycles * lr_pc)
+            log.warning("----- Current cycles: {}, LR PC: {} -----".format(cur_cls, cur_lr_pc))
+            params_.update({"cls": cur_cls, "lr": cur_lr_pc})
         cur_noise_acc = run_noise_experiment(model_path, test_loader, noise_level_list=noise_level_list,
                                  model_struct=model_struct, pc_conv_layer=pc_conv_layer, data_parallel=data_parallel,
                                  device=device, noisy_trials=noisy_trials, model_name=model_name,
@@ -253,6 +258,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
                 inputs, targets = inputs.to(device), targets.to(device)
                 with torch.no_grad():
                     output_tensor = net_(inputs)
+                    assert not torch.isnan(output_tensor).any()
 
                 # Get the predicted class
                 _, predicted = torch.max(output_tensor, 1)

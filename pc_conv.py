@@ -83,7 +83,8 @@ class PCConvNoisy(nn.Module):
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
                  relu_bp=False, use_pc=True, # below are parameters in Noisy PCConv only
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
-                 noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False):
+                 noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False,
+                 call_pc=True):
         super().__init__()
         log.warning("Initializing PC layer {} with noise level: {}, cycles: {}, LR PC: {}".format(
             layer_idx, noise_level, cls, lr))
@@ -101,6 +102,7 @@ class PCConvNoisy(nn.Module):
         self.relu_between = relu_between
         self.relu_bp = relu_bp
         self.use_pc = use_pc
+        self.call_pc = call_pc
 
         if use_pc:
             log.info("Use PC, initialize FBconv")
@@ -151,7 +153,7 @@ class PCConvNoisy(nn.Module):
             y = self.relu(self.FFconv(x))
 
         # PC recurrent
-        if self.use_pc:
+        if self.use_pc and self.call_pc:
             log.info("USE PC")
             # injected noise inside find_optimal_r
             y = self.find_optimal_r(x, y, self.layer_idx, w_type_used, use_relu)
