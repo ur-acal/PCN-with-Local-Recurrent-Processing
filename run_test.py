@@ -123,8 +123,8 @@ def run_test():
         # noise_level_list_ = [0, 0.1, .20, .30, .40]
         noisy_trials = 20
         if not args.noisy_test:
-            # scale_factor = [1, 2, 4, 6, 8, 10, 12, 16]
-            scale_factor = [0] # Not use PC
+            scale_factor = [1, 2, 4, 6, 8, 10, 12, 16]
+            # scale_factor = [0] # Not use PC
             _ = run_lr_cls_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
                                       model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
                                       device=device, noisy_trials=noisy_trials, model_name=args.model_name,

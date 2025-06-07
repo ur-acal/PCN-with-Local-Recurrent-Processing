@@ -186,11 +186,11 @@ def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu
                                  model_struct=model_struct, pc_conv_layer=pc_conv_layer, data_parallel=data_parallel,
                                  device=device, noisy_trials=noisy_trials, model_name=model_name,
                                  noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
-                                 fuse_bn=fuse_bn, **params_)
+                                 fuse_bn=fuse_bn, cls_scale=int(_sf), **params_)
         sf_acc_dict[cur_cls] = [cur_noise_acc[_nl] for _nl in noise_level_list]
         cls_list.append(cur_cls)
     noise_acc_dict = {}
-    log.warning("-------- Cycles LR PC experiment finished. Final Result --------")
+    log.warning("-------- Cycles LR PC Experiment Result --------")
     log.warning("-------- Model name: {} --------".format(model_name))
     for i, _noise_level in enumerate(noise_level_list):
         noise_acc_dict[_noise_level] = (cls_list, [sf_acc_dict[_][i] for _ in cls_list])
@@ -238,7 +238,7 @@ def plot_acc_diff_cls(noise_acc_dict, plot_path, model_name, cycles, lr_pc):
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
-                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, **kwargs):
+                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, **kwargs):
     noise_acc = {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
@@ -272,7 +272,10 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
         avg_acc = sum(acc_list) / len(acc_list)
         noise_acc[noise_level] = avg_acc
         log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
-    log.warning("-------- Final Result --------")
+    if cls_scale == 1:
+        log.warning("-------- Final Result --------")
+    else:
+        log.warning("-------- Final Result Cycles LR PC Experiment with scale: {} --------".format(cls_scale))
     log.warning("-------- Model name: {} --------".format(model_name))
     for _nl, _acc in noise_acc.items():
         log.warning("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))

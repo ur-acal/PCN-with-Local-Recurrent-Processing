@@ -14,15 +14,15 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0606_cls_lr_fffb_res_fixX_noise_conv_linear.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0606_cls_lr_fffb_fixX_res_noise_conv_linear.log"
+MASTER_LOG="$BASE_LOGDIR/master_0607_ppcn_no_bn_noise_to_all.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0607_ppcn_no_bn_noise_to_all.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_1REP" # retrained baseline
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_1REP"
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP"
-  "PPCN_PlainFFFBConvResFixedX_5CLS_1.0LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_1REP" # 7 layer baseline
+  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_3REP" # retrained baseline
+  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_3REP"
+  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_2REP"
+  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_2REP" # 7 layer baseline
 )
 
 # ─────────────── prepare logs ───────────────
@@ -48,11 +48,11 @@ run_model(){
     --noise_to_bp     "$NOISE_TO_BP" \
     --tie_noise       "false" \
     --tie_noise_bp    "false" \
-    --noise_to_bn     "false" \
+    --noise_to_bn     "true" \
     --noise_to_linear "true" \
     --fuse_bn         "false" \
-    --noisy_test      "false" \
-    --pc_conv         "PlainFFFBConvResFixedXNoisy" \
+    --noisy_test      "true" \
+    --pc_conv         "PCConvNoisy" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
