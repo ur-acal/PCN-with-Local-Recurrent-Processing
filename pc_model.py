@@ -151,7 +151,7 @@ class PCNetNoBatchNorm(PCNet):
                 x = self.max_pool2d(x)
 
         # classifier
-        out = F.avg_pool2d(self.relu(x), x.size(-1))
+        out = F.avg_pool2d(F.relu(x), x.size(-1)) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
