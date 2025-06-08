@@ -26,6 +26,7 @@ def get_args():
     p.add_argument("--weight_decay",  type=float, default=1e-3)
     p.add_argument("--learning_rate", type=float, default=0.01)
     p.add_argument("--num_epochs",    type=int,   default=300)
+    p.add_argument("--warmup_epoch",  type=int,   default=0)
     # PCNet / PCConv args
     p.add_argument("--inp_channels",  type=int, nargs="+", default=[3,  64, 64, 128, 128, 256, 256, 512],
                    help="list of input-channel sizes, e.g. 3 16 32")
@@ -73,6 +74,7 @@ def _constr_model_name(args, rep=1):
                   + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
                   + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
                   + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
+                  + str(args.batch_size) + 'BS_' + str(args.learning_rate) + 'LR_' \
                   + str(len(args.inp_channels)) + "Layers"
 
     if args.tie_method is not None:
@@ -157,6 +159,7 @@ def main():
         loss_fn       = loss_fn,
         learning_rate = args.learning_rate,
         num_epochs    = args.num_epochs,
+        warmup_epoch  = args.warmup_epoch,
     )
 
     if args.test_only:

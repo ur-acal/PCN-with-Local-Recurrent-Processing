@@ -16,7 +16,7 @@ class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
-                 learning_rate=0.01, num_epochs=300, warmup_epoch=0):
+                 learning_rate=0.01, num_epochs=300, warmup_epoch=1):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -28,7 +28,7 @@ class TrainerCiFar(object):
         # Reuse the LR schedule epoch as before
         # Todo: Change the scheduler to some more flexible one
         if warmup_epoch > 0:
-            self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.1, total_iters=10)
+            self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.01, total_iters=100)
         self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer, milestones=[80, 122, 150, 225, 262]) # [150, 225, 262]
         self.loss_fn = loss_fn
         self.batch_size = batch_size
