@@ -141,6 +141,7 @@ class PCNetNoBatchNorm(PCNet):
     A No-BatchNorm version of PCNet.
     """
     def __init__(self, **kwargs):
+        kwargs.update({"zero_init": True})
         super().__init__(**kwargs)
         self.BNs, self.BNend = None, None
 

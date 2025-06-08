@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 class PCConv(nn.Module):
     def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
-                 relu_bp=False, use_pc=True):
+                 relu_bp=False, use_pc=True, zero_init=False):
         super().__init__()
         self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride, padding, bias=bias)
         self.FBconv = None
@@ -34,6 +34,9 @@ class PCConv(nn.Module):
         if use_pc:
             log.info("Use PC, initialize FBconv")
             self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
+            if zero_init:
+                log.info("Initialize FBconv with zero weight")
+                nn.init.constant_(self.FBconv.weight, 0)
         if tie_weights and use_pc:
             log.info("Tie the weights of FF and FB")
             self.FFconv.weight = self.FBconv.weight
@@ -81,7 +84,7 @@ class PCConv(nn.Module):
 class PCConvNoisy(nn.Module):
     def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
-                 relu_bp=False, use_pc=True, # below are parameters in Noisy PCConv only
+                 relu_bp=False, use_pc=True, zero_init=False, # below are parameters in Noisy PCConv only
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
                  noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False,
                  call_pc=True):
@@ -107,6 +110,9 @@ class PCConvNoisy(nn.Module):
         if use_pc:
             log.info("Use PC, initialize FBconv")
             self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
+            if zero_init:
+                log.info("Initialize FBconv with zero weight")
+                nn.init.constant_(self.FBconv.weight, 0)
         self.tie_weights = tie_weights
         if tie_weights and use_pc:
             log.info("Tie the weights of FF and FB")
