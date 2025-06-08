@@ -14,15 +14,15 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0607_ppcn_no_bn_noise_to_all.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0607_ppcn_no_bn_noise_to_all.log"
+MASTER_LOG="$BASE_LOGDIR/master_0608_ppcn_no_bn_noise_to_all.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0608_ppcn_no_bn_noise_to_all.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_5Layers_3REP" # retrained baseline
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_7Layers_3REP"
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_7Layers_2REP"
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_7Layers_2REP" # 7 layer baseline
+  "PCNetNoBatchNorm_5CLS_0.2LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_5Layers_3REP" # retrained baseline
+  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_7Layers_3REP"
+  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_7Layers_10REP"
+  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_7Layers_3REP" # 7 layer baseline
 )
 
 # ─────────────── prepare logs ───────────────
