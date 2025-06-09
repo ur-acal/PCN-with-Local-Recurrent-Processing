@@ -152,7 +152,9 @@ class PCConvNoisy(nn.Module):
     def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
         log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
         if self.noise_to_ff:
-            log.info("USE noisy_ff")
+            log.info("USE noisy_ff. noisy_ff equals ideal weight: {}".format(
+                torch.allclose(self.noisy_ff, self.FFconv.weight.data)))
+            assert self.noise_level == 0.0 or not torch.allclose(self.noisy_ff, self.FFconv.weight.data)
             y = self.relu(torch.conv2d(x, self.noisy_ff, padding=self.FFconv.padding))
         else:
             log.info("USE non-noisy FF")
@@ -167,14 +169,18 @@ class PCConvNoisy(nn.Module):
         # Bypass convolution
         if self.bypass is not None and not self.relu_bp:
             if self.noise_to_bp:
-                log.info("DO NOT USE ReLU after BP and use noisy_bp")
+                log.info("DO NOT USE ReLU after BP and use noisy_bp. noisy_bp equals ideal weight: {}".format(
+                    torch.allclose(self.noisy_bp, self.bypass.weight.data)))
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_bp, self.bypass.weight.data)
                 y = y + torch.conv2d(x, self.noisy_bp, padding=self.bypass.padding)
             else:
                 log.info("DO NOT USE ReLU after BP and use non-noisy BP")
                 y = y + self.bypass(x)
         if self.bypass is not None and self.relu_bp:
             if self.noise_to_bp:
-                log.info("USE ReLU after BP and use noisy_bp")
+                log.info("USE ReLU after BP and use noisy_bp. noisy_bp equals ideal weight: {}".format(
+                    torch.allclose(self.noisy_bp, self.bypass.weight.data)))
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_bp, self.bypass.weight.data)
                 y = y + self.relu(torch.conv2d(x, self.noisy_bp, padding=self.bypass.padding))
             else:
                 log.info("USE ReLU after BP and use non-noisy BP")
@@ -194,12 +200,18 @@ class PCConvNoisy(nn.Module):
                 log.info("Set different noise at each cycle")
                 self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
                 self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            log.info("noisy_fb, noisy_ff equals ideal weight: {}, {}".format(
+                torch.allclose(self.noisy_fb, self.FBconv.weight.data),
+                     torch.allclose(self.noisy_ff, self.FFconv.weight.data)))
             if self.relu_between:
                 log.info("USE ReLU between FF/FB")
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
                 error = self.relu(x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))
             else:
                 log.info("DO NOT USE ReLU between FF/FB")
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
                 error = x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
+            assert self.noise_level == 0.0 or not torch.allclose(self.noisy_ff, self.FFconv.weight.data)
             y += self.lr * torch.conv2d(error, self.noisy_ff, padding=self.FFconv.padding)
         return y
 

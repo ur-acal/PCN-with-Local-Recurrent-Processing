@@ -39,6 +39,7 @@ def get_args():
     p.add_argument("--kernel_size",   type=int, default=3)
     p.add_argument("--stride",        type=int, default=1)
     p.add_argument("--padding",       type=int, default=1)
+    p.add_argument("--dropout",       type=float, default=0.0)
     p.add_argument("--cls",           type=int, default=30)
     p.add_argument("--bias",          action="store_true")
     p.add_argument("--lr_pc",       type=float, default=0.01,
@@ -75,7 +76,7 @@ def _constr_model_name(args, rep=1):
                   + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
                   + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
                   + str(args.batch_size) + 'BS_' + str(args.learning_rate) + 'LR_' \
-                  + str(len(args.inp_channels)) + "Layers"
+                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers"
 
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
@@ -119,6 +120,7 @@ def main():
         "relu_bp": args.relu_bp,
         "use_pc": args.use_pc,
         "first_bn": args.first_bn,
+        "dropout": args.dropout,
     }
 
     # Select PCConv Module to use
@@ -143,6 +145,7 @@ def main():
     logging.warning("input channels: {}".format(model.ics))
     logging.warning("output channels: {}".format(model.ocs))
     logging.warning("max pooling: {}".format(model.max_pool))
+    logging.warning("dropout rate: {}".format(model.dropout))
     logging.warning("Total number of parameters: {}".format(total_params / 1e6))
     logging.warning("Model name: {}".format(model_name))
     logging.info("----- Printing out model parameter names: -----")

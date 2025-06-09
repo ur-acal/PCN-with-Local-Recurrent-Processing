@@ -15,7 +15,8 @@ log = logging.getLogger(__name__)
 
 
 class PCNet(nn.Module):
-    def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv, first_bn=True, **kwargs):
+    def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
+                 first_bn=True, dropout=0.0, **kwargs):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.init_args = self._get_init_args(
@@ -25,6 +26,7 @@ class PCNet(nn.Module):
         self.ocs = out_channels # output channels
         self.max_pool = max_pool # downsample flag
         self.num_layers = len(self.ics)
+        self.dropout = dropout
 
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
@@ -50,6 +52,9 @@ class PCNet(nn.Module):
                 x = self.max_pool2d(x)
 
         # classifier
+        if self.dropout > 0.0:
+            log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
+            x = F.dropout(input=x, p=self.dropout, training=self.training)
         out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -152,6 +157,9 @@ class PCNetNoBatchNorm(PCNet):
                 x = self.max_pool2d(x)
 
         # classifier
+        if self.dropout > 0.0:
+            log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
+            x = F.dropout(input=x, p=self.dropout, training=self.training)
         out = F.avg_pool2d(F.relu(x), x.size(-1)) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -179,6 +187,9 @@ class PCNetWithMiddleConv(PCNet):
                 x = self.max_pool2d(x)
 
         # classifier
+        if self.dropout > 0.0:
+            log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
+            x = F.dropout(input=x, p=self.dropout, training=self.training)
         out = F.avg_pool2d(self.relu(self.BNend(self.mid_convs[-1](x))), x.size(-1))
         out = out.view(out.size(0), -1)
         out = self.linear(out)

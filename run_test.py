@@ -94,7 +94,7 @@ def run_test():
     with torch.no_grad():
         if args.test_only:
             logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
-            noisy_params["noise_level"] = 0.4
+            noisy_params["noise_level"] = 0.0
             noisy_params["weight"] = None
             net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                           pc_conv_layer=pc_conv, data_parallel=False,

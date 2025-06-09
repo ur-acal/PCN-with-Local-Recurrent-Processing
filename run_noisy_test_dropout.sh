@@ -14,15 +14,15 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0609_ppcn_no_bn_0.06LRPC_128BS_noise_to_all.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0609_ppcn_no_bn_0.06LRPC_128BS_noise_to_all.log"
+MASTER_LOG="$BASE_LOGDIR/master_0609_ppcn_no_bn_sqrtLRPC_128BS_0.25dropout_noise_to_all_2ndRun.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0609_ppcn_no_bn_sqrtLRPC_128BS_0.25dropout_noise_to_all_2ndRun.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_5Layers_1REP" # retrained baseline
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_7Layers_1REP" # No2
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_7Layers_1REP" # No6
-  "PCNetNoBatchNorm_5CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_7Layers_1REP" # 7 layer baseline
+  "PCNetNoBatchNorm_5CLS_0.2LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP" # retrained baseline
+  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # No2
+  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_2REP" # No6
+  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # 7 layer baseline
 )
 
 # ─────────────── prepare logs ───────────────
@@ -61,7 +61,7 @@ echo "Tail master with: tail -f $MASTER_LOG"
 
 # ─────────────── run in parallel ───────────────
 parallel \
-  --jobs 2 \
+  --jobs 1 \
   --joblog "$JOB_LOG" \
   --keep-order \
   run_model {} \
@@ -84,7 +84,7 @@ echo "All summaries written to $MASTER_LOG"
 
 #######################################################
 # running
-# nohup bash run_noisy_test_parallel.sh > logs/run_script_output/launcher.out 2>&1 &
+# nohup bash run_noisy_test_dropout.sh > logs/run_script_output/launcher.out 2>&1 &
 # tail -f logs/run_script_output/launcher.out
 # After the run is finished, the master_log file will be printed out
 # then cat master_log
