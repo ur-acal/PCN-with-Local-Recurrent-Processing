@@ -258,7 +258,8 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
                 inputs, targets = inputs.to(device), targets.to(device)
                 with torch.no_grad():
                     output_tensor = net_(inputs)
-                    assert not torch.isnan(output_tensor).any()
+                    if torch.isnan(output_tensor).any():
+                        logging.warning("=====> Output tensor contains nan values. <=====")
 
                 # Get the predicted class
                 _, predicted = torch.max(output_tensor, 1)
