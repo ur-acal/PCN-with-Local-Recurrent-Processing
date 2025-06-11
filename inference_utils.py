@@ -274,7 +274,7 @@ def plot_acc_diff_cls(noise_acc_dict, plot_path, model_name, cycles, lr_pc):
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0, **kwargs):
-    noise_acc = {}
+    noise_acc, noise_acc_spec = {}, {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
         acc_list = []
@@ -310,6 +310,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             log.warning(f'Test Accuracy at noise level {noise_level}: {accuracy:.2f}%')
         avg_acc = sum(acc_list) / len(acc_list)
         noise_acc[noise_level] = avg_acc
+        noise_acc_spec[noise_level] = acc_list
         log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
     if cls_scale == 1:
         log.warning("-------- Final Result --------")
@@ -318,7 +319,12 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
     log.warning("-------- Model name: {} --------".format(model_name))
     for _nl, _acc in noise_acc.items():
         log.warning("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
-    log.warning("-------- Noisy experiment finished --------")
+
+    # save noise acc spec to a pkl
+    spec_path = os.path.join("logs/acc_noisy_test", "{}_{}.pkl".format(model_name, noise_level_list))
+    with open(spec_path, "wb") as fp:
+        pickle.dump(noise_acc_spec, fp)
+    log.warning("-------- Noisy experiment finished, spec saved to {} --------".format(spec_path))
     return noise_acc
 
 
