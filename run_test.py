@@ -13,7 +13,7 @@ from copy import deepcopy
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, expand_and_save_weights, plot_layer_pcn_loss, run_noise_experiment
-from inference_utils import run_lr_cls_experiment
+from inference_utils import run_lr_cls_experiment, get_val_scale
 
 
 def get_test_data():
@@ -55,6 +55,8 @@ def parse_args():
                         default=False, help="If True, set different noise for each FF/FB call in recurrence")
     parser.add_argument("--fuse_bn", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True, help="Fuse batch norm into conv")
+    parser.add_argument("--val_scale_frac", type=float,
+                        default=0.0, help="Fraction of train samples used to calculate the value scaler")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
     parser.add_argument("--noisy_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -101,10 +103,32 @@ def run_test():
                                           noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                           fuse_bn=args.fuse_bn, **noisy_params)
             net_.eval()
-            _ = net_(next(iter(test_dataloader))[0].to(device)[:128])
+            test_batch = next(iter(test_dataloader))[0].to(device)[:128]
+            logging.info("===== Before the input are scaled =====")
+            _ = net_(test_batch)
+            _, predicted_raw = torch.max(_, 1)
+
+            # _max_scale = net_.get_max_hidden_val(test_batch)
+            _max_scale = 100
+            logging.info("===== After the input are scaled =====")
+            test_batch_scaled = test_batch / _max_scale
+            _ = net_(test_batch_scaled)
+            _, predicted = torch.max(_, 1)
+            logging.info("Prediction: {}".format(predicted_raw))
+            logging.info("Prediction scaled: {} with scaler={}".format(predicted, _max_scale))
+            logging.info("=====> Prediction acc after scaling: {}".format(
+                torch.sum(predicted_raw == predicted) / len(predicted_raw)))
             logging.info("Output shape: {}".format(_.shape))
             logging.info(_)
             exit(0)
+
+        # Get val_scale
+        noisy_params_vs = deepcopy(noisy_params)
+        noisy_params_vs.update({"noise_level": 0.0, "weight": None})
+        val_scale = get_val_scale(model_path=ckpt_path, device=device, model_struct=PCNet, pc_conv_layer=pc_conv,
+                                  data_parallel=False, noise_to_bn=args.noise_to_bn,
+                                  noise_to_linear=args.noise_to_linear, fuse_bn=args.fuse_bn,
+                                  val_scale_frac=args.val_scale_frac, **noisy_params_vs)
 
         # works with saved init_args
         if expand_weights:
@@ -129,14 +153,15 @@ def run_test():
                                       model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
                                       device=device, noisy_trials=noisy_trials, model_name=args.model_name,
                                       noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                                      fuse_bn=args.fuse_bn, scale_factor=scale_factor, **noisy_params)
+                                      fuse_bn=args.fuse_bn, scale_factor=scale_factor, val_scale=val_scale,
+                                      **noisy_params)
         else:
             # specify noise level inside, plot path omitted
             _ = run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
                                      model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
                                      device=device, noisy_trials=noisy_trials, model_name=args.model_name,
                                      noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                                     fuse_bn=args.fuse_bn, **noisy_params)
+                                     fuse_bn=args.fuse_bn, val_scale=val_scale, **noisy_params)
 
 if __name__ == "__main__":
     run_test()

@@ -44,12 +44,14 @@ class PCNet(nn.Module):
         self.noise_level = kwargs.get("noise_level", 0.0)
         self.noise_level = 0.0 if self.noise_level is None else self.noise_level
 
-    def forward(self, x):
+    def forward(self, x, clamp=False):
         for i in range(self.num_layers):
             x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
+            if clamp:
+                x = torch.clamp(x, -1, 1)
 
         # classifier
         if self.dropout > 0.0:
@@ -150,11 +152,25 @@ class PCNetNoBatchNorm(PCNet):
         super().__init__(**kwargs)
         self.BNs, self.BNend = None, None
 
-    def forward(self, x):
+    def get_max_hidden_val(self, x):
+        max_abs = torch.tensor(0.0, device=self.device)
         for i in range(self.num_layers):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
+            cur_max = torch.max(torch.abs(x.max()), torch.abs(x.min()))
+            max_abs = torch.max(max_abs, cur_max)
+        return max_abs
+
+    def forward(self, x, clamp=False):
+        for i in range(self.num_layers):
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
+            if self.max_pool[i]:
+                x = self.max_pool2d(x)
+            if clamp:
+                x = torch.clamp(x, -1, 1)
+            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}".format(
+                i, x.mean(), x.median(), x.min(), x.max()))
 
         # classifier
         if self.dropout > 0.0:
@@ -177,7 +193,7 @@ class PCNetWithMiddleConv(PCNet):
             nn.Conv2d(self.ocs[-1], self.ocs[-1], kernel_size=mid_kernel,
                       stride=1, padding=(mid_kernel-1)//2, bias=False))
 
-    def forward(self, x):
+    def forward(self, x, clamp=False):
         for i in range(self.num_layers):
             log.info("layer {} shape: {}".format(i, x.shape))
             x = self.mid_convs[i](x)
@@ -185,6 +201,8 @@ class PCNetWithMiddleConv(PCNet):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
+            if clamp:
+                x = torch.clamp(x, -1, 1)
 
         # classifier
         if self.dropout > 0.0:

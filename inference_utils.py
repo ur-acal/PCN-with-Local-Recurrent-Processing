@@ -60,6 +60,41 @@ def filter_args(module_class, arg_dict):
         arg_dict.pop(mod_arg)
 
 
+def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
+                  data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
+                  val_scale_frac=0.0, **kwargs):
+    """
+    Get the max possible values among all elements in all hidden representations.
+    The value is calculated based on val_scale_frac fraction of training samples with model of ideal weights.
+    """
+    if val_scale_frac <= 0.0:
+        return 0.0
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+    train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+    samples_used = int(len(train_set) * val_scale_frac)
+    subset, _ = torch.utils.data.random_split(train_set, [samples_used, len(train_set) - samples_used])
+    train_dataloader = torch.utils.data.DataLoader(subset, batch_size=1024, shuffle=True, num_workers=2, drop_last=False)
+
+    net_ = load_and_prepare_model(model_path=model_path, device=device, model_struct=model_struct,
+                                  pc_conv_layer=pc_conv_layer, data_parallel=data_parallel,
+                                  noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
+                                  fuse_bn=fuse_bn, **kwargs)
+    net_.eval()
+    if not hasattr(net_, "get_max_hidden_val"):
+        return 0.0
+
+    val_scale = 0.0
+    for (_input, _target) in train_dataloader:
+        cur_max = net_.get_max_hidden_val(_input.to(device))
+        val_scale = cur_max if cur_max > val_scale else val_scale
+    log.warning("Get val scale using: {} samples, val_scale={}".format(samples_used, val_scale))
+    return val_scale
+
+
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
@@ -163,7 +198,7 @@ def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PCNe
 def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                           pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                           noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
-                          scale_factor=None, plot_path="loss_plot/lr_cls_acc", **kwargs):
+                          scale_factor=None, plot_path="loss_plot/lr_cls_acc", val_scale=0.0, **kwargs):
     cycles, lr_pc = 5.0, 1.0 # default setting
     if isinstance(model_name, str):
         cycles = float(model_name.split("CLS")[0].split("_")[-1])
@@ -186,7 +221,7 @@ def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu
                                  model_struct=model_struct, pc_conv_layer=pc_conv_layer, data_parallel=data_parallel,
                                  device=device, noisy_trials=noisy_trials, model_name=model_name,
                                  noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
-                                 fuse_bn=fuse_bn, cls_scale=int(_sf), **params_)
+                                 fuse_bn=fuse_bn, cls_scale=int(_sf), val_scale=val_scale, **params_)
         sf_acc_dict[cur_cls] = [cur_noise_acc[_nl] for _nl in noise_level_list]
         cls_list.append(cur_cls)
     noise_acc_dict = {}
@@ -238,7 +273,7 @@ def plot_acc_diff_cls(noise_acc_dict, plot_path, model_name, cycles, lr_pc):
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
-                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, **kwargs):
+                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0, **kwargs):
     noise_acc = {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
@@ -257,7 +292,10 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             for batch_idx, (inputs, targets) in tqdm(enumerate(test_loader), total=len(test_loader), disable=False):
                 inputs, targets = inputs.to(device), targets.to(device)
                 with torch.no_grad():
-                    output_tensor = net_(inputs)
+                    if val_scale > 0.0:
+                        output_tensor = net_(inputs / val_scale, True)
+                    else:
+                        output_tensor = net_(inputs)
                     if torch.isnan(output_tensor).any():
                         logging.warning("=====> Output tensor contains nan values. <=====")
 

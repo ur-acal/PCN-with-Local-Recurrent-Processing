@@ -33,4 +33,6 @@ run_multiple.sh
 test_model__.py
 shell_utils/parse_res/
 *.ipynb
+run_30_cls.sh
+run_val_scale_noisy_test.sh
 
