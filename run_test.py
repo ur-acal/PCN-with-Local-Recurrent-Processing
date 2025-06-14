@@ -103,23 +103,30 @@ def run_test():
                                           noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                           fuse_bn=args.fuse_bn, **noisy_params)
             net_.eval()
-            test_batch = next(iter(test_dataloader))[0].to(device)[:128]
+            test_batch = next(iter(test_dataloader))[0].to(device)[:512]
             logging.info("===== Before the input are scaled =====")
             _ = net_(test_batch)
             _, predicted_raw = torch.max(_, 1)
 
             # _max_scale = net_.get_max_hidden_val(test_batch)
-            _max_scale = 100
-            logging.info("===== After the input are scaled =====")
-            test_batch_scaled = test_batch / _max_scale
-            _ = net_(test_batch_scaled)
-            _, predicted = torch.max(_, 1)
-            logging.info("Prediction: {}".format(predicted_raw))
-            logging.info("Prediction scaled: {} with scaler={}".format(predicted, _max_scale))
-            logging.info("=====> Prediction acc after scaling: {}".format(
-                torch.sum(predicted_raw == predicted) / len(predicted_raw)))
-            logging.info("Output shape: {}".format(_.shape))
-            logging.info(_)
+            # _max_scale = 1
+            # logging.info("===== After the input are scaled =====")
+            # test_batch_scaled = test_batch / _max_scale
+            # _ = net_(test_batch_scaled)
+            # _, predicted = torch.max(_, 1)
+            # logging.info("Prediction: {}".format(predicted_raw))
+            # logging.info("Prediction scaled: {} with scaler={}".format(predicted, _max_scale))
+            # logging.info("=====> Prediction acc after scaling: {}".format(
+            #     torch.sum(predicted_raw == predicted) / len(predicted_raw)))
+            # logging.info("Output shape: {}".format(_.shape))
+            # logging.info(_)
+            logging.info("===== Inspecting the range of the weights =====")
+            for _name, _p in net_.named_parameters():
+                print("Name: {}, max: {}, min: {}, median: {}, mean: {}".format(
+                    _name, _p.max(), _p.min(), _p.median(), _p.mean()))
+            for _name, _buf in net_.named_buffers():
+                if "beta" in _name:
+                    print("Name: {}, val: {}".format(_name, _buf))
             exit(0)
 
         # Get val_scale
@@ -143,10 +150,10 @@ def run_test():
                                 noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                 loss_plot_dir=args.plot_path, model_name=args.model_name)
 
-        # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
-        noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07,
-                             0.08, 0.09, 0.1, 0.12, 0.14, 0.16, 0.18, 0.20,
-                             .25, .30, .35, .40]
+        noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
+        # noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07,
+        #                      0.08, 0.09, 0.1, 0.12, 0.14, 0.16, 0.18, 0.20,
+        #                      .25, .30, .35, .40]
         # noise_level_list_ = [0, 0.1, .20, .30, .40]
         noisy_trials = 20
         if not args.noisy_test:

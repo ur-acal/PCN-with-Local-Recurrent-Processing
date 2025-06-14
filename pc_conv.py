@@ -316,6 +316,87 @@ class PCConvNoisy(nn.Module):
         plt.close(fig)
 
 
+class PCConvScaled(PCConv):
+    def __init__(self, act="relu", **kwargs):
+        super().__init__(**kwargs)
+        act_dict = {"relu": nn.ReLU, "sigmoid": nn.Sigmoid, "relu6": nn.ReLU6}
+        self.act = act_dict[act]()
+        self.register_buffer(
+            "conv_beta_init",
+            torch.tensor([self.cls * self.layer_idx], dtype=torch.float, requires_grad=False).to(self.FFconv.weight.device)
+        )
+
+    def forward(self, x, layer_idx=None):
+        log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
+        # Initializer of recurrent
+        y = self.act(self.FFconv(x))
+
+        # PC recurrent
+        if self.use_pc:
+            y = self.find_optimal_r(x, y, layer_idx)
+
+        # Bypass convolution
+        if self.bypass is not None:
+            if self.relu_bp:
+                y = y + self.act(self.bypass(x))
+            else:
+                y = y + self.bypass(x)
+        return y
+
+    def find_optimal_r(self, x, y, layer_idx=None):
+        for cycle in range(self.cls):
+            beta = 1 / torch.sqrt(1 + (self.conv_beta_init + cycle) * (self.lr ** 2))
+            # beta = 1 / (1 + (cycle * (self.lr ** 2))) ** 0.5
+            # log.info("conv_beta_init={}, beta={}".format(self.conv_beta_init, beta))
+
+            if self.relu_between:
+                y = self.lr * self.FFconv(self.act(x - self.FBconv(y * beta))) + y
+            else:
+                y = self.lr * self.FFconv(x - self.FBconv(y * beta)) + y
+        log.info("For intermediate y after recurrent in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+            layer_idx, y.mean(), y.median(), y.min(), y.max(), y.std()))
+        return y
+
+
+class PCConvScaledNoisy(PCConvNoisy):
+    def __init__(self, act="relu", **kwargs):
+        super().__init__(**kwargs)
+        act_dict = {"relu": nn.ReLU, "sigmoid": nn.Sigmoid, "relu6": nn.ReLU6}
+        self.relu = act_dict[act]()
+        self.register_buffer(
+            "conv_beta_init",
+            torch.tensor([self.cls * self.layer_idx], dtype=torch.float, requires_grad=False).to(
+                self.FFconv.weight.device)
+        )
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
+        # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
+        # of the model and before calling forward
+        for cycle in range(self.cls):
+            beta = 1 / torch.sqrt(1 + (self.conv_beta_init + cycle) * (self.lr ** 2))
+            # beta = 1 / (1 + (cycle * (self.lr ** 2))) ** 0.5
+
+            if self.diff_noise:
+                log.info("Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            log.info("noisy_fb, noisy_ff equals ideal weight: {}, {}".format(
+                torch.allclose(self.noisy_fb, self.FBconv.weight.data),
+                     torch.allclose(self.noisy_ff, self.FFconv.weight.data)))
+
+            if self.relu_between:
+                log.info("USE Nonlinear activation between FF/FB")
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
+                error = self.relu(x - torch.conv_transpose2d(y * beta, self.noisy_fb, padding=self.FBconv.padding))
+            else:
+                log.info("DO NOT USE Nonlinear activation between FF/FB")
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
+                error = x - torch.conv_transpose2d(y * beta, self.noisy_fb, padding=self.FBconv.padding)
+            assert self.noise_level == 0.0 or not torch.allclose(self.noisy_ff, self.FFconv.weight.data)
+            y += self.lr * torch.conv2d(error, self.noisy_ff, padding=self.FFconv.padding)
+        return y
+
+
 class TieSubset(nn.Module):
     def __init__(self, src_param: nn.Parameter, mask: torch.Tensor):
         super().__init__()

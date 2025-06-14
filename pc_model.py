@@ -7,6 +7,7 @@ import numpy as np
 from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy
 from pc_conv import PlainFFFBConvRes, PlainFFFBConvResFixedX
 from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
+from pc_conv import PCConvScaled, PCConvScaledNoisy
 from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
 
@@ -169,8 +170,8 @@ class PCNetNoBatchNorm(PCNet):
                 x = self.max_pool2d(x)
             if clamp:
                 x = torch.clamp(x, -1, 1)
-            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}".format(
-                i, x.mean(), x.median(), x.min(), x.max()))
+            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+                i, x.mean(), x.median(), x.min(), x.max(), x.std()))
 
         # classifier
         if self.dropout > 0.0:
@@ -223,11 +224,13 @@ PCN_CLASSES = {
 
 PC_CONV_CLASS = {
     "PCConv": PCConv,
+    "PCConvScaled": PCConvScaled,
     "PlainFFFBConv": PlainFFFBConv,
     "PlainFFFBConvRes": PlainFFFBConvRes,
     "PlainFFFBConvResFixedX": PlainFFFBConvResFixedX,
     # noisy pc conv
     "PCConvNoisy": PCConvNoisy,
+    "PCConvScaledNoisy": PCConvScaledNoisy,
     "PlainFFFBConvNoisy": PlainFFFBConvNoisy,
     "PlainFFFBConvResNoisy": PlainFFFBConvResNoisy,
     "PlainFFFBConvResFixedXNoisy": PlainFFFBConvResFixedXNoisy,
