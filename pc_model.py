@@ -8,6 +8,10 @@ from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy
 from pc_conv import PlainFFFBConvRes, PlainFFFBConvResFixedX
 from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
 from pc_conv import PCConvScaled, PCConvScaledNoisy
+from pc_conv import PCConvSigmoid, PCConvSigmoidNoisy, PCConvReLU6, PCConvReLU6Noisy
+from pc_conv import PCConvScaledReLU6, PCConvScaledReLU6Noisy
+from pc_conv import PCConvHardTanh, PCConvHardTanhNoisy
+from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy
 from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
 
@@ -128,6 +132,9 @@ class PCNet(nn.Module):
                     if _name.endswith(('running_mean', 'running_var')):
                         log.info("Adding noise to running mean and variance")
                         self._apply_noise(_buf)
+                    elif _name.endswith('conv_beta_init'):
+                        log.info("Adding noise to conv beta init")
+                        self._apply_noise(_buf)
 
     @staticmethod
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, **kwargs):
@@ -224,13 +231,23 @@ PCN_CLASSES = {
 
 PC_CONV_CLASS = {
     "PCConv": PCConv,
+    "PCConvSigmoid": PCConvSigmoid,
+    "PCConvHardTanh": PCConvHardTanh,
+    "PCConvHardTanhLimit": PCConvHardTanhLimit,
+    "PCConvReLU6": PCConvReLU6,
     "PCConvScaled": PCConvScaled,
+    "PCConvScaledReLU6": PCConvScaledReLU6,
     "PlainFFFBConv": PlainFFFBConv,
     "PlainFFFBConvRes": PlainFFFBConvRes,
     "PlainFFFBConvResFixedX": PlainFFFBConvResFixedX,
     # noisy pc conv
     "PCConvNoisy": PCConvNoisy,
+    "PCConvSigmoidNoisy": PCConvSigmoidNoisy,
+    "PCConvHardTanhNoisy": PCConvHardTanhNoisy,
+    "PCConvHardTanhLimitNoisy": PCConvHardTanhLimitNoisy,
+    "PCConvReLU6Noisy": PCConvReLU6Noisy,
     "PCConvScaledNoisy": PCConvScaledNoisy,
+    "PCConvScaledReLU6Noisy": PCConvScaledReLU6Noisy,
     "PlainFFFBConvNoisy": PlainFFFBConvNoisy,
     "PlainFFFBConvResNoisy": PlainFFFBConvResNoisy,
     "PlainFFFBConvResFixedXNoisy": PlainFFFBConvResFixedXNoisy,

@@ -57,6 +57,8 @@ def parse_args():
                         default=True, help="Fuse batch norm into conv")
     parser.add_argument("--val_scale_frac", type=float,
                         default=0.0, help="Fraction of train samples used to calculate the value scaler")
+    parser.add_argument("--val_scale", type=float,
+                        default=0.0, help="Input value scaler")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
     parser.add_argument("--noisy_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -96,7 +98,7 @@ def run_test():
     with torch.no_grad():
         if args.test_only:
             logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
-            noisy_params["noise_level"] = 0.0
+            noisy_params["noise_level"] = 0.4
             noisy_params["weight"] = None
             net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                           pc_conv_layer=pc_conv, data_parallel=False,
@@ -111,11 +113,11 @@ def run_test():
             # _max_scale = net_.get_max_hidden_val(test_batch)
             # _max_scale = 1
             # logging.info("===== After the input are scaled =====")
-            # test_batch_scaled = test_batch / _max_scale
+            # test_batch_scaled = test_batch / args.val_scale
             # _ = net_(test_batch_scaled)
             # _, predicted = torch.max(_, 1)
             # logging.info("Prediction: {}".format(predicted_raw))
-            # logging.info("Prediction scaled: {} with scaler={}".format(predicted, _max_scale))
+            # logging.info("Prediction scaled: {} with scaler={}".format(predicted, args.val_scale))
             # logging.info("=====> Prediction acc after scaling: {}".format(
             #     torch.sum(predicted_raw == predicted) / len(predicted_raw)))
             # logging.info("Output shape: {}".format(_.shape))
@@ -132,10 +134,13 @@ def run_test():
         # Get val_scale
         noisy_params_vs = deepcopy(noisy_params)
         noisy_params_vs.update({"noise_level": 0.0, "weight": None})
-        val_scale = get_val_scale(model_path=ckpt_path, device=device, model_struct=PCNet, pc_conv_layer=pc_conv,
-                                  data_parallel=False, noise_to_bn=args.noise_to_bn,
-                                  noise_to_linear=args.noise_to_linear, fuse_bn=args.fuse_bn,
-                                  val_scale_frac=args.val_scale_frac, **noisy_params_vs)
+        if args.val_scale != 0.0:
+            val_scale = args.val_scale
+        else:
+            val_scale = get_val_scale(model_path=ckpt_path, device=device, model_struct=PCNet, pc_conv_layer=pc_conv,
+                                      data_parallel=False, noise_to_bn=args.noise_to_bn,
+                                      noise_to_linear=args.noise_to_linear, fuse_bn=args.fuse_bn,
+                                      val_scale_frac=args.val_scale_frac, **noisy_params_vs)
 
         # works with saved init_args
         if expand_weights:

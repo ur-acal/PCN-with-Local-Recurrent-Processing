@@ -63,20 +63,20 @@ class PCConv(nn.Module):
         # Bypass convolution
         if self.bypass is not None:
             if self.relu_bp:
-                log.info("USE ReLU after BP")
+                log.info("USE {} as Non-linearity after BP".format(self.relu))
                 y = y + self.relu(self.bypass(x))
             else:
-                log.info("DO NOT USE ReLU after BP")
+                log.info("DO NOT USE Non-linearity after BP")
                 y = y + self.bypass(x)
         return y
 
     def find_optimal_r(self, x, y, layer_idx=None):
         for _ in range(self.cls):
             if self.relu_between:
-                log.info("USE ReLU between FF/FB")
+                log.info("USE {} as Non-linearity between FF/FB".format(self.relu))
                 y = self.lr * self.FFconv(self.relu(x - self.FBconv(y))) + y
             else:
-                log.info("DO NOT USE ReLU between FF/FB")
+                log.info("DO NOT USE Non-linearity between FF/FB")
                 y = self.lr * self.FFconv(x - self.FBconv(y)) + y
         return y
 
@@ -204,7 +204,7 @@ class PCConvNoisy(nn.Module):
                 torch.allclose(self.noisy_fb, self.FBconv.weight.data),
                      torch.allclose(self.noisy_ff, self.FFconv.weight.data)))
             if self.relu_between:
-                log.info("USE ReLU between FF/FB")
+                log.info("USE Non-linearity: {} between FF/FB".format(self.relu))
                 assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
                 error = self.relu(x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))
             else:
@@ -396,6 +396,95 @@ class PCConvScaledNoisy(PCConvNoisy):
             y += self.lr * torch.conv2d(error, self.noisy_ff, padding=self.FFconv.padding)
         return y
 
+
+class PCConvSigmoid(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Sigmoid()
+
+class PCConvSigmoidNoisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Sigmoid()
+
+class PCConvHardTanh(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh()
+
+class PCConvHardTanhNoisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh()
+
+class PCConvReLU6(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=True)
+
+class PCConvReLU6Noisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=True)
+
+class PCConvScaledReLU6(PCConvScaled):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=True)
+
+class PCConvScaledReLU6Noisy(PCConvScaledNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=True)
+
+class PCConvHardTanhLimit(PCConvHardTanh):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x, layer_idx=None):
+        y = super().forward(x, layer_idx)
+        return self.relu(y)
+
+    def find_optimal_r(self, x, y, layer_idx=None):
+        for _ in range(self.cls):
+            if self.relu_between:
+                log.info("USE {} as Non-linearity between FF/FB".format(self.relu))
+                y = self.lr * self.FFconv(self.relu(x - self.FBconv(y))) + y
+            else:
+                log.info("DO NOT USE Non-linearity between FF/FB")
+                y = self.lr * self.FFconv(x - self.FBconv(y)) + y
+            y = self.relu(y)
+        return y
+
+class PCConvHardTanhLimitNoisy(PCConvHardTanhNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
+        y = super().forward(x, layer_idx, w_type_used, use_relu)
+        return self.relu(y)
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
+        for _ in range(self.cls):
+            if self.diff_noise:
+                log.info("Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            log.info("noisy_fb, noisy_ff equals ideal weight: {}, {}".format(
+                torch.allclose(self.noisy_fb, self.FBconv.weight.data),
+                     torch.allclose(self.noisy_ff, self.FFconv.weight.data)))
+            if self.relu_between:
+                log.info("USE Non-linearity: {} between FF/FB".format(self.relu))
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
+                error = self.relu(x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))
+            else:
+                log.info("DO NOT USE Non-linearity between FF/FB")
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
+                error = x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
+            assert self.noise_level == 0.0 or not torch.allclose(self.noisy_ff, self.FFconv.weight.data)
+            y += self.lr * torch.conv2d(error, self.noisy_ff, padding=self.FFconv.padding)
+            y = self.relu(y)
+        return y
 
 class TieSubset(nn.Module):
     def __init__(self, src_param: nn.Parameter, mask: torch.Tensor):

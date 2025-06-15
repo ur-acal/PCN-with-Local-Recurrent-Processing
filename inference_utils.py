@@ -293,7 +293,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
                 inputs, targets = inputs.to(device), targets.to(device)
                 with torch.no_grad():
                     if val_scale > 0.0:
-                        output_tensor = net_(inputs / val_scale, True)
+                        output_tensor = net_(inputs / val_scale, False)
                     else:
                         output_tensor = net_(inputs)
                     if torch.isnan(output_tensor).any():

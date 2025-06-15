@@ -14,17 +14,14 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0612_ppcn_no_bn_sqrtLRPC_128BS_0.25dropout_noise_to_all_weight_inspect.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0612_ppcn_no_bn_sqrtLRPC_128BS_0.25dropout_noise_to_all_weight_inspect.log"
+MASTER_LOG="$BASE_LOGDIR/master_0613_ppcn_no_bn_noise_to_all_weight_hardtanh_cls_exp_test.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0613_ppcn_no_bn_noise_to_all_hardtanh_cls_exp_test.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-#  "PCNetNoBatchNorm_5CLS_0.2LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP" # retrained baseline
-#  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # No2
-#  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_withBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_2REP" # No6
-#  "PCNetNoBatchNorm_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # 7 layer baseline
-#  "PCNetNoBatchNorm_PCConvScaled_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_withBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_2REP"
-  "PCNetNoBatchNorm_PCConvScaled_30CLS_0.04LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -55,7 +52,7 @@ run_model(){
     --fuse_bn         "false" \
     --noisy_test      "true" \
     --test_only       "true" \
-    --pc_conv         "PCConvScaledNoisy" \
+    --pc_conv         "PCConvHardTanhLimitNoisy" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
