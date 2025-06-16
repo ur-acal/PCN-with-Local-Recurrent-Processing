@@ -13,7 +13,6 @@ from torchvision import transforms
 from tqdm import tqdm
 from copy import deepcopy
 
-from cifar_test import PredNetBpD
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
