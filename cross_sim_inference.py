@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision
 import os
+import pickle
 import argparse
 import logging
 
@@ -18,6 +19,7 @@ from simulator import CrossSimParameters
 from simulator.algorithms.dnn.torch.convert import from_torch, convertible_modules, reinitialize
 from cross_sim.dnn_inference_params import dnn_inference_params
 from cross_sim.cross_bar_params import base_params_args
+from cross_sim.test_analog_model import test_analog_model, get_exp_name
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -31,15 +33,19 @@ def parse_args():
                         default=True, help="Fuse batch norm into conv")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
-    parser.add_argument("--noisy_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+    parser.add_argument("--prop_error", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
+    parser.add_argument("--weight_bits", type=int, default=8)
+    parser.add_argument("--input_bits", type=int, default=8)
+    parser.add_argument("--adc_bits", type=int, default=0)
+    parser.add_argument("--bias_rows", type=int, default=0)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
 
 
-def cross_sim_inference(args, n=9, Nruns=10, noise_level=0.0, proportional_error=True, digital_bias=False,
-                            ideal=False, weight_bits=8, input_bits=8, adc_bits=0, bias_rows=0):
+def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True, digital_bias=False,
+                        ideal=False, weight_bits=8, input_bits=8, adc_bits=0, bias_rows=0):
     # args = parse_args()
     if args.test_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
@@ -56,14 +62,6 @@ def cross_sim_inference(args, n=9, Nruns=10, noise_level=0.0, proportional_error
     # Noise is added through cross-sim api
     #######################################################################################
     noisy_params = {"noise_level": 0.0}
-    with torch.no_grad():
-        if args.test_only:
-            logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
-            net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
-                                          pc_conv_layer=pc_conv, data_parallel=False,
-                                          noise_to_bn=False, noise_to_linear=False,
-                                          fuse_bn=False, conv_only=True, **noisy_params)
-            net_.eval()
 
     # Get noise-free model
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -90,13 +88,14 @@ def cross_sim_inference(args, n=9, Nruns=10, noise_level=0.0, proportional_error
 
     ### Load input limits
     # Todo: Support input range calibration for more models
-    input_ranges = torch.stack([torch.tensor([-2.64, 2.64])] + [torch.tensor([-1, 1])] * (n_layers - 1))
+    input_ranges = torch.stack([torch.tensor([-2.64, 2.64])] + [torch.tensor([-1, 1])] * (n_layers - 1)).numpy()
 
     ### Load ADC limits
     # Todo: Skipped for now
 
     ### Set the parameters
     for k in range(n_layers):
+        print("layer: {}, input_range_k: {}".format(k, input_ranges[k]))
         params_args_k = params_args.copy()
         params_args_k['positiveInputsOnly'] = input_ranges[k][0] >= 0
         params_args_k['input_range'] = input_ranges[k]
@@ -105,10 +104,70 @@ def cross_sim_inference(args, n=9, Nruns=10, noise_level=0.0, proportional_error
 
     #### Convert PyTorch layers to analog layers
     print("----- Start to convert from torch -----")
-    analog_resnet = from_torch(net_, params_list, fuse_batchnorm=True, bias_rows=bias_rows)
+    analog_net = from_torch(net_, params_list, fuse_batchnorm=True, bias_rows=bias_rows)
     print("----- Successfully converted from torch -----")
 
+    #### Load and transform CIFAR-10 dataset
+    batch_size = 256
+    normalize = transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.2470, 0.2435, 0.2616])
+    test_dataset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True,
+                               transform=transforms.Compose([transforms.ToTensor(), normalize]))
+    test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size)
+    mean_acc, std_acc, acc_list = test_analog_model(analog_model=analog_net, Nruns=Nruns, N=len(test_dataset),
+                                                    device=device, batch_size=batch_size, data_loader=test_dataloader)
+
+    return mean_acc, std_acc, acc_list
 
 
+def run_cross_sim_inference():
+    args = parse_args()
+
+    ###############################
+    ## Configurations
+    # prop_error_ = True
+    n_weight_bits_ = 8
+    n_input_bits_ = 8
+    n_adc_bits_ = 0
+    # n_bias_rows_ = 0
+    ###############################
+
+    logging.warning("Running test with cross-sim")
+    if args.test_only:
+        _ = cross_sim_inference(args, Nruns=1, noise_level=0.4, proportional_error=args.prop_error, digital_bias=False,
+                                ideal=False, weight_bits=args.weight_bits, input_bits=args.input_bits,
+                                adc_bits=args.adc_bits, bias_rows=args.bias_rows)
+        exit(0)
+
+    n_trials = 20
+    noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07,
+                         0.08, 0.09, 0.1, 0.12, 0.14, 0.16, 0.18, 0.20,
+                         .25, .30, .35, .40]
+    # noise_level_list_ = [0, 0.4]
+
+    acc_log_dict, acc_list_dict = {}, {}
+    for _nl in noise_level_list_:
+        _n_trials = n_trials if _nl > 0.0 else 1
+        _mean, _std, _acc = cross_sim_inference(args, Nruns=_n_trials, noise_level=_nl,
+                                                proportional_error=args.prop_error, digital_bias=False,
+                                                ideal=False, weight_bits=args.weight_bits,
+                                                input_bits=args.input_bits, adc_bits=args.adc_bits,
+                                                bias_rows=args.bias_rows)
+        acc_log_dict[_nl] = "{:.2f} ± {:.2f}".format(_mean, _std)
+        acc_list_dict[_nl] = _acc
+
+    pkl_name = get_exp_name(proportional_error=args.prop_error, weight_bits=args.weight_bits, input_bits=args.input_bits,
+                            adc_bits=args.adc_bits, bias_rows=args.bias_rows, noise_level_list=noise_level_list_)
+    pkl_name = "{}_".format(args.model_name) + pkl_name
+    with open("logs/cross_sim_res/{}.pkl".format(pkl_name), "wb") as fp:
+        pickle.dump(acc_list_dict, fp)
+        print("Model acc list saved to: {}".format("logs/cross_sim_res/{}.pkl".format(pkl_name)))
+
+    print("-------- Model name: {} --------".format(args.model_name))
+    for _nl, _acc in acc_log_dict.items():
+        print("Noise level: {}, Acc: {}".format(_nl, _acc))
 
 
+if __name__ == "__main__":
+    run_cross_sim_inference()
