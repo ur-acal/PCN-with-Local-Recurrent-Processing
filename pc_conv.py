@@ -486,6 +486,16 @@ class PCConvHardTanhLimitNoisy(PCConvHardTanhNoisy):
             y = self.relu(y)
         return y
 
+class PCConvReLU6Limit(PCConvHardTanhLimit):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=True)
+
+class PCConvReLU6LimitNoisy(PCConvHardTanhLimitNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=True)
+
 class TieSubset(nn.Module):
     def __init__(self, src_param: nn.Parameter, mask: torch.Tensor):
         super().__init__()

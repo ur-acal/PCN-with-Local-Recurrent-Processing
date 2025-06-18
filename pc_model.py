@@ -11,7 +11,7 @@ from pc_conv import PCConvScaled, PCConvScaledNoisy
 from pc_conv import PCConvSigmoid, PCConvSigmoidNoisy, PCConvReLU6, PCConvReLU6Noisy
 from pc_conv import PCConvScaledReLU6, PCConvScaledReLU6Noisy
 from pc_conv import PCConvHardTanh, PCConvHardTanhNoisy
-from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy
+from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvReLU6Limit, PCConvReLU6LimitNoisy
 from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
 
@@ -235,6 +235,7 @@ PC_CONV_CLASS = {
     "PCConvHardTanh": PCConvHardTanh,
     "PCConvHardTanhLimit": PCConvHardTanhLimit,
     "PCConvReLU6": PCConvReLU6,
+    "PCConvReLU6Limit": PCConvReLU6Limit,
     "PCConvScaled": PCConvScaled,
     "PCConvScaledReLU6": PCConvScaledReLU6,
     "PlainFFFBConv": PlainFFFBConv,
@@ -246,6 +247,7 @@ PC_CONV_CLASS = {
     "PCConvHardTanhNoisy": PCConvHardTanhNoisy,
     "PCConvHardTanhLimitNoisy": PCConvHardTanhLimitNoisy,
     "PCConvReLU6Noisy": PCConvReLU6Noisy,
+    "PCConvReLU6LimitNoisy": PCConvReLU6LimitNoisy,
     "PCConvScaledNoisy": PCConvScaledNoisy,
     "PCConvScaledReLU6Noisy": PCConvScaledReLU6Noisy,
     "PlainFFFBConvNoisy": PlainFFFBConvNoisy,

@@ -95,7 +95,8 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
 
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
-                           data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True, **kwargs):
+                           data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
+                           conv_only=False, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
@@ -107,7 +108,11 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
     # filter out unused init arguments
     filter_args(model_struct, model_args)
-    filter_args(pc_conv_layer, mod_args) if pc_conv_layer is not None else log.info("pc_conv_layer not specified")
+    if pc_conv_layer is not None:
+        filter_args(pc_conv_layer, mod_args)
+        filter_args(pc_conv_layer, kwargs)
+    else:
+        log.info("pc_conv_layer not specified")
 
     # check if we should use pc_conv_layer defined in the model loaded or the one passed in
     if "pc_conv_layer" in collect_init_args(model_struct) and pc_conv_layer is not None:
@@ -124,6 +129,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         net_ = net_.module
     else:
         net_.load_state_dict(checkpoint_weight['net'])
+
+    if conv_only:
+        log.warning("Replacing all transposed conv with conv")
+        replace_transpose_conv(net_)
 
     # No batch normalization for each convolutional layers in PcConv layers
     # If there is any, then need to change the _init_noise function
@@ -152,6 +161,17 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
             log.warning("----- Noise added, sanity check passed -----")
     log.warning("----- Model loaded -----")
     return net_
+
+
+def replace_transpose_conv(module: nn.Module):
+    for _name, _child in module.named_children():
+        if isinstance(_child, nn.ConvTranspose2d):
+            conv2d_fb = nn.Conv2d(in_channels=_child.in_channels, out_channels=_child.out_channels,
+                                  kernel_size=_child.kernel_size, stride=_child.stride, padding=_child.padding,
+                                  bias=_child.bias)
+            conv2d_fb.weight.data = _child.weight.data.permute([1,0,2,3]).flip([2,3])
+            setattr(module, "FBconv", conv2d_fb)
+        replace_transpose_conv(_child)
 
 
 def expand_and_save_weights(sample_imgs, model_path, device="cpu", model_struct=PCNet, pc_conv_layer=PCConvNoisy,
@@ -197,7 +217,8 @@ def plot_layer_pcn_loss(sample_imgs, model_path, device="cpu", model_struct=PCNe
 def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                           pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                           noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
-                          scale_factor=None, plot_path="loss_plot/lr_cls_acc", val_scale=0.0, **kwargs):
+                          scale_factor=None, plot_path="loss_plot/lr_cls_acc", val_scale=0.0,
+                          conv_only=False, **kwargs):
     cycles, lr_pc = 5.0, 1.0 # default setting
     if isinstance(model_name, str):
         cycles = float(model_name.split("CLS")[0].split("_")[-1])
@@ -220,7 +241,8 @@ def run_lr_cls_experiment(model_path, test_loader, noise_level_list, device="cpu
                                  model_struct=model_struct, pc_conv_layer=pc_conv_layer, data_parallel=data_parallel,
                                  device=device, noisy_trials=noisy_trials, model_name=model_name,
                                  noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
-                                 fuse_bn=fuse_bn, cls_scale=int(_sf), val_scale=val_scale, **params_)
+                                 fuse_bn=fuse_bn, cls_scale=int(_sf), val_scale=val_scale,
+                                 conv_only=conv_only, **params_)
         sf_acc_dict[cur_cls] = [cur_noise_acc[_nl] for _nl in noise_level_list]
         cls_list.append(cur_cls)
     noise_acc_dict = {}
@@ -272,7 +294,8 @@ def plot_acc_diff_cls(noise_acc_dict, plot_path, model_name, cycles, lr_pc):
 
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
-                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0, **kwargs):
+                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0,
+                         conv_only=False, **kwargs):
     noise_acc, noise_acc_spec = {}, {}
     for noise_level in noise_level_list:
         trials = noisy_trials if noise_level > 0 else 1
@@ -283,7 +306,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
             params_.update({"noise_level": noise_level})
             net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
                                           noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
-                                          fuse_bn=fuse_bn, **params_)
+                                          fuse_bn=fuse_bn, conv_only=conv_only, **params_)
             net_.eval()
             total = 0
             correct = 0

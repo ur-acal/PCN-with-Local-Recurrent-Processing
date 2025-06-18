@@ -35,4 +35,6 @@ shell_utils/parse_res/
 *.ipynb
 run_30_cls.sh
 run_val_scale_noisy_test.sh
+cross_sim/models/
+cross_sim/calibrated_config/
 

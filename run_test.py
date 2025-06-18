@@ -13,7 +13,7 @@ from copy import deepcopy
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, expand_and_save_weights, plot_layer_pcn_loss, run_noise_experiment
-from inference_utils import run_lr_cls_experiment, get_val_scale
+from inference_utils import run_lr_cls_experiment, get_val_scale, replace_transpose_conv
 
 
 def get_test_data():
@@ -63,6 +63,8 @@ def parse_args():
                    default=None)
     parser.add_argument("--noisy_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
+    parser.add_argument("--conv_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -103,7 +105,7 @@ def run_test():
             net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                           pc_conv_layer=pc_conv, data_parallel=False,
                                           noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                                          fuse_bn=args.fuse_bn, **noisy_params)
+                                          fuse_bn=args.fuse_bn, conv_only=args.conv_only, **noisy_params)
             net_.eval()
             test_batch = next(iter(test_dataloader))[0].to(device)[:512]
             logging.info("===== Before the input are scaled =====")
@@ -169,14 +171,15 @@ def run_test():
                                       device=device, noisy_trials=noisy_trials, model_name=args.model_name,
                                       noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                       fuse_bn=args.fuse_bn, scale_factor=scale_factor, val_scale=val_scale,
-                                      **noisy_params)
+                                      conv_only=args.conv_only, **noisy_params)
         else:
             # specify noise level inside, plot path omitted
             _ = run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
                                      model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
                                      device=device, noisy_trials=noisy_trials, model_name=args.model_name,
                                      noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
-                                     fuse_bn=args.fuse_bn, val_scale=val_scale, **noisy_params)
+                                     fuse_bn=args.fuse_bn, val_scale=val_scale, conv_only=args.conv_only,
+                                     **noisy_params)
 
 if __name__ == "__main__":
     run_test()
