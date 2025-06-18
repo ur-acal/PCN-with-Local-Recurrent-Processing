@@ -153,7 +153,7 @@ def get_exp_name(proportional_error, weight_bits, input_bits, adc_bits, bias_row
     exp_name += "{}InputBits_".format(input_bits)
     exp_name += "{}AdcBits_".format(adc_bits)
     exp_name += "{}BiasRows_".format(bias_rows)
-    exp_name += "{}".format(",".join(str(_).replace(".", "p") for _ in noise_level_list))
+    exp_name += "{}NoiseLevel".format(len(noise_level_list))
 
     return exp_name
 

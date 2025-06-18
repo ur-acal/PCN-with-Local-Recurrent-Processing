@@ -108,7 +108,7 @@ def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True
     print("----- Successfully converted from torch -----")
 
     #### Load and transform CIFAR-10 dataset
-    batch_size = 256
+    batch_size = 64
     normalize = transforms.Normalize(
         mean=[0.485, 0.456, 0.406],
         std=[0.2470, 0.2435, 0.2616])
@@ -159,10 +159,11 @@ def run_cross_sim_inference():
 
     pkl_name = get_exp_name(proportional_error=args.prop_error, weight_bits=args.weight_bits, input_bits=args.input_bits,
                             adc_bits=args.adc_bits, bias_rows=args.bias_rows, noise_level_list=noise_level_list_)
-    pkl_name = "{}_".format(args.model_name) + pkl_name
-    with open("logs/cross_sim_res/{}.pkl".format(pkl_name), "wb") as fp:
+    os.makedirs(os.path.join("logs/cross_sim_res", args.model_name), exist_ok=True)
+    pkl_path = os.path.join("logs/cross_sim_res", args.model_name, "{}.pkl".format(pkl_name))
+    with open(pkl_path, "wb") as fp:
         pickle.dump(acc_list_dict, fp)
-        print("Model acc list saved to: {}".format("logs/cross_sim_res/{}.pkl".format(pkl_name)))
+        print("Model acc list saved to: {}".format(pkl_path))
 
     print("-------- Model name: {} --------".format(args.model_name))
     for _nl, _acc in acc_log_dict.items():

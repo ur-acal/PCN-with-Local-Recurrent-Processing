@@ -37,7 +37,6 @@ run_model(){
     --model_dir       "$MODEL_DIR" \
     --prop_error      "true" \
     --bias_rows       0 \
-    --test_only       "true" \
     --pc_conv         "PCConvHardTanhLimit" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
