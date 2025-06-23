@@ -163,7 +163,8 @@ def run_exp_config(prop_error, n_weight_bits, n_input_bits, n_adc_bits, n_bias_r
     noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07,
                          0.08, 0.09, 0.1, 0.12, 0.14, 0.16, 0.18, 0.20,
                          .25, .30, .35, .40]
-    n_layer_list = [3, 5, 9]
+    # n_layer_list = [3, 5, 9]
+    n_layer_list = [9]
     # noise_level_list_ = [0, 0.4]
     model_acc_log, model_acc_list = {}, {}
     for _n in n_layer_list:
@@ -207,7 +208,7 @@ if __name__ == "__main__":
     # 2. setting adc_bits to non-zero values (<8) will decrease the acc
     # Setting bias_row > 1 can increase acc
 
-    test_only = True
+    test_only = False
     if test_only:
         run_resnet(n=9, Nruns=1, noise_level=0.3, proportional_error=True, ideal=False,
                    weight_bits=8, input_bits=8, adc_bits=0, bias_rows=1)
@@ -216,13 +217,13 @@ if __name__ == "__main__":
     ###############################
     ## Configurations
     # prop_error_ = True
-    n_weight_bits_ = 8
-    n_input_bits_ = 8
+    n_weight_bits_ = 4
+    n_input_bits_ = 4
     n_adc_bits_ = 0
     # n_bias_rows_ = 0
     ###############################
 
     for _pe in [True, False]:
-        for nbr_ in [0, 1]:
+        for nbr_ in [0, 1, 8]:
             run_exp_config(prop_error=_pe, n_weight_bits=n_weight_bits_, n_input_bits=n_input_bits_,
                            n_adc_bits=n_adc_bits_, n_bias_rows=nbr_)

@@ -9,8 +9,8 @@ export MODEL_DIR="./saved_ckpt"
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/test_cross_sim"
-MASTER_LOG="$BASE_LOGDIR/master_0618_ppcn_hardtanh_cross_sim.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0618_ppcn_hardtanh_cross_sim.log"
+MASTER_LOG="$BASE_LOGDIR/master_0619_ppcn_hardtanh_cross_sim_4bit.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0619_ppcn_hardtanh_cross_sim_4bit.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
@@ -36,6 +36,8 @@ run_model(){
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
     --prop_error      "true" \
+    --weight_bits     4 \
+    --input_bits      4 \
     --bias_rows       0 \
     --pc_conv         "PCConvHardTanhLimit" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
@@ -58,7 +60,7 @@ echo "All jobs finished — merging logs into $MASTER_LOG"
 : >"$MASTER_LOG"
 for name in "${MODEL_NAMES[@]}"; do
   printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
-  if ! grep -A 11 "Final Result " \
+  if ! grep -A 21 "Final Result " \
              "$BASE_LOGDIR/$name/job.log" >>"$MASTER_LOG"; then
      echo "[Final Result not found]" >>"$MASTER_LOG"
   fi
