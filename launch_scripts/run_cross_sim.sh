@@ -9,13 +9,14 @@ export MODEL_DIR="./saved_ckpt"
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/test_cross_sim"
-MASTER_LOG="$BASE_LOGDIR/master_0619_ppcn_hardtanh_cross_sim_4bit.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0619_ppcn_hardtanh_cross_sim_4bit.log"
+MASTER_LOG="$BASE_LOGDIR/master_0625_ppcn_relu6_cross_sim_8bit.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0625_ppcn_relu6_cross_sim_8bit.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
@@ -36,10 +37,12 @@ run_model(){
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
     --prop_error      "true" \
-    --weight_bits     4 \
-    --input_bits      4 \
+    --weight_bits     8 \
+    --input_bits      8 \
     --bias_rows       0 \
-    --pc_conv         "PCConvHardTanhLimit" \
+    --inp_min         0 \
+    --inp_max         6 \
+    --pc_conv         "PCConvReLU6Limit" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model

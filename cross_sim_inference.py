@@ -39,6 +39,8 @@ def parse_args():
     parser.add_argument("--input_bits", type=int, default=8)
     parser.add_argument("--adc_bits", type=int, default=0)
     parser.add_argument("--bias_rows", type=int, default=0)
+    parser.add_argument("--inp_min", type=int, default=-1)
+    parser.add_argument("--inp_max", type=int, default=1)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -88,7 +90,9 @@ def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True
 
     ### Load input limits
     # Todo: Support input range calibration for more models
-    input_ranges = torch.stack([torch.tensor([-2.64, 2.64])] + [torch.tensor([-1, 1])] * (n_layers - 1)).numpy()
+    input_ranges = torch.stack(
+        [torch.tensor([-2.64, 2.64])] + [torch.tensor([args.inp_min, args.inp_max])] * (n_layers - 1)
+    ).numpy()
 
     ### Load ADC limits
     # Todo: Skipped for now

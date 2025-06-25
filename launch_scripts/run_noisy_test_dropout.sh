@@ -14,13 +14,15 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0613_ppcn_no_bn_noise_to_all_weight_hardtanh_cls_exp_test.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0613_ppcn_no_bn_noise_to_all_hardtanh_cls_exp_test.log"
+MASTER_LOG="$BASE_LOGDIR/master_0623_ppcn_no_bn_noise_to_all_weight_hardtanh_4l_128chan.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0623_ppcn_no_bn_noise_to_all_hardtanh_4l_128chan.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_9Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_4Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
@@ -51,7 +53,6 @@ run_model(){
     --noise_to_linear "true" \
     --fuse_bn         "false" \
     --noisy_test      "true" \
-    --test_only       "true" \
     --pc_conv         "PCConvHardTanhLimitNoisy" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
