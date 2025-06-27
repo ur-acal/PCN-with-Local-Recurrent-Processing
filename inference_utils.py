@@ -16,6 +16,7 @@ from copy import deepcopy
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
+from ode_pc import make_ode_block
 
 import logging
 log = logging.getLogger(__name__)
@@ -26,6 +27,14 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
+def get_test_data():
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+    test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+    # Create a DataLoader
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=2048, shuffle=False, num_workers=2)
+    return test_loader
 
 def collect_init_args(module_class):
     all_args = set()
@@ -96,7 +105,7 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
-                           conv_only=False, **kwargs):
+                           conv_only=False, ode_params=None, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
@@ -145,13 +154,25 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
         clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
         net_.add_noise(noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear)
+
         noise_level = net_.noise_level
+        #############################################################################
+        # ODE related
+        if isinstance(ode_params, dict):
+            net_ = make_ode_block(net_, noise_level=noise_level, **ode_params)
+            logging.warning("PcConv converted to ODEBlock, ode_params={}".format(ode_params))
+        #############################################################################
         if noise_level > 0.0:
             for _name, _p in net_.named_parameters():
                 if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
                 elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
+
+                if isinstance(ode_params, dict):
+                    assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
+
+                logging.info("Noise check, name: {}, is equal: {}".format(_name, torch.allclose(_p, clean_params[_name])))
 
             if noise_to_bn:
                 # adding noise to running mean and variance of batch norm
@@ -354,14 +375,9 @@ if __name__ == '__main__':
     batch_size = 4096 * 2
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     log.warning(f'Using device: {device}')
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-    test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
-    num_samples = len(test_set)
 
     # Create a DataLoader
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=2)
+    test_loader_ = get_test_data()
 
     # set different model initialization parameters here
     model_path_ = "checkpoint/PredNetBpD_5_30CLS_FalseNes_0.001WD_FalseTIED_4REP_best_ckpt.t7"
@@ -374,7 +390,7 @@ if __name__ == '__main__':
     if expand_and_save:
         model_params = {"num_classes": 10, "cls": 30, "lr": 1e-2, "noise_level": 0, "solver": 'LD',
                         "layer_number": [0, 1, 2, 3, 4], "num_iterations": 30, "train_weight": False}
-        expand_and_save_weights(next(iter(test_loader))[0], model_path=model_path_, device=device,
+        expand_and_save_weights(next(iter(test_loader_))[0], model_path=model_path_, device=device,
                                 weight_dir=weight_dir_, **model_params)
 
     # plot noise level 0
@@ -384,10 +400,10 @@ if __name__ == '__main__':
                         "layer_number": [0, 1, 2, 3, 4], "num_iterations": 30, "train_weight": False,
                         "pcn_weight_type": "fb", "use_relu": False,
                         "pc_weight": expanded_weight_path}
-        plot_layer_pcn_loss(next(iter(test_loader))[0], model_path=model_path_, device=device,
+        plot_layer_pcn_loss(next(iter(test_loader_))[0], model_path=model_path_, device=device,
                             loss_plot_dir=loss_plot_dir_, **model_params)
         model_params.update({"solver": "SGD"})
-        plot_layer_pcn_loss(next(iter(test_loader))[0], model_path=model_path_, device=device,
+        plot_layer_pcn_loss(next(iter(test_loader_))[0], model_path=model_path_, device=device,
                             loss_plot_dir=loss_plot_dir_, **model_params)
 
     # noise experiments
@@ -399,5 +415,5 @@ if __name__ == '__main__':
                         "noise_to_ff": False, "noise_to_bp": False,
                         "pc_weight": expanded_weight_path, "plot_path": None}
         noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
-        run_noise_experiment(model_path_, test_loader, noise_level_list=noise_level_list_,
+        run_noise_experiment(model_path_, test_loader_, noise_level_list=noise_level_list_,
                              device=device, noisy_trials=5, **model_params)

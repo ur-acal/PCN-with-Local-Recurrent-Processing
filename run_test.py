@@ -13,17 +13,8 @@ from copy import deepcopy
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, expand_and_save_weights, plot_layer_pcn_loss, run_noise_experiment
-from inference_utils import run_lr_cls_experiment, get_val_scale, replace_transpose_conv
+from inference_utils import run_lr_cls_experiment, get_val_scale, replace_transpose_conv, get_test_data
 
-
-def get_test_data():
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-    test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
-    # Create a DataLoader
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=2048, shuffle=False, num_workers=2)
-    return test_loader
 
 def parse_args():
     parser = argparse.ArgumentParser(
