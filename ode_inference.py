@@ -112,11 +112,12 @@ def run_ode_inference():
             acc_list = []
             for t in range(trials):
                 noisy_params = {"noise_level": noise_level, "weight": None}
-                net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
-                                              pc_conv_layer=pc_conv, data_parallel=False,
-                                              noise_to_bn=True, noise_to_linear=True,
-                                              fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
-                                              **noisy_params)
+                with torch.no_grad():
+                    net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
+                                                  pc_conv_layer=pc_conv, data_parallel=False,
+                                                  noise_to_bn=True, noise_to_linear=True,
+                                                  fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
+                                                  **noisy_params)
                 net_.eval()
                 total = 0
                 correct = 0
