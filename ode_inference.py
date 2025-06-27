@@ -32,7 +32,8 @@ def parse_args():
                    default=None)
     parser.add_argument("--method", type=str, default="dopri5")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
-    parser.add_argument("--ts_scale", type=int, default=10, help="Scale factor of time step")
+    parser.add_argument("--ts_scale", type=int, default=10,
+                        help="Scale factor of time step; Applies to fixed grid methods")
     parser.add_argument("--d_start", type=float, default=0.1,
                         help="Difference between real t_end and position to start sweep")
     parser.add_argument("--d_end", type=float, default=0.1,
@@ -92,11 +93,17 @@ def run_ode_inference():
     lr_pc = float(args.model_name.split("LRPC")[0].split("_")[-1])
     gt_t_end = cycles * lr_pc
 
+    # Get t_end_list for experiments
+    # For single t_end, set d_start=0, d_end=1, n_sweep=1
     sweep_start, sweep_end = gt_t_end - args.d_start, gt_t_end + args.d_end
-    t_end_before = torch.arange(sweep_start, gt_t_end, args.d_start / args.n_sweep, dtype=torch.float32)
-    t_end_after = torch.arange(gt_t_end, sweep_end, args.d_end / args.n_sweep, dtype=torch.float32)
+    t_end_before, t_end_after = torch.tensor([]), torch.tensor([])
+    if args.d_start > 0:
+        t_end_before = torch.arange(sweep_start, gt_t_end, args.d_start / args.n_sweep, dtype=torch.float32)
+    if args.d_end > 0:
+        t_end_after = torch.arange(gt_t_end, sweep_end, args.d_end / args.n_sweep, dtype=torch.float32)
     t_end_list = torch.cat([t_end_before, t_end_after]).tolist()
 
+    logging.warning("Running ODE pcn inference, method: {}, tol: {}".format(args.method, args.tol))
     acc_dict = {}
     for t_end in t_end_list:
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
@@ -147,7 +154,7 @@ def run_ode_inference():
 
     # save noise acc spec to a pkl
     spec_path = os.path.join(
-        "logs/ode_noisy_acc", "{}_{}NoiseLevel.pkl".format(args.model_name, noise_level_list_))
+        "logs/ode_noisy_acc", "{}_{}_{}NoiseLevel.pkl".format(args.method, args.model_name, len(noise_level_list_)))
     with open(spec_path, "wb") as fp:
         pickle.dump(acc_dict, fp)
     log.warning("-------- ODEBlock Noisy experiment finished, spec saved to {} --------".format(spec_path))
