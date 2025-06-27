@@ -153,7 +153,10 @@ def run_ode_inference():
 
     # save noise acc spec to a pkl
     spec_path = os.path.join(
-        "logs/ode_noisy_acc", "{}_{}_{}NoiseLevel.pkl".format(args.method, args.model_name, len(noise_level_list_)))
+        "logs/ode_noisy_acc", "TEnd{}_{}_{}_{}_{}NoiseLevel.pkl".format(
+            str(round(t_end_list[0], 2)).replace(".", "p"),
+            str(round(t_end_list[-1], 2)).replace(".", "p"),
+            args.method, args.model_name, len(noise_level_list_)))
     with open(spec_path, "wb") as fp:
         pickle.dump(acc_dict, fp)
     log.warning("-------- ODEBlock Noisy experiment finished, spec saved to {} --------".format(spec_path))

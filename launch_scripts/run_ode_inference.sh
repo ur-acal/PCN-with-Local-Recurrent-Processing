@@ -40,9 +40,9 @@ run_model(){
     --method          "$method" \
     --tol             "$tol" \
     --ts_scale        10 \
-    --d_start         0.1 \
-    --d_end           0.1 \
-    --n_sweep         5 \
+    --d_start         0 \
+    --d_end           0.2 \
+    --n_sweep         10 \
     --pc_conv         "PCConvHardTanhNoisy" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
@@ -53,8 +53,8 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  MASTER_LOG="$BASE_LOGDIR/master_0626_ppcn_hardtanh_ode_${method}Method_${tol}Tol.log"
-  JOB_LOG="$BASE_LOGDIR/parallel_master_0626_ppcn_hardtanh_ode_${method}Method_${tol}Tol.log"
+  MASTER_LOG="$BASE_LOGDIR/master_0627_ppcn_hardtanh_ode_${method}Method_${tol}Tol_dEnd_10.log"
+  JOB_LOG="$BASE_LOGDIR/parallel_master_0627_ppcn_hardtanh_ode_${method}Method_${tol}Tol_dEnd_10.log"
   > "$MASTER_LOG"
   > "$JOB_LOG"
   echo "Tail master with: tail -f $MASTER_LOG"
