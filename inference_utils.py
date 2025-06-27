@@ -27,13 +27,13 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
-def get_test_data():
+def get_test_data(test_bs=2048):
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
     test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
     # Create a DataLoader
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=2048, shuffle=False, num_workers=2)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=False, num_workers=2)
     return test_loader
 
 def collect_init_args(module_class):

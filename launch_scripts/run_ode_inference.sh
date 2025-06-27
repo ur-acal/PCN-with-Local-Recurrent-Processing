@@ -4,10 +4,10 @@ trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
-tol="0.001"
+export tol="0.001"
 
 # ─────────────── noise toggles ───────────────
-METHOD_VALS=("dopri5" "rk4")
+METHOD_VALS=("dopri5" "adaptive_heun")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -21,7 +21,7 @@ MODEL_NAMES=(
 mkdir -p "$BASE_LOGDIR"
 for method in "${METHOD_VALS[@]}"; do
   for name in "${MODEL_NAMES[@]}"; do
-    mkdir -p "$BASE_LOGDIR/${name}_n_bits_${n_bits}_prop_err_${prop_err}"
+    mkdir -p "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}"
     > "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
   done
 done
@@ -40,15 +40,15 @@ run_model(){
     --method          "$method" \
     --tol             "$tol" \
     --ts_scale        10 \
-    --d_start         0 \
-    --d_end           1 \
-    --n_sweep         1 \
+    --d_start         0.1 \
+    --d_end           0.1 \
+    --n_sweep         5 \
     --pc_conv         "PCConvHardTanhNoisy" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
 
-# ─────────────── loop over n_bits_vals and prop_error_vals ───────────────
+# ─────────────── loop over methods ───────────────
 for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
@@ -70,7 +70,7 @@ for method in "${METHOD_VALS[@]}"; do
   : >"$MASTER_LOG"
   for name in "${MODEL_NAMES[@]}"; do
     printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
-    if ! grep -A 11 "Model Name: ${name} " \
+    if ! grep -A 11 "Model name: ${name} " \
               "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log" >>"$MASTER_LOG"; then
       echo "[Final Result not found]" >>"$MASTER_LOG"
     fi

@@ -67,8 +67,6 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
 
 def run_ode_inference():
     args = parse_args()
-
-    args = parse_args()
     if args.test_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
         logging.basicConfig(level=logging.INFO)
@@ -78,7 +76,7 @@ def run_ode_inference():
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_dataloader = get_test_data()
+    test_dataloader = get_test_data(test_bs=512)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
 
     with torch.no_grad():
@@ -159,3 +157,6 @@ def run_ode_inference():
         pickle.dump(acc_dict, fp)
     log.warning("-------- ODEBlock Noisy experiment finished, spec saved to {} --------".format(spec_path))
 
+
+if __name__ == "__main__":
+    run_ode_inference()

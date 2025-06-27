@@ -82,7 +82,7 @@ for n_bits in "${N_BITS_VALS[@]}"; do
     : >"$MASTER_LOG"
     for name in "${MODEL_NAMES[@]}"; do
       printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
-      if ! grep -A 11 "Model Name: ${name} " \
+      if ! grep -A 11 "Model name: ${name} " \
                 "$BASE_LOGDIR/${name}_n_bits_${n_bits}_prop_err_${prop_err}/job.log" >>"$MASTER_LOG"; then
         echo "[Final Result not found]" >>"$MASTER_LOG"
       fi
