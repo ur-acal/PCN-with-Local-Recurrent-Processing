@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
-from utils import expand_weights_to_matrix
 from torchdiffeq import odeint
 
 import logging
@@ -22,16 +21,6 @@ def is_adaptive(method):
     fixed_grid_sols = ['euler', 'midpoint', 'heun2', 'heun3', 'rk4', 'explicit_adams',
                        'implicit_adams', 'fixed_adams']  # 'scipy_solver'
     return method in adaptive_sols
-
-
-class _TAddedModule(nn.Module):
-    def __init__(self, base_module: nn.Module):
-        super(_TAddedModule, self).__init__()
-        self.base_module = base_module
-
-    def forward(self, t, x):
-        # t is an unused added input argument to fit the torchdiffeq module
-        return self.base_module(x)
 
 
 class ODEBlockPC(nn.Module):

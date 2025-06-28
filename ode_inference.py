@@ -11,8 +11,8 @@ from torchvision import transforms
 from tqdm import tqdm
 from copy import deepcopy
 
-from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
-from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
+from pc_conv import PCConvNoisy, PCConv
+from pc_model import PCNet, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data
 from ode_pc import make_ode_block, is_adaptive
 

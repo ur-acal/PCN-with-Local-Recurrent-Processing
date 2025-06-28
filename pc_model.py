@@ -4,16 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy
-from pc_conv import PlainFFFBConvRes, PlainFFFBConvResFixedX
-from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
-from pc_conv import PCConvScaled, PCConvScaledNoisy
-from pc_conv import PCConvSigmoid, PCConvSigmoidNoisy, PCConvReLU6, PCConvReLU6Noisy
-from pc_conv import PCConvScaledReLU6, PCConvScaledReLU6Noisy
+from pc_conv import PCConv, PCConvNoisy
+from pc_conv import PCConvReLU6, PCConvReLU6Noisy
 from pc_conv import PCConvHardTanh, PCConvHardTanhNoisy
 from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvReLU6Limit, PCConvReLU6LimitNoisy
-from ds_conv import PCConvDS
-from utils import expand_weights_to_matrix
 
 import logging
 log = logging.getLogger(__name__)
@@ -66,42 +60,6 @@ class PCNet(nn.Module):
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
-
-    def save_expanded_weights(self, sample_imgs, save_to):
-        x_ = sample_imgs.clone()
-        for layer_idx, pc_conv in enumerate(self.PcConvs):
-            y_ = pc_conv.relu(pc_conv.FFconv(x_))
-            # fb weights
-            if pc_conv.FBconv is not None:
-                weights_ = pc_conv.FBconv.weight.data.cpu()
-                expanded_weights_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3),
-                                                             stride=pc_conv.stride,
-                                                             padding=pc_conv.padding, flip_weight=False)
-                torch.save(expanded_weights_,
-                           os.path.join(save_to, 'expanded_weights_layer_fb_{}.pt'.format(layer_idx + 1)))
-                expanded_weights_flip_ = expand_weights_to_matrix(y_.shape[1:], weights_.permute(1, 0, 2, 3).flip([2, 3]),
-                                                                  stride=pc_conv.stride,
-                                                                  padding=pc_conv.padding, flip_weight=False)
-                torch.save(expanded_weights_flip_,
-                           os.path.join(save_to, 'expanded_weights_layer_fb_{}_flip.pt'.format(layer_idx + 1)))
-
-            # ff weights
-            expanded_weights_ = expand_weights_to_matrix(x_.shape[1:], pc_conv.FFconv.weight.data.cpu(),
-                                                         stride=pc_conv.stride,
-                                                         padding=pc_conv.padding, flip_weight=False)
-            torch.save(expanded_weights_,
-                       os.path.join(save_to, 'expanded_weights_layer_ff_{}.pt'.format(layer_idx + 1)))
-
-            # bypass weights
-            if pc_conv.bypass is not None:
-                expanded_weights_ = expand_weights_to_matrix(x_.shape[1:], pc_conv.bypass.weight.data.cpu(),
-                                                             stride=pc_conv.stride,
-                                                             padding=pc_conv.padding, flip_weight=False)
-                torch.save(expanded_weights_,
-                           os.path.join(save_to, 'expanded_weights_layer_bp_{}.pt'.format(layer_idx + 1)))
-            if self.max_pool[layer_idx]:
-                y_ = self.max_pool2d(y_)
-            x_ = y_
 
     def _apply_noise(self, p):
         noise_ = torch.randn_like(p, device=self.device, requires_grad=False) * self.noise_level
@@ -190,68 +148,22 @@ class PCNetNoBatchNorm(PCNet):
         return out
 
 
-class PCNetWithMiddleConv(PCNet):
-    def __init__(self, mid_kernel=3, **kwargs):
-        super().__init__(**kwargs)
-        self.mid_convs = nn.ModuleList([
-            nn.Conv2d(self.ics[i], self.ics[i], kernel_size=mid_kernel,
-                      stride=1, padding=(mid_kernel-1)//2, bias=False) for i in range(self.num_layers)
-        ])
-        self.mid_convs.append(
-            nn.Conv2d(self.ocs[-1], self.ocs[-1], kernel_size=mid_kernel,
-                      stride=1, padding=(mid_kernel-1)//2, bias=False))
-
-    def forward(self, x, clamp=False):
-        for i in range(self.num_layers):
-            log.info("layer {} shape: {}".format(i, x.shape))
-            x = self.mid_convs[i](x)
-            x = self.BNs[i](x)
-            x = self.PcConvs[i](x, i)  # ReLU + Conv
-            if self.max_pool[i]:
-                x = self.max_pool2d(x)
-            if clamp:
-                x = torch.clamp(x, -1, 1)
-
-        # classifier
-        if self.dropout > 0.0:
-            log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
-            x = F.dropout(input=x, p=self.dropout, training=self.training)
-        out = F.avg_pool2d(self.relu(self.BNend(self.mid_convs[-1](x))), x.size(-1))
-        out = out.view(out.size(0), -1)
-        out = self.linear(out)
-        return out
-
-
 PCN_CLASSES = {
     "PCNet": PCNet,
-    "PCNetWithMiddleConv": PCNetWithMiddleConv,
     "PCNetNoBatchNorm": PCNetNoBatchNorm,
     None: PCNet,
 }
 
 PC_CONV_CLASS = {
     "PCConv": PCConv,
-    "PCConvSigmoid": PCConvSigmoid,
     "PCConvHardTanh": PCConvHardTanh,
     "PCConvHardTanhLimit": PCConvHardTanhLimit,
     "PCConvReLU6": PCConvReLU6,
     "PCConvReLU6Limit": PCConvReLU6Limit,
-    "PCConvScaled": PCConvScaled,
-    "PCConvScaledReLU6": PCConvScaledReLU6,
-    "PlainFFFBConv": PlainFFFBConv,
-    "PlainFFFBConvRes": PlainFFFBConvRes,
-    "PlainFFFBConvResFixedX": PlainFFFBConvResFixedX,
     # noisy pc conv
     "PCConvNoisy": PCConvNoisy,
-    "PCConvSigmoidNoisy": PCConvSigmoidNoisy,
     "PCConvHardTanhNoisy": PCConvHardTanhNoisy,
     "PCConvHardTanhLimitNoisy": PCConvHardTanhLimitNoisy,
     "PCConvReLU6Noisy": PCConvReLU6Noisy,
     "PCConvReLU6LimitNoisy": PCConvReLU6LimitNoisy,
-    "PCConvScaledNoisy": PCConvScaledNoisy,
-    "PCConvScaledReLU6Noisy": PCConvScaledReLU6Noisy,
-    "PlainFFFBConvNoisy": PlainFFFBConvNoisy,
-    "PlainFFFBConvResNoisy": PlainFFFBConvResNoisy,
-    "PlainFFFBConvResFixedXNoisy": PlainFFFBConvResFixedXNoisy,
-    "PCConvDS": PCConvDS,
 }
