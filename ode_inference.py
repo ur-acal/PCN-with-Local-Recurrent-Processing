@@ -14,7 +14,7 @@ from copy import deepcopy
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data
-from ode_pc import make_ode_block, is_adaptive
+from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
 
 import logging
 log = logging.getLogger(__name__)
@@ -30,6 +30,8 @@ def parse_args():
                         help="Identifier or filename of the model to load")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
+    parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
+                        default=None)
     parser.add_argument("--method", type=str, default="dopri5")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     parser.add_argument("--ts_scale", type=int, default=10,
@@ -38,7 +40,8 @@ def parse_args():
                         help="Difference between real t_end and position to start sweep")
     parser.add_argument("--d_end", type=float, default=0.1,
                         help="Difference between position to end sweep and real t_end")
-    parser.add_argument("--n_sweep", type=int, default=5, help="Number of swept t_end")
+    parser.add_argument("--n_sweep_left", type=int, default=5, help="Number of swept t_end")
+    parser.add_argument("--n_sweep_right", type=int, default=5, help="Number of swept t_end")
     parser.add_argument("--conv_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
@@ -48,8 +51,12 @@ def parse_args():
 
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
+    cycles = float(args.model_name.split("CLS")[0].split("_")[-1])
+    lr_pc = float(args.model_name.split("LRPC")[0].split("_")[-1])
+    t_end = cycles * lr_pc
     noisy_params = {"noise_level": 0.4, "weight": None}
-    ode_params = {"method": "euler", "tol": 1e-3}
+    ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
+                  "tol": args.tol, "ts_scale": args.ts_scale}
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
                                   noise_to_bn=True, noise_to_linear=True,
@@ -96,16 +103,17 @@ def run_ode_inference():
     sweep_start, sweep_end = gt_t_end - args.d_start, gt_t_end + args.d_end
     t_end_before, t_end_after = torch.tensor([]), torch.tensor([])
     if args.d_start > 0:
-        t_end_before = torch.arange(sweep_start, gt_t_end, args.d_start / args.n_sweep, dtype=torch.float32)
+        t_end_before = torch.arange(sweep_start, gt_t_end, args.d_start / args.n_sweep_left, dtype=torch.float32)
     if args.d_end > 0:
-        t_end_after = torch.arange(gt_t_end, sweep_end, args.d_end / args.n_sweep, dtype=torch.float32)
+        t_end_after = torch.arange(gt_t_end, sweep_end, args.d_end / args.n_sweep_right, dtype=torch.float32)
     t_end_list = torch.cat([t_end_before, t_end_after]).tolist()
 
     logging.warning("Running ODE pcn inference, method: {}, tol: {}".format(args.method, args.tol))
     acc_dict = {}
     for t_end in t_end_list:
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
-        ode_params = {"t_end": t_end, "method": args.method, "tol": args.tol, "ts_scale": args.ts_scale}
+        ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
+                      "tol": args.tol, "ts_scale": args.ts_scale}
         noise_acc_spec = {}
         for noise_level in noise_level_list_:
             trials = noisy_trials if noise_level > 0 else 1

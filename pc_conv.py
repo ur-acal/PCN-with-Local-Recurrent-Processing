@@ -486,6 +486,45 @@ class PCConvHardTanhLimitNoisy(PCConvHardTanhNoisy):
             y = self.relu(y)
         return y
 
+class PCConvHardTanhDyn(PCConvHardTanh):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None):
+        for _ in range(self.cls):
+            if self.relu_between:
+                log.info("USE {} as Non-linearity between FF/FB".format(self.relu))
+                y = self.lr * self.relu(self.FFconv(self.relu(x - self.FBconv(y)))) + y
+            else:
+                log.info("DO NOT USE Non-linearity between FF/FB")
+                y = self.lr * self.relu(self.FFconv(x - self.FBconv(y))) + y
+        return y
+
+class PCConvHardTanhDynNoisy(PCConvHardTanhNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
+        for _ in range(self.cls):
+            if self.diff_noise:
+                log.info("Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            log.info("noisy_fb, noisy_ff equals ideal weight: {}, {}".format(
+                torch.allclose(self.noisy_fb, self.FBconv.weight.data),
+                     torch.allclose(self.noisy_ff, self.FFconv.weight.data)))
+            if self.relu_between:
+                log.info("USE Non-linearity: {} between FF/FB".format(self.relu))
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
+                error = self.relu(x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding))
+            else:
+                log.info("DO NOT USE Non-linearity between FF/FB")
+                assert self.noise_level == 0.0 or not torch.allclose(self.noisy_fb, self.FBconv.weight.data)
+                error = x - torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)
+            assert self.noise_level == 0.0 or not torch.allclose(self.noisy_ff, self.FFconv.weight.data)
+            y += self.lr * self.relu(torch.conv2d(error, self.noisy_ff, padding=self.FFconv.padding))
+        return y
+
 class PCConvReLU6Limit(PCConvHardTanhLimit):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

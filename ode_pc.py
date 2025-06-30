@@ -97,6 +97,24 @@ class ODEBlockPC(nn.Module):
         self.ode_func.nfe = value
 
 
+class ODEBlockPCLimitDyn(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x, layer_idx=None):
+        y0 = self.act_fn(self.FFconv(x))
+        def ode_func(t, y):
+            return self.act_fn(self.FFconv(self.act_fn(x - self.FBconv(y))))
+
+        self.integration_time = self.integration_time.type_as(x)
+        out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1):
     for i in range(pc_net.num_layers):
         cls, t_step = pc_net.PcConvs[i].cls, pc_net.PcConvs[i].lr
@@ -106,5 +124,11 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
             t_step = t_end / cls
         t_step = t_step / ts_scale
         pc_net.PcConvs[i] = ode_block(
-            pc_net.PcConvs[i], noise_level=noise_level, method=method, t_end=t_end, t_step=t_step, tol=tol)
+            pc_conv=pc_net.PcConvs[i], noise_level=noise_level, method=method, t_end=t_end, t_step=t_step, tol=tol)
     return pc_net
+
+
+ODEBLOCK_CLASSES = {
+    "ODEBlockPC": ODEBlockPC,
+    "ODEBlockPCLimitDyn": ODEBlockPCLimitDyn
+}
