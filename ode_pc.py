@@ -7,11 +7,13 @@ import torch.nn.functional as F
 import torch.nn.utils.parametrize as P
 import numpy as np
 import matplotlib.pyplot as plt
+from typing import Union
 
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from utils import expand_weights_to_matrix
 from torchdiffeq import odeint
+from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 
 import logging
 log = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ class _TAddedModule(nn.Module):
 
 class ODEBlockPC(nn.Module):
 
-    def __init__(self, pc_conv: PCConvNoisy, noise_level=0.0, method="dopri5", t_end=None, t_step=None, tol=1e-3):
+    def __init__(self, pc_conv: Union[PCConvNoisy, PCConv], noise_level=0.0, method="dopri5", t_end=None, t_step=None, tol=1e-3):
         super(ODEBlockPC, self).__init__()
         self.noise_level = noise_level
         self.tie_weights = pc_conv.tie_weights
@@ -61,13 +63,22 @@ class ODEBlockPC(nn.Module):
         self.tol = tol
         self.method = method
 
+        self.option_aca = {"t0": self.integration_time[0], "t1": self.integration_time[-1],
+                           "t_eval": self.integration_time.tolist(), "rtol": self.tol, "atol": self.tol,
+                           "h": None, "method": self.method}
+
+        # Not used. Exists to make compatible
+        self.b0 = pc_conv.b0
+
     def forward(self, x, layer_idx=None):
         y0 = self.act_fn(self.FFconv(x))
         def ode_func(t, y):
             return self.FFconv(self.act_fn(x - self.FBconv(y)))
 
         self.integration_time = self.integration_time.type_as(x)
-        out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+
+        out = aca_ode_solve(ode_func, y0, self.option_aca)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         out = out[-1]
 
         if self.bypass is not None:
@@ -107,7 +118,8 @@ class ODEBlockPCLimitDyn(ODEBlockPC):
             return self.act_fn(self.FFconv(self.act_fn(x - self.FBconv(y))))
 
         self.integration_time = self.integration_time.type_as(x)
-        out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+        out = aca_ode_solve(ode_func, y0, self.option_aca)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         out = out[-1]
 
         if self.bypass is not None:
@@ -121,7 +133,7 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
         if t_end is None:
             t_end = cls * t_step
         else:
-            t_step = t_end / cls
+            t_step = t_end / cls if cls != 0 else 1.0
         t_step = t_step / ts_scale
         pc_net.PcConvs[i] = ode_block(
             pc_conv=pc_net.PcConvs[i], noise_level=noise_level, method=method, t_end=t_end, t_step=t_step, tol=tol)

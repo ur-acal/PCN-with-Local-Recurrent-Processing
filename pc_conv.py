@@ -48,6 +48,9 @@ class PCConv(nn.Module):
             log.info("Tie the weights of Bypass and FF")
             self.bypass = self.FFconv
 
+        self.tie_weights = tie_weights
+        self.tie_bp = tie_bp
+
         self.layer_idx = layer_idx
 
     def forward(self, x, layer_idx=None):

@@ -14,8 +14,8 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0629_ppcn_no_bn_noise_to_all_weight_hardtanh_5l_30cls.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0629_ppcn_no_bn_noise_to_all_hardtanh_5l_30cls.log"
+MASTER_LOG="$BASE_LOGDIR/master_0630_ppcn_no_bn_noise_to_all_weight_hardtanh_5l_30cls.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0630_ppcn_no_bn_noise_to_all_hardtanh_5l_30cls.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
@@ -56,7 +56,6 @@ run_model(){
     --noise_to_linear "true" \
     --fuse_bn         "false" \
     --noisy_test      "true" \
-    --test_only       "true" \
     --pc_conv         "PCConvHardTanhDynNoisy" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
