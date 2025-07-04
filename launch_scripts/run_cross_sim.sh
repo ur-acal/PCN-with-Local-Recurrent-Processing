@@ -4,20 +4,22 @@ trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
+export CALIB_DIR="./cross_sim/calibrated_config/pcn_input_calib"
 
 #######################################################
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/test_cross_sim"
-MASTER_LOG="$BASE_LOGDIR/master_0625_ppcn_relu6_cross_sim_8bit.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0625_ppcn_relu6_cross_sim_8bit.log"
+EXP_NAME="0704_ppcn_hardtanh_calib"
+MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-#  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -36,13 +38,16 @@ run_model(){
   python -u cross_sim_inference.py \
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
+    --calib_type      "perc_hi_lo" \
+    --calib_samples   64 \
+    --calib_path      "$CALIB_DIR" \
+    --calib_only      "false" \
     --prop_error      "true" \
     --weight_bits     8 \
     --input_bits      8 \
     --bias_rows       0 \
-    --inp_min         0 \
-    --inp_max         6 \
-    --pc_conv         "PCConvReLU6Limit" \
+    --pc_conv         "PCConvHardTanhDyn" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model

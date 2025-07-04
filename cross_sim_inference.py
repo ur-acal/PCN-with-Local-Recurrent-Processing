@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 import torchvision
 import os
 import pickle
@@ -10,6 +11,7 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 from tqdm import tqdm
 from copy import deepcopy
+from typing import List
 
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
@@ -20,6 +22,7 @@ from simulator.algorithms.dnn.torch.convert import from_torch, convertible_modul
 from cross_sim.dnn_inference_params import dnn_inference_params
 from cross_sim.cross_bar_params import base_params_args
 from cross_sim.test_analog_model import test_analog_model, get_exp_name
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -33,23 +36,119 @@ def parse_args():
                         default=True, help="Fuse batch norm into conv")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
+    # input calibration arguments
+    parser.add_argument("--calib_samples", type=int, default=None)
+    parser.add_argument("--calib_type", type=str, default="min_max", choices=["min_max", "perc_hi_lo"])
+    parser.add_argument("--calib_perc", type=float, default=0.99999)
+    parser.add_argument("--sym_quant", type=lambda v: v.lower() in ('yes','true','t','1'), default=False)
+    parser.add_argument("--calib_path", type=str, default=None)
+    parser.add_argument("--calib_only", type=lambda v: v.lower() in ('yes','true','t','1'), default=False)
+    # cross-sim params
     parser.add_argument("--prop_error", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
     parser.add_argument("--weight_bits", type=int, default=8)
     parser.add_argument("--input_bits", type=int, default=8)
     parser.add_argument("--adc_bits", type=int, default=0)
     parser.add_argument("--bias_rows", type=int, default=0)
-    parser.add_argument("--inp_min", type=int, default=-1)
-    parser.add_argument("--inp_max", type=int, default=1)
+    parser.add_argument("--inp_min", type=int, default=None)
+    parser.add_argument("--inp_max", type=int, default=None)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
+
+def get_calib_loader(bs=128, n_samples=None):
+    # Todo: Should we keep the random crop here?
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+    train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+    if n_samples is not None:
+        perm = torch.randperm(len(train_set))
+        train_set = Subset(train_set, perm[:n_samples])
+    calib_dataloader = torch.utils.data.DataLoader(train_set, batch_size=bs, shuffle=False, num_workers=2)
+    return calib_dataloader
+
+def get_leaf_mods(model: nn.Module) -> List[nn.Module]:
+    leaf_mod = []
+    for _, _child in model.named_children():
+        if len(list(_child.children())) == 0 and len(list(_child.parameters())) > 0:
+            leaf_mod.append(_child)
+        leaf_mod.extend(get_leaf_mods(_child))
+    return leaf_mod
+
+def calibrate_input(model: nn.Module, device, model_name,
+                    calib_bs=128, calib_samples=None,
+                    percentile=0.99999, symmetric=False, save_to=None):
+    # if saved, just loading the result directly
+    if save_to is not None:
+        save_to = os.path.join(save_to, "{}_{}_{}.pkl".format(
+            model_name, calib_samples, str(percentile).replace(".", "p")))
+        if os.path.exists(save_to):
+            logging.warning("Calibration result already exists. Return existing result.")
+            with open(save_to, "rb") as fp:
+                calib_res = pickle.load(fp)
+            return calib_res
+
+    model.eval()
+    leaf_mod = get_leaf_mods(model)
+
+    stats = {}
+    hooks = []
+
+    def _make_hook(mod):
+        mod_idx = id(mod)
+        def _hook(_, inp):
+            x = inp[0].detach()
+            rec = stats.setdefault(mod_idx, {
+                "min": torch.inf,
+                "max": -torch.inf,
+                "q_lo": torch.inf,
+                "q_hi": -torch.inf,
+            })
+            rec["min"] = min(rec["min"], x.min().cpu().item())
+            rec["max"] = max(rec["max"], x.max().cpu().item())
+            # Todo: To get the true percentile, we need to accumulate all samples across batches
+            rec["q_lo"] = min(rec["q_lo"], x.quantile(1 - percentile).cpu().item())
+            rec["q_hi"] = max(rec["q_hi"], x.quantile(percentile).cpu().item())
+            if symmetric:
+                max_abs = max(abs(rec["min"]), abs(rec["max"]))
+                rec["min"] = -max_abs
+                rec["max"] = max_abs
+            stats[mod_idx] = rec
+        return _hook
+
+    for _mod in leaf_mod:
+        hooks.append(_mod.register_forward_pre_hook(_make_hook(_mod)))
+
+    calib_loader = get_calib_loader(bs=calib_bs, n_samples=calib_samples)
+    for _batch in calib_loader:
+        _inp, _ = _batch
+        _inp = _inp.to(device)
+        __ = model(_inp)
+
+    for _h in hooks:
+        _h.remove()
+
+    min_max, perc_hi_lo = [], []
+    for _, _rec in stats.items():
+        min_max.append([_rec["min"], _rec["max"]])
+        perc_hi_lo.append([_rec["q_lo"], _rec["q_hi"]])
+
+    calib_res = {"min_max": np.array(min_max), "perc_hi_lo": np.array(perc_hi_lo)}
+    if save_to is not None:
+        with open(save_to, "wb") as fp:
+            pickle.dump(calib_res, fp)
+            logging.warning("Calibration result saved to: {}".format(save_to))
+
+    return calib_res
 
 
 def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True, digital_bias=False,
                         ideal=False, weight_bits=8, input_bits=8, adc_bits=0, bias_rows=0):
     # args = parse_args()
-    if args.test_only:
+    if args.test_only or args.calib_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
         logging.basicConfig(level=logging.INFO)
 
@@ -90,9 +189,19 @@ def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True
 
     ### Load input limits
     # Todo: Support input range calibration for more models
-    input_ranges = torch.stack(
-        [torch.tensor([-2.64, 2.64])] + [torch.tensor([args.inp_min, args.inp_max])] * (n_layers - 1)
-    ).numpy()
+    if args.inp_min is not None and args.inp_max is not None:
+        input_ranges = torch.stack(
+            [torch.tensor([-2.64, 2.64])] + [torch.tensor([args.inp_min, args.inp_max])] * (n_layers - 1)
+        ).numpy()
+    else:
+        # Todo: Currently set calib_bs = calib_samples
+        input_ranges = calibrate_input(model=net_, device=device, model_name=args.model_name,
+                                       calib_bs=args.calib_samples,
+                                       calib_samples=args.calib_samples, percentile=args.calib_perc,
+                                       symmetric=args.sym_quant, save_to=args.calib_path)[args.calib_type]
+        if args.calib_only:
+            logging.warning("Calibrating inputs only, exit now.")
+            exit(0)
 
     ### Load ADC limits
     # Todo: Skipped for now
@@ -138,8 +247,8 @@ def run_cross_sim_inference():
     ###############################
 
     logging.warning("Running test with cross-sim")
-    if args.test_only:
-        _ = cross_sim_inference(args, Nruns=1, noise_level=0.4, proportional_error=args.prop_error, digital_bias=False,
+    if args.test_only or args.calib_only:
+        _ = cross_sim_inference(args, Nruns=1, noise_level=0.2, proportional_error=args.prop_error, digital_bias=False,
                                 ideal=False, weight_bits=args.weight_bits, input_bits=args.input_bits,
                                 adc_bits=args.adc_bits, bias_rows=args.bias_rows)
         exit(0)
