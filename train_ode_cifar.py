@@ -26,6 +26,7 @@ def get_args():
                    help="optimizer")
     p.add_argument("--weight_decay",  type=float, default=1e-3)
     p.add_argument("--learning_rate", type=float, default=0.01)
+    p.add_argument("--lr_reduce_on", type=str, default="80,122,150,225,262")
     p.add_argument("--num_epochs",    type=int,   default=300)
     p.add_argument("--warmup_epoch",  type=int,   default=0)
     # PCNet / PCConv args
@@ -174,6 +175,7 @@ def main():
         learning_rate = args.learning_rate,
         num_epochs    = args.num_epochs,
         warmup_epoch  = args.warmup_epoch,
+        lr_reduce_on  = args.lr_reduce_on,
     )
 
     if args.test_only:

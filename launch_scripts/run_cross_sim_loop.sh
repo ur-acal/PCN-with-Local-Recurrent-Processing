@@ -16,7 +16,8 @@ export BASE_LOGDIR="./logs/test_cross_sim"
 MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
@@ -49,7 +50,7 @@ run_model(){
     --bias_rows       0 \
     --inp_min         0 \
     --inp_max         6 \
-    --pc_conv         "PCConvReLU6Limit" \
+    --pc_conv         "PCConvHardTanh" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_n_bits_${n_bits}_prop_err_${prop_err}/job.log"
 }
 export -f run_model
@@ -60,8 +61,8 @@ for n_bits in "${N_BITS_VALS[@]}"; do
     ##########################################################################################
     # Modify log name here before each run
     ##########################################################################################
-    MASTER_LOG="$BASE_LOGDIR/master_0625_ppcn_relu6_cross_sim_${n_bits}bit_prop_err_${prop_err}.log"
-    JOB_LOG="$BASE_LOGDIR/parallel_master_0625_ppcn_relu6_cross_sim_${n_bits}bit_prop_err_${prop_err}.log"
+    MASTER_LOG="$BASE_LOGDIR/master_0703_ppcn_hardtanh_cross_sim_${n_bits}bit_prop_err_${prop_err}.log"
+    JOB_LOG="$BASE_LOGDIR/parallel_master_0703_ppcn_hardtanh_cross_sim_${n_bits}bit_prop_err_${prop_err}.log"
 
     > "$MASTER_LOG"
     > "$JOB_LOG"

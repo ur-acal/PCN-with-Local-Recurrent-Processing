@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
                         default=None)
     parser.add_argument("--method", type=str, default="dopri5")
+    parser.add_argument("--t_end", type=float, default=None, help="Stop time of the solver")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     parser.add_argument("--ts_scale", type=int, default=10,
                         help="Scale factor of time step; Applies to fixed grid methods")
@@ -49,11 +50,21 @@ def parse_args():
     return parser.parse_args()
 
 
+def get_t_end(args):
+    if "TEnd" in args.model_name:
+        return float(args.model_name.split("TEnd")[0].split("_")[-1])
+    elif "CLS" in args.model_name and "LRPC" in args.model_name:
+        cycles = float(args.model_name.split("CLS")[0].split("_")[-1])
+        lr_pc = float(args.model_name.split("LRPC")[0].split("_")[-1])
+        return cycles * lr_pc
+    else:
+        assert args.t_end is not None
+        return args.t_end
+
+
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
-    cycles = float(args.model_name.split("CLS")[0].split("_")[-1])
-    lr_pc = float(args.model_name.split("LRPC")[0].split("_")[-1])
-    t_end = cycles * lr_pc
+    t_end = get_t_end(args)
     noisy_params = {"noise_level": 0.4, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale}
@@ -83,7 +94,7 @@ def run_ode_inference():
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_dataloader = get_test_data(test_bs=512)
+    test_dataloader = get_test_data(test_bs=128)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
 
     with torch.no_grad():
@@ -94,9 +105,7 @@ def run_ode_inference():
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
     noise_level_list_ = [0, 0.1, .20, .30, .40]
     noisy_trials = 20
-    cycles = float(args.model_name.split("CLS")[0].split("_")[-1])
-    lr_pc = float(args.model_name.split("LRPC")[0].split("_")[-1])
-    gt_t_end = cycles * lr_pc
+    gt_t_end = get_t_end(args)
 
     # Get t_end_list for experiments
     # For single t_end, set d_start=0, d_end=1, n_sweep=1

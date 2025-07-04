@@ -7,7 +7,7 @@ export MODEL_DIR="./saved_ckpt"
 export tol="0.001"
 
 # ─────────────── noise toggles ───────────────
-METHOD_VALS=("dopri5" "adaptive_heun")
+METHOD_VALS=("dopri5")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -15,7 +15,9 @@ export BASE_LOGDIR="./logs/test_ode_noisy"
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanhDyn_dopri5Solver_1.0TEnd_0.001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanhDyn_dopri5Solver_1.0TEnd_0.001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -47,6 +49,7 @@ run_model(){
     --n_sweep_right   10 \
     --pc_conv         "PCConvHardTanhDynNoisy" \
     --ode_block       "ODEBlockPCLimitDyn" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -56,8 +59,8 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  MASTER_LOG="$BASE_LOGDIR/master_0630_ppcn_hardtanhDyn_5l_ode_${method}Method_${tol}Tol.log"
-  JOB_LOG="$BASE_LOGDIR/parallel_master_0630_ppcn_hardtanhDyn_5l_ode_${method}Method_${tol}Tol.log"
+  MASTER_LOG="$BASE_LOGDIR/master_0703_ppcn_hardtanhDyn_ode_${method}Method_${tol}Tol.log"
+  JOB_LOG="$BASE_LOGDIR/parallel_master_0703_ppcn_hardtanhDyn_ode_${method}Method_${tol}Tol.log"
   > "$MASTER_LOG"
   > "$JOB_LOG"
   echo "Tail master with: tail -f $MASTER_LOG"
