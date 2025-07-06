@@ -528,6 +528,17 @@ class PCConvHardTanhDynNoisy(PCConvHardTanhNoisy):
             y += self.lr * self.relu(torch.conv2d(error, self.noisy_ff, padding=self.FFconv.padding))
         return y
 
+class PCConvHardTanh2Dyn(PCConvHardTanhDyn):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh(-2, 2)
+
+class PCConvHardTanh2DynNoisy(PCConvHardTanhDynNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh(-2, 2)
+
+
 class PCConvReLU6Limit(PCConvHardTanhLimit):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

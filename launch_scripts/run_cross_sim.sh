@@ -18,8 +18,8 @@ JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-#  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -39,14 +39,15 @@ run_model(){
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
     --calib_type      "perc_hi_lo" \
-    --calib_samples   64 \
+    --calib_samples   256 \
+    --calib_perc      "0.995" \
     --calib_path      "$CALIB_DIR" \
     --calib_only      "false" \
     --prop_error      "true" \
-    --weight_bits     8 \
-    --input_bits      8 \
+    --weight_bits     4 \
+    --input_bits      4 \
     --bias_rows       0 \
-    --pc_conv         "PCConvHardTanhDyn" \
+    --pc_conv         "PCConvHardTanh" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }

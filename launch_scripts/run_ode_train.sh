@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0704_0p75TEnd_hardTanhDyn"
+EXP="no_bn_pcn_NODE_0705_hardTanh2Dyn"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -28,7 +28,7 @@ mkdir -p "${LOGDIR}"
 # No 2
 python train_ode_cifar.py \
   --optim         "SGD" \
-  --num_epochs    120 \
+  --num_epochs    150 \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
@@ -41,7 +41,7 @@ python train_ode_cifar.py \
   --tol           "0.0001" \
   --t_end         "0.75" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanhDyn" \
+  --pc_conv       "PCConvHardTanh2Dyn" \
   --ode_block     "ODEBlockPCLimitDyn" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanhDyn_0p75_1e-4.log"
 
@@ -50,7 +50,7 @@ echo "Completed."
 # No 2
 python train_ode_cifar.py \
   --optim         "SGD" \
-  --num_epochs    120 \
+  --num_epochs    150 \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
@@ -60,12 +60,12 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.00001" \
-  --t_end         "0.75" \
+  --tol           "0.0001" \
+  --t_end         "1.0" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanhDyn" \
+  --pc_conv       "PCConvHardTanh2Dyn" \
   --ode_block     "ODEBlockPCLimitDyn" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanhDyn_0p75_1e-5.log"
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanhDyn_1_1e-4.log"
 
 echo "Completed."
 
