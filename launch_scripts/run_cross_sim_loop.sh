@@ -4,10 +4,13 @@ trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
+export CALIB_DIR="./cross_sim/calibrated_config/pcn_input_calib"
 
 # ─────────────── noise toggles ───────────────
 N_BITS_VALS=(4 8)
 PROP_ERR_VALS=("true" "false")
+declare -A PREC_MAP=( ["4"]="0.995" ["8"]="0.99999" )
+export PREC_MAP_DEF="$(declare -p PREC_MAP)"
 
 export BASE_LOGDIR="./logs/test_cross_sim"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -17,8 +20,10 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
   "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -37,6 +42,12 @@ run_model(){
   local name="$1"
   local n_bits="$2"
   local prop_err="$3"
+
+  # inferred params
+  eval "$PREC_MAP_DEF"
+  local prec="${PREC_MAP[$n_bits]}"
+  local __rest="${name#*_}"
+  local _pc_conv="${__rest%%_*}"
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -44,13 +55,16 @@ run_model(){
   python -u cross_sim_inference.py \
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
+    --calib_type      "perc_hi_lo" \
+    --calib_perc      "$prec" \
+    --calib_samples   256 \
+    --calib_path      "$CALIB_DIR" \
+    --calib_only      "false" \
     --prop_error      "$prop_err" \
     --weight_bits     "$n_bits" \
     --input_bits      "$n_bits" \
     --bias_rows       0 \
-    --inp_min         0 \
-    --inp_max         6 \
-    --pc_conv         "PCConvHardTanh" \
+    --pc_conv         "$_pc_conv" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_n_bits_${n_bits}_prop_err_${prop_err}/job.log"
 }
 export -f run_model
@@ -61,8 +75,9 @@ for n_bits in "${N_BITS_VALS[@]}"; do
     ##########################################################################################
     # Modify log name here before each run
     ##########################################################################################
-    MASTER_LOG="$BASE_LOGDIR/master_0703_ppcn_hardtanh_cross_sim_${n_bits}bit_prop_err_${prop_err}.log"
-    JOB_LOG="$BASE_LOGDIR/parallel_master_0703_ppcn_hardtanh_cross_sim_${n_bits}bit_prop_err_${prop_err}.log"
+    EXP_NAME="0706_ppcn_hardtanh_and_Dyn_${n_bits}bit_prop_err_${prop_err}"
+    MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
+    JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}.log"
 
     > "$MASTER_LOG"
     > "$JOB_LOG"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0705_hardTanh2Dyn"
+EXP="no_bn_pcn_NODE_0706_hardTanh"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -41,9 +41,9 @@ python train_ode_cifar.py \
   --tol           "0.0001" \
   --t_end         "0.75" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanh2Dyn" \
-  --ode_block     "ODEBlockPCLimitDyn" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanhDyn_0p75_1e-4.log"
+  --pc_conv       "PCConvHardTanh" \
+  --ode_block     "ODEBlockPC" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_0p75_1e-4.log"
 
 echo "Completed."
 
@@ -63,9 +63,9 @@ python train_ode_cifar.py \
   --tol           "0.0001" \
   --t_end         "1.0" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanh2Dyn" \
-  --ode_block     "ODEBlockPCLimitDyn" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanhDyn_1_1e-4.log"
+  --pc_conv       "PCConvHardTanh" \
+  --ode_block     "ODEBlockPC" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_1_1e-4.log"
 
 echo "Completed."
 

@@ -14,15 +14,15 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0702_ppcn_no_bn_noise_to_all_weight_hardtanhDyn_5l_30cls.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0702_ppcn_no_bn_noise_to_all_hardtanhDyn_5l_30cls.log"
+MASTER_LOG="$BASE_LOGDIR/master_0706_ppcn_no_bn_noise_to_all_weight_hardtanh.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_0706_ppcn_no_bn_noise_to_all_hardtanh.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-#  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanh_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_9Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_4Layers_1REP"
@@ -41,6 +41,8 @@ done
 # ─────────────── helper function ───────────────
 run_model(){
   local name="$1"
+  local __rest="${name#*_}"
+  local _pc_conv="${__rest%%_*}"
   set -o pipefail
   python -u run_test.py \
     --model_name      "$name" \
@@ -56,7 +58,8 @@ run_model(){
     --noise_to_linear "true" \
     --fuse_bn         "false" \
     --noisy_test      "true" \
-    --pc_conv         "PCConvHardTanhDynNoisy" \
+    --pc_conv         "${_pc_conv}Noisy" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
