@@ -4,7 +4,7 @@ trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
-export tol="0.001"
+export tol="0.0001"
 
 # ─────────────── noise toggles ───────────────
 METHOD_VALS=("dopri5")
@@ -18,8 +18,10 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhDyn_dopri5Solver_1.0TEnd_0.001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhDyn_dopri5Solver_1.0TEnd_0.001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_dopri5Solver_1.0TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_dopri5Solver_1.0TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_1.0TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -35,6 +37,9 @@ done
 run_model(){
   local name="$1"
   local method="$2"
+
+  local __rest="${name#*_}"
+  local _pc_conv="${__rest%%_*}"
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -49,8 +54,8 @@ run_model(){
     --d_end           0.2 \
     --n_sweep_left    5 \
     --n_sweep_right   10 \
-    --pc_conv         "PCConvHardTanh2DynNoisy" \
-    --ode_block       "ODEBlockPCLimitDyn" \
+    --pc_conv         "${_pc_conv}Noisy" \
+    --ode_block       "ODEBlockPC" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -60,8 +65,9 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  MASTER_LOG="$BASE_LOGDIR/master_0706_ppcn_hardtanh2Dyn_ode_${method}Method_${tol}Tol.log"
-  JOB_LOG="$BASE_LOGDIR/parallel_master_0706_ppcn_hardtanh2Dyn_ode_${method}Method_${tol}Tol.log"
+  EXP_NAME="0707_ppcn_hardtanh_ode_${method}Method_${tol}Tol.log"
+  MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
+  JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
   > "$JOB_LOG"
   echo "Tail master with: tail -f $MASTER_LOG"

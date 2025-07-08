@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0706_hardTanh"
+EXP="no_bn_pcn_NODE_0708_hardTanh_minus_y"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -38,12 +38,12 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.0001" \
+  --tol           "0.00001" \
   --t_end         "0.75" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvHardTanh" \
-  --ode_block     "ODEBlockPC" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_0p75_1e-4.log"
+  --ode_block     "ODEBlockPCMinusY" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_minus_y_0p75_1e-5.log"
 
 echo "Completed."
 
@@ -51,6 +51,7 @@ echo "Completed."
 python train_ode_cifar.py \
   --optim         "SGD" \
   --num_epochs    150 \
+  --warmup_epoch  2 \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
   --max_pool      0  0  1  0  1   0   0   \
@@ -60,12 +61,12 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.0001" \
+  --tol           "0.001" \
   --t_end         "1.0" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvHardTanh" \
-  --ode_block     "ODEBlockPC" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_1_1e-4.log"
+  --ode_block     "ODEBlockPCMinusY" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_minus_y_1_1e-3.log"
 
 echo "Completed."
 

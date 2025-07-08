@@ -15,6 +15,7 @@ from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
+from cross_sim_inference import calibrate_input
 
 import logging
 log = logging.getLogger(__name__)
@@ -81,6 +82,14 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     for _name, _p in net_.named_parameters():
         print("Name: {}, max: {}, min: {}, median: {}, mean: {}".format(
             _name, _p.max(), _p.min(), _p.median(), _p.mean()))
+    input_ranges = calibrate_input(model=net_, device=device, model_name=args.model_name,
+                                   calib_bs=256,
+                                   calib_samples=256, percentile=0.995,
+                                   symmetric=False, save_to=None)
+    for _t, _range in input_ranges.items():
+        print("Type: {}".format(_t))
+        print(_range)
+        print("================================")
 
 
 def run_ode_inference():

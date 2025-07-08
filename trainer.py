@@ -17,7 +17,7 @@ class TrainerCiFar(object):
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
-                 lr_reduce_on="80,122,150,225,262"):
+                 lr_reduce_on="80,122,150,225,262", test_bs=512):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -36,6 +36,7 @@ class TrainerCiFar(object):
         self.batch_size = batch_size
         self.num_epochs = num_epochs
         self.warmup_epoch = warmup_epoch
+        self.test_batch_size = test_bs
 
         self._prepare_cifar()
 
@@ -206,4 +207,4 @@ class TrainerCiFar(object):
         self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
         self.train_dataloader = torch.utils.data.DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=2)
         self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
-        self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.batch_size * 4, shuffle=False, num_workers=2)
+        self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False, num_workers=2)

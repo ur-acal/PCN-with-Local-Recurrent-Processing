@@ -15,6 +15,7 @@ from typing import List
 
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
+from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
 from inference_utils import load_and_prepare_model, replace_transpose_conv
 
 from simulator import CrossSimParameters
@@ -165,10 +166,20 @@ def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True
     noisy_params = {"noise_level": 0.0}
 
     # Get noise-free model
-    net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
-                                  pc_conv_layer=pc_conv, data_parallel=False,
-                                  noise_to_bn=False, noise_to_linear=False,
-                                  fuse_bn=False, conv_only=True, **noisy_params)
+    if "TEnd" in args.model_name and "Solver" in args.model_name:
+        t_end = float(args.model_name.split("TEnd")[0].split("_")[-1])
+        ode_params = {"ode_block": ODEBLOCK_CLASSES["ODEBlockPC"], "t_end": t_end, "method": "dopri5",
+                      "tol": 1e-4, "ts_scale": 1}
+        net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
+                                      pc_conv_layer=pc_conv, data_parallel=False,
+                                      noise_to_bn=False, noise_to_linear=False,
+                                      fuse_bn=False, conv_only=True, ode_params=ode_params,
+                                      **noisy_params)
+    else:
+        net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
+                                      pc_conv_layer=pc_conv, data_parallel=False,
+                                      noise_to_bn=False, noise_to_linear=False,
+                                      fuse_bn=False, conv_only=True, **noisy_params)
 
     # Create a list of CrossSimParameters objects
     n_layers = len(convertible_modules(net_))

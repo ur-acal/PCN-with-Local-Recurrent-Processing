@@ -176,6 +176,7 @@ def main():
         num_epochs    = args.num_epochs,
         warmup_epoch  = args.warmup_epoch,
         lr_reduce_on  = args.lr_reduce_on,
+        test_bs       = args.batch_size,
     )
 
     if args.test_only:

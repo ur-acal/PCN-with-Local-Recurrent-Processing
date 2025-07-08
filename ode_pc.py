@@ -14,6 +14,7 @@ from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimi
 from utils import expand_weights_to_matrix
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
+# from TorchDiffEqPack.odesolver_mem import odesolve_adjoint as aca_ode_solve
 
 import logging
 log = logging.getLogger(__name__)
@@ -127,6 +128,41 @@ class ODEBlockPCLimitDyn(ODEBlockPC):
         return out
 
 
+class ODEBlockPCMinusY(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x, layer_idx=None):
+        y0 = self.act_fn(self.FFconv(x))
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
+            # weight_sum = self.FFconv.weight.data.view(y.shape[1], -1).mean(-1)
+            offset = weight_sum.view(1, -1, 1, 1) * y
+            return self.FFconv(self.act_fn(x - self.FBconv(y))) - offset
+
+        # class OdeFuncClass(nn.Module):
+        #     def __init__(self, ff_conv, act_fn, fb_conv):
+        #         super().__init__()
+        #         self.ff_conv = ff_conv
+        #         self.act_fn = act_fn
+        #         self.fb_conv = fb_conv
+        #     def forward(self, t, y):
+        #         # weight_sum = self.ff_conv.weight.data.view(y.shape[1], -1).sum(-1)
+        #         weight_sum = self.ff_conv.weight.data.view(y.shape[1], -1).mean(-1)
+        #         offset = weight_sum.view(1, -1, 1, 1) * y
+        #         return self.ff_conv(self.act_fn(x - self.fb_conv(y))) - offset
+        # ode_func = OdeFuncClass(self.FFconv, self.act_fn, self.FBconv)
+        #
+        # self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(ode_func, y0, self.option_aca)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1):
     for i in range(pc_net.num_layers):
         cls, t_step = pc_net.PcConvs[i].cls, pc_net.PcConvs[i].lr
@@ -142,5 +178,6 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
 
 ODEBLOCK_CLASSES = {
     "ODEBlockPC": ODEBlockPC,
-    "ODEBlockPCLimitDyn": ODEBlockPCLimitDyn
+    "ODEBlockPCLimitDyn": ODEBlockPCLimitDyn,
+    "ODEBlockPCMinusY": ODEBlockPCMinusY,
 }
