@@ -38,12 +38,12 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.00001" \
+  --tol           "0.001" \
   --t_end         "0.75" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvHardTanh" \
   --ode_block     "ODEBlockPCMinusY" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_minus_y_0p75_1e-5.log"
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_minus_y_0p75_1e-3.log"
 
 echo "Completed."
 
