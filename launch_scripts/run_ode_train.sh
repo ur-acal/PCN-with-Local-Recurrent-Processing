@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0708_hardTanh_minus_y"
+EXP="no_bn_pcn_NODE_0709_hardTanhWS_minus_y"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -38,12 +38,12 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.001" \
+  --tol           "0.0001" \
   --t_end         "0.75" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanh" \
+  --pc_conv       "PCConvHardTanhWSFF" \
   --ode_block     "ODEBlockPCMinusY" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_minus_y_0p75_1e-3.log"
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanhWS_minus_y_0p75_1e-4.log"
 
 echo "Completed."
 
@@ -61,12 +61,12 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.001" \
+  --tol           "0.0001" \
   --t_end         "1.0" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanh" \
+  --pc_conv       "PCConvHardTanhWSFF" \
   --ode_block     "ODEBlockPCMinusY" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_minus_y_1_1e-3.log"
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanhWS_minus_y_1_1e-4.log"
 
 echo "Completed."
 

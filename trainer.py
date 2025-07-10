@@ -1,3 +1,4 @@
+import logging
 import os
 import copy
 import torch
@@ -161,6 +162,7 @@ class TrainerCiFar(object):
                 parametrize_flag = True
                 P.remove_parametrizations(_mod, "weight", leave_parametrized=True) # Keep the parametrized res
         if parametrize_flag:
+            logging.warning("Model Includes parametrized module, saving the non-parametrized model with param baked in.")
             flat_state = {
                 'net': flat_model.state_dict(),
                 'init_args': self.model.init_args,

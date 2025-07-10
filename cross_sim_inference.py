@@ -37,6 +37,8 @@ def parse_args():
                         default=True, help="Fuse batch norm into conv")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
+    parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
+                        default=None)
     # input calibration arguments
     parser.add_argument("--calib_samples", type=int, default=None)
     parser.add_argument("--calib_type", type=str, default="min_max", choices=["min_max", "perc_hi_lo"])
@@ -168,8 +170,8 @@ def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True
     # Get noise-free model
     if "TEnd" in args.model_name and "Solver" in args.model_name:
         t_end = float(args.model_name.split("TEnd")[0].split("_")[-1])
-        ode_params = {"ode_block": ODEBLOCK_CLASSES["ODEBlockPC"], "t_end": t_end, "method": "dopri5",
-                      "tol": 1e-4, "ts_scale": 1}
+        ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": "dopri5",
+                      "tol": 1e-3, "ts_scale": 1}
         net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                       pc_conv_layer=pc_conv, data_parallel=False,
                                       noise_to_bn=False, noise_to_linear=False,

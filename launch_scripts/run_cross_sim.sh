@@ -10,7 +10,7 @@ export CALIB_DIR="./cross_sim/calibrated_config/pcn_input_calib"
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/test_cross_sim"
-EXP_NAME="0707_ppcn_hardtanh_calib"
+EXP_NAME="0709_ppcn_hardtanh_calib"
 MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
 JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 
@@ -18,7 +18,8 @@ JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanhLimit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6Limit_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanh_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_0.75TEnd_0.001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_2REP"
 #  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_1.0TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhDyn_30CLS_0.06LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
@@ -50,6 +51,7 @@ run_model(){
     --adc_bits        0 \
     --bias_rows       0 \
     --pc_conv         "PCConvHardTanh" \
+    --ode_block       "ODEBlockPCMinusY" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
