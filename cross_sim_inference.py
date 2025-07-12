@@ -135,9 +135,16 @@ def calibrate_input(model: nn.Module, device, model_name,
         _h.remove()
 
     min_max, perc_hi_lo = [], []
-    for _, _rec in stats.items():
+    for _mod in leaf_mod:
+        if id(_mod) not in stats:
+            logging.info("mod {} not used".format(_mod))
+            continue
+        _rec = stats[id(_mod)]
+    # for _, _rec in stats.items():
         min_max.append([_rec["min"], _rec["max"]])
         perc_hi_lo.append([_rec["q_lo"], _rec["q_hi"]])
+        logging.info("mod: {}, min_max: {}, perc {}: {}".format(
+            _mod, [_rec["min"], _rec["max"]], percentile, [_rec["q_lo"], _rec["q_hi"]]))
 
     calib_res = {"min_max": np.array(min_max), "perc_hi_lo": np.array(perc_hi_lo)}
     if save_to is not None:

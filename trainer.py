@@ -18,7 +18,7 @@ class TrainerCiFar(object):
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
-                 lr_reduce_on="80,122,150,225,262", test_bs=512):
+                 lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -38,6 +38,7 @@ class TrainerCiFar(object):
         self.num_epochs = num_epochs
         self.warmup_epoch = warmup_epoch
         self.test_batch_size = test_bs
+        self.max_norm = max_norm
 
         self._prepare_cifar()
 
@@ -83,6 +84,8 @@ class TrainerCiFar(object):
             outputs = self.model(inputs)
             loss = self.loss_fn(outputs, labels)
             loss.backward()
+            if self.max_norm is not None:
+                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.max_norm)
             self.optimizer.step()
 
             # Update running loss and compute average loss

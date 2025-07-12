@@ -128,6 +128,35 @@ class ODEBlockPCLimitDyn(ODEBlockPC):
         return out
 
 
+class ODEBlkActInp(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
+            offset = weight_sum.view(1, -1, 1, 1) * y
+            return self.FFconv(self.act_fn(x - self.FBconv(self.act_fn(y)))) - offset
+        return ode_func
+
+    def forward(self, x, layer_idx=None):
+        y0 = torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+class ODEActInpNoMinus(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(x - self.FBconv(self.act_fn(y))))
+        return ode_func
+
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -180,4 +209,6 @@ ODEBLOCK_CLASSES = {
     "ODEBlockPC": ODEBlockPC,
     "ODEBlockPCLimitDyn": ODEBlockPCLimitDyn,
     "ODEBlockPCMinusY": ODEBlockPCMinusY,
+    "ODEBlkActInp": ODEBlkActInp,
+    "ODEActInpNoMinus": ODEActInpNoMinus,
 }

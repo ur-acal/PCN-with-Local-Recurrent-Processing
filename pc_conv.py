@@ -419,6 +419,17 @@ class PCConvHardTanhNoisy(PCConvNoisy):
         super().__init__(**kwargs)
         self.relu = nn.Hardtanh()
 
+class PCConvHardTanh2(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh(-2, 2)
+
+class PCConvHardTanh2Noisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh(-2, 2)
+
+
 class WSConv(nn.Module):
     def __init__(self, eps=1e-5, **kwargs):
         super().__init__(**kwargs)
@@ -445,6 +456,42 @@ class PCConvHardTanhWSFF(PCConvHardTanh):
         P.register_parametrization(self.FFconv, "weight", WSConv())
 
 class PCConvHardTanhWSFFNoisy(PCConvHardTanhNoisy):
+    def __init__(self, **kwargs):
+        """
+        Same as PCConvHardTanhNoisy.
+        Assuming the standardized weights are already baked in the loaded
+        non-parametrized model.
+        """
+        super().__init__(**kwargs)
+
+class WSTransposedConv(nn.Module):
+    def __init__(self, eps=1e-5, **kwargs):
+        super().__init__(**kwargs)
+        self.eps = eps
+    def forward(self, conv_weight: nn.parameter.Parameter):
+        _mean = conv_weight.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)
+        _std = conv_weight.std(0, keepdim=True).std(2, keepdim=True).std(3, keepdim=True) + self.eps
+        std_weight = conv_weight - _mean # Minus _mean only, dividing by _std will cause NaN loss
+        # w_shape = conv_weight.shape
+        # std_weight = F.batch_norm(
+        #     conv_weight.reshape(1, w_shape[1], -1), None, None,
+        #     training=True, momentum=0., eps=self.eps).reshape_as(conv_weight)
+        return std_weight
+
+class PCConvHardTanhWSFFFB(PCConvHardTanh):
+    def __init__(self, **kwargs):
+        """
+        Only used during training. When saving the model, the parametrization is removed
+        from FFconv/FBconv. The parameterized weight is baked in and saved as a normal
+        non-parametrized model.
+        During testing, use PCConvHardTanhNoisy
+        """
+        super().__init__(**kwargs)
+        P.register_parametrization(self.FFconv, "weight", WSConv())
+        if self.FBconv is not None:
+            P.register_parametrization(self.FBconv, "weight", WSTransposedConv())
+
+class PCConvHardTanhWSFFFBNoisy(PCConvHardTanhNoisy):
     def __init__(self, **kwargs):
         """
         Same as PCConvHardTanhNoisy.

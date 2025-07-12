@@ -28,6 +28,7 @@ def get_args():
     p.add_argument("--learning_rate", type=float, default=0.01)
     p.add_argument("--lr_reduce_on", type=str, default="80,122,150,225,262")
     p.add_argument("--num_epochs",    type=int,   default=300)
+    p.add_argument("--max_g_norm", type=float, default=None)
     p.add_argument("--warmup_epoch",  type=int,   default=0)
     # PCNet / PCConv args
     p.add_argument("--inp_channels",  type=int, nargs="+", default=[3,  64, 64, 128, 128, 256, 256, 512],
@@ -72,11 +73,11 @@ def _constr_model_name(args, rep=1):
         model_name = args.pcn
     if args.pc_conv is not None:
         model_name += "_" + args.pc_conv
-    model_name += '_{}Solver'.format(args.method) + '_{}TEnd'.format(str(args.t_end)) + '_{}Tol_'.format(str(args.tol)) \
+    model_name += '_{}'.format(args.ode_block) \
+                  + '_{}Solver'.format(args.method) + '_{}TEnd'.format(str(args.t_end)) + '_{}Tol_'.format(str(args.tol)) \
                   + str(args.weight_decay) + 'WD_' \
                   + name_dict[str(args.tie_bp)] + 'BPtied_' \
                   + name_dict[str(args.bypass)] + 'BP_' \
-                  + name_dict[str(args.use_pc)] + 'PC_' \
                   + str(args.batch_size) + 'BS_' + str(args.learning_rate) + 'LR_' \
                   + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers"
 
@@ -164,6 +165,7 @@ def main():
     logging.warning("tol: {}".format(args.tol))
 
     # Get trainer
+    logging.warning("lr reduce on: {}, max grad norm: {}".format(args.lr_reduce_on, args.max_g_norm))
     trainer = TrainerCiFar(
         model         = model,
         model_name    = model_name,
@@ -177,6 +179,7 @@ def main():
         warmup_epoch  = args.warmup_epoch,
         lr_reduce_on  = args.lr_reduce_on,
         test_bs       = args.batch_size,
+        max_norm      = args.max_g_norm,
     )
 
     if args.test_only:
