@@ -160,6 +160,15 @@ class ODEActInpNoMinus(ODEBlkActInp):
             return self.FFconv(self.act_fn(x - self.FBconv(self.act_fn(y))))
         return ode_func
 
+class ODEActDynNoMinus(ODEBlkActInp):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            return self.act_fn(self.FFconv(x - self.act_fn(self.FBconv(y))))
+        return ode_func
+
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -214,4 +223,5 @@ ODEBLOCK_CLASSES = {
     "ODEBlockPCMinusY": ODEBlockPCMinusY,
     "ODEBlkActInp": ODEBlkActInp,
     "ODEActInpNoMinus": ODEActInpNoMinus,
+    "ODEActDynNoMinus": ODEActDynNoMinus,
 }

@@ -503,22 +503,22 @@ class PCConvHardTanhWSFFFBNoisy(PCConvHardTanhNoisy):
 class PCConvReLU6(PCConv):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.relu = nn.ReLU6(inplace=True)
+        self.relu = nn.ReLU6(inplace=False)
 
 class PCConvReLU6Noisy(PCConvNoisy):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.relu = nn.ReLU6(inplace=True)
+        self.relu = nn.ReLU6(inplace=False)
 
 class PCConvScaledReLU6(PCConvScaled):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.relu = nn.ReLU6(inplace=True)
+        self.relu = nn.ReLU6(inplace=False)
 
 class PCConvScaledReLU6Noisy(PCConvScaledNoisy):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.relu = nn.ReLU6(inplace=True)
+        self.relu = nn.ReLU6(inplace=False)
 
 class PCConvHardTanhLimit(PCConvHardTanh):
     def __init__(self, **kwargs):

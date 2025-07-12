@@ -18,7 +18,7 @@ def str2bool(v):
 
 def get_args():
     p = argparse.ArgumentParser(description="Train PCNet on CIFAR with neural ode")
-    model_save_path = "/home/rongzeng/_workspce_old/repos/pcn/PCN-with-Local-Recurrent-Processing/saved_ckpt"
+    model_save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_ckpt")
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--batch_size",    type=int,   default=512)
