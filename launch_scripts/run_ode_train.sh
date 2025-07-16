@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0716_ODEBlkActInp_minus_y"
+EXP="no_bn_pcn_NODE_0716_ODEBlkProj_minus_y"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -43,7 +43,7 @@ python train_ode_cifar.py \
   --t_end         "1.75" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvHardTanh2" \
-  --ode_block     "ODEBlkActInp" \
+  --ode_block     "ODEBlkProj" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh2_minus_y_1p75_1e-4.log"
 
 echo "Completed."
@@ -65,9 +65,9 @@ python train_ode_cifar.py \
   --tol           "0.0001" \
   --t_end         "1.75" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanh" \
-  --ode_block     "ODEBlkActInp" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_hardTanh_minus_y_1p75_1e-4.log"
+  --pc_conv       "PCConvReLU6" \
+  --ode_block     "ODEBlkProj" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_Relu6_minus_y_1p75_1e-4.log"
 
 echo "Completed."
 

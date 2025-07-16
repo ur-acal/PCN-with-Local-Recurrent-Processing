@@ -184,6 +184,38 @@ class ODEActDynNoMinus(ODEBlkActInp):
             return self.act_fn(self.FFconv(x - self.act_fn(self.FBconv(y))))
         return ode_func
 
+class ODEBlkProj(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
+            offset = weight_sum.view(1, -1, 1, 1) * y
+            return self.FFconv(self.act_fn(x - self.FBconv(y))) - offset
+        return ode_func
+
+    def forward(self, x, layer_idx=None):
+        y0 = torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca, proj_fn=self.act_fn)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+class ODEBlkProjActDyn(ODEBlkProj):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        # Todo: Check the dynamics and where to apply the self.act_fn
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
+            offset = weight_sum.view(1, -1, 1, 1) * y
+            return self.act_fn(self.FFconv(x - self.act_fn(self.FBconv(y)))) - offset
+        return ode_func
+
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -240,4 +272,5 @@ ODEBLOCK_CLASSES = {
     "ODEBlkActDyn": ODEBlkActDyn,
     "ODEActInpNoMinus": ODEActInpNoMinus,
     "ODEActDynNoMinus": ODEActDynNoMinus,
+    "ODEBlkProj": ODEBlkProj,
 }

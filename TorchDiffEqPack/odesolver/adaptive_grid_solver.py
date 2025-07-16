@@ -6,7 +6,7 @@ from torch.autograd import Variable
 from torch import nn
 from .base import ODESolver
 from ..misc import norm, delete_local_computation_graph, flatten, _is_iterable
-__all__ = ['RK12', 'RK23', 'Dopri5']
+__all__ = ['RK12', 'RK23', 'Dopri5', 'ProjDopri5']
 
 SAFETY = 0.9
 MIN_FACTOR = 0.2  # Minimum allowed decrease in a step size.
@@ -449,4 +449,19 @@ class Dopri5(AdaptiveGridSolver):
         if return_variables:
             return out1, error, [k1, k2, k3, k4, k5, k6, k7]
         else:
+            return out1, error
+
+class ProjDopri5(Dopri5):
+    def __init__(self, proj_fn, **kwargs):
+        super().__init__(**kwargs)
+        self.proj_fn = proj_fn
+
+    def step(self, func, t, dt, y, return_variables=False):
+        if return_variables:
+            out1, error, [k1, k2, k3, k4, k5, k6, k7] = super().step(func, t, dt, y, return_variables=return_variables)
+            out1 = tuple(self.proj_fn(_) for _ in out1)
+            return out1, error, [k1, k2, k3, k4, k5, k6, k7]
+        else:
+            out1, error = super().step(func, t, dt, y, return_variables=return_variables)
+            out1 = tuple(self.proj_fn(_) for _ in out1)
             return out1, error

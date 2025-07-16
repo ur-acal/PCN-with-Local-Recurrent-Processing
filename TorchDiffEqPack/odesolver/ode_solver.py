@@ -9,7 +9,7 @@ from .base import check_arguments
 
 __all__ = ['odesolve']
 
-def odesolve(func, y0, options, return_solver=False, **kwargs):
+def odesolve(func, y0, options, return_solver=False, proj_fn=None, **kwargs):
     r"""
     Implementation of ICML 2020 paper "Adaptive checkpoint adjoint method for accurate gradient esitmation in Neural ODEs"
 
@@ -42,7 +42,10 @@ def odesolve(func, y0, options, return_solver=False, **kwargs):
     elif options['method'].lower() == 'rk23':
         solver = RK23(func=func, y0=y0, **hyperparams, **kwargs)
     elif options['method'].lower() == 'dopri5':
-        solver = Dopri5(func=func, y0=y0,   **hyperparams, **kwargs)
+        if proj_fn is None:
+            solver = Dopri5(func=func, y0=y0,   **hyperparams, **kwargs)
+        else:
+            solver = ProjDopri5(func=func, y0=y0, proj_fn=proj_fn, **hyperparams, **kwargs)
     elif options['method'].lower() == 'ode23s':
         solver = ODE23s(func=func, y0=y0,   **hyperparams, **kwargs)
     elif options['method'].lower() == 'sym12async':
