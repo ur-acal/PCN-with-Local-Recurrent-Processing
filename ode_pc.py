@@ -134,12 +134,13 @@ class ODEBlkActInp(ODEBlockPC):
 
     def _make_ode_fn(self, x):
         def ode_func(t, y):
+            y = self.act_fn(y)
             weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
             offset = weight_sum.view(1, -1, 1, 1) * y
             # Todo: Can we add t as the min/max value in hardTanh?
             #  So that when t=0, the initializer is the same as before.
             #  Then the min/max value gradually increases so that the dynamics is the same as before
-            return self.FFconv(self.act_fn(x - self.FBconv(self.act_fn(y)))) - offset
+            return self.FFconv(self.act_fn(x - self.FBconv(y))) - offset
         return ode_func
 
     def forward(self, x, layer_idx=None):
@@ -150,6 +151,20 @@ class ODEBlkActInp(ODEBlockPC):
         if self.bypass is not None:
             out = self.bypass(out) + out
         return out
+
+class ODEBlkActDyn(ODEBlkActInp):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
+            offset = weight_sum.view(1, -1, 1, 1) * y
+            # Todo: Can we add t as the min/max value in hardTanh?
+            #  So that when t=0, the initializer is the same as before.
+            #  Then the min/max value gradually increases so that the dynamics is the same as before
+            return self.act_fn(self.FFconv(x - self.act_fn(self.FBconv(y)))) - offset
+        return ode_func
 
 class ODEActInpNoMinus(ODEBlkActInp):
     def __init__(self, **kwargs):
@@ -222,6 +237,7 @@ ODEBLOCK_CLASSES = {
     "ODEBlockPCLimitDyn": ODEBlockPCLimitDyn,
     "ODEBlockPCMinusY": ODEBlockPCMinusY,
     "ODEBlkActInp": ODEBlkActInp,
+    "ODEBlkActDyn": ODEBlkActDyn,
     "ODEActInpNoMinus": ODEActInpNoMinus,
     "ODEActDynNoMinus": ODEActDynNoMinus,
 }
