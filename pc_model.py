@@ -10,6 +10,7 @@ from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
 from pc_conv import PCConvScaled, PCConvScaledNoisy
 from pc_conv import PCConvSigmoid, PCConvSigmoidNoisy, PCConvReLU6, PCConvReLU6Noisy
 from pc_conv import PCConvScaledReLU6, PCConvScaledReLU6Noisy
+from pc_conv import PCConvHardTanh10, PCConvHardTanh10Noisy, PCConvReLU20, PCConvReLU20Noisy
 from pc_conv import PCConvHardTanh, PCConvHardTanhNoisy, PCConvHardTanhDyn, PCConvHardTanhDynNoisy
 from pc_conv import PCConvHardTanh2, PCConvHardTanh2Noisy, PCConvHardTanh2Dyn, PCConvHardTanh2DynNoisy
 from pc_conv import PCConvHardTanhWSFF, PCConvHardTanhWSFFNoisy, PCConvHardTanhWSFFFB, PCConvHardTanhWSFFFBNoisy
@@ -236,12 +237,14 @@ PC_CONV_CLASS = {
     "PCConvSigmoid": PCConvSigmoid,
     "PCConvHardTanh": PCConvHardTanh,
     "PCConvHardTanh2": PCConvHardTanh2,
+    "PCConvHardTanh10": PCConvHardTanh10,
     "PCConvHardTanhWSFF": PCConvHardTanhWSFF,
     "PCConvHardTanhWSFFFB": PCConvHardTanhWSFFFB,
     "PCConvHardTanhDyn": PCConvHardTanhDyn,
     "PCConvHardTanh2Dyn": PCConvHardTanh2Dyn,
     "PCConvHardTanhLimit": PCConvHardTanhLimit,
     "PCConvReLU6": PCConvReLU6,
+    "PCConvReLU20": PCConvReLU20,
     "PCConvReLU6Limit": PCConvReLU6Limit,
     "PCConvScaled": PCConvScaled,
     "PCConvScaledReLU6": PCConvScaledReLU6,
@@ -253,12 +256,14 @@ PC_CONV_CLASS = {
     "PCConvSigmoidNoisy": PCConvSigmoidNoisy,
     "PCConvHardTanhNoisy": PCConvHardTanhNoisy,
     "PCConvHardTanh2Noisy": PCConvHardTanh2Noisy,
+    "PCConvHardTanh10Noisy": PCConvHardTanh10Noisy,
     "PCConvHardTanhWSFFNoisy": PCConvHardTanhWSFFNoisy,
     "PCConvHardTanhWSFFFBNoisy": PCConvHardTanhWSFFFBNoisy,
     "PCConvHardTanhDynNoisy": PCConvHardTanhDynNoisy,
     "PCConvHardTanh2DynNoisy": PCConvHardTanh2DynNoisy,
     "PCConvHardTanhLimitNoisy": PCConvHardTanhLimitNoisy,
     "PCConvReLU6Noisy": PCConvReLU6Noisy,
+    "PCConvReLU20Noisy": PCConvReLU20Noisy,
     "PCConvReLU6LimitNoisy": PCConvReLU6LimitNoisy,
     "PCConvScaledNoisy": PCConvScaledNoisy,
     "PCConvScaledReLU6Noisy": PCConvScaledReLU6Noisy,

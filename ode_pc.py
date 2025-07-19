@@ -204,6 +204,19 @@ class ODEBlkProj(ODEBlockPC):
             out = self.bypass(out) + out
         return out
 
+class ODEBlkProjInitY(ODEBlkProj):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x, layer_idx=None):
+        y0 = self.act_fn(self.FFconv(x))
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca, proj_fn=self.act_fn)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
 class ODEBlkProjActDyn(ODEBlkProj):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -273,4 +286,5 @@ ODEBLOCK_CLASSES = {
     "ODEActInpNoMinus": ODEActInpNoMinus,
     "ODEActDynNoMinus": ODEActDynNoMinus,
     "ODEBlkProj": ODEBlkProj,
+    "ODEBlkProjInitY": ODEBlkProjInitY,
 }

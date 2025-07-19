@@ -429,6 +429,32 @@ class PCConvHardTanh2Noisy(PCConvNoisy):
         super().__init__(**kwargs)
         self.relu = nn.Hardtanh(-2, 2)
 
+class PCConvHardTanh10(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh(-10, 10)
+
+class PCConvHardTanh10Noisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.Hardtanh(-10, 10)
+
+class ReLUX(nn.Module):
+    def __init__(self, ub):
+        super().__init__()
+        self.scale = 6 / float(ub)
+    def forward(self, x):
+        return F.relu6(x * self.scale) / self.scale
+
+class PCConvReLU20(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = ReLUX(20)
+
+class PCConvReLU20Noisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = ReLUX(20)
 
 class WSConv(nn.Module):
     def __init__(self, eps=1e-5, **kwargs):
