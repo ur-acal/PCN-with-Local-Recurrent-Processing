@@ -7,7 +7,8 @@ export MODEL_DIR="./saved_ckpt"
 export tol="1e-4"
 
 # ─────────────── noise toggles ───────────────
-METHOD_VALS=("dopri5")
+#METHOD_VALS=("dopri5")
+METHOD_VALS=("euler")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -20,7 +21,7 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanhDyn_dopri5Solver_1.0TEnd_0.001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanh2Dyn_dopri5Solver_1.0TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # NODE baseline
+#  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # NODE baseline
 #  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_1.0TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # NODE baseline
 #  "PCNetNoBatchNorm_PCConvHardTanhWSFF_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanhWSFFFB_ODEBlockPCMinusY_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
@@ -33,6 +34,9 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_ODEBlkProj_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_ODEActInpNoMinus_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvHardTanh_ODEActInpNoMinus_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU20_ODEBlkProj_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_ODEBlkProjInitY_eulerSolver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_ODEBlkProjInitY_eulerSolver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -60,13 +64,14 @@ run_model(){
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
     --tol             "$tol" \
-    --ts_scale        10 \
+    --n_steps         15 \
+    --ts_scale        1 \
     --d_start         0.1 \
     --d_end           0.2 \
     --n_sweep_left    5 \
     --n_sweep_right   10 \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "ODEBlockPC" \
+    --ode_block       "ODEBlkProjInitY" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }

@@ -1,6 +1,8 @@
+import logging
+
 from .base import ODESolver
 import torch
-__all__ = ['Euler','RK2','RK4']
+__all__ = ['Euler','RK2','RK4', 'ProjEuler']
 
 class FixedGridSolver(ODESolver):
 
@@ -50,6 +52,21 @@ class Euler(FixedGridSolver):
             return out, None, k1
         else:
             return out, None,
+
+class ProjEuler(Euler):
+    def __init__(self, proj_fn, **kwargs):
+        super().__init__(**kwargs)
+        self.proj_fn = proj_fn
+
+    def step(self, func, t, dt, y, return_variables=False):
+        if return_variables:
+            out, _, k1 = super().step(func, t, dt, y, return_variables)
+            out = tuple(self.proj_fn(_) for _ in out)
+            return out, _, k1
+        else:
+            out, _ = super().step(func, t, dt, y, return_variables)
+            out = tuple(self.proj_fn(_) for _ in out)
+            return out, _
 
 class RK2(FixedGridSolver):
     order = 2

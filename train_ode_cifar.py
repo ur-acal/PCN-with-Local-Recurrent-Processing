@@ -43,6 +43,7 @@ def get_args():
                         default="ODEBlockPC")
     p.add_argument("--method", type=str, default="dopri5")
     p.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
+    p.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
     # PCConv hyper-params
     p.add_argument("--kernel_size",   type=int, default=3)
@@ -158,7 +159,8 @@ def main():
     # convert block to Neural ode
     ode_block = ODEBLOCK_CLASSES[args.ode_block]
     model = make_ode_block(
-        pc_net=model, ode_block=ode_block, noise_level=0.0, method=args.method, t_end=args.t_end, tol=args.tol)
+        pc_net=model, ode_block=ode_block, noise_level=0.0, method=args.method, t_end=args.t_end,
+        tol=args.tol, n_steps=args.n_steps)
     logging.warning("PcConv converted to ODEBlock: {}".format(ode_block.__name__))
     logging.warning("t_end: {}".format(args.t_end))
     logging.warning("method: {}".format(args.method))

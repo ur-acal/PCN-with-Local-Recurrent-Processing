@@ -32,7 +32,10 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, **kwargs):
     hyperparams = extract_keys(options)
 
     if options['method'].lower() == 'euler':
-        solver = Euler(func=func, y0=y0,  **hyperparams, **kwargs)
+        if proj_fn is None:
+            solver = Euler(func=func, y0=y0,  **hyperparams, **kwargs)
+        else:
+            solver = ProjEuler(func=func, y0=y0, proj_fn=proj_fn, **hyperparams, **kwargs)
     elif options['method'].lower() == 'rk2':
         solver = RK2(func=func, y0=y0,  **hyperparams, **kwargs)
     elif options['method'].lower() == 'rk4':

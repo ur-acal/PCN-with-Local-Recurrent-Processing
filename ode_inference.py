@@ -35,6 +35,7 @@ def parse_args():
                         default=None)
     parser.add_argument("--method", type=str, default="dopri5")
     parser.add_argument("--t_end", type=float, default=None, help="Stop time of the solver")
+    parser.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     parser.add_argument("--ts_scale", type=int, default=10,
                         help="Scale factor of time step; Applies to fixed grid methods")
@@ -66,29 +67,29 @@ def get_t_end(args):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.4, "weight": None}
+    noisy_params = {"noise_level": 0.2, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
-                  "tol": args.tol, "ts_scale": args.ts_scale}
+                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
                                   noise_to_bn=True, noise_to_linear=True,
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                   **noisy_params)
     net_.eval()
-    test_batch = next(iter(test_dataloader))[0].to(device)[:512]
-    _ = net_(test_batch)
-    _, predicted_raw = torch.max(_, 1)
-    # _total, _correct = 0, 0
-    # for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False):
-    #     inputs, targets = inputs.to(device), targets.to(device)
-    #     with torch.no_grad():
-    #         output_tensor = net_(inputs)
-    #     _, predicted = torch.max(output_tensor, 1)
-    #     _total += targets.size(0)
-    #     _correct += (predicted == targets).sum().item()
-    # # Calculate the accuracy
-    # _acc = 100 * _correct / _total
-    # logging.info("Accuracy: {}".format(_acc))
+    # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
+    # _ = net_(test_batch)
+    # _, predicted_raw = torch.max(_, 1)
+    _total, _correct = 0, 0
+    for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=True):
+        inputs, targets = inputs.to(device), targets.to(device)
+        with torch.no_grad():
+            output_tensor = net_(inputs)
+        _, predicted = torch.max(output_tensor, 1)
+        _total += targets.size(0)
+        _correct += (predicted == targets).sum().item()
+    # Calculate the accuracy
+    _acc = 100 * _correct / _total
+    logging.info("Accuracy: {}".format(_acc))
 
     logging.info("===== Inspecting the range of the weights =====")
     for _name, _p in net_.named_parameters():
@@ -143,7 +144,7 @@ def run_ode_inference():
     for t_end in t_end_list:
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
-                      "tol": args.tol, "ts_scale": args.ts_scale}
+                      "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
         noise_acc_spec = {}
         for noise_level in noise_level_list_:
             trials = noisy_trials if noise_level > 0 else 1

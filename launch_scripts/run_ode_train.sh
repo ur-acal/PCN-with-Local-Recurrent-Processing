@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0718_HardTanh10_ReLU20_minus_y"
+EXP="no_bn_pcn_NODE_0721_ODEBlk0Init"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -42,9 +42,9 @@ python train_ode_cifar.py \
   --tol           "0.0001" \
   --t_end         "1.75" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvReLU20" \
-  --ode_block     "ODEBlkProj" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_Relu20_minus_y_1p75_1e-4.log"
+  --pc_conv       "PCConvHardTanh" \
+  --ode_block     "ODEBlk0Init" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_HardTanh_minus_y_0p75_1e-4.log"
 
 echo "Completed."
 
@@ -65,9 +65,9 @@ python train_ode_cifar.py \
   --tol           "0.0001" \
   --t_end         "1.75" \
   --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvHardTanh10" \
-  --ode_block     "ODEBlkProj" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_HardTanh10_minus_y_1p75_1e-4.log"
+  --pc_conv       "PCConvReLU6" \
+  --ode_block     "ODEBlk0Init" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_minus_y_0p75_1e-4.log"
 
 echo "Completed."
 
