@@ -12,7 +12,7 @@ from typing import Union
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from utils import expand_weights_to_matrix
-from torchdiffeq import odeint
+# from torchdiffeq import odeint  # Not used, using TorchDiffEqPack instead
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 # from TorchDiffEqPack.odesolver_mem import odesolve_adjoint as aca_ode_solve
 

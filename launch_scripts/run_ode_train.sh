@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0721_ODEBlk0Init"
+EXP="no_bn_pcn_NODE_0722_ODEBlockPCMinusY_QAT_INT8"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -25,7 +25,7 @@ mkdir -p "${LOGDIR}"
 #  --ode_block     "ODEBlockPCLimitDyn" \
 #  2>&1 | tee "${LOGDIR}/train_${EXP}_5l_baseline_hardTanhDyn.log"
 
-# No 2
+# Task 1 - QAT Training with HardTanh (run in background)
 python train_ode_cifar.py \
   --optim         "SGD" \
   --num_epochs    150 \
@@ -43,12 +43,15 @@ python train_ode_cifar.py \
   --t_end         "1.75" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvHardTanh" \
-  --ode_block     "ODEBlk0Init" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_HardTanh_minus_y_0p75_1e-4.log"
+  --ode_block     "ODEBlockPCMinusY" \
+  --qat           "true" \
+  --qat_backend   "fbgemm" \
+  --qat_start_epoch 50 \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_HardTanh_minus_y_QAT_INT8.log" &
 
-echo "Completed."
+echo "Started Task 1 (HardTanh) in background with PID: $!"
 
-# No 2
+# Task 2 - QAT Training with ReLU6 (run in background)
 python train_ode_cifar.py \
   --optim         "SGD" \
   --num_epochs    150 \
@@ -66,15 +69,30 @@ python train_ode_cifar.py \
   --t_end         "1.75" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
-  --ode_block     "ODEBlk0Init" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_minus_y_0p75_1e-4.log"
+  --ode_block     "ODEBlockPCMinusY" \
+  --qat           "true" \
+  --qat_backend   "fbgemm" \
+  --qat_start_epoch 50 \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_minus_y_QAT_INT8.log" &
 
-echo "Completed."
+echo "Started Task 2 (ReLU6) in background with PID: $!"
+
+# Wait for both tasks to complete
+echo "Waiting for both training tasks to complete..."
+wait
+
+echo "Both tasks completed!"
 
 ############################################################
-# launch in this way:
-# nohup bash launch_scripts/run_ode_train.sh > ./logs/master_single.log 2>&1 &
-# tail -f ./logs/master_single.log
-# after train finished
-# cat ./logs/master_single.log | grep "Train finished" -A 3
+# launch in this way (both tasks run in parallel):
+# nohup bash launch_scripts/run_ode_train.sh > ./logs/master_parallel.log 2>&1 &
+#
+# Monitor progress:
+# tail -f ./logs/master_parallel.log
+# tail -f ./logs/no_bn_pcn_NODE_0722_ODEBlockPCMinusY_QAT_INT8/train_*_HardTanh_*.log
+# tail -f ./logs/no_bn_pcn_NODE_0722_ODEBlockPCMinusY_QAT_INT8/train_*_ReLU6_*.log
+#
+# Check when both tasks finish:
+# cat ./logs/master_parallel.log | grep "Both tasks completed"
+# cat ./logs/no_bn_pcn_NODE_0722_ODEBlockPCMinusY_QAT_INT8/train_*_*.log | grep "Train finished" -A 3
 ############################################################

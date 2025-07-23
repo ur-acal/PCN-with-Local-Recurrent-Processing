@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
+import torch.quantization as quantization
 
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block
 from pc_conv import PCConv, PartialTiedPCConv
@@ -65,6 +66,13 @@ def get_args():
     p.add_argument("--tie_frac", type=float, default=1.0,
                    help="fraction to tie weights of FF/FB")
     p.add_argument("--test_only", type=str2bool, default=False)
+    # Quantization Aware Training arguments
+    p.add_argument("--qat", type=str2bool, default=False,
+                   help="Enable Quantization Aware Training")
+    p.add_argument("--qat_backend", type=str, choices=["fbgemm", "qnnpack"], default="fbgemm",
+                   help="Quantization backend (fbgemm for x86, qnnpack for ARM)")
+    p.add_argument("--qat_start_epoch", type=int, default=0,
+                   help="Epoch to start quantization aware training")
     return p.parse_args()
 
 def _constr_model_name(args, rep=1):
@@ -166,6 +174,18 @@ def main():
     logging.warning("method: {}".format(args.method))
     logging.warning("tol: {}".format(args.tol))
 
+    # Quantization Aware Training setup
+    if args.qat:
+        logging.warning("Enabling Quantization Aware Training (QAT)")
+        logging.warning("QAT backend: {}".format(args.qat_backend))
+        logging.warning("QAT start epoch: {}".format(args.qat_start_epoch))
+
+        # Set quantization backend
+        torch.backends.quantized.engine = args.qat_backend
+
+        # Update model name to include QAT info
+        model_name = model_name + "_QAT_INT8_{}".format(args.qat_backend)
+
     # Get trainer
     logging.warning("lr reduce on: {}, max grad norm: {}".format(args.lr_reduce_on, args.max_g_norm))
     trainer = TrainerCiFar(
@@ -182,6 +202,9 @@ def main():
         lr_reduce_on  = args.lr_reduce_on,
         test_bs       = args.batch_size,
         max_norm      = args.max_g_norm,
+        qat           = args.qat,
+        qat_backend   = args.qat_backend,
+        qat_start_epoch = args.qat_start_epoch,
     )
 
     if args.test_only:
