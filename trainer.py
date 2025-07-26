@@ -309,6 +309,10 @@ class TrainerCiFar(object):
         original_params = sum(p.numel() for p in self.model.parameters())
         print(f'Original model parameters: {original_params:,}')
 
+        # Ensure model is in training mode (required for QAT)
+        self.model.train()
+        print('✓ Model set to training mode')
+
         # Set quantization config for INT8
         self.model.qconfig = quantization.get_default_qat_qconfig(self.qat_backend)
         print(f'QConfig: {self.model.qconfig}')

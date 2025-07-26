@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0722_ODEBlockPCMinusY_QAT_INT8"
+EXP="no_bn_pcn_NODE_0722_ODEBlockPCMinusY_QAT_INT8_TEST"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -25,10 +25,10 @@ mkdir -p "${LOGDIR}"
 #  --ode_block     "ODEBlockPCLimitDyn" \
 #  2>&1 | tee "${LOGDIR}/train_${EXP}_5l_baseline_hardTanhDyn.log"
 
-# Task 1 - QAT Training with HardTanh (run in background)
+# Task 1 - QAT Training with HardTanh (run in background) - 2 EPOCH TEST
 python train_ode_cifar.py \
   --optim         "SGD" \
-  --num_epochs    150 \
+  --num_epochs    2 \
   --max_g_norm    1.0 \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
@@ -40,21 +40,21 @@ python train_ode_cifar.py \
   --batch_size    128 \
   --method        "dopri5" \
   --tol           "0.0001" \
-  --t_end         "1.75" \
+  --t_end         "0.1" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvHardTanh" \
   --ode_block     "ODEBlockPCMinusY" \
   --qat           "true" \
   --qat_backend   "fbgemm" \
-  --qat_start_epoch 50 \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_HardTanh_minus_y_QAT_INT8.log" &
+  --qat_start_epoch 1 \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_HardTanh_minus_y_QAT_INT8_TEST.log" &
 
 echo "Started Task 1 (HardTanh) in background with PID: $!"
 
-# Task 2 - QAT Training with ReLU6 (run in background)
+# Task 2 - QAT Training with ReLU6 (run in background) - 2 EPOCH TEST
 python train_ode_cifar.py \
   --optim         "SGD" \
-  --num_epochs    150 \
+  --num_epochs    2 \
   --max_g_norm    1.0 \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
@@ -66,14 +66,14 @@ python train_ode_cifar.py \
   --batch_size    128 \
   --method        "dopri5" \
   --tol           "0.0001" \
-  --t_end         "1.75" \
+  --t_end         "0.1" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
   --ode_block     "ODEBlockPCMinusY" \
   --qat           "true" \
   --qat_backend   "fbgemm" \
-  --qat_start_epoch 50 \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_minus_y_QAT_INT8.log" &
+  --qat_start_epoch 1 \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_minus_y_QAT_INT8_TEST.log" &
 
 echo "Started Task 2 (ReLU6) in background with PID: $!"
 
