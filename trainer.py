@@ -20,7 +20,8 @@ class TrainerCiFar(object):
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None,
-                 qat=False, qat_backend="fbgemm", qat_start_epoch=0):
+                 qat=False, qat_backend="fbgemm", qat_start_epoch=0,
+                 subset_fraction=1.0):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -55,10 +56,16 @@ class TrainerCiFar(object):
         self.qat_start_epoch = qat_start_epoch
         self.qat_prepared = False
 
+        # Quick testing parameters
+        self.subset_fraction = subset_fraction
+
         if self.qat:
             print('----- Quantization Aware Training enabled -----')
             print('----- QAT Backend: {} -----'.format(self.qat_backend))
             print('----- QAT Start Epoch: {} -----'.format(self.qat_start_epoch))
+
+        if self.subset_fraction < 1.0:
+            print('----- Using {:.1%} of dataset for quick testing -----'.format(self.subset_fraction))
 
         self._prepare_cifar()
 
@@ -109,47 +116,25 @@ class TrainerCiFar(object):
 
         # Convert QAT model to quantized model for inference
         if self.qat and self.qat_prepared:
-            print("\n" + "="*60)
-            print("CONVERTING QAT MODEL TO QUANTIZED MODEL")
-            print("="*60)
-
-            # Get model size before quantization
-            qat_size = sum(p.numel() * p.element_size() for p in self.model.parameters())
-
-            self.model.eval()
-            quantized_model = quantization.convert(self.model, inplace=False)
-
-            # Test quantized model
             try:
-                dummy_input = torch.randn(1, 3, 32, 32).to(self.device)
-                with torch.no_grad():
-                    qat_output = self.model(dummy_input)
-                    quant_output = quantized_model(dummy_input.cpu())  # Quantized models typically run on CPU
-                print("✓ Quantized model forward pass test successful")
-                print(f"QAT output shape: {qat_output.shape}, Quantized output shape: {quant_output.shape}")
+                # Move model to CPU for quantization conversion
+                self.model.eval()
+                cpu_model = self.model.cpu()
+
+                # Convert to quantized model
+                quantized_model = quantization.convert(cpu_model, inplace=False)
+
+                # Move original model back to device
+                self.model = self.model.to(self.device)
+
+                # Save quantized model
+                quantized_model_path = self._save_quantized_model(quantized_model, val_acc, self.num_epochs)
+                print(f"✓ Quantized model saved: {quantized_model_path}")
+
             except Exception as e:
-                print(f"✗ Quantized model test failed: {e}")
-
-            # Count quantized modules
-            quant_modules = []
-            for name, module in quantized_model.named_modules():
-                if 'quantized' in str(type(module)).lower():
-                    quant_modules.append(name)
-
-            print(f"✓ Found {len(quant_modules)} quantized modules")
-            print(f"QAT model size: {qat_size / 1024:.2f} KB")
-
-            quantized_model_path = self._save_quantized_model(quantized_model, val_acc, self.num_epochs)
-
-            # Check saved file size
-            if os.path.exists(quantized_model_path):
-                file_size = os.path.getsize(quantized_model_path)
-                print(f"Quantized model file size: {file_size / 1024:.2f} KB")
-                compression_ratio = qat_size / file_size if file_size > 0 else 0
-                print(f"Compression ratio: {compression_ratio:.2f}x")
-
-            print(f"✓ Quantized model saved: {quantized_model_path}")
-            print("="*60)
+                # Move model back to device if conversion failed
+                self.model = self.model.to(self.device)
+                print(f"⚠️ Quantized model conversion failed: {str(e)[:100]}...")
 
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
         print("----- Total number of parameters: {} M -----".format(sum(p.numel() for p in self.model.parameters()) / 1e6))
@@ -248,6 +233,22 @@ class TrainerCiFar(object):
         os.makedirs(save_to, exist_ok=True)
         save_pth_path = os.path.join(str(save_to), self.model_name + suffix)
 
+        # For QAT models, skip the _save_then_load process as it causes issues with fake quantization parameters
+        if self.qat and self.qat_prepared:
+            # Save QAT model directly without the complex parameterization handling
+            qat_state = {
+                'net': self.model.state_dict(),
+                'init_args': self.model.init_args,
+                'net_type': self.model.__class__.__name__,
+                'acc': acc,
+                'epoch': epoch,
+                'qat_model': True,
+                'qat_backend': self.qat_backend,
+            }
+            torch.save(qat_state, save_pth_path)
+            return save_pth_path
+
+        # Original logic for non-QAT models
         # Need to save then the load the model to totally decouple the parameterization
         flat_model = self._save_then_load(save_to)
         parametrize_flag = False
@@ -313,9 +314,22 @@ class TrainerCiFar(object):
         self.model.train()
         print('✓ Model set to training mode')
 
-        # Set quantization config for INT8
-        self.model.qconfig = quantization.get_default_qat_qconfig(self.qat_backend)
-        print(f'QConfig: {self.model.qconfig}')
+        # Set quantization config for INT8 - use per-tensor quantization for better compatibility
+        if self.qat_backend == "fbgemm":
+            # Use per-tensor quantization instead of per-channel for better compatibility
+            self.model.qconfig = quantization.QConfig(
+                activation=quantization.FakeQuantize.with_args(
+                    observer=quantization.MovingAverageMinMaxObserver,
+                    quant_min=0, quant_max=255, dtype=torch.quint8, qscheme=torch.per_tensor_affine
+                ),
+                weight=quantization.FakeQuantize.with_args(
+                    observer=quantization.MovingAverageMinMaxObserver,
+                    quant_min=-128, quant_max=127, dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
+                )
+            )
+        else:
+            # For qnnpack backend
+            self.model.qconfig = quantization.get_default_qat_qconfig(self.qat_backend)
 
         # Prepare model for QAT
         self.model = quantization.prepare_qat(self.model, inplace=False)
@@ -382,7 +396,26 @@ class TrainerCiFar(object):
         transform_test = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-        self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+        # Load full datasets
+        full_train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+        full_val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+
+        # Create subsets if needed
+        if self.subset_fraction < 1.0:
+            train_size = int(len(full_train_set) * self.subset_fraction)
+            val_size = int(len(full_val_set) * self.subset_fraction)
+
+            # Create random subsets
+            train_indices = torch.randperm(len(full_train_set))[:train_size]
+            val_indices = torch.randperm(len(full_val_set))[:val_size]
+
+            self.train_set = torch.utils.data.Subset(full_train_set, train_indices)
+            self.val_set = torch.utils.data.Subset(full_val_set, val_indices)
+
+            print(f'Using subset: {len(self.train_set)}/{len(full_train_set)} train samples, {len(self.val_set)}/{len(full_val_set)} val samples')
+        else:
+            self.train_set = full_train_set
+            self.val_set = full_val_set
+
         self.train_dataloader = torch.utils.data.DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=2)
-        self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
         self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False, num_workers=2)

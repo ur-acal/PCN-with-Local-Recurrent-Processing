@@ -25,10 +25,10 @@ mkdir -p "${LOGDIR}"
 #  --ode_block     "ODEBlockPCLimitDyn" \
 #  2>&1 | tee "${LOGDIR}/train_${EXP}_5l_baseline_hardTanhDyn.log"
 
-# Task 1 - QAT Training with HardTanh (run in background) - 2 EPOCH TEST
+# Task 1 - QAT Training with HardTanh (run in background) - QUICK TEST
 python train_ode_cifar.py \
   --optim         "SGD" \
-  --num_epochs    2 \
+  --num_epochs    3 \
   --max_g_norm    1.0 \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
@@ -47,14 +47,15 @@ python train_ode_cifar.py \
   --qat           "true" \
   --qat_backend   "fbgemm" \
   --qat_start_epoch 1 \
+  --subset_fraction 0.05 \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_HardTanh_minus_y_QAT_INT8_TEST.log" &
 
 echo "Started Task 1 (HardTanh) in background with PID: $!"
 
-# Task 2 - QAT Training with ReLU6 (run in background) - 2 EPOCH TEST
+# Task 2 - QAT Training with ReLU6 (run in background) - QUICK TEST
 python train_ode_cifar.py \
   --optim         "SGD" \
-  --num_epochs    2 \
+  --num_epochs    3 \
   --max_g_norm    1.0 \
   --inp_channels  3  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
@@ -73,6 +74,7 @@ python train_ode_cifar.py \
   --qat           "true" \
   --qat_backend   "fbgemm" \
   --qat_start_epoch 1 \
+  --subset_fraction 0.05 \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_minus_y_QAT_INT8_TEST.log" &
 
 echo "Started Task 2 (ReLU6) in background with PID: $!"

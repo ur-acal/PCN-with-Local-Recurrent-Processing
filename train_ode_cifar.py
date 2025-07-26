@@ -73,6 +73,9 @@ def get_args():
                    help="Quantization backend (fbgemm for x86, qnnpack for ARM)")
     p.add_argument("--qat_start_epoch", type=int, default=0,
                    help="Epoch to start quantization aware training")
+    # Quick testing arguments
+    p.add_argument("--subset_fraction", type=float, default=1.0,
+                   help="Fraction of dataset to use (0.0-1.0). Use smaller values for quick testing")
     return p.parse_args()
 
 def _constr_model_name(args, rep=1):
@@ -205,6 +208,7 @@ def main():
         qat           = args.qat,
         qat_backend   = args.qat_backend,
         qat_start_epoch = args.qat_start_epoch,
+        subset_fraction = args.subset_fraction,
     )
 
     if args.test_only:
