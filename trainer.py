@@ -235,6 +235,7 @@ class TrainerCiFar(object):
 
         # For QAT models, skip the _save_then_load process as it causes issues with fake quantization parameters
         if self.qat and self.qat_prepared:
+            print(f"Saving QAT model checkpoint: {save_pth_path}")
             # Save QAT model directly without the complex parameterization handling
             qat_state = {
                 'net': self.model.state_dict(),
