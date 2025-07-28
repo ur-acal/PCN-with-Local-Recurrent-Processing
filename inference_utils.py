@@ -110,10 +110,17 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
 
+    # Check if this is a QAT model
+    is_qat_model = checkpoint_weight.get("qat_model", False)
+    qat_backend = checkpoint_weight.get("qat_backend", "fbgemm")
+
     # Get model used
     sd_model_struct = checkpoint_weight.get("net_type", None)
     model_struct = PCN_CLASSES[sd_model_struct] if sd_model_struct else model_struct
     log.warning("----- Using :{} model -----".format(model_struct.__name__))
+
+    if is_qat_model:
+        log.warning("----- Loading QAT model with backend: {} -----".format(qat_backend))
 
     # filter out unused init arguments
     filter_args(model_struct, model_args)
@@ -132,6 +139,23 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
     net_ = model_struct(**init_kwargs)
     net_ = net_.to(device)
+
+    # Handle QAT model loading
+    if is_qat_model:
+        # Prepare model for QAT (add fake quantization)
+        import torch.quantization as quantization
+        net_.qconfig = quantization.QConfig(
+            activation=quantization.FakeQuantize.with_args(
+                observer=quantization.MovingAverageMinMaxObserver,
+                quant_min=0, quant_max=255, dtype=torch.quint8, qscheme=torch.per_tensor_affine
+            ),
+            weight=quantization.FakeQuantize.with_args(
+                observer=quantization.MovingAverageMinMaxObserver,
+                quant_min=-128, quant_max=127, dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
+            )
+        )
+        net_ = quantization.prepare_qat(net_, inplace=True)
+
     if data_parallel:
         net_ = nn.DataParallel(net_)
         net_.load_state_dict(checkpoint_weight['net'])

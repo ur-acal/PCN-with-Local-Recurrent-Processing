@@ -11,11 +11,20 @@ from torchvision import transforms
 from tqdm import tqdm
 from copy import deepcopy
 
+# Set logging level to reduce verbose output
+logging.getLogger('pc_conv').setLevel(logging.WARNING)
+logging.getLogger('pc_model').setLevel(logging.WARNING)
+
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
-from cross_sim_inference import calibrate_input
+
+# Skip cross-sim inference for now - use built-in noise functionality
+CROSS_SIM_AVAILABLE = False
+def calibrate_input(*args, **kwargs):
+    print("Using built-in noise functionality instead of cross-sim")
+    return {}
 
 import logging
 log = logging.getLogger(__name__)

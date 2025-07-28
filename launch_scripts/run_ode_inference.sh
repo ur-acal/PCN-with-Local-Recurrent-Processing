@@ -7,8 +7,8 @@ export MODEL_DIR="./saved_ckpt"
 export tol="1e-4"
 
 # ─────────────── noise toggles ───────────────
-#METHOD_VALS=("dopri5")
-METHOD_VALS=("euler")
+METHOD_VALS=("dopri5")
+#METHOD_VALS=("euler")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -36,7 +36,8 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvHardTanh_ODEActInpNoMinus_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU20_ODEBlkProj_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_ODEBlkProjInitY_eulerSolver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-  "PCNetNoBatchNorm_PCConvHardTanh_ODEBlkProjInitY_eulerSolver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+#  "PCNetNoBatchNorm_PCConvHardTanh_ODEBlkProjInitY_eulerSolver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
+  "PCNetNoBatchNorm_PCConvHardTanh_ODEBlockPCMinusY_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP_QAT_INT8_fbgemm"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -71,8 +72,7 @@ run_model(){
     --n_sweep_left    5 \
     --n_sweep_right   10 \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "ODEBlkProjInitY" \
-    --test_only       "true" \
+    --ode_block       "ODEBlockPCMinusY" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -82,7 +82,7 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0714_ppcn_hardtanh_ODEBlkActInp_ode_${method}Method_${tol}Tol.log"
+  EXP_NAME="ppcn_hardtanh_ODEBlockPCMinusY_ode_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
@@ -100,7 +100,7 @@ for method in "${METHOD_VALS[@]}"; do
   : >"$MASTER_LOG"
   for name in "${MODEL_NAMES[@]}"; do
     printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
-    if ! grep -A 11 "Model name: ${name} " \
+    if ! grep -A 20 "-------- Model name: ${name}" \
               "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log" >>"$MASTER_LOG"; then
       echo "[Final Result not found]" >>"$MASTER_LOG"
     fi
