@@ -93,8 +93,15 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
 
     logging.info("===== Inspecting the range of the weights =====")
     for _name, _p in net_.named_parameters():
-        print("Name: {}, max: {}, min: {}, median: {}, mean: {}".format(
-            _name, _p.max(), _p.min(), _p.median(), _p.mean()))
+        if "ff" in _name.lower():
+            print("Name: {}, max: {}, min: {}, median: {}, mean: {}, sum's mean: {}".format(
+                _name, _p.max(), _p.min(), _p.median(), _p.mean(), _p.view(_p.shape[0], -1).sum(-1).mean()))
+        elif "fb" in _name.lower():
+            print("Name: {}, max: {}, min: {}, median: {}, mean: {}, sum's mean: {}".format(
+                _name, _p.max(), _p.min(), _p.median(), _p.mean(), _p.view(_p.shape[1], -1).sum(-1).mean()))
+        else:
+            print("Name: {}, max: {}, min: {}, median: {}, mean: {}".format(
+                _name, _p.max(), _p.min(), _p.median(), _p.mean()))
     input_ranges = calibrate_input(model=net_, device=device, model_name=args.model_name,
                                    calib_bs=256,
                                    calib_samples=256, percentile=0.995,
@@ -135,6 +142,7 @@ def run_ode_inference():
     t_end_before, t_end_after = torch.tensor([]), torch.tensor([])
     if args.d_start > 0:
         t_end_before = torch.arange(sweep_start, gt_t_end, args.d_start / args.n_sweep_left, dtype=torch.float32)
+        t_end_before = t_end_before[t_end_before < gt_t_end]
     if args.d_end > 0:
         t_end_after = torch.arange(gt_t_end, sweep_end, args.d_end / args.n_sweep_right, dtype=torch.float32)
     t_end_list = torch.cat([t_end_before, t_end_after]).tolist()

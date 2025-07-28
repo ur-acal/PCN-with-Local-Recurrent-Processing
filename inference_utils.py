@@ -170,7 +170,7 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
 
                 if isinstance(ode_params, dict):
-                    assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
+                    assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name]), "param name: {}".format(_name)
 
                 logging.info("Noise check, name: {}, is equal: {}".format(_name, torch.allclose(_p, clean_params[_name])))
 

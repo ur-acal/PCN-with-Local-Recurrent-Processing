@@ -45,6 +45,7 @@ def get_args():
     p.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     p.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
+    p.add_argument("--offset_eps", type=float, default=None, help="Noise level of the offset")
     # PCConv hyper-params
     p.add_argument("--kernel_size",   type=int, default=3)
     p.add_argument("--stride",        type=int, default=1)
@@ -74,6 +75,8 @@ def _constr_model_name(args, rep=1):
         model_name = args.pcn
     if args.pc_conv is not None:
         model_name += "_" + args.pc_conv
+    if args.offset_eps is not None:
+        model_name += "_{}eps".format(args.offset_eps)
     model_name += '_{}'.format(args.ode_block) \
                   + '_{}Solver'.format(args.method) + '_{}TEnd'.format(str(args.t_end)) + '_{}Tol_'.format(str(args.tol)) \
                   + str(args.weight_decay) + 'WD_' \
@@ -157,10 +160,14 @@ def main():
         logging.info("name: {}, shape: {}, param count: {}".format(name, param.shape, param.numel()))
 
     # convert block to Neural ode
+    ode_kw, ode_kwargs = ["offset_eps"], {}
+    for _name, _val in vars(args).items():
+        if _name in ode_kw and _val is not None:
+            ode_kwargs[_name] = _val
     ode_block = ODEBLOCK_CLASSES[args.ode_block]
     model = make_ode_block(
         pc_net=model, ode_block=ode_block, noise_level=0.0, method=args.method, t_end=args.t_end,
-        tol=args.tol, n_steps=args.n_steps)
+        tol=args.tol, n_steps=args.n_steps, **ode_kwargs)
     logging.warning("PcConv converted to ODEBlock: {}".format(ode_block.__name__))
     logging.warning("t_end: {}".format(args.t_end))
     logging.warning("method: {}".format(args.method))
