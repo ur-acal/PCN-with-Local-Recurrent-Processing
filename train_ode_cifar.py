@@ -11,6 +11,7 @@ from ode_pc import ODEBLOCK_CLASSES, make_ode_block
 from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
+from inference_utils import load_and_prepare_model, test_once
 
 
 def str2bool(v):
@@ -30,6 +31,8 @@ def get_args():
     p.add_argument("--num_epochs",    type=int,   default=300)
     p.add_argument("--max_g_norm", type=float, default=None)
     p.add_argument("--warmup_epoch",  type=int,   default=0)
+    p.add_argument("--model_name", type=str, default=None,
+                   help="Resume from a checkpoint. None means training from scratch")
     # PCNet / PCConv args
     p.add_argument("--inp_channels",  type=int, nargs="+", default=[3,  64, 64, 128, 128, 256, 256, 512],
                    help="list of input-channel sizes, e.g. 3 16 32")
@@ -88,6 +91,8 @@ def _constr_model_name(args, rep=1):
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
     model_name = model_name + "_" + str(rep) + 'REP'
+    if args.model_name is not None:
+        model_name = "ft" + model_name
     return model_name
 
 def get_model_name(args):
@@ -145,7 +150,16 @@ def main():
     logging.warning("----- Using PCN model: {} -----".format(pcn_model.__name__))
 
     # build model
-    model = pcn_model(**model_args)
+    if args.model_name is None:
+        model = pcn_model(**model_args)
+    else:
+        ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_best_ckpt.pth")
+        noisy_params = {"noise_level": 0.0, "weight": None}
+        model = load_and_prepare_model(model_path=ckpt_path, device="cpu", model_struct=pcn_model,
+                                       pc_conv_layer=pc_conv_mod, data_parallel=False,
+                                       noise_to_bn=False, noise_to_linear=False,
+                                       fuse_bn=False, conv_only=False, ode_params=None,
+                                       **noisy_params)
 
     total_params = sum(p.numel() for p in model.parameters())
     model_name = get_model_name(args)
@@ -172,6 +186,12 @@ def main():
     logging.warning("t_end: {}".format(args.t_end))
     logging.warning("method: {}".format(args.method))
     logging.warning("tol: {}".format(args.tol))
+
+    # sanity check if resume training
+    if args.model_name is not None:
+        logging.warning("Before training, evaluate the accuracy of the loaded model")
+        test_once(model, device='cuda' if torch.cuda.is_available() else 'cpu')
+        model.train()
 
     # Get trainer
     logging.warning("lr reduce on: {}, max grad norm: {}".format(args.lr_reduce_on, args.max_g_norm))

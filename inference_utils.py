@@ -36,6 +36,23 @@ def get_test_data(test_bs=2048):
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=False, num_workers=2)
     return test_loader
 
+def test_once(net, test_dataloader=None, device='cpu'):
+    net = net.to(device)
+    net.eval()
+    if test_dataloader is None:
+        test_dataloader = get_test_data(128)
+    _total, _correct = 0, 0
+    for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=True):
+        inputs, targets = inputs.to(device), targets.to(device)
+        with torch.no_grad():
+            output_tensor = net(inputs)
+        _, predicted = torch.max(output_tensor, 1)
+        _total += targets.size(0)
+        _correct += (predicted == targets).sum().item()
+    # Calculate the accuracy
+    _acc = 100 * _correct / _total
+    log.warning("Accuracy: {}".format(_acc))
+
 def collect_init_args(module_class):
     all_args = set()
     for cls in module_class.__mro__:
@@ -163,6 +180,7 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
             logging.warning("PcConv converted to ODEBlock, ode_params={}".format(ode_params))
         #############################################################################
         if noise_level > 0.0:
+            mean_abs = []
             for _name, _p in net_.named_parameters():
                 if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
@@ -172,7 +190,11 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                 if isinstance(ode_params, dict):
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name]), "param name: {}".format(_name)
 
-                logging.info("Noise check, name: {}, is equal: {}".format(_name, torch.allclose(_p, clean_params[_name])))
+                cur_mean_abs = torch.mean(torch.abs(_p - clean_params[_name]))
+                mean_abs.append(cur_mean_abs)
+                logging.info("Noise check, name: {}, is equal: {}, abs mean change: {}".format(
+                    _name, torch.allclose(_p, clean_params[_name]), cur_mean_abs))
+            logging.info("Summed abs mean change: {}".format(sum(mean_abs)))
 
             if noise_to_bn:
                 # adding noise to running mean and variance of batch norm

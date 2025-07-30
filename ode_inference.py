@@ -13,7 +13,7 @@ from copy import deepcopy
 
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
-from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data
+from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
 from cross_sim_inference import calibrate_input
 
@@ -79,17 +79,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
     # _, predicted_raw = torch.max(_, 1)
-    _total, _correct = 0, 0
-    for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=True):
-        inputs, targets = inputs.to(device), targets.to(device)
-        with torch.no_grad():
-            output_tensor = net_(inputs)
-        _, predicted = torch.max(output_tensor, 1)
-        _total += targets.size(0)
-        _correct += (predicted == targets).sum().item()
-    # Calculate the accuracy
-    _acc = 100 * _correct / _total
-    logging.info("Accuracy: {}".format(_acc))
+    test_once(net_, test_dataloader, device)
 
     logging.info("===== Inspecting the range of the weights =====")
     for _name, _p in net_.named_parameters():

@@ -318,8 +318,11 @@ class ODEFixNoiseOffset(ODESelfCoupleInitY):
             return self.FFconv(self.act_fn(x - self.FBconv(y))) - noisy_cu * y
         return ode_func
 
+    def init_y(self, x):
+        return self.act_fn(self.FFconv(x))
+
     def forward(self, x, layer_idx=None):
-        y0 = self.act_fn(self.FFconv(x))
+        y0 = self.init_y(x)
         with torch.no_grad():
             weight_sum = self.FFconv.weight.data.view(y0.shape[1], -1).sum(-1).view(1, -1, 1, 1)
             if self.FFconv.training:
@@ -332,6 +335,13 @@ class ODEFixNoiseOffset(ODESelfCoupleInitY):
         if self.bypass is not None:
             out = self.bypass(out) + out
         return out
+
+class ODEFixNoise0Init(ODEFixNoiseOffset):
+    def __init__(self,  **kwargs):
+        super().__init__(**kwargs)
+
+    def init_y(self, x):
+        return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
 
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
@@ -399,4 +409,5 @@ ODEBLOCK_CLASSES = {
     "ODESumAsBInitY": ODESumAsBInitY,
     "ODENoisyOffset": ODENoisyOffset,
     "ODEFixNoiseOffset": ODEFixNoiseOffset,
+    "ODEFixNoise0Init": ODEFixNoise0Init,
 }
