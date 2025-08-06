@@ -15,10 +15,39 @@ import logging
 log = logging.getLogger(__name__)
 
 
+class SepConv(nn.Module):
+    def __init__(self, act_fn, inp_chan, out_chan, kernel_size, stride=1, padding=1, bias=True):
+        super().__init__()
+        self.depthwise_conv = nn.Conv2d(inp_chan, inp_chan, kernel_size=kernel_size, stride=stride, padding=padding,
+                                        groups=inp_chan, bias=bias)
+        self.pointwise_conv = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=stride, padding=padding, bias=bias)
+        self.weight = self.pointwise_conv.weight
+        self.act_fn = act_fn
+
+    def forward(self, x):
+        return self.act_fn(self.pointwise_conv(self.act_fn(self.depthwise_conv(x))))
+
+
+class SepConvWithBN(nn.Module):
+    def __init__(self, act_fn, inp_chan, out_chan, kernel_size, stride=1, padding=1, bias=True, separable="d"):
+        super().__init__()
+        if separable == "d":
+            self.conv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride=stride, padding=padding,
+                                  bias=bias, groups=inp_chan)
+        else:
+            self.conv = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=stride, padding=padding, bias=bias)
+        self.relu = act_fn
+        self.bn = nn.BatchNorm2d(out_chan)
+        self.weight = self.conv.weight
+
+    def forward(self, x):
+        return self.bn(self.relu(self.conv(x)))
+
+
 class PCConv(nn.Module):
     def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
-                 relu_bp=False, use_pc=True, zero_init=False):
+                 relu_bp=False, use_pc=True, zero_init=False, separable=None, **kwargs):
         super().__init__()
         self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size, stride, padding, bias=bias)
         self.FBconv = None
@@ -31,7 +60,7 @@ class PCConv(nn.Module):
         self.relu_bp = relu_bp
         self.use_pc = use_pc
 
-        if use_pc:
+        if use_pc and not separable:
             log.info("Use PC, initialize FBconv")
             self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
             if zero_init:
@@ -47,6 +76,15 @@ class PCConv(nn.Module):
         elif tie_bp and bypass:
             log.info("Tie the weights of Bypass and FF")
             self.bypass = self.FFconv
+
+        if separable == "p":
+            self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=stride, padding=padding, bias=bias)
+            self.FBconv = nn.Conv2d(out_chan, inp_chan, kernel_size=1, stride=stride, padding=padding, bias=bias)
+        elif separable == "d":
+            self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size=kernel_size, stride=stride, padding=padding,
+                                    groups=inp_chan, bias=bias)
+            self.FBconv = nn.Conv2d(out_chan, inp_chan, kernel_size=kernel_size, stride=stride, padding=padding,
+                                    groups=inp_chan, bias=bias)
 
         self.tie_weights = tie_weights
         self.tie_bp = tie_bp
@@ -87,10 +125,10 @@ class PCConv(nn.Module):
 class PCConvNoisy(nn.Module):
     def __init__(self, inp_chan, out_chan, kernel_size=3, stride=1, padding=1, cls=5, bias=False, lr=1e-2,
                  tie_weights=False, tie_bp=False, relu_between=True, bypass=True, layer_idx=None,
-                 relu_bp=False, use_pc=True, zero_init=False, # below are parameters in Noisy PCConv only
+                 relu_bp=False, use_pc=True, zero_init=False, separable=None, # below are parameters in Noisy PCConv only
                  noise_level=None, weight=None, plot_path=None, w_type="fb_flip",
                  noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False,
-                 call_pc=True):
+                 call_pc=True, **kwargs):
         super().__init__()
         log.warning("Initializing PC layer {} with noise level: {}, cycles: {}, LR PC: {}".format(
             layer_idx, noise_level, cls, lr))
@@ -110,7 +148,7 @@ class PCConvNoisy(nn.Module):
         self.use_pc = use_pc
         self.call_pc = call_pc
 
-        if use_pc:
+        if use_pc and not separable:
             log.info("Use PC, initialize FBconv")
             self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
             if zero_init:
@@ -128,6 +166,15 @@ class PCConvNoisy(nn.Module):
         elif tie_bp and bypass:
             log.info("Tie the weights of Bypass and FF")
             self.bypass = self.FFconv
+
+        if separable == "p":
+            self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size=1, stride=stride, padding=padding, bias=bias)
+            self.FBconv = nn.Conv2d(out_chan, inp_chan, kernel_size=1, stride=stride, padding=padding, bias=bias)
+        elif separable == "d":
+            self.FFconv = nn.Conv2d(inp_chan, out_chan, kernel_size=kernel_size, stride=stride, padding=padding,
+                                    groups=inp_chan, bias=bias)
+            self.FBconv = nn.Conv2d(out_chan, inp_chan, kernel_size=kernel_size, stride=stride, padding=padding,
+                                    groups=inp_chan, bias=bias)
 
         # noise related
         self.diff_noise = diff_noise
@@ -530,6 +577,17 @@ class PCConvReLU6(PCConv):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.relu = nn.ReLU6(inplace=False)
+
+class PCConvReLU6Sep(PCConvReLU6):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        separable = kwargs["separable"]
+        self.FFconv = SepConvWithBN(self.relu, kwargs["inp_chan"], kwargs["out_chan"],
+                                    kernel_size=kwargs["kernel_size"], stride=kwargs["stride"],
+                                    padding=kwargs["padding"], bias=kwargs["bias"], separable=separable)
+        self.FBconv = SepConvWithBN(self.relu, kwargs["out_chan"], kwargs["inp_chan"],
+                                    kernel_size=kwargs["kernel_size"], stride=kwargs["stride"],
+                                    padding=kwargs["padding"], bias=kwargs["bias"], separable=separable)
 
 class PCConvReLU6Noisy(PCConvNoisy):
     def __init__(self, **kwargs):

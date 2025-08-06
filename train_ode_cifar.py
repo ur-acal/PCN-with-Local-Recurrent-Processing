@@ -31,6 +31,7 @@ def get_args():
     p.add_argument("--num_epochs",    type=int,   default=300)
     p.add_argument("--max_g_norm", type=float, default=None)
     p.add_argument("--warmup_epoch",  type=int,   default=0)
+    p.add_argument("--aug", type=str2bool, default=False)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
     # PCNet / PCConv args
@@ -40,6 +41,8 @@ def get_args():
                    help="list of output-channel sizes")
     p.add_argument("--max_pool",      type=int, nargs="+",
                    default=[False, False, True, False, True, False, False, False])
+    p.add_argument("--separable", type=str, nargs="+", default=None)
+    p.add_argument("--patch_dim", type=int, default=None)
     p.add_argument("--num_classes",   type=int, default=10)
     # ODE hyper-params
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()),
@@ -121,7 +124,7 @@ def main():
         "num_classes": args.num_classes,
         "kernel_size": args.kernel_size,
         "stride": args.stride,
-        "padding": args.padding,
+        "padding": args.padding if args.patch_dim is None else "same",
         "cls": 0,
         "bias": args.bias,
         "lr": 0.0,
@@ -133,6 +136,8 @@ def main():
         "use_pc": args.use_pc,
         "first_bn": False,
         "dropout": args.dropout,
+        "patch_dim": args.patch_dim,
+        "separable": args.separable,
     }
 
     # Select PCConv Module to use
@@ -155,7 +160,8 @@ def main():
     else:
         ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_best_ckpt.pth")
         noisy_params = {"noise_level": 0.0, "weight": None}
-        model = load_and_prepare_model(model_path=ckpt_path, device="cpu", model_struct=pcn_model,
+        model = load_and_prepare_model(model_path=ckpt_path, device="cuda" if torch.cuda.is_available() else "cpu",
+                                       model_struct=pcn_model,
                                        pc_conv_layer=pc_conv_mod, data_parallel=False,
                                        noise_to_bn=False, noise_to_linear=False,
                                        fuse_bn=False, conv_only=False, ode_params=None,
@@ -209,6 +215,7 @@ def main():
         lr_reduce_on  = args.lr_reduce_on,
         test_bs       = args.batch_size,
         max_norm      = args.max_g_norm,
+        aug           = args.aug,
     )
 
     if args.test_only:

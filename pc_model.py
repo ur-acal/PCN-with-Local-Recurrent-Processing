@@ -2,6 +2,7 @@ import torch
 import os
 import torch.nn as nn
 import torch.nn.functional as F
+from collections.abc import Iterable
 import numpy as np
 
 from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy
@@ -9,7 +10,7 @@ from pc_conv import PlainFFFBConvRes, PlainFFFBConvResFixedX
 from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
 from pc_conv import PCConvScaled, PCConvScaledNoisy
 from pc_conv import PCConvSigmoid, PCConvSigmoidNoisy, PCConvReLU6, PCConvReLU6Noisy
-from pc_conv import PCConvScaledReLU6, PCConvScaledReLU6Noisy
+from pc_conv import PCConvScaledReLU6, PCConvScaledReLU6Noisy, PCConvReLU6Sep
 from pc_conv import PCConvHardTanh10, PCConvHardTanh10Noisy, PCConvReLU20, PCConvReLU20Noisy
 from pc_conv import PCConvHardTanh, PCConvHardTanhNoisy, PCConvHardTanhDyn, PCConvHardTanhDynNoisy
 from pc_conv import PCConvHardTanh2, PCConvHardTanh2Noisy, PCConvHardTanh2Dyn, PCConvHardTanh2DynNoisy
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
-                 first_bn=True, dropout=0.0, **kwargs):
+                 first_bn=True, dropout=0.0, separable=None, **kwargs):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.init_args = self._get_init_args(
@@ -33,12 +34,15 @@ class PCNet(nn.Module):
         self.ics = inp_channels # input channels
         self.ocs = out_channels # output channels
         self.max_pool = max_pool # downsample flag
+        self.sep = separable if isinstance(separable, Iterable) else [False for _ in inp_channels]
         self.num_layers = len(self.ics)
         self.dropout = dropout
 
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
-            [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], layer_idx=i, **kwargs) for i in range(self.num_layers)])
+            [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i],
+                           layer_idx=i, separable=self.sep[i], **kwargs)
+             for i in range(self.num_layers)])
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.num_layers)])
         if not first_bn:
             logging.warning("Drop the first BN layer")
@@ -225,10 +229,89 @@ class PCNetWithMiddleConv(PCNet):
         return out
 
 
+class PCNetSeparable(PCNetNoBatchNorm):
+    def __init__(self, patch_dim=4, **kwargs):
+        self.inp_chan = kwargs["inp_channels"][0]
+        self.chan = kwargs["out_channels"][0]
+        self.patch_dim = patch_dim
+        kwargs.update({
+            "inp_channels": kwargs["inp_channels"][1:],
+            "out_channels": kwargs["out_channels"][1:]
+        })
+        super().__init__(**kwargs)
+        self.first_conv = nn.Conv2d(self.inp_chan, self.chan, kernel_size=patch_dim, stride=patch_dim)
+        self.init_args = self._get_init_args(**kwargs)
+
+    def forward(self, x, clamp=False):
+        x = F.relu(self.first_conv(x))
+        out = super().forward(x, clamp)
+        return out
+
+    def _get_init_args(self, inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, **kwargs):
+        init_args = super()._get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn,
+                                           **kwargs)
+        init_args["model_args"]["inp_channels"] = [self.inp_chan] + init_args["model_args"]["inp_channels"]
+        init_args["model_args"]["out_channels"] = [self.chan] + init_args["model_args"]["out_channels"]
+        init_args["model_args"]["patch_dim"] = self.patch_dim
+        return init_args
+
+
+class PCNetSepBN(PCNetSeparable):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.BN_start = nn.BatchNorm2d(self.chan)
+        self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ocs[i]) for i in range(self.num_layers)])
+
+    def forward(self, x, clamp=False):
+        x = F.relu(self.first_conv(x))
+        for i in range(self.num_layers):
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
+            if self.max_pool[i]:
+                x = self.max_pool2d(x)
+            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+                i, x.mean(), x.median(), x.min(), x.max(), x.std()))
+            x = self.BNs[i](x)
+
+        # classifier
+        if self.dropout > 0.0:
+            x = F.dropout(input=x, p=self.dropout, training=self.training)
+        out = F.avg_pool2d(F.relu(x), x.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+
+class PCNetSepBNRes(PCNetSepBN):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x, clamp=False):
+        x = F.relu(self.first_conv(x))
+        for i in range(self.num_layers):
+            inp = x.clone()
+            x = self.PcConvs[i](x, i)  # ReLU + Conv
+            if self.max_pool[i]:
+                x = self.max_pool2d(x)
+            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+                i, x.mean(), x.median(), x.min(), x.max(), x.std()))
+            x = self.BNs[i](x) + inp
+
+        # classifier
+        if self.dropout > 0.0:
+            x = F.dropout(input=x, p=self.dropout, training=self.training)
+        out = F.avg_pool2d(F.relu(x), x.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+
 PCN_CLASSES = {
     "PCNet": PCNet,
     "PCNetWithMiddleConv": PCNetWithMiddleConv,
     "PCNetNoBatchNorm": PCNetNoBatchNorm,
+    "PCNetSeparable": PCNetSeparable,
+    "PCNetSepBN": PCNetSepBN,
+    "PCNetSepBNRes": PCNetSepBNRes,
     None: PCNet,
 }
 
@@ -244,6 +327,7 @@ PC_CONV_CLASS = {
     "PCConvHardTanh2Dyn": PCConvHardTanh2Dyn,
     "PCConvHardTanhLimit": PCConvHardTanhLimit,
     "PCConvReLU6": PCConvReLU6,
+    "PCConvReLU6Sep": PCConvReLU6Sep,
     "PCConvReLU20": PCConvReLU20,
     "PCConvReLU6Limit": PCConvReLU6Limit,
     "PCConvScaled": PCConvScaled,

@@ -273,6 +273,15 @@ class ODESelfCoupleInitY(ODEBlkActInp):
             out = self.bypass(out) + out
         return out
 
+class ODEActDynInitY(ODESelfCoupleInitY):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            return self.act_fn(self.FFconv(x - self.act_fn(self.FBconv(y))))
+        return ode_func
+
 class ODESumAsBInitY(ODESelfCoupleInitY):
     def __init__(self, **kwargs):
         kwargs.update({"init_b": True})
@@ -410,4 +419,5 @@ ODEBLOCK_CLASSES = {
     "ODENoisyOffset": ODENoisyOffset,
     "ODEFixNoiseOffset": ODEFixNoiseOffset,
     "ODEFixNoise0Init": ODEFixNoise0Init,
+    "ODEActDynInitY": ODEActDynInitY,
 }

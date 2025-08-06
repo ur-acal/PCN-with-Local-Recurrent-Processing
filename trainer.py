@@ -18,7 +18,7 @@ class TrainerCiFar(object):
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
-                 lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None):
+                 lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -39,6 +39,7 @@ class TrainerCiFar(object):
         self.warmup_epoch = warmup_epoch
         self.test_batch_size = test_bs
         self.max_norm = max_norm
+        self.aug = aug # use the augmentation in convMixer or not
 
         self._prepare_cifar()
 
@@ -201,11 +202,22 @@ class TrainerCiFar(object):
         Todo: Actually the validation dataset should be split from the train_set.
         After the split, we can change the scheduler into other types depending on the validation result.
         """
-        transform_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+        if self.aug:
+            transform_train = transforms.Compose([
+                transforms.RandomResizedCrop(32, scale=(0.75, 1.0), ratio=(1.0, 1.0)),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandAugment(num_ops=1, magnitude=8),
+                transforms.ColorJitter(0.1, 0.1, 0.1),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+                transforms.RandomErasing(p=0.25)
+            ])
+        else:
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
         transform_test = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
