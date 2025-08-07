@@ -166,6 +166,7 @@ def main():
                                        noise_to_bn=False, noise_to_linear=False,
                                        fuse_bn=False, conv_only=False, ode_params=None,
                                        **noisy_params)
+        model.dropout = args.dropout
 
     total_params = sum(p.numel() for p in model.parameters())
     model_name = get_model_name(args)
