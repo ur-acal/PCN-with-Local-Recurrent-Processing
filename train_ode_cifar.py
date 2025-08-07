@@ -41,6 +41,7 @@ def get_args():
                    help="list of output-channel sizes")
     p.add_argument("--max_pool",      type=int, nargs="+",
                    default=[False, False, True, False, True, False, False, False])
+    p.add_argument("--avg_pooling", type=str2bool, default=False)
     p.add_argument("--separable", type=str, nargs="+", default=None)
     p.add_argument("--patch_dim", type=int, default=None)
     p.add_argument("--num_classes",   type=int, default=10)
@@ -138,6 +139,7 @@ def main():
         "dropout": args.dropout,
         "patch_dim": args.patch_dim,
         "separable": args.separable,
+        "avg_pooling": args.avg_pooling,
     }
 
     # Select PCConv Module to use

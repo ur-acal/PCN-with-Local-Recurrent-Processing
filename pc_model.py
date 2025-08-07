@@ -25,11 +25,11 @@ log = logging.getLogger(__name__)
 
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
-                 first_bn=True, dropout=0.0, separable=None, **kwargs):
+                 first_bn=True, dropout=0.0, separable=None, avg_pooling=False, **kwargs):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.init_args = self._get_init_args(
-            inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, **kwargs)
+            inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling, **kwargs)
 
         self.ics = inp_channels # input channels
         self.ocs = out_channels # output channels
@@ -49,7 +49,7 @@ class PCNet(nn.Module):
             self.BNs[0] = nn.Identity()
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
-        self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2) if not avg_pooling else nn.AvgPool2d(kernel_size=2, stride=2)
         self.relu = nn.ReLU(inplace=True)
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
@@ -144,7 +144,7 @@ class PCNet(nn.Module):
                         self._apply_noise(_buf)
 
     @staticmethod
-    def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, **kwargs):
+    def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling, **kwargs):
         init_args = {
             "model_args": {
                 "inp_channels": inp_channels,
@@ -153,6 +153,7 @@ class PCNet(nn.Module):
                 "num_classes": num_classes,
                 "pc_conv_layer": pc_conv_layer,
                 "first_bn": first_bn,
+                "avg_pooling": avg_pooling,
             },
             "kwargs": kwargs
         }

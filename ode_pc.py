@@ -387,6 +387,14 @@ class ODEBlockPCMinusY(ODEBlockPC):
         return out
 
 
+class ODEWrapperRC(nn.Module):
+    def __init__(self, ode_block: ODEBlockPC, calib_path=None, calib_batch=None, R=1e5, C=49e-15):
+        super().__init__()
+        self.ode_block = ode_block
+        self.R = R
+        self.C = C
+
+
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
                    n_steps=None, **kwargs):
     for i in range(pc_net.num_layers):
