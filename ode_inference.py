@@ -14,7 +14,7 @@ from copy import deepcopy
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
-from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
+from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLASSES, wrap_ode_block
 from cross_sim_inference import calibrate_input
 
 import logging
@@ -33,6 +33,13 @@ def parse_args():
                    default=None)
     parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
                         default=None)
+    parser.add_argument("--ode_wrapper", type=str, choices=list(ODEWrapper_CLASSES.keys()) + [None],
+                        default=None)
+    parser.add_argument("--state_calib", type=str, required=False,
+                        help="The calibration result of ode intermediate states for each layer")
+    parser.add_argument("--R", type=float, default=1e5, help="Resistance")
+    parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
+    parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     parser.add_argument("--method", type=str, default="dopri5")
     parser.add_argument("--t_end", type=float, default=None, help="Stop time of the solver")
     parser.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
@@ -70,10 +77,13 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     noisy_params = {"noise_level": 0.2, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
+    wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
+                      "R": args.R, "C": args.C, "v_dd": args.v_dd} if args.ode_wrapper is not None else None
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
                                   noise_to_bn=True, noise_to_linear=True,
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
+                                  ode_wrapper_params=wrapper_params,
                                   **noisy_params)
     net_.eval()
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]

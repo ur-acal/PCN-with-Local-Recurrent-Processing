@@ -16,7 +16,7 @@ from copy import deepcopy
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
-from ode_pc import make_ode_block
+from ode_pc import make_ode_block, wrap_ode_block
 
 import logging
 log = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def test_once(net, test_dataloader=None, device='cpu'):
         _correct += (predicted == targets).sum().item()
     # Calculate the accuracy
     _acc = 100 * _correct / _total
-    log.warning("Accuracy: {}".format(_acc))
+    logging.warning("Accuracy: {}".format(_acc))
 
 def collect_init_args(module_class):
     all_args = set()
@@ -116,13 +116,13 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
     for (_input, _target) in train_dataloader:
         cur_max = net_.get_max_hidden_val(_input.to(device))
         val_scale = cur_max if cur_max > val_scale else val_scale
-    log.warning("Get val scale using: {} samples, val_scale={}".format(samples_used, val_scale))
+    logging.warning("Get val scale using: {} samples, val_scale={}".format(samples_used, val_scale))
     return val_scale
 
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
-                           conv_only=False, ode_params=None, **kwargs):
+                           conv_only=False, ode_params=None, ode_wrapper_params=None, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
@@ -178,6 +178,9 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         if isinstance(ode_params, dict):
             net_ = make_ode_block(net_, noise_level=noise_level, **ode_params)
             logging.warning("PcConv converted to ODEBlock, ode_params={}".format(ode_params))
+            if isinstance(ode_wrapper_params, dict):
+                net_ = wrap_ode_block(net_, **ode_wrapper_params)
+                logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(ode_wrapper_params))
         #############################################################################
         if noise_level > 0.0:
             mean_abs = []
@@ -201,8 +204,8 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                 for _name, _buf in net_.named_buffers():
                     if _name.endswith(('running_mean', 'running_var')):
                         assert torch.allclose(_buf, torch.zeros_like(_buf)) or not torch.allclose(_buf, clean_buffs[_name])
-            log.warning("----- Noise added, sanity check passed -----")
-    log.warning("----- Model loaded -----")
+            logging.warning("----- Noise added, sanity check passed -----")
+    logging.warning("----- Model loaded -----")
     return net_
 
 

@@ -25,23 +25,27 @@ log = logging.getLogger(__name__)
 
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
-                 first_bn=True, dropout=0.0, separable=None, avg_pooling=False, **kwargs):
+                 first_bn=True, dropout=0.0, separable=None, avg_pooling=False, stride=1, kernel_size=3, **kwargs):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.init_args = self._get_init_args(
-            inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling, **kwargs)
 
         self.ics = inp_channels # input channels
         self.ocs = out_channels # output channels
         self.max_pool = max_pool # downsample flag
+        self.stride = stride if isinstance(stride, Iterable) else [stride for _ in inp_channels]
+        self.kernel_size = kernel_size if isinstance(kernel_size, Iterable) else [kernel_size for _ in inp_channels]
         self.sep = separable if isinstance(separable, Iterable) else [False for _ in inp_channels]
         self.num_layers = len(self.ics)
         self.dropout = dropout
 
+        self.init_args = self._get_init_args(
+            inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling,
+            self.stride, self.kernel_size, **kwargs)
+
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
-            [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i],
-                           layer_idx=i, separable=self.sep[i], **kwargs)
+            [pc_conv_layer(inp_chan=self.ics[i], out_chan=self.ocs[i], stride=self.stride[i],
+                           kernel_size=self.kernel_size[i], layer_idx=i, separable=self.sep[i], **kwargs)
              for i in range(self.num_layers)])
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ics[i]) for i in range(self.num_layers)])
         if not first_bn:
@@ -144,7 +148,8 @@ class PCNet(nn.Module):
                         self._apply_noise(_buf)
 
     @staticmethod
-    def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling, **kwargs):
+    def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=False,
+                       stride=None, kernel_size=None, **kwargs):
         init_args = {
             "model_args": {
                 "inp_channels": inp_channels,
@@ -154,6 +159,8 @@ class PCNet(nn.Module):
                 "pc_conv_layer": pc_conv_layer,
                 "first_bn": first_bn,
                 "avg_pooling": avg_pooling,
+                "stride": stride,
+                "kernel_size": kernel_size,
             },
             "kwargs": kwargs
         }
@@ -248,9 +255,10 @@ class PCNetSeparable(PCNetNoBatchNorm):
         out = super().forward(x, clamp)
         return out
 
-    def _get_init_args(self, inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, **kwargs):
+    def _get_init_args(self, inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=None,
+                       stride=None, kernel_size=None, **kwargs):
         init_args = super()._get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn,
-                                           **kwargs)
+                                           avg_pooling, stride=None, kernel_size=None, **kwargs)
         init_args["model_args"]["inp_channels"] = [self.inp_chan] + init_args["model_args"]["inp_channels"]
         init_args["model_args"]["out_channels"] = [self.chan] + init_args["model_args"]["out_channels"]
         init_args["model_args"]["patch_dim"] = self.patch_dim

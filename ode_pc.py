@@ -8,9 +8,11 @@ import torch.nn.utils.parametrize as P
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Union
+from functools import wraps
 
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
+from pc_conv import ReLUX, HardTanhByX
 from utils import expand_weights_to_matrix
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
@@ -80,14 +82,16 @@ class ODEBlockPC(nn.Module):
                            "t_eval": self.integration_time.tolist(), "rtol": self.tol, "atol": self.tol,
                            "h": t_step, "method": self.method}
 
-    def forward(self, x, layer_idx=None):
-        y0 = self.act_fn(self.FFconv(x))
+    def _make_ode_fn(self, x):
         def ode_func(t, y):
             return self.FFconv(self.act_fn(x - self.FBconv(y)))
+        return ode_func
 
+    def forward(self, x, layer_idx=None):
+        y0 = self.act_fn(self.FFconv(x))
         self.integration_time = self.integration_time.type_as(x)
 
-        out = aca_ode_solve(ode_func, y0, self.option_aca)
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
         # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         out = out[-1]
 
@@ -125,19 +129,10 @@ class ODEBlockPCLimitDyn(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def forward(self, x, layer_idx=None):
-        y0 = self.act_fn(self.FFconv(x))
+    def _make_ode_fn(self, x):
         def ode_func(t, y):
             return self.act_fn(self.FFconv(self.act_fn(x - self.FBconv(y))))
-
-        self.integration_time = self.integration_time.type_as(x)
-        out = aca_ode_solve(ode_func, y0, self.option_aca)
-        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
-        out = out[-1]
-
-        if self.bypass is not None:
-            out = self.bypass(out) + out
-        return out
+        return ode_func
 
 
 class ODEBlkActInp(ODEBlockPC):
@@ -356,13 +351,16 @@ class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def forward(self, x, layer_idx=None):
-        y0 = self.act_fn(self.FFconv(x))
+    def _make_ode_fn(self, x):
         def ode_func(t, y):
             weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
             # weight_sum = self.FFconv.weight.data.view(y.shape[1], -1).mean(-1)
             offset = weight_sum.view(1, -1, 1, 1) * y
             return self.FFconv(self.act_fn(x - self.FBconv(y))) - offset
+        return ode_func
+
+    def forward(self, x, layer_idx=None):
+        y0 = self.act_fn(self.FFconv(x))
 
         # class OdeFuncClass(nn.Module):
         #     def __init__(self, ff_conv, act_fn, fb_conv):
@@ -379,7 +377,7 @@ class ODEBlockPCMinusY(ODEBlockPC):
         #
         # self.integration_time = self.integration_time.type_as(x)
 
-        out = aca_ode_solve(ode_func, y0, self.option_aca)
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
         out = out[-1]
 
         if self.bypass is not None:
@@ -388,11 +386,73 @@ class ODEBlockPCMinusY(ODEBlockPC):
 
 
 class ODEWrapperRC(nn.Module):
-    def __init__(self, ode_block: ODEBlockPC, calib_path=None, calib_batch=None, R=1e5, C=49e-15):
+    def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
         super().__init__()
         self.ode_block = ode_block
+
         self.R = R
         self.C = C
+        self.v_dd = v_dd
+
+        # the bound to scale the states, can be either the maximum absolute value or percentile (99.99)
+        self.state_bound = state_bound
+        self.q = v_dd / state_bound
+
+        self.original_make_fn = self.ode_block._make_ode_fn
+        self._patch()
+        # logging.warning("self.q: {}, self.R: {}, self.C: {}, self.act_fn: {}".format(self.q, self.R, self.C, self.ode_block.act_fn))
+
+    def transform(self, inner_fn):
+        @wraps(inner_fn)
+        def scaled(*f_args, **f_kwargs):
+            return inner_fn(*f_args, **f_kwargs) / (self.R * self.C)
+        return scaled
+
+    def _scale_act_fn(self):
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = ReLUX(6 * self.q)
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-self.q, max_val=self.q)
+
+    def _scale_time(self):
+        integral_option = self.ode_block.option_aca
+        integration_time = self.ode_block.integration_time
+
+        # scale and set value
+        integration_time = integration_time * self.R * self.C
+        integral_option["t0"], integral_option["t1"] = integration_time[0], integration_time[-1]
+        integral_option["t_eval"] = integration_time.tolist()
+        integral_option["h"] = integral_option["h"] * self.R * self.C if integral_option["h"] is not None else None
+
+        self.ode_block.option_aca = integral_option
+        self.ode_block.integration_time = integration_time
+        logging.warning("Scaled end time: {} s".format(self.ode_block.option_aca["t1"]))
+
+    def _patch(self):
+        # scale integration time
+        self._scale_time()
+        self._scale_act_fn()
+
+        # scale the ode_func
+        orig = self.original_make_fn
+        @wraps(orig)
+        def patched_make_fn(*args, **kwargs):
+            inner = orig(*args, **kwargs)
+            return self.transform(inner)
+        self.ode_block._make_ode_fn = patched_make_fn
+
+        # scale the forward method
+        orig_call = self.ode_block.forward
+        @wraps(orig_call)
+        def patched_forward(x, *args, **kwargs):
+            return orig_call(self.q * x, *args, **kwargs) / self.q
+        self.ode_block.forward = patched_forward
+
+    def forward(self, x, layer_idx=None):
+        return self.ode_block(self.q * x, layer_idx=layer_idx) / self.q
+
+    def get_ode_block(self):
+        return self.ode_block
 
 
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
@@ -408,6 +468,20 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
         pc_net.PcConvs[i] = ode_block(
             pc_conv=pc_net.PcConvs[i], noise_level=noise_level, method=method, t_end=t_end, t_step=t_step, tol=tol,
             **kwargs)
+    return pc_net
+
+
+def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
+    calib_res = [100.0 for _ in range(pc_net.num_layers)]
+    # Todo: Perform calibration for intermediate states if we are going to quantize them and the weights
+    if calib_path is None:
+        pass
+    else:
+        pass
+        # calib_res = np.load(calib_path)
+    for i in range(pc_net.num_layers):
+        ode_wrapper_ins = ode_wrapper(pc_net.PcConvs[i], state_bound=calib_res[i], R=R, C=C, v_dd=v_dd, **kwargs)
+        pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
     return pc_net
 
 
@@ -428,4 +502,8 @@ ODEBLOCK_CLASSES = {
     "ODEFixNoiseOffset": ODEFixNoiseOffset,
     "ODEFixNoise0Init": ODEFixNoise0Init,
     "ODEActDynInitY": ODEActDynInitY,
+}
+
+ODEWrapper_CLASSES = {
+    "ODEWrapperRC": ODEWrapperRC,
 }

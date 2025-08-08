@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="NODE_0806_resume_training_ODEFixNoiseOffset_0.4eps_5Layers"
+EXP="NODE_0808_resume_training_ODEFixNoiseOffset_0.4eps_6Layers_3Pooling"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -10,11 +10,11 @@ python train_ode_cifar.py \
   --learning_rate 0.0001 \
   --lr_reduce_on  "10,20" \
   --num_epochs    10 \
-  --model_name    "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_5Layers_1REP" \
+  --model_name    "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_6Layers_1REP" \
   --offset_eps    0.4 \
-  --inp_channels  3  32 64 64 64   \
-  --out_channels  32 64 64 64 64  \
-  --max_pool      0  1  0  1  0   0   0 0   \
+  --inp_channels  3  32 32 64 64  128   \
+  --out_channels  32 32 64 64 128 128  \
+  --max_pool      0  1  1  0  1   0   0 0   \
   --dropout       0.25 \
   --tie_weights   "false" \
   --tie_bp        "false" \

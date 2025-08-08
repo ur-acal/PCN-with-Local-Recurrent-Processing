@@ -39,6 +39,10 @@ def get_args():
                    help="list of input-channel sizes, e.g. 3 16 32")
     p.add_argument("--out_channels",  type=int, nargs="+", default=[64, 64, 128, 128, 256, 256, 512, 512],
                    help="list of output-channel sizes")
+    p.add_argument("--stride", type=int, nargs="+",
+                   default=1)
+    p.add_argument("--kernel_size", type=int, nargs="+",
+                   default=3)
     p.add_argument("--max_pool",      type=int, nargs="+",
                    default=[False, False, True, False, True, False, False, False])
     p.add_argument("--avg_pooling", type=str2bool, default=False)
@@ -54,8 +58,8 @@ def get_args():
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
     p.add_argument("--offset_eps", type=float, default=None, help="Noise level of the offset")
     # PCConv hyper-params
-    p.add_argument("--kernel_size",   type=int, default=3)
-    p.add_argument("--stride",        type=int, default=1)
+    # p.add_argument("--kernel_size",   type=int, default=3)
+    # p.add_argument("--stride",        type=int, default=1)
     p.add_argument("--padding",       type=int, default=1)
     p.add_argument("--dropout",       type=float, default=0.0)
     p.add_argument("--bias",          action="store_true")
@@ -175,6 +179,7 @@ def main():
     logging.warning("input channels: {}".format(model.ics))
     logging.warning("output channels: {}".format(model.ocs))
     logging.warning("max pooling: {}".format(model.max_pool))
+    logging.warning("pooling layer: {}".format(model.max_pool2d))
     logging.warning("dropout rate: {}".format(model.dropout))
     logging.warning("Total number of parameters: {}".format(total_params / 1e6))
     logging.warning("Model name: {}".format(model_name))

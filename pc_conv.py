@@ -62,7 +62,9 @@ class PCConv(nn.Module):
 
         if use_pc and not separable:
             log.info("Use PC, initialize FBconv")
-            self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
+            output_padding = 1 if stride == 2 else 0
+            self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding,
+                                             output_padding=output_padding, bias=bias)
             if zero_init:
                 log.info("Initialize FBconv with zero weight")
                 nn.init.constant_(self.FBconv.weight, 0)
@@ -150,7 +152,9 @@ class PCConvNoisy(nn.Module):
 
         if use_pc and not separable:
             log.info("Use PC, initialize FBconv")
-            self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding, bias=bias)
+            output_padding = 1 if stride == 2 else 0
+            self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding,
+                                             output_padding=output_padding, bias=bias)
             if zero_init:
                 log.info("Initialize FBconv with zero weight")
                 nn.init.constant_(self.FBconv.weight, 0)
@@ -485,6 +489,15 @@ class PCConvHardTanh10Noisy(PCConvNoisy):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.relu = nn.Hardtanh(-10, 10)
+
+class HardTanhByX(nn.Module):
+    def __init__(self, factor, lb, ub):
+        super().__init__()
+        self.factor = factor
+        self._hardtanh = nn.Hardtanh(min_val=lb, max_val=ub)
+
+    def forward(self, x):
+        return self.factor * self._hardtanh(x)
 
 class ReLUX(nn.Module):
     def __init__(self, ub):
