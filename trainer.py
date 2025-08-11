@@ -18,7 +18,7 @@ class TrainerCiFar(object):
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
-                 lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False):
+                 lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -31,8 +31,12 @@ class TrainerCiFar(object):
         # Todo: Change the scheduler to some more flexible one
         if warmup_epoch > 0:
             self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.01, total_iters=100)
-        self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer,
-                                                        milestones=list(map(int, lr_reduce_on.split(","))))
+        if T0 is not None:
+            self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer=self.optimizer,
+                                                                            T_0=T0, T_mult=2)
+        else:
+            self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer,
+                                                            milestones=list(map(int, lr_reduce_on.split(","))))
         self.loss_fn = loss_fn
         self.batch_size = batch_size
         self.num_epochs = num_epochs

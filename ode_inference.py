@@ -27,6 +27,7 @@ def parse_args():
     )
     parser.add_argument("--model_dir",  type=str, required=True,
                         help="Directory containing the saved model checkpoint")
+    parser.add_argument("--ckpt", type=str, default="best")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
@@ -74,7 +75,7 @@ def get_t_end(args):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.2, "weight": None}
+    noisy_params = {"noise_level": 0.4, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
@@ -124,7 +125,7 @@ def run_ode_inference():
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     test_dataloader = get_test_data(test_bs=128)
-    ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
+    ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
 
     with torch.no_grad():
         if args.test_only:
@@ -153,7 +154,10 @@ def run_ode_inference():
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
+        wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
+                          "R": args.R, "C": args.C, "v_dd": args.v_dd} if args.ode_wrapper is not None else None
         noise_acc_spec = {}
+        real_t_end = t_end
         for noise_level in noise_level_list_:
             trials = noisy_trials if noise_level > 0 else 1
             acc_list = []
@@ -164,7 +168,9 @@ def run_ode_inference():
                                                   pc_conv_layer=pc_conv, data_parallel=False,
                                                   noise_to_bn=True, noise_to_linear=True,
                                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
+                                                  ode_wrapper_params=wrapper_params,
                                                   **noisy_params)
+                real_t_end = net_.PcConvs[0].integration_time[-1]
                 net_.eval()
                 total = 0
                 correct = 0
@@ -191,12 +197,13 @@ def run_ode_inference():
         ###################################################################################################
         # Noisy Experiment finished for one t_end
         ###################################################################################################
-        log.warning("-------- Final Result ODEBlock with t_end: {} --------".format(t_end))
+        log.warning("-------- Final Result ODEBlock with t_end: {}, real_t_end: {} --------".format(t_end, real_t_end))
         log.warning("-------- Model name: {} --------".format(args.model_name))
         for _nl, _acc in noise_acc_spec.items():
-            log.warning("t_end: {}, Noise level: {}, Acc:{:.2f}%".format(t_end, _nl, sum(_acc) / len(_acc)))
+            log.warning("t_end: {}, real_t_end: {}, Noise level: {}, Acc:{:.2f}%".format(
+                t_end, real_t_end, _nl, sum(_acc) / len(_acc)))
 
-        acc_dict[t_end] = noise_acc_spec
+        acc_dict[real_t_end] = noise_acc_spec
 
     # save noise acc spec to a pkl
     spec_path = os.path.join(

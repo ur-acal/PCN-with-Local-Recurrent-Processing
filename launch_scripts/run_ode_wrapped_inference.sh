@@ -29,7 +29,9 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_7Layers_1REP" # passive baseline
 
-  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_5Layers_2Pool_1REP" # 2 max pooling
+#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_5Layers_2Pool_1REP" # 2 max pooling
+
+  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
 )
 
 # ─────────────── prepare logs ───────────────
@@ -54,19 +56,19 @@ run_model(){
   set -o pipefail
   python -u ode_inference.py \
     --model_name      "$name" \
+    --ckpt            "last" \
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
     --tol             "$tol" \
     --n_steps         15 \
     --ts_scale        1 \
-    --d_start         0 \
-    --d_end           1 \
-    --n_sweep_left    0 \
-    --n_sweep_right   1 \
+    --d_start         0.1 \
+    --d_end           0.2 \
+    --n_sweep_left    5 \
+    --n_sweep_right   10 \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "ODESumAsBInitY" \
     --ode_wrapper     "ODEWrapperRC" \
-    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -76,7 +78,7 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0808_2pooling_ODESumAsBInitY_${method}Method_${tol}Tol.log"
+  EXP_NAME="0808_3pooling_wrapped_ODESumAsBInitY_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

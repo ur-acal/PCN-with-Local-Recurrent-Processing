@@ -31,6 +31,8 @@ def get_args():
     p.add_argument("--num_epochs",    type=int,   default=300)
     p.add_argument("--max_g_norm", type=float, default=None)
     p.add_argument("--warmup_epoch",  type=int,   default=0)
+    p.add_argument("--cosine_t0", type=int, default=None,
+                   help="T0 of cosine annealing schedule; if None, using default reduce on epoch scheduler")
     p.add_argument("--aug", type=str2bool, default=False)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
@@ -93,8 +95,12 @@ def _constr_model_name(args, rep=1):
                   + str(args.weight_decay) + 'WD_' \
                   + name_dict[str(args.tie_bp)] + 'BPtied_' \
                   + name_dict[str(args.bypass)] + 'BP_' \
-                  + str(args.batch_size) + 'BS_' + str(args.learning_rate) + 'LR_' \
-                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers"
+                  + str(args.batch_size) + 'BS_'
+    if args.cosine_t0 is not None:
+        model_name += "{}CosLR{}T0_".format(str(args.learning_rate), args.cosine_t0)
+    else:
+        model_name += str(args.learning_rate) + 'LR_'
+    model_name += str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers"
 
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
@@ -208,7 +214,8 @@ def main():
         model.train()
 
     # Get trainer
-    logging.warning("lr reduce on: {}, max grad norm: {}".format(args.lr_reduce_on, args.max_g_norm))
+    logging.warning("lr reduce on: {}, max grad norm: {}, cosine annealing T0: {}".format(
+        args.lr_reduce_on, args.max_g_norm, args.cosine_t0))
     trainer = TrainerCiFar(
         model         = model,
         model_name    = model_name,
@@ -224,6 +231,7 @@ def main():
         test_bs       = args.batch_size,
         max_norm      = args.max_g_norm,
         aug           = args.aug,
+        T0            = args.cosine_t0
     )
 
     if args.test_only:
