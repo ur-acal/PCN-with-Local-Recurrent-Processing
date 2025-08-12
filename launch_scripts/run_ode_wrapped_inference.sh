@@ -69,6 +69,7 @@ run_model(){
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "ODESumAsBInitY" \
     --ode_wrapper     "ODEWrapperRC" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model

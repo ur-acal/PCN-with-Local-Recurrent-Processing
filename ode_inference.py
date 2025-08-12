@@ -75,7 +75,7 @@ def get_t_end(args):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.4, "weight": None}
+    noisy_params = {"noise_level": 0.0, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
@@ -86,11 +86,16 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                   ode_wrapper_params=wrapper_params,
                                   **noisy_params)
+    logging.warning("Model input channels: {}".format(net_.ics))
+    logging.warning("Model output channels: {}".format(net_.ocs))
+    logging.warning("Model pooling layers: {}".format(net_.max_pool))
     net_.eval()
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
     # _, predicted_raw = torch.max(_, 1)
     test_once(net_, test_dataloader, device)
+    # net_.recover_params()
+    # test_once(net_, test_dataloader, device)
 
     logging.info("===== Inspecting the range of the weights =====")
     for _name, _p in net_.named_parameters():

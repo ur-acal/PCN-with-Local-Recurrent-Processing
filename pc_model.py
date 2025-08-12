@@ -57,6 +57,7 @@ class PCNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
+        self.clean_params = {}
         self.noise_level = kwargs.get("noise_level", 0.0)
         self.noise_level = 0.0 if self.noise_level is None else self.noise_level
 
@@ -129,12 +130,15 @@ class PCNet(nn.Module):
             for _name, _p in self.named_parameters():
                 if "conv" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to conv layer: {}".format(_name))
+                    self.clean_params[_name] = _p.clone()
                     self._apply_noise(_p)
                 if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to batch norm")
+                    self.clean_params[_name] = _p.clone()
                     self._apply_noise(_p)
                 elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to linear layer")
+                    self.clean_params[_name] = _p.clone()
                     self._apply_noise(_p)
 
             if noise_to_bn:
@@ -142,10 +146,26 @@ class PCNet(nn.Module):
                 for _name, _buf in self.named_buffers():
                     if _name.endswith(('running_mean', 'running_var')):
                         log.info("Adding noise to running mean and variance")
+                        self.clean_params[_name] = _p.clone()
                         self._apply_noise(_buf)
                     elif _name.endswith('conv_beta_init'):
                         log.info("Adding noise to conv beta init")
+                        self.clean_params[_name] = _p.clone()
                         self._apply_noise(_buf)
+
+    def recover_params(self):
+        with torch.no_grad():
+            for _pc_conv in self.PcConvs:
+                if hasattr(_pc_conv, "recover_params"):
+                    _pc_conv.recover_params()
+
+            for _name, _p in self.named_parameters():
+                if _name in self.clean_params:
+                    _p.copy_(self.clean_params[_name])
+
+            for _name, _buf in self.named_buffers():
+                if _name in self.clean_params:
+                    _buf.copy_(self.clean_params[_name])
 
     @staticmethod
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=False,

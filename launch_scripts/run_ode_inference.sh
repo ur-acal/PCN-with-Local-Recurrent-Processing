@@ -64,7 +64,7 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_2pool_2REP"
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_7Layers_2REP"
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.0Dropout_7Layers_2REP"
-  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_7Layers_20epoch_2REP"
+#  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_7Layers_20epoch_2REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_5Layers_1REP" # 5Layer - 64 chan
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_5Layers_1REP" # 5Layer - 64 chan ft
@@ -85,7 +85,7 @@ MODEL_NAMES=(
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.0Dropout_6Layers_1REP" # 3 max pooling
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_2REP"
-#  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_5Layers_3REP"
+  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_5Layers_3REP" # 2 max pooling
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_2REP" # 3 max pooling
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.0Dropout_7Layers_1REP"
 )
@@ -133,7 +133,7 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0810_2pooling_7layers_20epoch_ODESumAsBInitY_${method}Method_${tol}Tol.log"
+  EXP_NAME="0811_2pooling_5layers_ODESumAsBInitY_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
@@ -141,7 +141,7 @@ for method in "${METHOD_VALS[@]}"; do
   echo "Tail master with: tail -f $MASTER_LOG"
   # ─────────────── run in parallel ───────────────
   parallel \
-    --jobs 3 \
+    --jobs 2 \
     --joblog "$JOB_LOG" \
     --keep-order \
     run_model {1} "${method}" \
