@@ -41,6 +41,9 @@ def parse_args():
     parser.add_argument("--R", type=float, default=1e5, help="Resistance")
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
+    parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
+    parser.add_argument("--w_quant_mode", type=str, default="min_max", help="min_max or perc")
+    parser.add_argument("--w_perc", type=float, default=0.99999, help="percentile for quantization")
     parser.add_argument("--method", type=str, default="dopri5")
     parser.add_argument("--t_end", type=float, default=None, help="Stop time of the solver")
     parser.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
@@ -75,11 +78,13 @@ def get_t_end(args):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.0, "weight": None}
+    noisy_params = {"noise_level": 0.2, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                      "R": args.R, "C": args.C, "v_dd": args.v_dd} if args.ode_wrapper is not None else None
+                      "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "w_quant_mode": args.w_quant_mode,
+                      "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
                                   noise_to_bn=True, noise_to_linear=True,
@@ -160,7 +165,9 @@ def run_ode_inference():
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                          "R": args.R, "C": args.C, "v_dd": args.v_dd} if args.ode_wrapper is not None else None
+                          "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "w_quant_mode": args.w_quant_mode,
+                          "w_perc": args.w_perc} if args.ode_wrapper is not None else None
         noise_acc_spec = {}
         real_t_end = t_end
         for noise_level in noise_level_list_:

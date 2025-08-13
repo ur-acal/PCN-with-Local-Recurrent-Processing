@@ -66,9 +66,12 @@ run_model(){
     --d_end           0.2 \
     --n_sweep_left    5 \
     --n_sweep_right   10 \
+    --R               1e5 \
+    --C               49e-9 \
+    --w_bits          8 \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "ODESumAsBInitY" \
-    --ode_wrapper     "ODEWrapperRC" \
+    --ode_wrapper     "WrapQuantizeW" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }

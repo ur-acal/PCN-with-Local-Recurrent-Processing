@@ -77,6 +77,7 @@ class ODEBlockPC(nn.Module):
             self.integration_time = torch.arange(0, t_end + t_step, t_step).float()
         else:
             self.integration_time = torch.arange(0, (pc_conv.cls + 1) * pc_conv.lr, pc_conv.lr).float()
+        self.integration_time = self.integration_time.to(self.FFconv.weight.device)
 
         if is_adaptive(method):
             # automatically pick the initial step size for adaptive methods
@@ -275,7 +276,7 @@ class ODESelfCoupleInitY(ODEBlkActInp):
         return ode_func
 
     def forward(self, x, layer_idx=None):
-        y0 = self.act_fn(self.FFconv(x))
+        y0 = self.init_y(x)
         out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
         out = out[-1]
 
@@ -401,14 +402,13 @@ class ODEBlockPCMinusY(ODEBlockPC):
 
 
 class ODEWrapperRC(nn.Module):
-    def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
+    def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, patch=True, **kwargs):
         super().__init__()
         self.ode_block = ode_block
 
         self.R = R
         self.C = C
         self.v_dd = v_dd
-        self.time_scaler = self.get_time_scaler()
 
         # the bound to scale the states, can be either the maximum absolute value or percentile (99.99)
         self.state_bound = state_bound
@@ -417,7 +417,8 @@ class ODEWrapperRC(nn.Module):
         self.original_make_fn = self.ode_block._make_ode_fn
         self.original_forward = self.ode_block.forward
         self.original_init_y = self.ode_block.init_y
-        self._patch()
+        if patch:
+            self._patch()
         # logging.warning("self.q: {}, self.R: {}, self.C: {}, self.act_fn: {}".format(self.q, self.R, self.C, self.ode_block.act_fn))
 
     def get_time_scaler(self):
@@ -447,7 +448,7 @@ class ODEWrapperRC(nn.Module):
 
         self.ode_block.option_aca = integral_option
         self.ode_block.integration_time = integration_time
-        logging.warning("Scaled end time: {} s".format(self.ode_block.option_aca["t1"]))
+        logging.info("Scaled end time: {} s".format(self.ode_block.option_aca["t1"]))
 
     def _patch_make_fn(self):
         # scale the ode_func
@@ -470,6 +471,7 @@ class ODEWrapperRC(nn.Module):
         pass
 
     def _patch(self):
+        self.time_scaler = self.get_time_scaler()
         # scale integration time
         self._scale_time()
         self._scale_act_fn()
@@ -486,6 +488,8 @@ class ODEWrapperRC(nn.Module):
 
 class WrapQuantizeW(ODEWrapperRC):
     def __init__(self, w_bits=8, w_quant_mode="min_max", perc=None, **kwargs):
+        kwargs.update({"patch": False})
+        super().__init__(**kwargs)
         self.w_bits = w_bits
         self.w_quant_mode = w_quant_mode
         self.perc = perc
@@ -493,22 +497,16 @@ class WrapQuantizeW(ODEWrapperRC):
         self.get_quantize_factor()
         self.alpha = self.s_ff * self.s_fb
         self.beta = self.q * self.s_fb
-        super().__init__(**kwargs)
-        # # recover the functions first
-        # self.ode_block._make_ode_fn = self.original_make_fn
-        # self.ode_block.forward = self.original_forward
 
-        # # redo patching for the child method
-        # self._patch()
-
-    def get_time_scaler(self):
-        return self.self.alpha / (self.R * self.C)
+        # patch for the child method
+        self._patch()
 
     @staticmethod
     def cal_quant_factor_and_set(n_bits, p: nn.Parameter):
         with torch.no_grad():
             abs_max = p.data.abs().max()
-            q_lo, q_hi = -(1 << (n_bits - 1)), (1 << (n_bits - 1)) - 1
+            q_lo = -(1 << (n_bits - 1))
+            q_hi = (1 << (n_bits - 1)) - 1
             # -2 ** n is not used for symmetry
             s = q_hi / abs_max
             torch.clamp((s * p).round(), min=-q_hi, max=q_hi, out=p)
@@ -522,14 +520,29 @@ class WrapQuantizeW(ODEWrapperRC):
         self.register_buffer(
             "s_fb", self.cal_quant_factor_and_set(self.w_bits, self.ode_block.clean_params["FBconv"]))
         if not torch.allclose(torch.zeros_like(self.ode_block.b0[0]), self.ode_block.clean_params["b0"]):
-            ff_weight = self.ode_block.clean_params["FFconv"].data
-            self.ode_block.clean_params["b0"] = nn.Parameter(
-                ff_weight.view(ff_weight.shape[0], -1).sum(-1).view(1, -1, 1, 1))
+            with torch.no_grad():
+                ff_weight = self.ode_block.clean_params["FFconv"].data
+                self.ode_block.clean_params["b0"] = nn.Parameter(
+                    ff_weight.view(ff_weight.shape[0], -1).sum(-1).view(1, -1, 1, 1))
 
         # Recovered using clean_params, which has being quantized before
         # Then add noise
         self.ode_block.recover_params()
         self.ode_block.add_noise()
+
+    def _scale_time(self):
+        integral_option = self.ode_block.option_aca
+        integration_time = self.ode_block.integration_time
+
+        # scale and set value
+        integration_time = integration_time * self.time_scaler / self.alpha
+        integral_option["t0"], integral_option["t1"] = integration_time[0], integration_time[-1]
+        integral_option["t_eval"] = integration_time.tolist()
+        integral_option["h"] = integral_option["h"] * self.time_scaler / self.alpha if integral_option["h"] is not None else None
+
+        self.ode_block.option_aca = integral_option
+        self.ode_block.integration_time = integration_time
+        logging.info("Scaled end time: {} s".format(self.ode_block.option_aca["t1"]))
 
     def _scale_act_fn(self):
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
@@ -549,7 +562,7 @@ class WrapQuantizeW(ODEWrapperRC):
         orig_init_y = self.original_init_y
         @wraps(orig_init_y)
         def patched_init_y(x, *args, **kwargs):
-            return orig_init_y(x/self.s_ff)
+            return orig_init_y(x / self.s_ff) / self.s_fb
         self.ode_block.init_y = patched_init_y
 
 
@@ -570,7 +583,7 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
 
 
 def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
-    calib_res = [100.0 for _ in range(pc_net.num_layers)]
+    calib_res = [1e4 for _ in range(pc_net.num_layers)]
     # Todo: Perform calibration for intermediate states if we are going to quantize them and the weights
     if calib_path is None:
         pass
@@ -578,7 +591,8 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         pass
         # calib_res = np.load(calib_path)
     for i in range(pc_net.num_layers):
-        ode_wrapper_ins = ode_wrapper(pc_net.PcConvs[i], state_bound=calib_res[i], R=R, C=C, v_dd=v_dd, **kwargs)
+        ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
+                                      R=R, C=C, v_dd=v_dd, **kwargs)
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
     return pc_net
 
