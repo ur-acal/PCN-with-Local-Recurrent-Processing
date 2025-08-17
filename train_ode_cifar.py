@@ -45,6 +45,9 @@ def get_args():
                    default=1)
     p.add_argument("--kernel_size", type=int, nargs="+",
                    default=3)
+    p.add_argument("--first_ksz", type=int, default=3)
+    p.add_argument("--first_stride", type=int, default=1)
+    p.add_argument("--first_pad", type=str, choices=["same", "valid"], default="valid")
     p.add_argument("--max_pool",      type=int, nargs="+",
                    default=[False, False, True, False, True, False, False, False])
     p.add_argument("--avg_pooling", type=str2bool, default=False)
@@ -150,6 +153,9 @@ def main():
         "patch_dim": args.patch_dim,
         "separable": args.separable,
         "avg_pooling": args.avg_pooling,
+        "first_ksz": args.first_ksz,
+        "first_stride": args.first_stride,
+        "first_pad": args.first_pad,
     }
 
     # Select PCConv Module to use

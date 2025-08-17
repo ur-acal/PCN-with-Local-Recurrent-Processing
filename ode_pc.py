@@ -363,6 +363,24 @@ class ODEFixNoise0Init(ODEFixNoiseOffset):
     def init_y(self, x):
         return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
 
+class ODEFixNoiseXInit(ODEFixNoiseOffset):
+    def __init__(self,  **kwargs):
+        super().__init__(**kwargs)
+        self.in_chan = self.FFconv.in_channels
+        self.out_chan = self.FFconv.out_channels
+        chan_diff = self.out_chan - self.in_chan
+        if chan_diff == 0:
+            self.chan_pad_a, self.chan_pad_b = 0, 0
+        elif self.in_chan * 2 == self.out_chan:
+            self.chan_pad_a = chan_diff // 2
+            self.chan_pad_b = self.chan_pad_a
+        else:
+            self.chan_pad_a = chan_diff // 2
+            self.chan_pad_b = chan_diff - self.chan_pad_a
+
+    def init_y(self, x):
+        return F.pad(self.act_fn(x), (0, 0, 0, 0, self.chan_pad_b, self.chan_pad_a), "constant", 0)
+
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -399,6 +417,15 @@ class ODEBlockPCMinusY(ODEBlockPC):
         if self.bypass is not None:
             out = self.bypass(out) + out
         return out
+
+class ODEFFFBConv(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            return self.act_fn(self.FFconv(self.act_fn(self.FBconv(y))))
+        return ode_func
 
 
 class ODEWrapperRC(nn.Module):
@@ -614,6 +641,8 @@ ODEBLOCK_CLASSES = {
     "ODEFixNoiseOffset": ODEFixNoiseOffset,
     "ODEFixNoise0Init": ODEFixNoise0Init,
     "ODEActDynInitY": ODEActDynInitY,
+    "ODEFixNoiseXInit": ODEFixNoiseXInit,
+    "ODEFFFBConv": ODEFFFBConv,
 }
 
 ODEWrapper_CLASSES = {

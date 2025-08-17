@@ -267,7 +267,8 @@ class PCNetSeparable(PCNetNoBatchNorm):
             "out_channels": kwargs["out_channels"][1:]
         })
         super().__init__(**kwargs)
-        self.first_conv = nn.Conv2d(self.inp_chan, self.chan, kernel_size=patch_dim, stride=patch_dim)
+        if patch_dim is not None:
+            self.first_conv = nn.Conv2d(self.inp_chan, self.chan, kernel_size=patch_dim, stride=patch_dim)
         self.init_args = self._get_init_args(**kwargs)
 
     def forward(self, x, clamp=False):
@@ -278,11 +279,24 @@ class PCNetSeparable(PCNetNoBatchNorm):
     def _get_init_args(self, inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=None,
                        stride=None, kernel_size=None, **kwargs):
         init_args = super()._get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn,
-                                           avg_pooling, stride=None, kernel_size=None, **kwargs)
+                                           avg_pooling, stride=self.stride, kernel_size=self.kernel_size, **kwargs)
         init_args["model_args"]["inp_channels"] = [self.inp_chan] + init_args["model_args"]["inp_channels"]
         init_args["model_args"]["out_channels"] = [self.chan] + init_args["model_args"]["out_channels"]
         init_args["model_args"]["patch_dim"] = self.patch_dim
         return init_args
+
+
+class PCNetWith1stConv(PCNetSeparable):
+    def __init__(self, first_ksz=5, first_stride=1, first_pad="valid", **kwargs):
+        kwargs.update({"patch_dim": None})
+        self.first_ksz = first_ksz
+        self.first_stride = first_stride
+        self.first_pad = first_pad
+        super().__init__(**kwargs)
+        self.first_conv = nn.Conv2d(
+            self.inp_chan, self.chan, kernel_size=first_ksz, stride=first_stride, padding=first_pad)
+        self.init_args["model_args"].update({
+            "first_ksz": self.first_ksz, "first_stride": self.first_stride, "first_pad": self.first_pad})
 
 
 class PCNetSepBN(PCNetSeparable):
@@ -341,6 +355,7 @@ PCN_CLASSES = {
     "PCNetSeparable": PCNetSeparable,
     "PCNetSepBN": PCNetSepBN,
     "PCNetSepBNRes": PCNetSepBNRes,
+    "PCNetWith1stConv": PCNetWith1stConv,
     None: PCNet,
 }
 

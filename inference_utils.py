@@ -192,6 +192,8 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
                 if isinstance(ode_params, dict):
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name]), "param name: {}".format(_name)
+                    logging.warning("name: {}, noisy params mean: {}, min: {}, max: {}".format(
+                        _name, _p.mean(), _p.min(), _p.max()))
 
                 cur_mean_abs = torch.mean(torch.abs(_p - clean_params[_name]))
                 mean_abs.append(cur_mean_abs)
