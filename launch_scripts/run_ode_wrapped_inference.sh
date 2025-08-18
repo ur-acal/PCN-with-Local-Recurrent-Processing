@@ -7,6 +7,7 @@ export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
+N_BITS_VALS=(4 5 6 7 8)
 METHOD_VALS=("dopri5")
 #METHOD_VALS=("euler")
 
@@ -47,6 +48,7 @@ done
 run_model(){
   local name="$1"
   local method="$2"
+  local n_bits="$3"
 
   local __rest="${name#*_}"
   local _pc_conv="${__rest%%_*}"
@@ -62,27 +64,28 @@ run_model(){
     --tol             "$tol" \
     --n_steps         15 \
     --ts_scale        1 \
-    --d_start         0.1 \
-    --d_end           0.2 \
-    --n_sweep_left    5 \
-    --n_sweep_right   10 \
+    --d_start         0 \
+    --d_end           1 \
+    --n_sweep_left    0 \
+    --n_sweep_right   1 \
     --R               1e5 \
     --C               49e-9 \
-    --w_bits          8 \
+    --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "ODESumAsBInitY" \
     --ode_wrapper     "WrapQuantizeW" \
-    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
 
 # ─────────────── loop over methods ───────────────
+#for n_bits in "${N_BITS_VALS[@]}"; do
 for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0808_3pooling_wrapped_ODESumAsBInitY_${method}Method_${tol}Tol.log"
+#  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
+  EXP_NAME="0818_3pooling_wrapped_ODESumAsBInitY_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
@@ -93,8 +96,9 @@ for method in "${METHOD_VALS[@]}"; do
     --jobs 4 \
     --joblog "$JOB_LOG" \
     --keep-order \
-    run_model {1} "${method}" \
-    ::: "${MODEL_NAMES[@]}"
+    run_model {1} "${method}" {2} \
+    ::: "${MODEL_NAMES[@]}" \
+    ::: "${N_BITS_VALS[@]}"
   echo "All jobs finished — merging logs into $MASTER_LOG"
   # ─────────────── merge logs sequentially ───────────────
   : >"$MASTER_LOG"
@@ -108,6 +112,7 @@ for method in "${METHOD_VALS[@]}"; do
   done
   echo "All summaries written to $MASTER_LOG"
 done
+#done
 
 #######################################################
 # running

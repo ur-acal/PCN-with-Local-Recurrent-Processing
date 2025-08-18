@@ -210,7 +210,11 @@ def run_ode_inference():
         # Noisy Experiment finished for one t_end
         ###################################################################################################
         log.warning("-------- Final Result ODEBlock with t_end: {}, real_t_end: {} --------".format(t_end, real_t_end))
-        log.warning("-------- Model name: {} --------".format(args.model_name))
+        if args.ode_wrapper is not None:
+            log.warning("-------- Model name: {}, wrapper: {}_{}b --------".format(
+                args.model_name, args.ode_wrapper, args.w_bits))
+        else:
+            log.warning("-------- Model name: {} --------".format(args.model_name))
         for _nl, _acc in noise_acc_spec.items():
             log.warning("t_end: {}, real_t_end: {}, Noise level: {}, Acc:{:.2f}%".format(
                 t_end, real_t_end, _nl, sum(_acc) / len(_acc)))
@@ -218,11 +222,19 @@ def run_ode_inference():
         acc_dict[real_t_end] = noise_acc_spec
 
     # save noise acc spec to a pkl
-    spec_path = os.path.join(
-        "logs/ode_noisy_acc", "TEnd{}_{}_{}_{}_{}NoiseLevel.pkl".format(
-            str(round(t_end_list[0], 2)).replace(".", "p"),
-            str(round(t_end_list[-1], 2)).replace(".", "p"),
-            args.method, args.model_name, len(noise_level_list_)))
+    if args.ode_wrapper is None:
+        spec_path = os.path.join(
+            "logs/ode_noisy_acc", "TEnd{}_{}_{}_{}_{}NoiseLevel.pkl".format(
+                str(round(t_end_list[0], 2)).replace(".", "p"),
+                str(round(t_end_list[-1], 2)).replace(".", "p"),
+                args.method, args.model_name, len(noise_level_list_)))
+    else:
+        spec_path = os.path.join(
+            "logs/ode_noisy_acc", "TEnd{}_{}_{}_{}_{}{}b_{}NL.pkl".format(
+                str(round(t_end_list[0], 2)).replace(".", "p"),
+                str(round(t_end_list[-1], 2)).replace(".", "p"),
+                args.method, args.model_name, args.ode_wrapper, args.w_bits,
+                len(noise_level_list_)))
     with open(spec_path, "wb") as fp:
         pickle.dump(acc_dict, fp)
     log.warning("-------- ODEBlock Noisy experiment finished, spec saved to {} --------".format(spec_path))
