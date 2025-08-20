@@ -82,6 +82,7 @@ def get_args():
                    help="method used to select positions in the kernel to tie between FF/FB")
     p.add_argument("--tie_frac", type=float, default=1.0,
                    help="fraction to tie weights of FF/FB")
+    p.add_argument("--mem_frac", type=float, default=1.0)
     p.add_argument("--test_only", type=str2bool, default=False)
     return p.parse_args()
 
@@ -130,6 +131,9 @@ def main():
     args = get_args()
     if args.test_only:
         logging.basicConfig(level=logging.INFO)
+
+    if torch.cuda.is_available():
+        torch.cuda.set_per_process_memory_fraction(args.mem_frac, device=0)
 
     # map optimizer name -> class
     # optim_type = getattr(optim, args.optim)

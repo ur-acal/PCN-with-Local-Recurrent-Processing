@@ -58,6 +58,7 @@ def parse_args():
     parser.add_argument("--n_sweep_right", type=int, default=5, help="Number of swept t_end")
     parser.add_argument("--conv_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
+    parser.add_argument("--mem_frac", type=float, default=1.0)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -128,6 +129,9 @@ def run_ode_inference():
     if args.test_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
         logging.basicConfig(level=logging.INFO)
+
+    if torch.cuda.is_available():
+        torch.cuda.set_per_process_memory_fraction(args.mem_frac, device=0)
 
     # Get pc_conv_layer to use
     pc_conv = PC_CONV_CLASS.get(args.pc_conv, PCConvNoisy)
