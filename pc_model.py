@@ -8,7 +8,7 @@ import numpy as np
 from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy
 from pc_conv import PlainFFFBConvRes, PlainFFFBConvResFixedX
 from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
-from pc_conv import PCConvScaled, PCConvScaledNoisy
+from pc_conv import PCConvScaled, PCConvScaledNoisy, PCConvFFReLU6, PCConvFFReLU6Noisy
 from pc_conv import PCConvSigmoid, PCConvSigmoidNoisy, PCConvReLU6, PCConvReLU6Noisy
 from pc_conv import PCConvScaledReLU6, PCConvScaledReLU6Noisy, PCConvReLU6Sep
 from pc_conv import PCConvHardTanh10, PCConvHardTanh10Noisy, PCConvReLU20, PCConvReLU20Noisy
@@ -379,6 +379,7 @@ PC_CONV_CLASS = {
     "PlainFFFBConv": PlainFFFBConv,
     "PlainFFFBConvRes": PlainFFFBConvRes,
     "PlainFFFBConvResFixedX": PlainFFFBConvResFixedX,
+    "PCConvFFReLU6": PCConvFFReLU6,
     # noisy pc conv
     "PCConvNoisy": PCConvNoisy,
     "PCConvSigmoidNoisy": PCConvSigmoidNoisy,
@@ -398,5 +399,6 @@ PC_CONV_CLASS = {
     "PlainFFFBConvNoisy": PlainFFFBConvNoisy,
     "PlainFFFBConvResNoisy": PlainFFFBConvResNoisy,
     "PlainFFFBConvResFixedXNoisy": PlainFFFBConvResFixedXNoisy,
+    "PCConvFFReLU6Noisy": PCConvFFReLU6Noisy,
     "PCConvDS": PCConvDS,
 }

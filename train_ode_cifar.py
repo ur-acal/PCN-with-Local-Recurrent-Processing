@@ -34,6 +34,7 @@ def get_args():
     p.add_argument("--cosine_t0", type=int, default=None,
                    help="T0 of cosine annealing schedule; if None, using default reduce on epoch scheduler")
     p.add_argument("--aug", type=str2bool, default=False)
+    p.add_argument("--eval_every", type=int, default=1)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
     # PCNet / PCConv args
@@ -96,8 +97,6 @@ def _constr_model_name(args, rep=1):
     model_name += '_{}'.format(args.ode_block) \
                   + '_{}Solver'.format(args.method) + '_{}TEnd'.format(str(args.t_end)) + '_{}Tol_'.format(str(args.tol)) \
                   + str(args.weight_decay) + 'WD_' \
-                  + name_dict[str(args.tie_bp)] + 'BPtied_' \
-                  + name_dict[str(args.bypass)] + 'BP_' \
                   + str(args.batch_size) + 'BS_'
     if args.cosine_t0 is not None:
         model_name += "{}CosLR{}T0_".format(str(args.learning_rate), args.cosine_t0)
@@ -109,7 +108,11 @@ def _constr_model_name(args, rep=1):
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None:
-        model_name = "ft" + model_name
+        eps_val = args.model_name.split("_")[2]
+        ode_blk = args.model_name.split("_")[3]
+        model_name = "ft" + args.model_name.replace(
+            eps_val, "{}eps".format(args.offset_eps)).replace(
+            ode_blk, "{}".format(args.ode_block))
     return model_name
 
 def get_model_name(args):
@@ -237,7 +240,8 @@ def main():
         test_bs       = args.batch_size,
         max_norm      = args.max_g_norm,
         aug           = args.aug,
-        T0            = args.cosine_t0
+        T0            = args.cosine_t0,
+        eval_every    = args.eval_every,
     )
 
     if args.test_only:

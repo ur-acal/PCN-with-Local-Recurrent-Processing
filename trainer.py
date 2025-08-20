@@ -18,7 +18,8 @@ class TrainerCiFar(object):
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
-                 lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None):
+                 lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
+                 eval_every=1):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -44,6 +45,7 @@ class TrainerCiFar(object):
         self.test_batch_size = test_bs
         self.max_norm = max_norm
         self.aug = aug # use the augmentation in convMixer or not
+        self.eval_every = eval_every
 
         self._prepare_cifar()
 
@@ -54,15 +56,16 @@ class TrainerCiFar(object):
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch(epoch)
-            train_acc, _, _ = self.evaluate(self.train_dataloader)
-            val_acc, _, _ = self.evaluate(self.val_dataloader)
-            train_loss_list.append(train_loss)
-            val_acc_list.append(val_acc)
-            print("Validation acc: {}, Train acc: {}".format(val_acc, train_acc))
-            if val_acc > best_acc:
-                best_acc = val_acc
-                best_epoch = epoch + 1
-                best_model_path = self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
+            if (epoch + 1) % self.eval_every == 0:
+                train_acc, _, _ = self.evaluate(self.train_dataloader)
+                val_acc, _, _ = self.evaluate(self.val_dataloader)
+                train_loss_list.append(train_loss)
+                val_acc_list.append(val_acc)
+                print("Validation acc: {}, Train acc: {}".format(val_acc, train_acc))
+                if val_acc > best_acc:
+                    best_acc = val_acc
+                    best_epoch = epoch + 1
+                    best_model_path = self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
             self.scheduler.step()
         _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
         print("----- Train finished, Model Name: {} -----".format(self.model_name))

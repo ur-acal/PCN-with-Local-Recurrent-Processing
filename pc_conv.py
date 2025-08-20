@@ -586,6 +586,20 @@ class PCConvHardTanhWSFFFBNoisy(PCConvHardTanhNoisy):
         """
         super().__init__(**kwargs)
 
+class PCConvFFReLU6(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=False)
+        self.FBconv = nn.Conv2d(kwargs["out_chan"], kwargs["out_chan"], kwargs["kernel_size"], kwargs["stride"],
+                                kwargs["padding"], bias=kwargs["bias"])
+
+class PCConvFFReLU6Noisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6(inplace=False)
+        self.FBconv = nn.Conv2d(kwargs["out_chan"], kwargs["out_chan"], kwargs["kernel_size"], kwargs["stride"],
+                                kwargs["padding"], bias=kwargs["bias"])
+
 class PCConvReLU6(PCConv):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

@@ -182,7 +182,7 @@ def run_ode_inference():
                                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                                   ode_wrapper_params=wrapper_params,
                                                   **noisy_params)
-                real_t_end = net_.PcConvs[0].integration_time[-1]
+                real_t_end = net_.PcConvs[0].integration_time[-1].cpu()
                 net_.eval()
                 total = 0
                 correct = 0

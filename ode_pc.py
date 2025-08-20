@@ -363,23 +363,170 @@ class ODEFixNoise0Init(ODEFixNoiseOffset):
     def init_y(self, x):
         return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
 
-class ODEFixNoiseXInit(ODEFixNoiseOffset):
+class ODEXInitFFFB(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.in_chan = self.FFconv.in_channels
+        self.out_chan = self.FFconv.out_channels
+        self.chan_diff = self.out_chan - self.in_chan
+
+    def init_y(self, x):
+        if self.chan_diff == 0:
+            return x
+        else:
+            return torch.cat([x, x], dim=1)
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(self.FBconv(y)))
+        return ode_func
+
+class ODEFixNoiseXInitFFFB(ODEFixNoiseOffset):
+    """
+    Used in training. During testing, use SumAsBInitYAsXFFFB.
+    """
     def __init__(self,  **kwargs):
         super().__init__(**kwargs)
         self.in_chan = self.FFconv.in_channels
         self.out_chan = self.FFconv.out_channels
-        chan_diff = self.out_chan - self.in_chan
-        if chan_diff == 0:
+        self.chan_diff = self.out_chan - self.in_chan
+        if self.chan_diff == 0:
             self.chan_pad_a, self.chan_pad_b = 0, 0
         elif self.in_chan * 2 == self.out_chan:
-            self.chan_pad_a = chan_diff // 2
+            self.chan_pad_a = self.chan_diff // 2
             self.chan_pad_b = self.chan_pad_a
         else:
-            self.chan_pad_a = chan_diff // 2
-            self.chan_pad_b = chan_diff - self.chan_pad_a
+            self.chan_pad_a = self.chan_diff // 2
+            self.chan_pad_b = self.chan_diff - self.chan_pad_a
 
     def init_y(self, x):
-        return F.pad(self.act_fn(x), (0, 0, 0, 0, self.chan_pad_b, self.chan_pad_a), "constant", 0)
+        if self.chan_diff == 0:
+            return x
+        elif self.in_chan * 2 == self.out_chan:
+            return torch.cat([x, x], dim=1)
+        else:
+            return F.pad(torch.cat([x for _ in range(self.out_chan // self.in_chan)], dim=1),
+                         (0, 0, 0, 0, 0, self.out_chan % self.in_chan), "constant", 0)
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(self.FBconv(y))) - noisy_cu * y
+        return ode_func
+
+    def forward(self, x, layer_idx=None):
+        """
+        Different from before, the gradient of the summation of weights is calculated.
+        """
+        y0 = self.init_y(x)
+        weight_sum = self.FFconv.weight.view(y0.shape[1], -1).sum(-1).view(1, -1, 1, 1).expand_as(y0)
+        if self.FFconv.training:
+            noisy_cu = weight_sum * torch.randn_like(weight_sum, requires_grad=False, device=y0.device) * self.offset_eps
+        else:
+            noisy_cu = torch.zeros_like(weight_sum, requires_grad=False, device=y0.device)
+        out = aca_ode_solve(self._make_ode_fn(x, noisy_cu), y0, self.option_aca)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+class ODEFixNoiseXInit(ODEFixNoiseXInitFFFB):
+    """
+    Used in training. During testing, use ODESumAsBInitYAsX.
+    """
+    def __init__(self,  **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(x - self.FBconv(y))) - noisy_cu * y
+        return ode_func
+
+class ODEFixNoise0InitFFFB(ODEFixNoiseXInitFFFB):
+    """
+    Used in training. During testing, use SumAsBInitYAsXFFFB.
+    """
+    def __init__(self,  **kwargs):
+        super().__init__(**kwargs)
+
+    def init_y(self, x):
+        return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+
+class ODEFixNoise0InitExpand(ODEFixNoiseXInit):
+    """
+    Used in training. During testing, use ODESumAsBInitYAsX.
+    """
+    def __init__(self,  **kwargs):
+        super().__init__(**kwargs)
+
+    def init_y(self, x):
+        return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(x - self.FBconv(y))) - noisy_cu * y
+        return ode_func
+
+class FixNoiseXInitFFFBNoExpand(ODEFixNoiseXInitFFFB):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x, layer_idx=None):
+        """
+        Different from before, the gradient of the summation of weights is calculated.
+        """
+        y0 = self.init_y(x)
+        with torch.no_grad():
+            weight_sum = self.FFconv.weight.data.view(y0.shape[1], -1).sum(-1).view(1, -1, 1, 1)
+            if self.FFconv.training:
+                noisy_cu = weight_sum * torch.randn_like(weight_sum, requires_grad=False, device=y0.device) * self.offset_eps
+            else:
+                noisy_cu = torch.zeros_like(weight_sum, requires_grad=False, device=y0.device)
+        out = aca_ode_solve(self._make_ode_fn(x, noisy_cu), y0, self.option_aca)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+class ODESumAsBInitYAsX(ODESumAsBInitY):
+    """
+    Used in test.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.in_chan = self.FFconv.in_channels
+        self.out_chan = self.FFconv.out_channels
+        self.chan_diff = self.out_chan - self.in_chan
+        if self.chan_diff == 0:
+            self.chan_pad_a, self.chan_pad_b = 0, 0
+        elif self.in_chan * 2 == self.out_chan:
+            self.chan_pad_a = self.chan_diff // 2
+            self.chan_pad_b = self.chan_pad_a
+        else:
+            self.chan_pad_a = self.chan_diff // 2
+            self.chan_pad_b = self.chan_diff - self.chan_pad_a
+
+    def init_y(self, x):
+        # return F.pad(self.act_fn(x), (0, 0, 0, 0, self.chan_pad_b, self.chan_pad_a), "constant", 0)
+        if self.chan_diff == 0:
+            return x
+        else:
+            return torch.cat([x, x], dim=1)
+
+class SumAsBInitYAsXFFFB(ODESumAsBInitYAsX):
+    """
+    Used in test.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
+            offset = (weight_sum.view(1, -1, 1, 1) - self.b0[0]) * y
+            return self.FFconv(self.act_fn(self.FBconv(y))) - offset
+        return ode_func
 
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
@@ -425,6 +572,18 @@ class ODEFFFBConv(ODEBlockPC):
     def _make_ode_fn(self, x):
         def ode_func(t, y):
             return self.act_fn(self.FFconv(self.act_fn(self.FBconv(y))))
+        return ode_func
+
+class ODEFFConv(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def init_y(self, x):
+        return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            return self.act_fn(self.FBconv(self.act_fn(self.FFconv(x))))
         return ode_func
 
 
@@ -643,6 +802,14 @@ ODEBLOCK_CLASSES = {
     "ODEActDynInitY": ODEActDynInitY,
     "ODEFixNoiseXInit": ODEFixNoiseXInit,
     "ODEFFFBConv": ODEFFFBConv,
+    "ODEFFConv": ODEFFConv,
+    "ODESumAsBInitYAsX": ODESumAsBInitYAsX,
+    "ODEFixNoiseXInitFFFB": ODEFixNoiseXInitFFFB,
+    "SumAsBInitYAsXFFFB": SumAsBInitYAsXFFFB,
+    "FixNoiseXInitFFFBNoExpand": FixNoiseXInitFFFBNoExpand,
+    "ODEXInitFFFB": ODEXInitFFFB,
+    "ODEFixNoise0InitExpand": ODEFixNoise0InitExpand,
+    "ODEFixNoise0InitFFFB": ODEFixNoise0InitFFFB,
 }
 
 ODEWrapper_CLASSES = {
