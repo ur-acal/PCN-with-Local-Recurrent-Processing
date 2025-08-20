@@ -36,7 +36,7 @@ def get_test_data(test_bs=2048):
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=False, num_workers=2)
     return test_loader
 
-def test_once(net, test_dataloader=None, device='cpu'):
+def test_once(net, test_dataloader=None, device='cpu', model_name=None):
     net = net.to(device)
     net.eval()
     if test_dataloader is None:
@@ -51,7 +51,7 @@ def test_once(net, test_dataloader=None, device='cpu'):
         _correct += (predicted == targets).sum().item()
     # Calculate the accuracy
     _acc = 100 * _correct / _total
-    logging.warning("Accuracy: {}".format(_acc))
+    logging.warning("model_name: {}, Accuracy: {}".format(model_name, _acc))
 
 def collect_init_args(module_class):
     all_args = set()

@@ -98,7 +98,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
     # _, predicted_raw = torch.max(_, 1)
-    test_once(net_, test_dataloader, device)
+    test_once(net_, test_dataloader, device, args.model_name)
     # net_.recover_params()
     # test_once(net_, test_dataloader, device)
 
@@ -210,11 +210,9 @@ def run_ode_inference():
         # Noisy Experiment finished for one t_end
         ###################################################################################################
         log.warning("-------- Final Result ODEBlock with t_end: {}, real_t_end: {} --------".format(t_end, real_t_end))
+        log.warning("-------- Model name: {} --------".format(args.model_name))
         if args.ode_wrapper is not None:
-            log.warning("-------- Model name: {}, wrapper: {}_{}b --------".format(
-                args.model_name, args.ode_wrapper, args.w_bits))
-        else:
-            log.warning("-------- Model name: {} --------".format(args.model_name))
+            log.warning("wrapper params: {}".format(wrapper_params))
         for _nl, _acc in noise_acc_spec.items():
             log.warning("t_end: {}, real_t_end: {}, Noise level: {}, Acc:{:.2f}%".format(
                 t_end, real_t_end, _nl, sum(_acc) / len(_acc)))

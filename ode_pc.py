@@ -508,11 +508,13 @@ class ODESumAsBInitYAsX(ODESumAsBInitY):
             self.chan_pad_b = self.chan_diff - self.chan_pad_a
 
     def init_y(self, x):
-        # return F.pad(self.act_fn(x), (0, 0, 0, 0, self.chan_pad_b, self.chan_pad_a), "constant", 0)
         if self.chan_diff == 0:
             return x
-        else:
+        elif self.in_chan * 2 == self.out_chan:
             return torch.cat([x, x], dim=1)
+        else:
+            return F.pad(torch.cat([x for _ in range(self.out_chan // self.in_chan)], dim=1),
+                         (0, 0, 0, 0, 0, self.out_chan % self.in_chan), "constant", 0)
 
 class SumAsBInitYAsXFFFB(ODESumAsBInitYAsX):
     """
@@ -527,6 +529,18 @@ class SumAsBInitYAsXFFFB(ODESumAsBInitYAsX):
             offset = (weight_sum.view(1, -1, 1, 1) - self.b0[0]) * y
             return self.FFconv(self.act_fn(self.FBconv(y))) - offset
         return ode_func
+
+class ODESumAsBInitYAs0(ODESumAsBInitYAsX):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    def init_y(self, x):
+        return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+
+class SumAsBInitYAs0FFFB(SumAsBInitYAsXFFFB):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    def init_y(self, x):
+        return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
 
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
@@ -810,6 +824,8 @@ ODEBLOCK_CLASSES = {
     "ODEXInitFFFB": ODEXInitFFFB,
     "ODEFixNoise0InitExpand": ODEFixNoise0InitExpand,
     "ODEFixNoise0InitFFFB": ODEFixNoise0InitFFFB,
+    "ODESumAsBInitYAs0": ODESumAsBInitYAs0,
+    "SumAsBInitYAs0FFFB": SumAsBInitYAs0FFFB,
 }
 
 ODEWrapper_CLASSES = {

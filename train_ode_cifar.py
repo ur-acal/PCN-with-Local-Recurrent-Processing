@@ -102,7 +102,8 @@ def _constr_model_name(args, rep=1):
         model_name += "{}CosLR{}T0_".format(str(args.learning_rate), args.cosine_t0)
     else:
         model_name += str(args.learning_rate) + 'LR_'
-    model_name += str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers"
+    model_name += str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers_" \
+                  + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
@@ -219,7 +220,7 @@ def main():
     # sanity check if resume training
     if args.model_name is not None:
         logging.warning("Before training, evaluate the accuracy of the loaded model")
-        test_once(model, device='cuda' if torch.cuda.is_available() else 'cpu')
+        test_once(model, device='cuda' if torch.cuda.is_available() else 'cpu', model_name=args.model_name)
         model.train()
 
     # Get trainer

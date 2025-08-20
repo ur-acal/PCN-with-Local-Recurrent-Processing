@@ -91,8 +91,12 @@ MODEL_NAMES=(
 
 #  "PCNetWith1stConv_PCConvReLU6_0.1eps_ODEFixNoiseXInit_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 3p 6l
 #  "PCNetWith1stConv_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_16Layers_1REP" # 2p
-  "ftPCNetWith1stConv_PCConvReLU6_0.4eps_FixNoiseXInitFFFBNoExpand_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_8Layers_1REP"
+#  "ftPCNetWith1stConv_PCConvReLU6_0.4eps_FixNoiseXInitFFFBNoExpand_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_8Layers_1REP"
 #  "PCNetWith1stConv_PCConvReLU6_0.1eps_ODEFixNoiseXInit_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_6Layers_2REP" # 3 first_ksz, 3p
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 3p-wide
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2REP" # 2p-wide
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_18Layers_1REP" # 2p-deep
 )
 
 # ─────────────── prepare logs ───────────────
@@ -128,7 +132,7 @@ run_model(){
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "ODEXInitFFFB" \
+    --ode_block       "SumAsBInitYAsXFFFB" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
@@ -147,7 +151,7 @@ for method in "${METHOD_VALS[@]}"; do
   echo "Tail master with: tail -f $MASTER_LOG"
   # ─────────────── run in parallel ───────────────
   parallel \
-    --jobs 2 \
+    --jobs 3 \
     --joblog "$JOB_LOG" \
     --keep-order \
     run_model {1} "${method}" \

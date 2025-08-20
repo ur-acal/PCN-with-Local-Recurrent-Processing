@@ -3,11 +3,11 @@
 #SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
-#SBATCH --gres=gpu:L40S:1             # exactly ONE GPU; allows packing on 4-GPU nodes
+#SBATCH --gres=gpu:1             # exactly ONE GPU; allows packing on 4-GPU nodes
 #SBATCH -t 48:10:00
 #SBATCH -o /home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
-set -euo pipefail
+#set -euo pipefail
 
 # ---- Conda activation (non-interactive safe) ----
 source activate base
