@@ -82,7 +82,7 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_5Layers_4REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 3 max pooling
-#  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
+  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling BASELINE
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.0Dropout_6Layers_1REP" # 3 max pooling
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_2REP"
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_5Layers_3REP" # 2 max pooling
@@ -94,9 +94,9 @@ MODEL_NAMES=(
 #  "ftPCNetWith1stConv_PCConvReLU6_0.4eps_FixNoiseXInitFFFBNoExpand_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_8Layers_1REP"
 #  "PCNetWith1stConv_PCConvReLU6_0.1eps_ODEFixNoiseXInit_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_6Layers_2REP" # 3 first_ksz, 3p
 
-  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 3p-wide
-  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2REP" # 2p-wide
-  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_18Layers_1REP" # 2p-deep
+#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 3p-wide
+#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2REP" # 2p-wide
+#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseXInitFFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_18Layers_1REP" # 2p-deep
 )
 
 # ─────────────── prepare logs ───────────────
@@ -121,7 +121,7 @@ run_model(){
   set -o pipefail
   python -u ode_inference.py \
     --model_name      "$name" \
-    --ckpt            "best" \
+    --ckpt            "last" \
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
     --tol             "$tol" \
@@ -132,8 +132,7 @@ run_model(){
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "SumAsBInitYAsXFFFB" \
-    --test_only       "true" \
+    --ode_block       "ODEBlockPC" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -143,7 +142,7 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0811_2pooling_5layers_ODESumAsBInitY_${method}Method_${tol}Tol.log"
+  EXP_NAME="0820_3pooling_6layers_ODEBlockPC_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

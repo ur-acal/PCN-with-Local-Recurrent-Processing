@@ -44,7 +44,7 @@ else
   echo "ARCH_SET must be A or B"; exit 2
 fi
 
-BLOCKS=( "ODEFixNoiseXInit" "ODEFixNoiseXInitFFFB" "ODEFixNoise0InitExpand" "ODEFixNoise0InitFFFB" )
+BLOCKS=( "ODEFixNoiseXInit" "ODEFixNoiseXInitFFFB" "ODEFixNoise0InitExpand" )
 
 # Split CPU threads evenly across 4 concurrent trainings
 CPUS=${SLURM_CPUS_PER_TASK:-16}
@@ -102,9 +102,7 @@ ok=0
 for p in "${pids[@]}"; do
   wait "$p" || ok=1
 done
-echo "Completed all four ode_blocks for ${EXP} (job $SLURM_JOB_ID)."
-exit $ok
-
+echo "Completed all ode_blocks for ${EXP} (job $SLURM_JOB_ID)."
 
 ################################################################################
 #                           EVAL → FINETUNE → EVAL                             #
@@ -134,9 +132,10 @@ done
 
 # Helpers
 extract_model_name() {
-  # From lines like: "----- Train finished, Model Name: <NAME> -----"
   local logfile="$1"
-  sed -n 's/.*Model Name:[[:space:]]*\(.*\)[[:space:]]*-----.*$/\1/p' "$logfile" | tail -n 1
+  sed -n 's/.*Model Name:[[:space:]]*\(.*\)[[:space:]]*-----.*$/\1/p' "$logfile" \
+    | tail -n 1 \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
 eval_model() {
