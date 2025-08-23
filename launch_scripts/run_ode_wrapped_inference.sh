@@ -7,7 +7,8 @@ export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
-N_BITS_VALS=(4 5 6 7 8)
+#N_BITS_VALS=(4 5 6 7 8)
+N_BITS_VALS=(8)
 METHOD_VALS=("dopri5")
 #METHOD_VALS=("euler")
 
@@ -74,6 +75,7 @@ run_model(){
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "ODESumAsBInitY" \
     --ode_wrapper     "WrapQuantizeW" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -85,7 +87,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="0818_3pooling_wrapped_ODESumAsBInitY_${method}Method_${tol}Tol.log"
+  EXP_NAME="0821_3pooling_wrapped_ODESumAsBInitY_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

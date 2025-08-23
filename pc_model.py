@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from collections.abc import Iterable
 import numpy as np
 
-from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy
+from pc_conv import PCConv, PCConvNoisy, PlainFFFBConv, PlainFFFBConvNoisy, FFFBReLU6, FFFBReLU6Noisy
 from pc_conv import PlainFFFBConvRes, PlainFFFBConvResFixedX
 from pc_conv import PlainFFFBConvResNoisy, PlainFFFBConvResFixedXNoisy
 from pc_conv import PCConvScaled, PCConvScaledNoisy, PCConvFFReLU6, PCConvFFReLU6Noisy
@@ -380,6 +380,7 @@ PC_CONV_CLASS = {
     "PlainFFFBConvRes": PlainFFFBConvRes,
     "PlainFFFBConvResFixedX": PlainFFFBConvResFixedX,
     "PCConvFFReLU6": PCConvFFReLU6,
+    "FFFBReLU6": FFFBReLU6,
     # noisy pc conv
     "PCConvNoisy": PCConvNoisy,
     "PCConvSigmoidNoisy": PCConvSigmoidNoisy,
@@ -400,5 +401,6 @@ PC_CONV_CLASS = {
     "PlainFFFBConvResNoisy": PlainFFFBConvResNoisy,
     "PlainFFFBConvResFixedXNoisy": PlainFFFBConvResFixedXNoisy,
     "PCConvFFReLU6Noisy": PCConvFFReLU6Noisy,
+    "FFFBReLU6Noisy": FFFBReLU6Noisy,
     "PCConvDS": PCConvDS,
 }

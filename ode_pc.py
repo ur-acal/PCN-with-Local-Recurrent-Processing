@@ -42,7 +42,7 @@ class _TAddedModule(nn.Module):
 class ODEBlockPC(nn.Module):
 
     def __init__(self, pc_conv: Union[PCConvNoisy, PCConv], noise_level=0.0, method="dopri5", t_end=None, t_step=None,
-                 tol=1e-3, return_mid=False, init_b=False):
+                 tol=1e-3, return_mid=False, init_b=False, **kwargs):
         super(ODEBlockPC, self).__init__()
         self.noise_level = noise_level
         self.tie_weights = pc_conv.tie_weights
@@ -139,6 +139,41 @@ class ODEBlockPC(nn.Module):
     @nfe.setter
     def nfe(self, value):
         self.ode_func.nfe = value
+
+
+class ODEBlockFFFB(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(self.FBconv(y)))
+        return ode_func
+
+
+class ODEBlockXInit(ODEBlockPC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.in_chan = self.FFconv.in_channels
+        self.out_chan = self.FFconv.out_channels
+        self.chan_diff = self.out_chan - self.in_chan
+        if self.chan_diff == 0:
+            self.chan_pad_a, self.chan_pad_b = 0, 0
+        elif self.in_chan * 2 == self.out_chan:
+            self.chan_pad_a = self.chan_diff // 2
+            self.chan_pad_b = self.chan_pad_a
+        else:
+            self.chan_pad_a = self.chan_diff // 2
+            self.chan_pad_b = self.chan_diff - self.chan_pad_a
+
+    def init_y(self, x):
+        if self.chan_diff == 0:
+            return x
+        elif self.in_chan * 2 == self.out_chan:
+            return torch.cat([x, x], dim=1)
+        else:
+            return F.pad(torch.cat([x for _ in range(self.out_chan // self.in_chan)], dim=1),
+                         (0, 0, 0, 0, 0, self.out_chan % self.in_chan), "constant", 0)
 
 
 class ODEBlockPCLimitDyn(ODEBlockPC):
@@ -298,6 +333,17 @@ class ODESumAsBInitY(ODESelfCoupleInitY):
         kwargs.update({"init_b": True})
         super().__init__(**kwargs)
 
+class ODESumAsBInitYFFFB(ODESumAsBInitY):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).sum(-1)
+            offset = (weight_sum.view(1, -1, 1, 1) - self.b0[0]) * y
+            return self.FFconv(self.act_fn(self.FBconv(y))) - offset
+        return ode_func
+
 class ODENoisyOffset(ODESelfCoupleInitY):
     """
     Only used in training.
@@ -356,6 +402,15 @@ class ODEFixNoiseOffset(ODESelfCoupleInitY):
             out = self.bypass(out) + out
         return out
 
+class ODEFixNoiseFFFB(ODEFixNoiseOffset):
+    def __init__(self,  **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(self.FBconv(y))) - noisy_cu * y
+        return ode_func
+
 class ODEFixNoise0Init(ODEFixNoiseOffset):
     def __init__(self,  **kwargs):
         super().__init__(**kwargs)
@@ -363,18 +418,9 @@ class ODEFixNoise0Init(ODEFixNoiseOffset):
     def init_y(self, x):
         return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
 
-class ODEXInitFFFB(ODEBlockPC):
+class ODEXInitFFFB(ODEBlockXInit):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.in_chan = self.FFconv.in_channels
-        self.out_chan = self.FFconv.out_channels
-        self.chan_diff = self.out_chan - self.in_chan
-
-    def init_y(self, x):
-        if self.chan_diff == 0:
-            return x
-        else:
-            return torch.cat([x, x], dim=1)
 
     def _make_ode_fn(self, x, noisy_cu=None):
         def ode_func(t, y):
@@ -473,7 +519,8 @@ class FixNoiseXInitFFFBNoExpand(ODEFixNoiseXInitFFFB):
 
     def forward(self, x, layer_idx=None):
         """
-        Different from before, the gradient of the summation of weights is calculated.
+        Different with its parent class ODEFixNoiseXInitFFFB, the gradient of the summation of weights is NOT calculated.
+        The weight sum is NOT expanded.
         """
         y0 = self.init_y(x)
         with torch.no_grad():
@@ -799,6 +846,8 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
 
 ODEBLOCK_CLASSES = {
     "ODEBlockPC": ODEBlockPC,
+    "ODEBlockFFFB": ODEBlockFFFB,
+    "ODEBlockXInit": ODEBlockXInit,
     "ODEBlockPCLimitDyn": ODEBlockPCLimitDyn,
     "ODEBlockPCMinusY": ODEBlockPCMinusY,
     "ODEBlk0Init": ODEBlk0Init,
@@ -810,8 +859,10 @@ ODEBLOCK_CLASSES = {
     "ODEBlkProjInitY": ODEBlkProjInitY,
     "ODESelfCoupleInitY": ODESelfCoupleInitY,
     "ODESumAsBInitY": ODESumAsBInitY,
+    "ODESumAsBInitYFFFB": ODESumAsBInitYFFFB,
     "ODENoisyOffset": ODENoisyOffset,
     "ODEFixNoiseOffset": ODEFixNoiseOffset,
+    "ODEFixNoiseFFFB": ODEFixNoiseFFFB,
     "ODEFixNoise0Init": ODEFixNoise0Init,
     "ODEActDynInitY": ODEActDynInitY,
     "ODEFixNoiseXInit": ODEFixNoiseXInit,

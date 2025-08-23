@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
 #SBATCH --gres=gpu:1             # exactly ONE GPU; allows packing on 4-GPU nodes
-#SBATCH -t 48:10:00
+#SBATCH -t 60:10:00
 #SBATCH -o /home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
 #set -euo pipefail
@@ -18,12 +18,16 @@ conda activate cross_sim
 ##########################################################################
 ARCH_SET=${ARCH_SET:-A}      # A or B
 PCN=${PCN:-PCNetNoBatchNorm} # "PCNetNoBatchNorm" | "PCNetWith1stConv"
-if [[ "$ARCH_SET" == "B" ]]; then
-  ARCH_LABEL=deep
+if [[ "$ARCH_SET" == "A" ]]; then
+  ARCH_LABEL="6L3P"
+elif [[ "$ARCH_SET" == "B" ]]; then
+  ARCH_LABEL="18L2P"
+elif [[ "$ARCH_SET" == "C" ]]; then
+  ARCH_LABEL="7L2P"
 else
-  ARCH_LABEL=wide
+  ARCH_LABEL="Invalid"
 fi
-EXP="no_bn_${PCN}_NODE_0820_relu6_${ARCH_LABEL}_Exp"
+EXP="no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp"
 LOGDIR="/home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}"
 mkdir -p "$LOGDIR"
 ##########################################################################
@@ -40,15 +44,50 @@ elif [[ "$ARCH_SET" == "B" ]]; then
   INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
   OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
   POOL=(0  0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0)
+elif [[ "$ARCH_SET" == "C" ]]; then
+  INP=(3  32 32 64 64  128 128)
+  OUT=(32 32 64 64 128 128 128)
+  POOL=(0  0  1  0  1   0  0)
 else
-  echo "ARCH_SET must be A or B"; exit 2
+  echo "ARCH_SET must be A or B or C"; exit 2
 fi
 
-BLOCKS=( "ODEFixNoiseXInit" "ODEFixNoiseXInitFFFB" "ODEFixNoise0InitExpand" )
+##########################################################################
+# Change the blocks to run here
+##########################################################################
+BLOCKS_A=( "ODEBlockFFFB" "ODEFixNoiseFFFB" "ODEXInitFFFB" )
+BLOCKS_B=( "ODEFixNoiseXInit" "ODEFixNoiseXInitFFFB" "ODEFixNoise0InitExpand" )
+BLOCKS_C=(
+  "ODEBlockFFFB" # active
+  "ODEFixNoiseFFFB" # passive
+  "ODEXInitFFFB"    # active + fixed init
+  "ODEFixNoiseXInitFFFB"  # passive + fixed init
+)
 
-# Split CPU threads evenly across 4 concurrent trainings
+case "$ARCH_SET" in
+  A) BLOCKS=( "${BLOCKS_A[@]}" ) ;;
+  B) BLOCKS=( "${BLOCKS_B[@]}" ) ;;
+  C) BLOCKS=( "${BLOCKS_C[@]}" ) ;;
+esac
+##########################################################################
+
+##########################################################################
+# Finetunable blocks list
+##########################################################################
+FINETUNE_BLOCKS=( "ODEFixNoiseXInit" "ODEFixNoiseXInitFFFB" "ODEFixNoise0InitExpand" "ODEFixNoiseOffset" "ODEFixNoiseFFFB" )
+is_finetunable() {
+  local b="$1"
+  for x in "${FINETUNE_BLOCKS[@]}"; do
+    [[ "$b" == "$x" ]] && return 0
+  done
+  return 1
+}
+##########################################################################
+
+# Split CPU threads evenly across the selected number of blocks
 CPUS=${SLURM_CPUS_PER_TASK:-16}
-THREADS_PER_PROC=$(( CPUS / 4 ))
+PROCS=${#BLOCKS[@]}
+THREADS_PER_PROC=$(( CPUS / PROCS ))
 if (( THREADS_PER_PROC < 1 )); then THREADS_PER_PROC=1; fi
 
 # ---- Per-process GPU memory fraction ----------------------------------
@@ -122,6 +161,8 @@ map_test_block() {
     ODEFixNoiseXInit)          echo "ODESumAsBInitYAsX" ;;
     ODEFixNoiseXInitFFFB)      echo "SumAsBInitYAsXFFFB" ;;
     ODEFixNoise0InitExpand)    echo "ODESumAsBInitYAs0" ;;
+    ODEFixNoiseOffset)         echo "ODESumAsBInitY" ;;
+    ODEFixNoiseFFFB)           echo "ODESumAsBInitYFFFB" ;;
     *)                         echo "$1" ;;
   esac
 }
@@ -213,28 +254,38 @@ for i in "${!MODEL_NAMES_PRE[@]}"; do
 done
 for p in "${pids[@]}"; do wait "$p"; done
 
-# FINETUNE all 4 in parallel
+# FINETUNE only selected blocks in parallel
 pids=()
 for i in "${!MODEL_NAMES_PRE[@]}"; do
-  finetune_model "${MODEL_NAMES_PRE[$i]}" "${BLOCKS[$i]}" & pids+=($!)
+  b="${BLOCKS[$i]}"
+  if is_finetunable "$b"; then
+    finetune_model "${MODEL_NAMES_PRE[$i]}" "$b" & pids+=($!)
+  fi
 done
 for p in "${pids[@]}"; do wait "$p"; done
 
 # Collect finetuned model names from finetune logs
 declare -a MODEL_NAMES_FT=()
-for block in "${BLOCKS[@]}"; do
-  ftlog="${LOGDIR}/finetune_${block}.log"
-  mn="$(extract_model_name "$ftlog")"
-  if [[ -z "$mn" ]]; then
-    echo "[WARN] Could not extract finetuned model name from $ftlog"
+declare -a TEST_BLOCKS_FT=()
+declare -A POST_BY_BLOCK=()
+for idx in "${!BLOCKS[@]}"; do
+  b="${BLOCKS[$idx]}"
+  if is_finetunable "$b"; then
+    ftlog="${LOGDIR}/finetune_${b}.log"
+    mn="$(extract_model_name "$ftlog")"
+    if [[ -z "$mn" ]]; then
+      echo "[WARN] Could not extract finetuned model name from $ftlog"
+    fi
+    MODEL_NAMES_FT+=("$mn")
+    TEST_BLOCKS_FT+=("${TEST_BLOCKS[$idx]}")
+    POST_BY_BLOCK["$b"]="$mn"
   fi
-  MODEL_NAMES_FT+=("$mn")
 done
 
 # EVAL (post-finetune) in parallel
 pids=()
 for i in "${!MODEL_NAMES_FT[@]}"; do
-  eval_model "${MODEL_NAMES_FT[$i]}" "post_ft" "${TEST_BLOCKS[$i]}" & pids+=($!)
+  eval_model "${MODEL_NAMES_FT[$i]}" "post_ft" "${TEST_BLOCKS_FT[$i]}" & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p"; done
 
@@ -257,16 +308,32 @@ for i in "${!BLOCKS[@]}"; do
   fi
   printf '\n' >>"$MASTER_LOG"
 
-  printf '---------- %s (post-finetune) ----------\n' "$post" >>"$MASTER_LOG"
-  if [[ -f "$post_log" ]]; then
-    if ! grep -A 11 "Model name: ${post} " "$post_log" >>"$MASTER_LOG"; then
-      echo "[Final Result not found]" >>"$MASTER_LOG"
+  if is_finetunable "${BLOCKS[$i]}"; then
+    post="${POST_BY_BLOCK[${BLOCKS[$i]}]-}"
+    post_log="${EVAL_BASE}/post_ft/${post}_method_${METHOD}_tol_${TOL}/job.log"
+
+    printf '%s\n' "---------- ${post} (post-finetune) ----------" >>"$MASTER_LOG"
+    if [[ -f "$post_log" ]]; then
+      if ! grep -A 11 "Model name: ${post} " "$post_log" >>"$MASTER_LOG"; then
+        echo "[Final Result not found]" >>"$MASTER_LOG"
+      fi
+    else
+      echo "[Missing log: $post_log]" >>"$MASTER_LOG"
     fi
-  else
-    echo "[Missing log: $post_log]" >>"$MASTER_LOG"
+    printf '\n\n' >>"$MASTER_LOG"
   fi
-  printf '\n\n' >>"$MASTER_LOG"
 done
 
 echo "All summaries written to ${MASTER_LOG}"
+
+################################################################################
+#                               RUN PARSER
+################################################################################
+PARSE_WRAPPER="shell_utils/pipeline_node_run_parse.py"
+if [[ -f "$PARSE_WRAPPER" ]]; then
+  echo "[PARSE] python $PARSE_WRAPPER ${MASTER_LOG}"
+  python -u "$PARSE_WRAPPER" "${MASTER_LOG}"
+else
+  echo "[PARSE] Skipping parse: ${PARSE_WRAPPER} not found."
+fi
 exit $ok

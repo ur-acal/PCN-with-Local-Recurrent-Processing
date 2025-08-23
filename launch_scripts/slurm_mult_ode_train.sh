@@ -2,8 +2,15 @@
 
 #set -euo pipefail
 
-for ARCH in A B; do
-  for PCN in "PCNetNoBatchNorm" "PCNetWith1stConv"; do
+#for ARCH in A B; do
+#  for PCN in "PCNetNoBatchNorm" "PCNetWith1stConv"; do
+#    echo "Submitting ARCH=${ARCH} PCN=${PCN}"
+#    sbatch --export=ALL,ARCH_SET=${ARCH},PCN="${PCN}" ./launch_scripts/run_mult_ode_train.sbatch
+#  done
+#done
+
+for ARCH in A C; do
+  for PCN in "PCNetNoBatchNorm"; do
     echo "Submitting ARCH=${ARCH} PCN=${PCN}"
     sbatch --export=ALL,ARCH_SET=${ARCH},PCN="${PCN}" ./launch_scripts/run_mult_ode_train.sbatch
   done

@@ -592,6 +592,15 @@ class PCConvFFReLU6(PCConv):
         self.relu = nn.ReLU6(inplace=False)
         self.FBconv = nn.Conv2d(kwargs["out_chan"], kwargs["out_chan"], kwargs["kernel_size"], kwargs["stride"],
                                 kwargs["padding"], bias=kwargs["bias"])
+        chan_diff = kwargs["out_chan"] - kwargs["inp_chan"]
+        self.pad_a = chan_diff // 2
+        self.pad_b = self.pad_a
+        if chan_diff % 2 != 0:
+            self.pad_b += 1
+
+    def forward(self, x, layer_idx=None):
+        return F.pad(x, (0, 0, 0, 0, self.pad_a, self.pad_b),
+                     "constant", 0) + self.relu(self.FBconv(self.relu(self.FFconv(x))))
 
 class PCConvFFReLU6Noisy(PCConvNoisy):
     def __init__(self, **kwargs):
@@ -599,6 +608,17 @@ class PCConvFFReLU6Noisy(PCConvNoisy):
         self.relu = nn.ReLU6(inplace=False)
         self.FBconv = nn.Conv2d(kwargs["out_chan"], kwargs["out_chan"], kwargs["kernel_size"], kwargs["stride"],
                                 kwargs["padding"], bias=kwargs["bias"])
+        chan_diff = kwargs["out_chan"] - kwargs["inp_chan"]
+        self.pad_a = chan_diff // 2
+        self.pad_b = self.pad_a
+        if chan_diff % 2 != 0:
+            self.pad_b += 1
+
+    def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
+        shortcut = F.pad(x, (0, 0, 0, 0, self.pad_a, self.pad_b),
+                     "constant", 0)
+        x = self.relu(torch.conv2d(x, self.noisy_ff, padding=self.FFconv.padding))
+        return shortcut + self.relu(torch.conv2d(x, self.noisy_fb, padding=self.FFconv.padding))
 
 class PCConvReLU6(PCConv):
     def __init__(self, **kwargs):
@@ -894,3 +914,15 @@ class PlainFFFBConvResNoisy(PlainFFFBConvResFixedXNoisy):
     def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None, add_x=False):
         y = super().find_optimal_r(x, y, layer_idx, w_type_used, use_relu, add_x)
         return y
+
+
+class FFFBReLU6(PlainFFFBConvRes):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6()
+
+
+class FFFBReLU6Noisy(PlainFFFBConvResNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6()
