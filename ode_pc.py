@@ -648,6 +648,119 @@ class ODEFFConv(ODEBlockPC):
         return ode_func
 
 
+class _FuncWrapper(nn.Module):
+    def __init__(self, func):
+        super().__init__()
+        self.func = func
+    def forward(self, t, y):
+        return self.func(t, y)
+
+class ODEState2FFFB(ODEBlockXInit):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "conv"
+
+    def init_y(self, x):
+        if self.y_init_with == "x":
+            y0 = super().init_y(x)
+        elif self.y_init_with == "0":
+            y0 = torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+        elif self.y_init_with == "conv":
+            y0 = self.act_fn(self.FFconv(x))
+        else:
+            raise NotImplementedError
+
+        if self.z_init_with == "x":
+            z0 = x
+        elif self.z_init_with == "0":
+            z0 = torch.zeros((x.shape[0], self.FFconv.weight.shape[1], x.shape[2], x.shape[3]), device=x.device)
+        elif self.z_init_with == "conv":
+            z0 = self.FBconv(y0)
+        else:
+            raise NotImplementedError
+        return y0, z0
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            y_, z_ = y
+            y_ = self.FFconv(self.act_fn(z_))
+            z_ = self.FBconv(y_) - z_
+            return y_, z_
+        return _FuncWrapper(ode_func)
+
+    def forward(self, x, layer_idx=None):
+        yz = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+        out = out[0][-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+class State2InitYZ(ODEState2FFFB):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "conv"
+        self.z_init_with = "conv"
+
+class State2InitYAsXZAs0(ODEState2FFFB):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "0"
+
+class State2InitYAs0ZAsX(ODEState2FFFB):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "0"
+        self.z_init_with = "x"
+
+class State2InitYAsXZAsX(ODEState2FFFB):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "x"
+
+
+class State2NoMinusZ(ODEState2FFFB):
+    """
+    dy/dt = W_FF (f(z))
+    dz/dt = W_FB (y)
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            y_, z_ = y
+            y_ = self.FFconv(self.act_fn(z_))
+            z_ = self.FBconv(y_)
+            return y_, z_
+        return _FuncWrapper(ode_func)
+
+class State2NoMinusZYAsXZAs0(State2NoMinusZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "0"
+
+class State2NoMinusZYAs0ZAsX(State2NoMinusZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "0"
+        self.z_init_with = "x"
+
+class State2NoMinusZYAsXZAsX(State2NoMinusZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "x"
+
+
 class ODEWrapperRC(nn.Module):
     def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, patch=True, **kwargs):
         super().__init__()
@@ -877,6 +990,16 @@ ODEBLOCK_CLASSES = {
     "ODEFixNoise0InitFFFB": ODEFixNoise0InitFFFB,
     "ODESumAsBInitYAs0": ODESumAsBInitYAs0,
     "SumAsBInitYAs0FFFB": SumAsBInitYAs0FFFB,
+    # Using 2 states
+    "ODEState2FFFB": ODEState2FFFB,
+    "State2InitYZ": State2InitYZ,
+    "State2InitYAsXZAs0": State2InitYAsXZAs0,
+    "State2InitYAs0ZAsX": State2InitYAs0ZAsX,
+    "State2InitYAsXZAsX": State2InitYAsXZAsX,
+    "State2NoMinusZ": State2NoMinusZ,
+    "State2NoMinusZYAsXZAs0": State2NoMinusZYAsXZAs0,
+    "State2NoMinusZYAs0ZAsX": State2NoMinusZYAs0ZAsX,
+    "State2NoMinusZYAsXZAsX": State2NoMinusZYAsXZAsX
 }
 
 ODEWrapper_CLASSES = {
