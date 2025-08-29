@@ -60,9 +60,9 @@ fi
 # The BLOCKS set above will be overwritten by BLOCKS passed in
 if [[ -n "${BLOCKS_LIST:-}" ]]; then
   IFS=',' read -r -a BLOCKS <<< "${BLOCKS_LIST}"
-elif [[ -n "${BLOCK:-}" ]]; then
-  BLOCKS=( "${BLOCK}" )
 fi
+echo "BLOCKS_LIST=${BLOCKS_LIST}"
+echo "Parsed ${#BLOCKS[@]} blocks: ${BLOCKS[*]}"
 ##########################################################################
 
 ##########################################################################

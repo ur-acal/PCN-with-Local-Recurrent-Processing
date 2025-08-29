@@ -44,12 +44,13 @@ split_and_submit() {
     local csv; csv=$(IFS=,; echo "${chunk[*]}")
     # Tag EXP with arch + joined block names + timestamp (unique per chunk)
     local tag; tag=$(echo "$csv" | tr ',' '+')
-    local EXP="no_bn_${pcn}_NODE_0822_relu6_FFFB_DYN_${arch}_Exp_${tag}"
+    local EXP="no_bn_${pcn}_NODE_0828_2State_${arch}_Exp_${tag}"
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] → EXP=${EXP}"
+    BLOCKS_LIST="${csv}" \
     sbatch \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,ARCH_SET="${arch}",PCN="${pcn}",BLOCKS_LIST="${csv}",EXP="${EXP}" \
+      --export=ALL,ARCH_SET="${arch}",PCN="${pcn}",EXP="${EXP}" \
       "${SBATCH_SCRIPT}"
 
     i=$end
