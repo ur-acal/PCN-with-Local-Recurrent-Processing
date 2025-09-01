@@ -81,17 +81,13 @@ wait_for_jobs() {
     local alive=0
     for j in "${ids[@]}"; do
       # if job is still known to scheduler
-      if squeue -h -j "$j" >/dev/null 2>&1; then alive=1; break; fi
+      if (( $(squeue -h -j "$j" -o '%i' 2>/dev/null | wc -l) > 0 )); then
+        alive=1
+        break
+      fi
     done
     (( alive )) || break
-
-    # status line
-    local list; list="$(IFS=,; echo "${ids[*]}")"
-    local r p
-    r=$(squeue -h -j "$list" -t RUNNING -o '%i' | wc -l)
-    p=$(squeue -h -j "$list" -t PENDING -o '%i' | wc -l)
-    printf '\rWaiting… RUNNING=%d PENDING=%d  %s' "$r" "$p" "$(date +%H:%M:%S)"
-    sleep 20
+    sleep 5
   done
 }
 
