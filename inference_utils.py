@@ -17,6 +17,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
 from ode_pc import make_ode_block, wrap_ode_block
+from data_utils import ToPackedRGGB, RawImgDataset
 
 import logging
 log = logging.getLogger(__name__)
@@ -27,11 +28,22 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
-def get_test_data(test_bs=2048):
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-    test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+def get_test_data(test_bs=2048, img_type="rgb"):
+    if img_type in {"rgb", "rggb"}:
+        if img_type == "rgb":
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+        else:
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+                ToPackedRGGB(return_orig=False), ])
+        test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+    else:
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+        ])
+        test_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=False, transform=transform_test)
     # Create a DataLoader
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=False, num_workers=2)
     return test_loader

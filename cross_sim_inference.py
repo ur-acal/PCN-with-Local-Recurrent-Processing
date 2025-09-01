@@ -17,6 +17,7 @@ from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
 from inference_utils import load_and_prepare_model, replace_transpose_conv
+from data_utils import ToPackedRGGB, RawImgDataset
 
 from simulator import CrossSimParameters
 from simulator.algorithms.dnn.torch.convert import from_torch, convertible_modules, reinitialize
@@ -59,14 +60,30 @@ def parse_args():
                         default=False)
     return parser.parse_args()
 
-def get_calib_loader(bs=128, n_samples=None):
-    # Todo: Should we keep the random crop here?
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-    train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
+    if img_type in {"rgb", "rggb"}:
+        if img_type == "rgb":
+            # Todo: Should we keep the random crop here?
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+        else:
+            transform_train = transforms.Compose([
+                transforms.ToTensor(),
+                ToPackedRGGB(return_orig=False),
+                transforms.RandomCrop(16, padding=2),
+                transforms.RandomHorizontalFlip(),
+            ])
+        train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+    else:
+        transform_train = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomCrop(16, padding=2),
+            transforms.RandomHorizontalFlip(),
+        ])
+        train_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=True, transform=transform_train)
     if n_samples is not None:
         perm = torch.randperm(len(train_set))
         train_set = Subset(train_set, perm[:n_samples])
@@ -83,7 +100,7 @@ def get_leaf_mods(model: nn.Module) -> List[nn.Module]:
 
 def calibrate_input(model: nn.Module, device, model_name,
                     calib_bs=128, calib_samples=None,
-                    percentile=0.99999, symmetric=False, save_to=None):
+                    percentile=0.99999, symmetric=False, save_to=None, img_type="rgb"):
     # if saved, just loading the result directly
     if save_to is not None:
         save_to = os.path.join(save_to, "{}_{}_{}.pkl".format(
@@ -125,7 +142,7 @@ def calibrate_input(model: nn.Module, device, model_name,
     for _mod in leaf_mod:
         hooks.append(_mod.register_forward_pre_hook(_make_hook(_mod)))
 
-    calib_loader = get_calib_loader(bs=calib_bs, n_samples=calib_samples)
+    calib_loader = get_calib_loader(bs=calib_bs, n_samples=calib_samples, img_type=img_type)
     for _batch in calib_loader:
         _inp, _ = _batch
         _inp = _inp.to(device)

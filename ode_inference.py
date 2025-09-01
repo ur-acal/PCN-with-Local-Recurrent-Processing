@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument("--ckpt", type=str, default="best")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
+    parser.add_argument("--img_type", type=str, default="rgb")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
     parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
@@ -117,7 +118,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     input_ranges = calibrate_input(model=net_, device=device, model_name=args.model_name,
                                    calib_bs=256,
                                    calib_samples=256, percentile=0.995,
-                                   symmetric=False, save_to=None)
+                                   symmetric=False, save_to=None, img_type=args.img_type)
     for _t, _range in input_ranges.items():
         print("Type: {}".format(_t))
         print(_range)
@@ -138,7 +139,7 @@ def run_ode_inference():
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_dataloader = get_test_data(test_bs=128)
+    test_dataloader = get_test_data(test_bs=128, img_type=args.img_type)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
 
     with torch.no_grad():

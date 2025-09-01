@@ -199,6 +199,7 @@ eval_model() {
     --model_name      "$name" \
     --ckpt            "$ckpt" \
     --model_dir       "$MODEL_DIR" \
+    --img_type        "${IMG_TYPE}" \
     --method          "$METHOD" \
     --tol             "$TOL" \
     --n_steps         15 \
@@ -227,6 +228,7 @@ finetune_model() {
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --optim         "SGD" \
+    --img_type      "${IMG_TYPE}" \
     --learning_rate 0.0001 \
     --lr_reduce_on  "10,20" \
     --num_epochs    10 \

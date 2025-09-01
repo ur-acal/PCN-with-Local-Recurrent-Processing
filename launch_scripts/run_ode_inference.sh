@@ -101,7 +101,9 @@ MODEL_NAMES=(
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_FixNoiseXInitFFFBNoExpand_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2REP" # 2p-wide-ft
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEState2FFFB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_3Pool_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_State2InitYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_3Pool_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_State2InitYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_3Pool_1REP"
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_State2NoMinusZ_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_3Pool_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -126,6 +128,7 @@ run_model(){
   set -o pipefail
   python -u ode_inference.py \
     --model_name      "$name" \
+    --img_type        "cycleisp" \
     --ckpt            "best" \
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
@@ -137,8 +140,7 @@ run_model(){
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "State2InitYAsXZAsX" \
-    --test_only       "true" \
+    --ode_block       "State2NoMinusZ" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -148,7 +150,7 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0820_2pooling_wide_SumAsBInitYAsXFFFB_${method}Method_${tol}Tol.log"
+  EXP_NAME="0901_3pooling_rggb_State2NoMinusZ_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
