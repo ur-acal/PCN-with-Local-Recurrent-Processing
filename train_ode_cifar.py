@@ -109,6 +109,8 @@ def _constr_model_name(args, rep=1):
 
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
+    if args.img_type != "rgb":
+        model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None:
         eps_val = args.model_name.split("_")[2]
