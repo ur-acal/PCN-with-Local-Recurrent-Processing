@@ -6,6 +6,13 @@ MAX_TASKS_PER_GPU=${MAX_TASKS_PER_GPU:-2}
 # GPUs per job (kept at 1; override here if you need to)
 GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 
+###############################################################################################
+# running with
+# module swap slurm slurm/24.05.0.b1
+# source ./launch_scripts/slurm_schedule_ode_train.sh > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
+###############################################################################################
+# Change exp parameter here
+###############################################################################################
 # Define blocks per ARCH (must match names used inside the sbatch script)
 declare -A BLOCKS_BY_ARCH
 # 6L3p
@@ -19,6 +26,7 @@ BLOCKS_BY_ARCH[C]="ODEState2FFFB State2InitYAsXZAsX State2NoMinusZ State2NoMinus
 ARCHES=(A C)
 PCNS=("PCNetNoBatchNorm")
 IMG_TYPES=( "rggb" "cycleisp" )
+###############################################################################################
 
 # Paths
 REPO_ROOT="/home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing"
@@ -78,6 +86,7 @@ wait_for_jobs() {
     (( alive )) || break
 
     # status line
+    local list; list="$(IFS=,; echo "${ids[*]}")"
     local r p
     r=$(squeue -h -j "$list" -t RUNNING -o '%i' | wc -l)
     p=$(squeue -h -j "$list" -t PENDING -o '%i' | wc -l)
