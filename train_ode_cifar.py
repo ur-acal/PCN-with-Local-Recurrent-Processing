@@ -22,6 +22,7 @@ def get_args():
     model_save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_ckpt")
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
+    p.add_argument("--img_type", type=str, default="rgb")
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
@@ -247,6 +248,7 @@ def main():
         aug           = args.aug,
         T0            = args.cosine_t0,
         eval_every    = args.eval_every,
+        img_type      = args.img_type,
     )
 
     if args.test_only:

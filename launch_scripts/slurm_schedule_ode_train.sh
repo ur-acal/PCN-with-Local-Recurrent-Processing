@@ -9,22 +9,23 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # Define blocks per ARCH (must match names used inside the sbatch script)
 declare -A BLOCKS_BY_ARCH
 # 6L3p
-BLOCKS_BY_ARCH[A]="ODEState2FFFB State2InitYAsXZAs0 State2InitYAsXZAsX State2NoMinusZ State2NoMinusZYAsXZAs0 State2NoMinusZYAsXZAsX"
+BLOCKS_BY_ARCH[A]="ODEState2FFFB State2InitYAsXZAsX State2NoMinusZ State2NoMinusZYAsXZAsX"
 # Deep
 BLOCKS_BY_ARCH[B]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
-BLOCKS_BY_ARCH[C]="ODEState2FFFB State2InitYAsXZAs0 State2InitYAsXZAsX State2NoMinusZ State2NoMinusZYAsXZAs0 State2NoMinusZYAsXZAsX"
+BLOCKS_BY_ARCH[C]="ODEState2FFFB State2InitYAsXZAsX State2NoMinusZ State2NoMinusZYAsXZAsX"
 
 # Which ARCH/PCN combos to run
 ARCHES=(A C)
 PCNS=("PCNetNoBatchNorm")
+IMG_TYPES=( "rggb" "cycleisp" )
 
 # Paths
 REPO_ROOT="/home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing"
 SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_blocks_ode_train.sbatch"
 
 split_and_submit() {
-  local arch="$1" pcn="$2"
+  local arch="$1" pcn="$2" img_type="$3"
   local blocks_str="${BLOCKS_BY_ARCH[$arch]:-}"
   if [[ -z "$blocks_str" ]]; then
     echo "No blocks defined for ARCH=$arch" >&2
@@ -44,21 +45,23 @@ split_and_submit() {
     local csv; csv=$(IFS=,; echo "${chunk[*]}")
     # Tag EXP with arch + joined block names + timestamp (unique per chunk)
     local tag; tag=$(echo "$csv" | tr ',' '+')
-    local EXP="no_bn_${pcn}_NODE_0828_2State_${arch}_Exp_${tag}"
+    local EXP="no_bn_${pcn}_NODE_0831_2State_RAWImg_${arch}_${img_type}_Exp_${tag}"
 
-    echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] → EXP=${EXP}"
+    echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
     BLOCKS_LIST="${csv}" \
     sbatch \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,ARCH_SET="${arch}",PCN="${pcn}",EXP="${EXP}" \
+      --export=ALL,ARCH_SET="${arch}",PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}" \
       "${SBATCH_SCRIPT}"
 
     i=$end
   done
 }
 
-for ARCH in "${ARCHES[@]}"; do
-  for PCN in "${PCNS[@]}"; do
-    split_and_submit "$ARCH" "$PCN"
+for IMG_TYPE in "${IMG_TYPES[@]}"; do
+  for ARCH in "${ARCHES[@]}"; do
+    for PCN in "${PCNS[@]}"; do
+      split_and_submit "$ARCH" "$PCN" "$IMG_TYPE"
+    done
   done
 done

@@ -16,6 +16,7 @@ conda activate cross_sim
 ##########################################################################
 # Change exp name here.
 ##########################################################################
+IMG_TYPE=${IMG_TYPE:-rgb}
 ARCH_SET=${ARCH_SET:-A}      # A or B
 PCN=${PCN:-PCNetNoBatchNorm} # "PCNetNoBatchNorm" | "PCNetWith1stConv"
 if [[ "$ARCH_SET" == "A" ]]; then
@@ -109,6 +110,7 @@ run_one () {
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --optim         "SGD" \
+    --img_type      "${IMG_TYPE}" \
     --num_epochs    150 \
     --eval_every    10 \
     --offset_eps    0.2 \

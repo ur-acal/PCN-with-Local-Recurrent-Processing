@@ -12,6 +12,7 @@ import argparse
 import tqdm
 
 from pc_model import PCNet
+from data_utils import ToPackedRGGB, RawImgDataset
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
@@ -19,7 +20,7 @@ class TrainerCiFar(object):
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
-                 eval_every=1):
+                 eval_every=1, img_type="rgb"):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -47,7 +48,7 @@ class TrainerCiFar(object):
         self.aug = aug # use the augmentation in convMixer or not
         self.eval_every = eval_every
 
-        self._prepare_cifar()
+        self._prepare_cifar(img_type)
 
     def train(self):
         train_loss_list, val_acc_list = [], []
@@ -204,31 +205,71 @@ class TrainerCiFar(object):
         else:
             raise ValueError("Unknown optimizer: {}".format(optim_type))
 
-    def _prepare_cifar(self):
+    def _prepare_cifar(self, img_type):
         """
         Todo: Actually the validation dataset should be split from the train_set.
         After the split, we can change the scheduler into other types depending on the validation result.
         """
-        if self.aug:
-            transform_train = transforms.Compose([
-                transforms.RandomResizedCrop(32, scale=(0.75, 1.0), ratio=(1.0, 1.0)),
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandAugment(num_ops=1, magnitude=8),
-                transforms.ColorJitter(0.1, 0.1, 0.1),
-                transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
-                transforms.RandomErasing(p=0.25)
-            ])
+        if img_type in {"rgb", "rggb"}:
+            if self.aug:
+                if img_type == "rgb":
+                    transform_train = transforms.Compose([
+                        transforms.RandomResizedCrop(32, scale=(0.75, 1.0), ratio=(1.0, 1.0)),
+                        transforms.RandomHorizontalFlip(p=0.5),
+                        transforms.RandAugment(num_ops=1, magnitude=8),
+                        transforms.ColorJitter(0.1, 0.1, 0.1),
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+                        transforms.RandomErasing(p=0.25),
+                    ])
+                else:
+                    transform_train = transforms.Compose([
+                        transforms.ToTensor(),
+                        ToPackedRGGB(return_orig=False),
+                        transforms.RandomResizedCrop(16, scale=(0.75, 1.0), ratio=(1.0, 1.0)),
+                        transforms.RandomHorizontalFlip(p=0.2),
+                        transforms.RandomErasing(p=0.1),
+                    ])
+            else:
+                if img_type == "rgb":
+                    transform_train = transforms.Compose([
+                        transforms.RandomCrop(32, padding=4),
+                        transforms.RandomHorizontalFlip(),
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+                else:
+                    # Todo: Normalize rggb data?
+                    transform_train = transforms.Compose([
+                        transforms.ToTensor(),
+                        ToPackedRGGB(return_orig=False),
+                        transforms.RandomCrop(16, padding=2),
+                        transforms.RandomHorizontalFlip(),
+                    ])
+            if img_type == "rgb":
+                transform_test = transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+            else:
+                transform_test = transforms.Compose([
+                    transforms.ToTensor(),
+                    ToPackedRGGB(return_orig=False), ])
+            self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+            self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
         else:
             transform_train = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-        self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
-        self.train_dataloader = torch.utils.data.DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=2)
-        self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
-        self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False, num_workers=2)
+                transforms.RandomCrop(16, padding=2),
+                transforms.RandomHorizontalFlip(),
+            ])
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+            ])
+            self.train_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=True, transform=transform_train)
+            self.val_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=False, transform=transform_test)
+
+        # Get dataloader
+        self.train_dataloader = torch.utils.data.DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True,
+                                                            num_workers=2)
+        self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False,
+                                                          num_workers=2)
+
