@@ -60,7 +60,7 @@ split_and_submit() {
     local csv; csv=$(IFS=,; echo "${chunk[*]}")
     # Tag EXP with arch + joined block names + timestamp (unique per chunk)
     local tag; tag=$(echo "$csv" | tr ',' '+')
-    local EXP="no_bn_${pcn}_NODE_0831_2State_RAWImg_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0902_2State_RAWImg_${arch}_${img_type}_Exp"
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
     jid=$( BLOCKS_LIST="${csv}" \
