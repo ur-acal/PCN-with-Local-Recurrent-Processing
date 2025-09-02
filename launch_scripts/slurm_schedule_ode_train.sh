@@ -9,7 +9,11 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 ###############################################################################################
 # running with
 # module swap slurm slurm/24.05.0.b1
-# source ./launch_scripts/slurm_schedule_ode_train.sh > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
+# ( source ./launch_scripts/slurm_schedule_ode_train.sh ) \
+#  > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
+#
+# sched_pid=$!
+# disown -h "$sched_pid"
 ###############################################################################################
 # Change exp parameter here
 ###############################################################################################
@@ -96,6 +100,7 @@ merge_csvs_for_exp() {
   local joblist="${JOBS_BY_EXP[$exp]}"
   joblist="${joblist%:}"          # trim trailing colon
   IFS=':' read -r -a ids <<< "$joblist"
+  echo "EXP: ${exp}, joblist: ${joblist}"
 
   # Wait for these jobs
   wait_for_jobs "${ids[@]}"
