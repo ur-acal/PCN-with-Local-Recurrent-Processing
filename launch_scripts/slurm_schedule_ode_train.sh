@@ -20,11 +20,11 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # Define blocks per ARCH (must match names used inside the sbatch script)
 declare -A BLOCKS_BY_ARCH
 # 6L3p
-BLOCKS_BY_ARCH[A]="S2NoMinusZChargeZ S2NoMinusZChargeZMinus SelfCUAbsSumFFFB SelfCUAbsSumFFFBInitB"
+BLOCKS_BY_ARCH[A]="S2NoMinusZChargeZ S2NoMinusZChargeZMinus SelfCUAbsSumFFFBInitB"
 # Deep
 BLOCKS_BY_ARCH[B]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
-BLOCKS_BY_ARCH[C]="S2NoMinusZChargeZ S2NoMinusZChargeZMinus SelfCUAbsSumFFFB SelfCUAbsSumFFFBInitB"
+BLOCKS_BY_ARCH[C]="S2NoMinusZChargeZ S2NoMinusZChargeZMinus SelfCUAbsSumFFFBInitB"
 
 # Which ARCH/PCN combos to run
 ARCHES=(A C)

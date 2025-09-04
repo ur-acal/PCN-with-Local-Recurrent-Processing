@@ -605,6 +605,7 @@ class SelfCUAbsSumFFFB(ODEBlockXInit):
     the summation of the abs of weights times voltage term.
     Active.
     Todo: How do we add noise to the active self-coupling terms?
+    Note: Initialize b with zero failed to train.
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -621,7 +622,7 @@ class SelfCUAbsSumFFFB(ODEBlockXInit):
         return ode_func
 
 class SelfCUAbsSumFFFBInitB(SelfCUAbsSumFFFB):
-    def __init_(self, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         with torch.no_grad():
             logging.warning("Initialize b0 as the summation of the absolute value of weights")
