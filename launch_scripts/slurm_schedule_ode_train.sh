@@ -20,16 +20,17 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # Define blocks per ARCH (must match names used inside the sbatch script)
 declare -A BLOCKS_BY_ARCH
 # 6L3p
-BLOCKS_BY_ARCH[A]="ODEState2FFFB State2InitYAsXZAsX State2NoMinusZ State2NoMinusZYAsXZAsX"
+BLOCKS_BY_ARCH[A]="S2NoMinusZChargeZ S2NoMinusZChargeZMinus SelfCUAbsSumFFFB SelfCUAbsSumFFFBInitB"
 # Deep
 BLOCKS_BY_ARCH[B]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
-BLOCKS_BY_ARCH[C]="ODEState2FFFB State2InitYAsXZAsX State2NoMinusZ State2NoMinusZYAsXZAsX"
+BLOCKS_BY_ARCH[C]="S2NoMinusZChargeZ S2NoMinusZChargeZMinus SelfCUAbsSumFFFB SelfCUAbsSumFFFBInitB"
 
 # Which ARCH/PCN combos to run
 ARCHES=(A C)
 PCNS=("PCNetNoBatchNorm")
-IMG_TYPES=( "rggb" "cycleisp" )
+#IMG_TYPES=( "rggb" "cycleisp" )
+IMG_TYPES=( "rgb" )
 ###############################################################################################
 
 # Paths
@@ -64,7 +65,11 @@ split_and_submit() {
     local csv; csv=$(IFS=,; echo "${chunk[*]}")
     # Tag EXP with arch + joined block names + timestamp (unique per chunk)
     local tag; tag=$(echo "$csv" | tr ',' '+')
-    local EXP="no_bn_${pcn}_NODE_0902_2State_RAWImg_${arch}_${img_type}_Exp"
+    ###############################################################################################
+    # Change EXP name here
+    ###############################################################################################
+    local EXP="no_bn_${pcn}_NODE_0904_2State_AbsSum_RAWImg_${arch}_${img_type}_Exp"
+    ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
     jid=$( BLOCKS_LIST="${csv}" \

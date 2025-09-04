@@ -1,3 +1,4 @@
+import copy
 import os
 import time
 import random
@@ -536,6 +537,9 @@ class FixNoiseXInitFFFBNoExpand(ODEFixNoiseXInitFFFB):
             out = self.bypass(out) + out
         return out
 
+####################################################################################
+# Inference blocks for noisy self-coupling training
+####################################################################################
 class ODESumAsBInitYAsX(ODESumAsBInitY):
     """
     Used in test.
@@ -588,6 +592,107 @@ class SumAsBInitYAs0FFFB(SumAsBInitYAsXFFFB):
         super().__init__(**kwargs)
     def init_y(self, x):
         return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+####################################################################################
+####################################################################################
+
+####################################################################################
+# Abs Summation
+####################################################################################
+class SelfCUAbsSumFFFB(ODEBlockXInit):
+    """
+    Initialize y0 = x or concat([x,x]).
+    self.b0 is trainable, meaning that the active self-coupling units are not compensate exactly
+    the summation of the abs of weights times voltage term.
+    Active.
+    Todo: How do we add noise to the active self-coupling terms?
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            weight_sum = self.FFconv.weight.view(y.shape[1], -1).abs().sum(-1)
+            offset = (weight_sum.view(1, -1, 1, 1) - self.b0[0]) * y
+            # logging.warning("weight sum mean: {}, median: {}, max: {}, min: {}".format(
+            #     weight_sum.mean(), weight_sum.median(), weight_sum.max(), weight_sum.min()))
+            # logging.warning("b0 sum mean: {}, median: {}, max: {}, min: {}".format(
+            #     self.b0[0].mean(), self.b0[0].median(), self.b0[0].max(), self.b0[0].min()))
+            return self.FFconv(self.act_fn(self.FBconv(y))) - offset
+        return ode_func
+
+class SelfCUAbsSumFFFBInitB(SelfCUAbsSumFFFB):
+    def __init_(self, **kwargs):
+        super().__init__(**kwargs)
+        with torch.no_grad():
+            logging.warning("Initialize b0 as the summation of the absolute value of weights")
+            ff_weight = self.FFconv.weight.data
+            self.b0 = nn.ParameterList([ff_weight.view(ff_weight.shape[0], -1).abs().sum(-1).view(1, -1, 1, 1)])
+        self.clean_params["b0"] = nn.Parameter(self.b0[0].clone())
+
+class SelfCUAbsSumFFFBFixNoise(ODEFixNoiseXInitFFFB):
+    """
+    Assuming the active self-coupling units are exactly compensating the summation of the abs of weights times
+    the voltage term.
+    The noisy_cu can be interpreted as the noise of the active self-coupling units.
+    Todo: Check the type of noise in the active self-coupling terms (or current mirror) in order to model
+        the behavior of the real circuit. If the self-coupling terms are active, then using the old
+        multiplicative mismatch added to self.b0 may not be appropriate.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_ode_fn(self, x, noisy_i=None):
+        def ode_func(t, y):
+            return self.FFconv(self.act_fn(self.FBconv(y))) - noisy_i
+        return ode_func
+
+    def forward(self, x, layer_idx=None):
+        """
+        Different from parent class:
+        1. Using the summation of absolute value of weights.
+        2. Expand the last two dimensions of y0 only. Does NOT expand the batch dimension.
+        Todo: If the self-coupling terms are now active (or current mirrors), then the noisy_cu should be
+            directly added to the dynamics as a whole, mimicking the current instead of having noisy_cu * y
+            in the dynamics.
+        """
+        y0 = self.init_y(x)
+        weight_sum = self.FFconv.weight.view(y0.shape[1], -1).abs().sum(-1).view(1, -1, 1, 1).expand(1, -1, y0.shape[2], y0.shape[3])
+        # logging.warning("weight sum mean: {}, median: {}, max: {}, min: {}".format(
+        #     weight_sum.mean(), weight_sum.median(), weight_sum.max(), weight_sum.min()))
+        if self.FFconv.training:
+            noisy_i = y0 * weight_sum * torch.randn_like(weight_sum, requires_grad=False, device=y0.device) * self.offset_eps
+        else:
+            noisy_i = torch.zeros_like(weight_sum, requires_grad=False, device=y0.device)
+        out = aca_ode_solve(self._make_ode_fn(x, noisy_i), y0, self.option_aca)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+class SelfCUAbsSumFFFBNoisy(SelfCUAbsSumFFFBFixNoise):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # sqrt((k_B * T) * R * df * 4) = sqrt(4.16e-21 * 1e5 * 10e9 * 4)
+        self.offset_eps = 0.002
+
+    def _make_ode_fn(self, x, noisy_i=None):
+        def ode_func(t, y):
+            _noisy_v = y.abs().max() * self.offset_eps * torch.randn_like(y, requires_grad=False, device=y.device)
+            return self.FFconv(self.act_fn(x - self.FBconv(y))) - _noisy_v
+        return ode_func
+
+    def forward(self, x, layer_idx=None):
+        y0 = self.init_y(x)
+        out = aca_ode_solve(self._make_ode_fn(x, None), y0, self.option_aca)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+####################################################################################
+####################################################################################
+
 
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
@@ -638,6 +743,11 @@ class ODEFFFBConv(ODEBlockPC):
 class ODEFFConv(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        chan_diff = self.FFconv.out_channels - self.FFconv.in_channels
+        self.pad_a = chan_diff // 2
+        self.pad_b = self.pad_a
+        if chan_diff % 2 != 0:
+            self.pad_b += 1
 
     def init_y(self, x):
         return torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
@@ -647,7 +757,31 @@ class ODEFFConv(ODEBlockPC):
             return self.act_fn(self.FBconv(self.act_fn(self.FFconv(x))))
         return ode_func
 
+    def forward(self, x, layer_idx=None):
+        y0 = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
 
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+
+        # Have to add residual connection, otherwise the plain CNN is not trainable
+        out = out[-1] + F.pad(x, (0, 0, 0, 0, self.pad_a, self.pad_b), "constant", 0)
+
+        # Todo: Verify the Jacobian of aca_ode_solve and plain feedforward operation
+        # with torch.no_grad():
+        #     out_ff = self.option_aca["t1"] * self.act_fn(self.FBconv(self.act_fn(self.FFconv(x))))
+        #     out_diff = (out_ff - out).abs()
+        #     logging.warning("out and ff diff max: {}, mean: {}".format(out_diff.max(), out_diff.mean()))
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+
+####################################################################################
+# 2 state ode blocks
+# dy/dt = f(z); dz/dt = g(y)
+####################################################################################
 class _FuncWrapper(nn.Module):
     def __init__(self, func):
         super().__init__()
@@ -760,6 +894,49 @@ class State2NoMinusZYAsXZAsX(State2NoMinusZ):
         self.y_init_with = "x"
         self.z_init_with = "x"
 
+class S2NoMinusZChargeZ(State2NoMinusZ):
+    def __init__(self, time_split=0.5, **kwargs):
+        super().__init__(**kwargs)
+        self.time_split = time_split
+        self.option_init = copy.deepcopy(self.option_aca)
+        t1_all = self.option_aca["t1"]
+        t_step = self.option_aca["h"]
+
+        # Note: Now self.integration_time can not be used.
+        self.option_init = self._set_ode_option(self.option_init, time_split, t1_all, t_step)
+        self.option_aca = self._set_ode_option(self.option_aca, 1 - time_split, t1_all, t_step)
+
+    def _set_ode_option(self, option_dict, time_ratio, t1_all, t_step):
+        option_dict["t1"] = t1_all * time_ratio
+        option_dict["t_eval"] = [_ts * time_ratio for _ts in self.integration_time.tolist()]
+        option_dict["h"] = t_step * time_ratio if t_step is not None else t_step
+        return option_dict
+
+    def _make_z_ode_fn(self, y):
+        def ode_func(t, z):
+            return self.FBconv(y)
+        return ode_func
+
+    def init_y(self, x):
+        # set this to avoid the conv op in the parent's init_y
+        self.z_init_with = "0"
+
+        # init y and z
+        y0 = super().init_y(x)[0]
+        z0 = torch.zeros_like(x, device=x.device) # Todo: add option for z0 = x
+        z0 = aca_ode_solve(self._make_z_ode_fn(y0), z0, self.option_init)[-1]
+        return y0, z0
+
+class S2NoMinusZChargeZMinus(S2NoMinusZChargeZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_z_ode_fn(self, y):
+        def ode_func(t, z):
+            return self.FBconv(y) - z
+        return ode_func
+####################################################################################
+####################################################################################
 
 class ODEWrapperRC(nn.Module):
     def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, patch=True, **kwargs):
@@ -999,7 +1176,14 @@ ODEBLOCK_CLASSES = {
     "State2NoMinusZ": State2NoMinusZ,
     "State2NoMinusZYAsXZAs0": State2NoMinusZYAsXZAs0,
     "State2NoMinusZYAs0ZAsX": State2NoMinusZYAs0ZAsX,
-    "State2NoMinusZYAsXZAsX": State2NoMinusZYAsXZAsX
+    "State2NoMinusZYAsXZAsX": State2NoMinusZYAsXZAsX,
+    "S2NoMinusZChargeZ": S2NoMinusZChargeZ,
+    "S2NoMinusZChargeZMinus": S2NoMinusZChargeZMinus,
+    # Using summation of abs value
+    "SelfCUAbsSumFFFB": SelfCUAbsSumFFFB,
+    "SelfCUAbsSumFFFBInitB": SelfCUAbsSumFFFBInitB,
+    "SelfCUAbsSumFFFBFixNoise": SelfCUAbsSumFFFBFixNoise,
+    "SelfCUAbsSumFFFBNoisy": SelfCUAbsSumFFFBNoisy,
 }
 
 ODEWrapper_CLASSES = {
