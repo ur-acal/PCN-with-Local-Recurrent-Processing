@@ -622,6 +622,10 @@ class SelfCUAbsSumFFFB(ODEBlockXInit):
         return ode_func
 
 class SelfCUAbsSumFFFBInitB(SelfCUAbsSumFFFB):
+    """
+    When inference, use SelfCUAbsSumFFFB to avoid overwriting the loaded trained b0 with
+    the summation of the abs of weights.
+    """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         with torch.no_grad():
@@ -936,6 +940,38 @@ class S2NoMinusZChargeZMinus(S2NoMinusZChargeZ):
         def ode_func(t, z):
             return self.FBconv(y) - z
         return ode_func
+
+class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # sqrt((k_B * T) * R * df * 4) = sqrt(4.16e-21 * 1e5 * 10e9 * 4)
+        self.offset_eps = 0.002
+
+    def _make_z_ode_fn(self, y):
+        def ode_func(t, z):
+            _noisy_i = z.abs().max() * self.offset_eps * torch.randn_like(z, requires_grad=False, device=y.device)
+            return self.FBconv(y) + _noisy_i
+        return ode_func
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, y):
+            y_, z_ = y
+            _noisy_iz = z_.abs().max() * self.offset_eps * torch.randn_like(z_, requires_grad=False, device=z_.device)
+            _noisy_iy = y_.abs().max() * self.offset_eps * torch.randn_like(y_, requires_grad=False, device=y_.device)
+            y_ = self.FFconv(self.act_fn(z_)) + _noisy_iy
+            z_ = self.FBconv(y_) + _noisy_iz
+            return y_, z_
+        return _FuncWrapper(ode_func)
+
+class S2NoMinusZChgZMinusNoisyI(S2NoMinusZChgZNoisyI):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _make_z_ode_fn(self, y):
+        def ode_func(t, z):
+            _noisy_i = z.abs().max() * self.offset_eps * torch.randn_like(z, requires_grad=False, device=y.device)
+            return self.FBconv(y) - z + _noisy_i
+        return ode_func
 ####################################################################################
 ####################################################################################
 
@@ -1180,6 +1216,8 @@ ODEBLOCK_CLASSES = {
     "State2NoMinusZYAsXZAsX": State2NoMinusZYAsXZAsX,
     "S2NoMinusZChargeZ": S2NoMinusZChargeZ,
     "S2NoMinusZChargeZMinus": S2NoMinusZChargeZMinus,
+    "S2NoMinusZChgZNoisyI": S2NoMinusZChgZNoisyI,
+    "S2NoMinusZChgZMinusNoisyI": S2NoMinusZChgZMinusNoisyI,
     # Using summation of abs value
     "SelfCUAbsSumFFFB": SelfCUAbsSumFFFB,
     "SelfCUAbsSumFFFBInitB": SelfCUAbsSumFFFBInitB,

@@ -163,6 +163,7 @@ map_test_block() {
     ODEFixNoise0InitExpand)    echo "ODESumAsBInitYAs0" ;;
     ODEFixNoiseOffset)         echo "ODESumAsBInitY" ;;
     ODEFixNoiseFFFB)           echo "ODESumAsBInitYFFFB" ;;
+    SelfCUAbsSumFFFBInitB)     echo "SelfCUAbsSumFFFB" ;;
     *)                         echo "$1" ;;
   esac
 }
