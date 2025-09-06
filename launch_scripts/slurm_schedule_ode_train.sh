@@ -97,11 +97,11 @@ wait_for_jobs() {
     for j in "${ids[@]}"; do
       # first line = job summary (not steps)
       local state
-      state=$(sacct -n -j "$j" -o State 2>/dev/null | head -n1)
+      state=$(sacct -X -n -j "$j" -o State 2>/dev/null | head -n1)
       state=${state%% *}   # drop reason, e.g. "FAILED exit code ..."
       state=${state%%.*}   # drop substate
       case "$state" in
-        COMPLETED|FAILED|CANCELLED|TIMEOUT|OUT_OF_MEMORY) ((done++)) ;;
+        COMPLETED*|FAILED*|CANCELLED*|TIMEOUT*|OUT_OF_MEMORY*) ((done++)) ;;
         ""|RUNNING|PENDING|CONFIGURING|COMPLETING|SUSPENDED|REQUEUED|RESIZING|PREEMPTED|NODE_FAIL) : ;;
         *) : ;;
       esac
