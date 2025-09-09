@@ -111,7 +111,7 @@ run_one () {
   local t_end="0.75"
   if [[ "$block" == *0Init* || "$block" == *As0* ]]; then
     t_end="1.75"
-  elif [[ "$block" == *Charge* ]]; then
+  elif [[ "$block" == *Charge* || "$block" == *Chg* ]]; then
     t_end="1.5"
   fi
 
