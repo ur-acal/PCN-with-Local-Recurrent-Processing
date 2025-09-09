@@ -58,9 +58,9 @@ python train_ode_cifar.py \
   --num_epochs    150 \
   --eval_every    10 \
   --offset_eps    0.002 \
-  --inp_channels  3  32 32 64 64  128 \
-  --out_channels  32 32 64 64 128 128 \
-  --max_pool      0  1  1  0  1   0   \
+  --inp_channels  3  32 32 64 64  128 128 \
+  --out_channels  32 32 64 64 128 128 128 \
+  --max_pool      0  0  1  0  1   0   0  \
   --dropout       0.25 \
   --tie_weights   "false" \
   --tie_bp        "false" \
@@ -68,10 +68,10 @@ python train_ode_cifar.py \
   --batch_size    128 \
   --method        "dopri5" \
   --tol           "0.0001" \
-  --t_end         "0.75" \
+  --t_end         "1.5" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
-  --ode_block     "SelfCUAbsSumFFFBNoisy" \
+  --ode_block     "S2NoMinusZChgZNoisyI" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_Wide_SelfCUAbsSumFFFB.log"
 
 echo "Completed."

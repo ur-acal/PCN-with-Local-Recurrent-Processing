@@ -46,5 +46,7 @@ def extract_keys(options):
     if 'dense_output' in options.keys():
         hyperparams.update({'dense_output': options['dense_output']})
         print('Dense output mode enabled. The output put is in dense-state and can be called again as usual functions.')
+    if 'eps' in options.keys():
+        hyperparams.update({'eps': options['eps']})
 
     return hyperparams

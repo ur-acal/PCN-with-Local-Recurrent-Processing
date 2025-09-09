@@ -68,7 +68,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_0905_2State_Noisy_RAWImg_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0908_2State_Noisy_RAWImg_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
@@ -101,7 +101,7 @@ wait_for_jobs() {
       state=${state%% *}   # drop reason, e.g. "FAILED exit code ..."
       state=${state%%.*}   # drop substate
       case "$state" in
-        COMPLETED*|FAILED*|CANCELLED*|TIMEOUT*|OUT_OF_MEMORY*) ((done++)) ;;
+        *COMPLETED*|*FAILED*|*CANCELLED*|*TIMEOUT*|*OUT_OF_MEMORY*) ((done++)) ;;
         ""|RUNNING|PENDING|CONFIGURING|COMPLETING|SUSPENDED|REQUEUED|RESIZING|PREEMPTED|NODE_FAIL) : ;;
         *) : ;;
       esac

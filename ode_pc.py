@@ -947,21 +947,35 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
         # sqrt((k_B * T) * R * df * 4) = sqrt(4.16e-21 * 1e5 * 10e9 * 4)
         self.offset_eps = 0.002
 
-    def _make_z_ode_fn(self, y):
-        def ode_func(t, z):
-            _noisy_i = z.abs().max() * self.offset_eps * torch.randn_like(z, requires_grad=False, device=y.device)
-            return self.FBconv(y) + _noisy_i
-        return ode_func
+    def init_y(self, x):
+        # init y with x
+        if self.chan_diff == 0:
+            y0 = x
+        elif self.in_chan * 2 == self.out_chan:
+            y0 = torch.cat([x, x], dim=1)
+        else:
+            y0 = F.pad(torch.cat([x for _ in range(self.out_chan // self.in_chan)], dim=1),
+                         (0, 0, 0, 0, 0, self.out_chan % self.in_chan), "constant", 0)
 
-    def _make_ode_fn(self, x):
-        def ode_func(t, y):
-            y_, z_ = y
-            _noisy_iz = z_.abs().max() * self.offset_eps * torch.randn_like(z_, requires_grad=False, device=z_.device)
-            _noisy_iy = y_.abs().max() * self.offset_eps * torch.randn_like(y_, requires_grad=False, device=y_.device)
-            y_ = self.FFconv(self.act_fn(z_)) + _noisy_iy
-            z_ = self.FBconv(y_) + _noisy_iz
-            return y_, z_
-        return _FuncWrapper(ode_func)
+        # init z
+        z0 = torch.zeros_like(x, device=x.device) # Todo: add option for z0 = x
+        z0 = aca_ode_solve(self._make_z_ode_fn(y0), z0, self.option_init)[-1]
+        return y0, z0
+
+    def forward(self, x, layer_idx=None):
+        self.option_init["eps"] = x.abs().max() * self.offset_eps
+        self.option_aca["eps"] = x.abs().max() * self.offset_eps
+
+        yz = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+        out = out[0][-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
 
 class S2NoMinusZChgZMinusNoisyI(S2NoMinusZChgZNoisyI):
     def __init__(self, **kwargs):
@@ -969,8 +983,7 @@ class S2NoMinusZChgZMinusNoisyI(S2NoMinusZChgZNoisyI):
 
     def _make_z_ode_fn(self, y):
         def ode_func(t, z):
-            _noisy_i = z.abs().max() * self.offset_eps * torch.randn_like(z, requires_grad=False, device=y.device)
-            return self.FBconv(y) - z + _noisy_i
+            return self.FBconv(y) - z
         return ode_func
 ####################################################################################
 ####################################################################################

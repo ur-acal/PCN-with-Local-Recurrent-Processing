@@ -19,7 +19,7 @@ class AdaptiveGridSolver(ODESolver):
     def __init__(self, func, t0, y0, t1=1.0, h=0.1, rtol=1e-3, atol=1e-6, neval_max=500000,
                  print_neval=False, print_direction=False, step_dif_ratio=1e-3, safety=SAFETY,
                  regenerate_graph=False, dense_output=True, interpolation_method = 'cubic', print_time = False,
-                 end_point_mode = False):
+                 end_point_mode = False, eps=None):
         '''
         If end_point_mode is set as True, evaluated at t0 <= s1, s2, s3, ..., sn = t1, return value at t1 without interpolation
         '''
@@ -34,6 +34,7 @@ class AdaptiveGridSolver(ODESolver):
                  print_neval=print_neval, print_direction=print_direction, step_dif_ratio=step_dif_ratio, safety=safety,
                  regenerate_graph=regenerate_graph, dense_output=dense_output, interpolation_method = interpolation_method,
                                                  print_time=print_time, end_point_mode = end_point_mode)
+        self.eps = eps
 
     def select_initial_step_scipy(self, t0, y0, f0):
         """Empirically select a good initial step.
@@ -291,6 +292,10 @@ class AdaptiveGridSolver(ODESolver):
             y_old = y_current
             y_current, error, variables = self.step(self.func, t_current, h_current * self.time_direction,
                                                     y_current, return_variables=True)
+            if self.eps is not None:
+                _std = (h_current ** 0.5) * self.eps
+                y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                  for _y in y_current)
 
             if not self.end_point_mode: # evaluate at some points on the fly if not in end_time_mode
                 # if regenerate computation graph, do not save dense states at this step.
