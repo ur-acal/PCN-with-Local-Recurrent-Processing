@@ -1,4 +1,5 @@
 import copy
+import math
 import os
 import time
 import random
@@ -946,6 +947,7 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
         super().__init__(**kwargs)
         # sqrt((k_B * T) * R * df * 4) = sqrt(4.16e-21 * 1e5 * 10e9 * 4)
         self.offset_eps = 0.002
+        self.eps_scale = None
 
     def init_y(self, x):
         # init y with x
@@ -962,9 +964,18 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
         z0 = aca_ode_solve(self._make_z_ode_fn(y0), z0, self.option_init)[-1]
         return y0, z0
 
+    def _set_eps(self, x):
+        if self.eps_scale is not None:
+            # directly use the eps_scale
+            self.option_init["eps"] = self.eps_scale * self.offset_eps
+            self.option_aca["eps"] = self.eps_scale * self.offset_eps
+        else:
+            # scale the eps according to the maximum activation
+            self.option_init["eps"] = x.abs().max() * self.offset_eps
+            self.option_aca["eps"] = x.abs().max() * self.offset_eps
+
     def forward(self, x, layer_idx=None):
-        self.option_init["eps"] = x.abs().max() * self.offset_eps
-        self.option_aca["eps"] = x.abs().max() * self.offset_eps
+        self._set_eps(x)
 
         yz = self.init_y(x)
         self.integration_time = self.integration_time.type_as(x)
@@ -1153,6 +1164,102 @@ class WrapQuantizeW(ODEWrapperRC):
         self.ode_block.init_y = patched_init_y
 
 
+class ODEWrapper2State(WrapQuantizeW):
+    def __init__(self, is_first=False, is_last=False, **kwargs):
+        kwargs.update({"patch": False})
+        super().__init__(**kwargs)
+        self.cap_scale = self._round(self.s_ff / self.s_fb, 1)
+        self.C_fb = self.C
+        self.C_ff = self.C_fb * self.cap_scale
+
+        self.alpha = self.s_fb
+        self.beta = self.q        # Assuming q is the same for all layers
+        self.is_first = is_first
+        self.is_last = is_last
+        self.inp_scale = self.beta if self.is_first else 1
+        self.out_scale = self.beta if self.is_last else 1
+
+        self.proj_fn = nn.Hardtanh(min_val=-self.v_dd, max_val=self.v_dd)
+        self.ode_block.eps_scale = 1.0 # the noise is independent of the voltage value
+
+        self._patch()
+        self.ode_block.option_init["proj_fn"] = self.proj_fn
+        self.ode_block.option_aca["proj_fn"] = self.proj_fn
+
+    def get_time_scaler(self):
+        return self.R * self.C_ff, self.R * self.C_fb
+
+    @staticmethod
+    def _scale_time_impl(integral_option, end_time_scaler):
+        # scale and set value
+        integral_option["t0"] = integral_option["t0"] * end_time_scaler
+        integral_option["t1"] = integral_option["t1"] * end_time_scaler
+        integral_option["t_eval"] = [_ts * end_time_scaler for _ts in integral_option["t_eval"]]
+        integral_option["h"] = integral_option["h"] * end_time_scaler if integral_option["h"] is not None else None
+
+        return integral_option
+
+    def _scale_time(self):
+        # scale integration time based on s_fb
+        end_time_scaler = self.R * self.C / self.alpha
+        self.ode_block.integration_time = self.ode_block.integration_time * end_time_scaler
+
+        self.ode_block.option_init = self._scale_time_impl(self.ode_block.option_init, end_time_scaler)
+        self.ode_block.option_aca = self._scale_time_impl(self.ode_block.option_aca, end_time_scaler)
+
+        logging.info("Scaled init end time: {} s".format(self.ode_block.option_init["t1"]))
+        logging.info("Scaled compute end time: {} s".format(self.ode_block.option_aca["t1"]))
+
+    def transform(self, inner_fn):
+        @wraps(inner_fn)
+        def scaled(*f_args, **f_kwargs):
+            y_, z_ = inner_fn(*f_args, **f_kwargs)
+            return y_ / self.time_scaler[0], z_ / self.time_scaler[1]
+        return scaled
+
+    def _patch_forward(self):
+        # scale the forward method
+        orig_call = self.original_forward
+        @wraps(orig_call)
+        def patched_forward(x, *args, **kwargs):
+            return orig_call(self.inp_scale * x, *args, **kwargs) / self.out_scale
+        self.ode_block.forward = patched_forward
+
+    def _patch_init_y(self):
+        """
+        No modification on the init_y of the ode_block.
+        """
+        orig_init_y = self.original_init_y
+        @wraps(orig_init_y)
+        def patched_init_y(x, *args, **kwargs):
+            return orig_init_y(x)
+        self.ode_block.init_y = patched_init_y
+
+    def _patch(self):
+        """
+        1. Scale the integration time for option_init and option_aca
+        2. Scale the act_fn
+        3. Scale the dynamics of y and z
+        4. Scale the input/output of the layer for the first/last layer
+        """
+        self.time_scaler = self.get_time_scaler()
+        # scale integration time
+        self._scale_time()
+        self._scale_act_fn()
+        self._patch_make_fn()
+        self._patch_forward()
+        self._patch_init_y()
+
+    @staticmethod
+    def _round(x, n):
+        if abs(x) >= 1:
+            return round(x, n)
+        elif x != 0:
+            return round(x, -int(math.floor(math.log10(abs(x)))) + n - 1)
+        else:
+            return 0
+
+
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
                    n_steps=None, **kwargs):
     for i in range(pc_net.num_layers):
@@ -1178,8 +1285,15 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         pass
         # calib_res = np.load(calib_path)
     for i in range(pc_net.num_layers):
-        ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
-                                      R=R, C=C, v_dd=v_dd, **kwargs)
+        if i == 0:
+            ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
+                                          R=R, C=C, v_dd=v_dd, is_first=True, is_last=False, **kwargs)
+        elif i == pc_net.num_layers - 1:
+            ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
+                                          R=R, C=C, v_dd=v_dd, is_first=False, is_last=True, **kwargs)
+        else:
+            ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
+                                          R=R, C=C, v_dd=v_dd, is_first=False, is_last=False, **kwargs)
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
     return pc_net
 

@@ -4,7 +4,7 @@ trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
-export tol="1e-4"
+export tol="1e-7"
 
 # ─────────────── noise toggles ───────────────
 METHOD_VALS=("dopri5")
@@ -104,7 +104,9 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_State2InitYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_3Pool_1REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_State2NoMinusZ_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_3Pool_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_SelfCUAbsSumFFFBInitB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_SelfCUAbsSumFFFBInitB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -140,7 +142,7 @@ run_model(){
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "SelfCUAbsSumFFFB" \
+    --ode_block       "S2NoMinusZChgZNoisyI" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }

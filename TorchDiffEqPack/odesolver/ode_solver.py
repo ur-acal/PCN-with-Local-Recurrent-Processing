@@ -45,10 +45,12 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, **kwargs):
     elif options['method'].lower() == 'rk23':
         solver = RK23(func=func, y0=y0, **hyperparams, **kwargs)
     elif options['method'].lower() == 'dopri5':
-        if proj_fn is None:
+        if proj_fn is None and 'proj_fn' not in options:
             solver = Dopri5(func=func, y0=y0,   **hyperparams, **kwargs)
-        else:
+        elif proj_fn is not None:
             solver = ProjDopri5(func=func, y0=y0, proj_fn=proj_fn, **hyperparams, **kwargs)
+        elif 'proj_fn' in options:
+            solver = ProjDopri5(func=func, y0=y0, proj_fn=options['proj_fn'], **hyperparams, **kwargs)
     elif options['method'].lower() == 'ode23s':
         solver = ODE23s(func=func, y0=y0,   **hyperparams, **kwargs)
     elif options['method'].lower() == 'sym12async':

@@ -1,4 +1,6 @@
 import abc
+import logging
+
 import torch
 import copy
 import numpy as np
@@ -462,11 +464,38 @@ class ProjDopri5(Dopri5):
         self.proj_fn = proj_fn
 
     def step(self, func, t, dt, y, return_variables=False):
+        logging.warning("Calling projDopri5")
+        k1 = func(t, tuple(self.proj_fn(_y) for _y in y))
+        k2 = func(t + dt / 5, tuple( self.proj_fn(_y + 1 / 5 * dt * _k1) for _y, _k1 in zip(y, k1)) )
+        k3 = func(t + dt * 3 / 10,  tuple( self.proj_fn(_y + 3 / 40 * dt * _k1 + 9.0 / 40.0 * dt * _k2) for
+                                           _y, _k1, _k2 in zip(y, k1, k2)) )
+        k4 = func(t + dt * 4. / 5., tuple( self.proj_fn(_y + 44. / 45. * dt * _k1 - 56. / 15. * dt * _k2 + 32. / 9. * dt * _k3) for
+                                           _y, _k1, _k2, _k3 in zip(y, k1, k2, k3)))
+        k5 = func(t + dt * 8. / 9.,
+                       tuple( self.proj_fn(_y + 19372. / 6561. * dt * _k1 - 25360. / 2187. *dt * _k2 + \
+                              64448. / 6561. * dt * _k3 - 212. / 729. * dt * _k4) for
+                              _y, _k1, _k2, _k3, _k4 in zip(y, k1, k2, k3, k4) ))
+
+        k6 = func(t + dt,
+                       tuple( self.proj_fn(_y + 9017. / 3168.*dt * _k1 - 355. / 33. * dt * _k2 + 46732. / 5247. * dt * _k3 + \
+                              49. / 176. * dt * _k4 - 5103. / 18656. * dt * _k5) for
+                        _y, _k1, _k2, _k3, _k4, _k5 in zip(y, k1, k2, k3, k4, k5)) )
+
+        k7 = func(t + dt,
+                       tuple( self.proj_fn(_y + 35. / 384. *dt * _k1 + 0*dt * _k2 + 500. / 1113.*dt * _k3 + \
+                              125. / 192.* dt * _k4 - 2187. / 6784. * dt * _k5 + 11. / 84. * dt * _k6 )for \
+                              _y, _k1, _k2, _k3, _k4, _k5, _k6 in zip(y, k1, k2, k3, k4, k5, k6)) )
+
+        out1 = tuple( self.proj_fn(_y + 35. / 384. * dt * _k1 + 0 * dt * _k2 + 500. / 1113. *dt * _k3 +
+                      125. / 192. * dt * _k4 - 2187. / 6784. * dt * _k5 + 11. / 84. *dt * _k6) for
+                      _y, _k1, _k2, _k3, _k4, _k5, _k6 in zip(y, k1, k2, k3, k4, k5, k6))
+
+        error = tuple( (35 / 384 - 5179 / 57600) * dt * _k1 + 0 * dt * _k2 + (500 / 1113 - 7571 / 16695) * dt * _k3 + \
+                       (125 / 192 - 393 / 640) * dt * _k4 + (-2187 / 6784 + 92097 / 339200) * dt * _k5 + \
+                       (11 / 84 - 187 / 2100) * dt * _k6 - 1 / 40 * dt * _k7
+                       for _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(k1, k2, k3, k4, k5, k6, k7))
+
         if return_variables:
-            out1, error, [k1, k2, k3, k4, k5, k6, k7] = super().step(func, t, dt, y, return_variables=return_variables)
-            out1 = tuple(self.proj_fn(_) for _ in out1)
             return out1, error, [k1, k2, k3, k4, k5, k6, k7]
         else:
-            out1, error = super().step(func, t, dt, y, return_variables=return_variables)
-            out1 = tuple(self.proj_fn(_) for _ in out1)
             return out1, error
