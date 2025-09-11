@@ -35,7 +35,7 @@ class AdaptiveGridSolver(ODESolver):
                                               atol=atol, neval_max=neval_max,
                  print_neval=print_neval, print_direction=print_direction, step_dif_ratio=step_dif_ratio, safety=safety,
                  regenerate_graph=regenerate_graph, dense_output=dense_output, interpolation_method = interpolation_method,
-                                                 print_time=print_time, end_point_mode = end_point_mode)
+                                                 print_time=print_time, end_point_mode = end_point_mode, eps = eps)
         self.eps = eps
 
     def select_initial_step_scipy(self, t0, y0, f0):
@@ -296,8 +296,13 @@ class AdaptiveGridSolver(ODESolver):
                                                     y_current, return_variables=True)
             if self.eps is not None:
                 _std = (h_current ** 0.5) * self.eps
-                y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
-                                  for _y in y_current)
+                if hasattr(self, "proj_fn"):
+                    y_current = tuple(
+                        self.proj_fn(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device))
+                        for _y in y_current)
+                else:
+                    y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                      for _y in y_current)
 
             if not self.end_point_mode: # evaluate at some points on the fly if not in end_time_mode
                 # if regenerate computation graph, do not save dense states at this step.
@@ -464,7 +469,9 @@ class ProjDopri5(Dopri5):
         self.proj_fn = proj_fn
 
     def step(self, func, t, dt, y, return_variables=False):
-        logging.warning("Calling projDopri5")
+        """
+        Note: Did not work so far. Use fixed_gird_solver for projected methods.
+        """
         k1 = func(t, tuple(self.proj_fn(_y) for _y in y))
         k2 = func(t + dt / 5, tuple( self.proj_fn(_y + 1 / 5 * dt * _k1) for _y, _k1 in zip(y, k1)) )
         k3 = func(t + dt * 3 / 10,  tuple( self.proj_fn(_y + 3 / 40 * dt * _k1 + 9.0 / 40.0 * dt * _k2) for
@@ -490,10 +497,15 @@ class ProjDopri5(Dopri5):
                       125. / 192. * dt * _k4 - 2187. / 6784. * dt * _k5 + 11. / 84. *dt * _k6) for
                       _y, _k1, _k2, _k3, _k4, _k5, _k6 in zip(y, k1, k2, k3, k4, k5, k6))
 
-        error = tuple( (35 / 384 - 5179 / 57600) * dt * _k1 + 0 * dt * _k2 + (500 / 1113 - 7571 / 16695) * dt * _k3 + \
-                       (125 / 192 - 393 / 640) * dt * _k4 + (-2187 / 6784 + 92097 / 339200) * dt * _k5 + \
-                       (11 / 84 - 187 / 2100) * dt * _k6 - 1 / 40 * dt * _k7
-                       for _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(k1, k2, k3, k4, k5, k6, k7))
+        out2 = tuple (self.proj_fn( _y + 5179 / 57600 * dt * _k1 + 7571 / 16695 * dt * _k3 + 393 / 640 * dt * _k4 - \
+                                    92097 / 339200 * dt * _k5 + 187 / 2100 * dt * _k6 + 1 / 40 * dt * _k7)
+                      for _y, _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(y, k1, k2, k3, k4, k5, k6, k7))
+
+        error = tuple ( _fifth - _fourth for _fifth, _fourth in zip(out1, out2))
+        # error = tuple( (35 / 384 - 5179 / 57600) * dt * _k1 + 0 * dt * _k2 + (500 / 1113 - 7571 / 16695) * dt * _k3 + \
+        #                (125 / 192 - 393 / 640) * dt * _k4 + (-2187 / 6784 + 92097 / 339200) * dt * _k5 + \
+        #                (11 / 84 - 187 / 2100) * dt * _k6 - 1 / 40 * dt * _k7
+        #                for _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(k1, k2, k3, k4, k5, k6, k7))
 
         if return_variables:
             return out1, error, [k1, k2, k3, k4, k5, k6, k7]

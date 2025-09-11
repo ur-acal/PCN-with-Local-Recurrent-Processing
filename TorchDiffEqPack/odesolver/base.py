@@ -41,7 +41,7 @@ class ODESolver(nn.Module):
     def __init__(self, func, t0, y0, t1=1.0, h=0.1, rtol=1e-3, atol=1e-6, neval_max=500000,
                  print_neval=False, print_direction=False, step_dif_ratio=1e-3, safety=0.9,
                  regenerate_graph=False, dense_output=True, interpolation_method = 'cubic',
-                 print_time = False, end_point_mode = False):
+                 print_time = False, end_point_mode = False, eps=None):
         super(ODESolver, self).__init__()
         """
         ----------------
@@ -118,6 +118,7 @@ class ODESolver(nn.Module):
                 print("Reverse-time integration")
 
         self.end_point_mode = end_point_mode
+        self.eps = eps
 
     def check_t(self, t_eval):
         if t_eval is  None:
@@ -369,6 +370,15 @@ class ODESolver(nn.Module):
             # time passed into step function must be of type Tensor with shape None
             y_current, error, variables = self.step(self.func, t_current, (point - t_current), y_current,
                                                     return_variables=True)
+            if self.eps is not None:
+                _std = ((point - t_current) ** 0.5) * self.eps
+                if hasattr(self, "proj_fn"):
+                    y_current = tuple(
+                        self.proj_fn(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device))
+                        for _y in y_current)
+                else:
+                    y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                      for _y in y_current)
 
             if not self.end_point_mode:
                 self.update_dense_state(t_current, point, y_old, y_current)

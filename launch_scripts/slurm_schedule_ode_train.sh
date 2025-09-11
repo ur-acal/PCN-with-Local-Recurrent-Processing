@@ -20,11 +20,11 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # Define blocks per ARCH (must match names used inside the sbatch script)
 declare -A BLOCKS_BY_ARCH
 # 6L3p
-BLOCKS_BY_ARCH[A]="S2NoMinusZChgZMinusNoisyI, S2NoMinusZChgZNoisyI, SelfCUAbsSumFFFBInitB"
+BLOCKS_BY_ARCH[A]="S2NoMinusZChgZMinusNoisyI, S2NoMinusZChgZNoisyI"
 # Deep
 BLOCKS_BY_ARCH[B]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
-BLOCKS_BY_ARCH[C]="S2NoMinusZChgZMinusNoisyI, S2NoMinusZChgZNoisyI, SelfCUAbsSumFFFBInitB"
+BLOCKS_BY_ARCH[C]="S2NoMinusZChgZMinusNoisyI, S2NoMinusZChgZNoisyI"
 
 # Which ARCH/PCN combos to run
 ARCHES=(A C)
@@ -68,7 +68,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_0908_2State_Noisy_RAWImg_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0910_2State_Noisy_RAWImg_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
@@ -98,8 +98,6 @@ wait_for_jobs() {
       # first line = job summary (not steps)
       local state
       state=$(sacct -X -n -j "$j" -o State 2>/dev/null | head -n1)
-      state=${state%% *}   # drop reason, e.g. "FAILED exit code ..."
-      state=${state%%.*}   # drop substate
       case "$state" in
         *COMPLETED*|*FAILED*|*CANCELLED*|*TIMEOUT*|*OUT_OF_MEMORY*) ((done++)) ;;
         ""|RUNNING|PENDING|CONFIGURING|COMPLETING|SUSPENDED|REQUEUED|RESIZING|PREEMPTED|NODE_FAIL) : ;;

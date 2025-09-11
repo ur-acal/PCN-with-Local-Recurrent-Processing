@@ -32,14 +32,21 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, **kwargs):
     hyperparams = extract_keys(options)
 
     if options['method'].lower() == 'euler':
-        if proj_fn is None:
+        if proj_fn is None and 'proj_fn' not in options:
             solver = Euler(func=func, y0=y0,  **hyperparams, **kwargs)
-        else:
+        elif proj_fn is not None:
             solver = ProjEuler(func=func, y0=y0, proj_fn=proj_fn, **hyperparams, **kwargs)
+        elif 'proj_fn' in options:
+            solver = ProjEuler(func=func, y0=y0, proj_fn=options['proj_fn'], **hyperparams, **kwargs)
     elif options['method'].lower() == 'rk2':
         solver = RK2(func=func, y0=y0,  **hyperparams, **kwargs)
     elif options['method'].lower() == 'rk4':
-        solver = RK4(func=func, y0=y0,   **hyperparams, **kwargs)
+        if proj_fn is None and 'proj_fn' not in options:
+            solver = RK4(func=func, y0=y0,   **hyperparams, **kwargs)
+        elif proj_fn is not None:
+            solver = ProjRK4(func=func, y0=y0, proj_fn=proj_fn, **hyperparams, **kwargs)
+        elif 'proj_fn' in options:
+            solver = ProjRK4(func=func, y0=y0, proj_fn=options['proj_fn'], **hyperparams, **kwargs)
     elif options['method'].lower() == 'rk12':
         solver = RK12(func=func, y0=y0,   **hyperparams, **kwargs)
     elif options['method'].lower() == 'rk23':

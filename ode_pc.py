@@ -824,9 +824,9 @@ class ODEState2FFFB(ODEBlockXInit):
     def _make_ode_fn(self, x):
         def ode_func(t, y):
             y_, z_ = y
-            y_ = self.FFconv(self.act_fn(z_))
-            z_ = self.FBconv(y_) - z_
-            return y_, z_
+            dy = self.FFconv(self.act_fn(z_))
+            dz = self.FBconv(y_) - z_
+            return dy, dz
         return _FuncWrapper(ode_func)
 
     def forward(self, x, layer_idx=None):
@@ -877,9 +877,9 @@ class State2NoMinusZ(ODEState2FFFB):
     def _make_ode_fn(self, x):
         def ode_func(t, y):
             y_, z_ = y
-            y_ = self.FFconv(self.act_fn(z_))
-            z_ = self.FBconv(y_)
-            return y_, z_
+            dy = self.FFconv(self.act_fn(z_))
+            dz = self.FBconv(y_)
+            return dy, dz
         return _FuncWrapper(ode_func)
 
 class State2NoMinusZYAsXZAs0(State2NoMinusZ):
@@ -946,6 +946,7 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # sqrt((k_B * T) * R * df * 4) = sqrt(4.16e-21 * 1e5 * 10e9 * 4)
+        # Todo: use voltage or current?
         self.offset_eps = 0.002
         self.eps_scale = None
 
@@ -1086,6 +1087,7 @@ class ODEWrapperRC(nn.Module):
 
 class WrapQuantizeW(ODEWrapperRC):
     def __init__(self, w_bits=8, w_quant_mode="min_max", perc=None, **kwargs):
+        patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
         self.w_bits = w_bits
@@ -1097,7 +1099,8 @@ class WrapQuantizeW(ODEWrapperRC):
         self.beta = self.q * self.s_fb
 
         # patch for the child method
-        self._patch()
+        if patch:
+            self._patch()
 
     @staticmethod
     def cal_quant_factor_and_set(n_bits, p: nn.Parameter):
@@ -1168,7 +1171,9 @@ class ODEWrapper2State(WrapQuantizeW):
     def __init__(self, is_first=False, is_last=False, **kwargs):
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
-        self.cap_scale = self._round(self.s_ff / self.s_fb, 1)
+        # Todo: Right now using the same cap value seems to be fine. Need more experiment.
+        self.cap_scale = self._round((self.s_ff / self.s_fb).item(), 1)
+        # self.cap_scale = 1
         self.C_fb = self.C
         self.C_ff = self.C_fb * self.cap_scale
 
@@ -1177,10 +1182,15 @@ class ODEWrapper2State(WrapQuantizeW):
         self.is_first = is_first
         self.is_last = is_last
         self.inp_scale = self.beta if self.is_first else 1
-        self.out_scale = self.beta if self.is_last else 1
+        # Todo: Right don't scaling back the last layer's output seems to be fine (when q >= 0.1 is not very small)
+        # self.out_scale = self.beta if self.is_last else 1
+        self.out_scale = 1
 
+        self.original_make_z_fn = self.ode_block._make_z_ode_fn
         self.proj_fn = nn.Hardtanh(min_val=-self.v_dd, max_val=self.v_dd)
-        self.ode_block.eps_scale = 1.0 # the noise is independent of the voltage value
+        # Todo: What's the right eps_scale?
+        # self.ode_block.eps_scale = 1 / (self.R * self.C_fb) # the noise is independent of the voltage value
+        self.ode_block.eps_scale = (1 / self.ode_block.offset_eps) * ((4.16e-21 * 10e9 * 4 / self.R) ** 0.5 / self.C_fb)
 
         self._patch()
         self.ode_block.option_init["proj_fn"] = self.proj_fn
@@ -1210,12 +1220,18 @@ class ODEWrapper2State(WrapQuantizeW):
         logging.info("Scaled init end time: {} s".format(self.ode_block.option_init["t1"]))
         logging.info("Scaled compute end time: {} s".format(self.ode_block.option_aca["t1"]))
 
+    def _scale_act_fn(self):
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = ReLUX(min(6 * self.beta, self.v_dd))
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta, self.v_dd), max_val=min(self.beta, self.v_dd))
+
     def transform(self, inner_fn):
         @wraps(inner_fn)
         def scaled(*f_args, **f_kwargs):
             y_, z_ = inner_fn(*f_args, **f_kwargs)
             return y_ / self.time_scaler[0], z_ / self.time_scaler[1]
-        return scaled
+        return _FuncWrapper(scaled)
 
     def _patch_forward(self):
         # scale the forward method
@@ -1235,6 +1251,21 @@ class ODEWrapper2State(WrapQuantizeW):
             return orig_init_y(x)
         self.ode_block.init_y = patched_init_y
 
+    def transform_z(self, inner_fn):
+        @wraps(inner_fn)
+        def scaled(*f_args, **f_kwargs):
+            return inner_fn(*f_args, **f_kwargs) / self.time_scaler[1]
+        return scaled
+
+    def _patch_make_z_fn(self):
+        # scale the ode_func for charging z
+        orig = self.original_make_z_fn
+        @wraps(orig)
+        def patched_make_z_fn(*args, **kwargs):
+            inner = orig(*args, **kwargs)
+            return self.transform_z(inner)
+        self.ode_block._make_z_ode_fn = patched_make_z_fn
+
     def _patch(self):
         """
         1. Scale the integration time for option_init and option_aca
@@ -1249,6 +1280,7 @@ class ODEWrapper2State(WrapQuantizeW):
         self._patch_make_fn()
         self._patch_forward()
         self._patch_init_y()
+        self._patch_make_z_fn()
 
     @staticmethod
     def _round(x, n):
@@ -1277,7 +1309,7 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
 
 
 def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
-    calib_res = [1e4 for _ in range(pc_net.num_layers)]
+    calib_res = [10 for _ in range(pc_net.num_layers)]
     # Todo: Perform calibration for intermediate states if we are going to quantize them and the weights
     if calib_path is None:
         pass
@@ -1355,4 +1387,5 @@ ODEBLOCK_CLASSES = {
 ODEWrapper_CLASSES = {
     "ODEWrapperRC": ODEWrapperRC,
     "WrapQuantizeW": WrapQuantizeW,
+    "ODEWrapper2State": ODEWrapper2State,
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_0903_S2NoMinusZChargeZ"
+EXP="no_bn_pcn_NODE_0910_S2NoMinusZChgZNoisyI"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 

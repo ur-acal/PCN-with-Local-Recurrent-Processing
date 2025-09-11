@@ -9,8 +9,9 @@ export tol="1e-6"
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
 N_BITS_VALS=(8)
-METHOD_VALS=("dopri5")
+#METHOD_VALS=("dopri5")
 #METHOD_VALS=("euler")
+METHOD_VALS=("rk4")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -33,7 +34,9 @@ MODEL_NAMES=(
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_5Layers_2Pool_1REP" # 2 max pooling
 
-  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
+#  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
+#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -59,22 +62,22 @@ run_model(){
   set -o pipefail
   python -u ode_inference.py \
     --model_name      "$name" \
-    --ckpt            "last" \
+    --ckpt            "best" \
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
     --tol             "$tol" \
-    --n_steps         15 \
+    --n_steps         20 \
     --ts_scale        1 \
     --d_start         0 \
     --d_end           1 \
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --R               1e5 \
-    --C               49e-9 \
+    --C               49e-12 \
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "ODESumAsBInitY" \
-    --ode_wrapper     "WrapQuantizeW" \
+    --ode_block       "S2NoMinusZChgZNoisyI" \
+    --ode_wrapper     "ODEWrapper2State" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
