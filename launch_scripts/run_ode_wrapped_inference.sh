@@ -10,8 +10,8 @@ export tol="1e-6"
 #N_BITS_VALS=(4 5 6 7 8)
 N_BITS_VALS=(8)
 #METHOD_VALS=("dopri5")
-#METHOD_VALS=("euler")
-METHOD_VALS=("rk4")
+METHOD_VALS=("euler")
+#METHOD_VALS=("rk4")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -66,14 +66,14 @@ run_model(){
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
     --tol             "$tol" \
-    --n_steps         20 \
+    --n_steps         10 \
     --ts_scale        1 \
     --d_start         0 \
     --d_end           1 \
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --R               1e5 \
-    --C               49e-12 \
+    --C               5e-9 \
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "S2NoMinusZChgZNoisyI" \

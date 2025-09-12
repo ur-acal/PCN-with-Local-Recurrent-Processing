@@ -4,7 +4,7 @@ trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
-export tol="1e-7"
+export tol="1e-4"
 
 # ─────────────── noise toggles ───────────────
 METHOD_VALS=("dopri5")
@@ -106,7 +106,8 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_State2NoMinusZ_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_3Pool_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_SelfCUAbsSumFFFBInitB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
 
-  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
 )
 
 # ─────────────── prepare logs ───────────────

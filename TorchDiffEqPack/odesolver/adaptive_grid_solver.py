@@ -38,6 +38,34 @@ class AdaptiveGridSolver(ODESolver):
                                                  print_time=print_time, end_point_mode = end_point_mode, eps = eps)
         self.eps = eps
 
+    # def select_initial_step_scipy(self, t0, y0, f0):
+    #     self.rtol = self.rtol if _is_iterable(self.rtol) else [self.rtol] * len(y0)
+    #     self.atol = self.atol if _is_iterable(self.atol) else [self.atol] * len(y0)
+    #
+    #     scale = tuple( _atol + torch.abs(_y0) * _rtol + EPS for _y0, _rtol, _atol in zip(y0, self.rtol, self.atol) )
+    #     #import pdb
+    #     #pdb.set_trace()
+    #     d0 = norm(tuple(_y0 / _scale for _y0, _scale in zip(y0, scale)  ) )
+    #     d1 = norm(tuple(_f0 / _scale for _f0, _scale in zip(f0, scale)  ) )
+    #     dT = self.t1 - t0
+    #     print("possible Init step: {}".format(0.01 * d0 / d1))
+    #     if d0.item() < 1e-5 or d1.item() < 1e-5:
+    #         h0 = 1e-6
+    #     else:
+    #         h0 = 0.01 * d0 / d1
+    #
+    #     y1 = tuple( _y0 + h0 * self.time_direction * _f0 for _y0, _f0 in zip(y0, f0) )
+    #     f1 = self.func(t0 + h0 * self.time_direction, y1)
+    #     d2 = norm(    tuple( (_f1 - _f0) / _scale for _f1, _f0, _scale in zip(f0, f1, scale) )        ) / h0
+    #
+    #     if d1.item() <= 1e-15 and d2.item() <= 1e-15:
+    #         h1 = max(1e-6, h0 * 1e-3)
+    #     else:
+    #         h1 = (0.01 / max(d1.item(), d2.item())) ** (1 / (self.order + 1))
+    #
+    #     print("Init step: {}".format(min(100 * h0, h1)))
+    #     return min(100 * h0, h1)
+
     def select_initial_step_scipy(self, t0, y0, f0):
         """Empirically select a good initial step.
         The algorithm is described in [1]_.
@@ -73,12 +101,13 @@ class AdaptiveGridSolver(ODESolver):
         self.atol = self.atol if _is_iterable(self.atol) else [self.atol] * len(y0)
 
         scale = tuple( _atol + torch.abs(_y0) * _rtol + EPS for _y0, _rtol, _atol in zip(y0, self.rtol, self.atol) )
-        #import pdb
-        #pdb.set_trace()
         d0 = norm(tuple(_y0 / _scale for _y0, _scale in zip(y0, scale)  ) )
         d1 = norm(tuple(_f0 / _scale for _f0, _scale in zip(f0, scale)  ) )
-        if d0.item() < 1e-5 or d1.item() < 1e-5:
+        dT = self.t1 - t0
+        if (d0.item() < 1e-5 or d1.item() < 1e-5) and dT > 1e6:
             h0 = 1e-6
+        elif torch.allclose(d0, torch.zeros_like(d0)):
+            h0 = 1e-15
         else:
             h0 = 0.01 * d0 / d1
 
@@ -86,12 +115,13 @@ class AdaptiveGridSolver(ODESolver):
         f1 = self.func(t0 + h0 * self.time_direction, y1)
         d2 = norm(    tuple( (_f1 - _f0) / _scale for _f1, _f0, _scale in zip(f0, f1, scale) )        ) / h0
 
-        if d1.item() <= 1e-15 and d2.item() <= 1e-15:
+        if (d1.item() <= 1e-15 and d2.item() <= 1e-15) and dT > max(1e-6, h0 * 1e-3):
             h1 = max(1e-6, h0 * 1e-3)
         else:
             h1 = (0.01 / max(d1.item(), d2.item())) ** (1 / (self.order + 1))
 
-        return min(100 * h0, h1)
+        # print("Init step: {}".format(min(100 * h0, h1)))
+        return min(100 * h0, h1, dT)
 
     def adapt_stepsize(self, y, y_new, error, h_abs, step_accepted, step_rejected):
         """
@@ -297,9 +327,14 @@ class AdaptiveGridSolver(ODESolver):
             if self.eps is not None:
                 _std = (h_current ** 0.5) * self.eps
                 if hasattr(self, "proj_fn"):
+                    # print("------------------------------------")
+                    # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(), y_current[0].min()))
                     y_current = tuple(
                         self.proj_fn(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device))
                         for _y in y_current)
+                    # print("after proj_fn _y mean: {}, max: {}, min: {}".format(y_current[0].mean(), y_current[0].max(),
+                    #                                              y_current[0].min()))
+                    # print("------------------------------------")
                 else:
                     y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                       for _y in y_current)
@@ -465,49 +500,51 @@ class Dopri5(AdaptiveGridSolver):
 
 class ProjDopri5(Dopri5):
     def __init__(self, proj_fn, **kwargs):
+        """
+        Previously the problem of clamping with adaptive step size solver exists in the initial step size
+        selection part. After that is fixed, both projecting only after noise added and projecting on every
+        call to func works.
+        """
         super().__init__(**kwargs)
         self.proj_fn = proj_fn
 
-    def step(self, func, t, dt, y, return_variables=False):
-        """
-        Note: Did not work so far. Use fixed_gird_solver for projected methods.
-        """
-        k1 = func(t, tuple(self.proj_fn(_y) for _y in y))
-        k2 = func(t + dt / 5, tuple( self.proj_fn(_y + 1 / 5 * dt * _k1) for _y, _k1 in zip(y, k1)) )
-        k3 = func(t + dt * 3 / 10,  tuple( self.proj_fn(_y + 3 / 40 * dt * _k1 + 9.0 / 40.0 * dt * _k2) for
-                                           _y, _k1, _k2 in zip(y, k1, k2)) )
-        k4 = func(t + dt * 4. / 5., tuple( self.proj_fn(_y + 44. / 45. * dt * _k1 - 56. / 15. * dt * _k2 + 32. / 9. * dt * _k3) for
-                                           _y, _k1, _k2, _k3 in zip(y, k1, k2, k3)))
-        k5 = func(t + dt * 8. / 9.,
-                       tuple( self.proj_fn(_y + 19372. / 6561. * dt * _k1 - 25360. / 2187. *dt * _k2 + \
-                              64448. / 6561. * dt * _k3 - 212. / 729. * dt * _k4) for
-                              _y, _k1, _k2, _k3, _k4 in zip(y, k1, k2, k3, k4) ))
-
-        k6 = func(t + dt,
-                       tuple( self.proj_fn(_y + 9017. / 3168.*dt * _k1 - 355. / 33. * dt * _k2 + 46732. / 5247. * dt * _k3 + \
-                              49. / 176. * dt * _k4 - 5103. / 18656. * dt * _k5) for
-                        _y, _k1, _k2, _k3, _k4, _k5 in zip(y, k1, k2, k3, k4, k5)) )
-
-        k7 = func(t + dt,
-                       tuple( self.proj_fn(_y + 35. / 384. *dt * _k1 + 0*dt * _k2 + 500. / 1113.*dt * _k3 + \
-                              125. / 192.* dt * _k4 - 2187. / 6784. * dt * _k5 + 11. / 84. * dt * _k6 )for \
-                              _y, _k1, _k2, _k3, _k4, _k5, _k6 in zip(y, k1, k2, k3, k4, k5, k6)) )
-
-        out1 = tuple( self.proj_fn(_y + 35. / 384. * dt * _k1 + 0 * dt * _k2 + 500. / 1113. *dt * _k3 +
-                      125. / 192. * dt * _k4 - 2187. / 6784. * dt * _k5 + 11. / 84. *dt * _k6) for
-                      _y, _k1, _k2, _k3, _k4, _k5, _k6 in zip(y, k1, k2, k3, k4, k5, k6))
-
-        out2 = tuple (self.proj_fn( _y + 5179 / 57600 * dt * _k1 + 7571 / 16695 * dt * _k3 + 393 / 640 * dt * _k4 - \
-                                    92097 / 339200 * dt * _k5 + 187 / 2100 * dt * _k6 + 1 / 40 * dt * _k7)
-                      for _y, _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(y, k1, k2, k3, k4, k5, k6, k7))
-
-        error = tuple ( _fifth - _fourth for _fifth, _fourth in zip(out1, out2))
-        # error = tuple( (35 / 384 - 5179 / 57600) * dt * _k1 + 0 * dt * _k2 + (500 / 1113 - 7571 / 16695) * dt * _k3 + \
-        #                (125 / 192 - 393 / 640) * dt * _k4 + (-2187 / 6784 + 92097 / 339200) * dt * _k5 + \
-        #                (11 / 84 - 187 / 2100) * dt * _k6 - 1 / 40 * dt * _k7
-        #                for _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(k1, k2, k3, k4, k5, k6, k7))
-
-        if return_variables:
-            return out1, error, [k1, k2, k3, k4, k5, k6, k7]
-        else:
-            return out1, error
+    # def step(self, func, t, dt, y, return_variables=False):
+    #     k1 = func(t, y)
+    #     k2 = func(t + dt / 5, tuple( _y + 1 / 5 * dt * _k1 for _y, _k1 in zip(y, k1))   )
+    #     k3 = func(t + dt * 3 / 10,  tuple( _y + 3 / 40 * dt * _k1 + 9.0 / 40.0 * dt * _k2 for
+    #                                        _y, _k1, _k2 in zip(y, k1, k2)) )
+    #     k4 = func(t + dt * 4. / 5., tuple( _y + 44. / 45. * dt * _k1 - 56. / 15. * dt * _k2 + 32. / 9. * dt * _k3 for
+    #                                        _y, _k1, _k2, _k3 in zip(y, k1, k2, k3)))
+    #     k5 = func(t + dt * 8. / 9.,
+    #                    tuple( _y + 19372. / 6561. * dt * _k1 - 25360. / 2187. *dt * _k2 + \
+    #                           64448. / 6561. * dt * _k3 - 212. / 729. * dt * _k4 for
+    #                           _y, _k1, _k2, _k3, _k4 in zip(y, k1, k2, k3, k4) ))
+    #
+    #     k6 = func(t + dt,
+    #                    tuple( _y + 9017. / 3168.*dt * _k1 - 355. / 33. * dt * _k2 + 46732. / 5247. * dt * _k3 + \
+    #                           49. / 176. * dt * _k4 - 5103. / 18656. * dt * _k5 for
+    #                     _y, _k1, _k2, _k3, _k4, _k5 in zip(y, k1, k2, k3, k4, k5)) )
+    #
+    #     k7 = func(t + dt,
+    #                    tuple( _y + 35. / 384. *dt * _k1 + 0*dt * _k2 + 500. / 1113.*dt * _k3 + \
+    #                           125. / 192.* dt * _k4 - 2187. / 6784. * dt * _k5 + 11. / 84. * dt * _k6 for \
+    #                           _y, _k1, _k2, _k3, _k4, _k5, _k6 in zip(y, k1, k2, k3, k4, k5, k6)) )
+    #
+    #     out1 = tuple( _y + 35. / 384. * dt * _k1 + 0 * dt * _k2 + 500. / 1113. *dt * _k3 +
+    #                   125. / 192. * dt * _k4 - 2187. / 6784. * dt * _k5 + 11. / 84. *dt * _k6 for
+    #                   _y, _k1, _k2, _k3, _k4, _k5, _k6 in zip(y, k1, k2, k3, k4, k5, k6))
+    #
+    #     # out2 = tuple (self.proj_fn( _y + 5179 / 57600 * dt * _k1 + 7571 / 16695 * dt * _k3 + 393 / 640 * dt * _k4 - \
+    #     #                             92097 / 339200 * dt * _k5 + 187 / 2100 * dt * _k6 + 1 / 40 * dt * _k7)
+    #     #               for _y, _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(y, k1, k2, k3, k4, k5, k6, k7))
+    #
+    #     # error = tuple ( _fifth - _fourth for _fifth, _fourth in zip(out1, out2))
+    #     error = tuple( (35 / 384 - 5179 / 57600) * dt * _k1 + 0 * dt * _k2 + (500 / 1113 - 7571 / 16695) * dt * _k3 + \
+    #                    (125 / 192 - 393 / 640) * dt * _k4 + (-2187 / 6784 + 92097 / 339200) * dt * _k5 + \
+    #                    (11 / 84 - 187 / 2100) * dt * _k6 - 1 / 40 * dt * _k7
+    #                    for _k1, _k2, _k3, _k4, _k5, _k6, _k7 in zip(k1, k2, k3, k4, k5, k6, k7))
+    #
+    #     if return_variables:
+    #         return out1, error, [k1, k2, k3, k4, k5, k6, k7]
+    #     else:
+    #         return out1, error

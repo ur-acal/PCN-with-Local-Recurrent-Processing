@@ -1129,7 +1129,8 @@ class WrapQuantizeW(ODEWrapperRC):
         # Recovered using clean_params, which has being quantized before
         # Then add noise
         self.ode_block.recover_params()
-        self.ode_block.add_noise()
+        if self.ode_block.noise_level is not None and self.ode_block.noise_level > 0:
+            self.ode_block.add_noise()
 
     def _scale_time(self):
         integral_option = self.ode_block.option_aca
@@ -1189,8 +1190,8 @@ class ODEWrapper2State(WrapQuantizeW):
         self.original_make_z_fn = self.ode_block._make_z_ode_fn
         self.proj_fn = nn.Hardtanh(min_val=-self.v_dd, max_val=self.v_dd)
         # Todo: What's the right eps_scale?
-        # self.ode_block.eps_scale = 1 / (self.R * self.C_fb) # the noise is independent of the voltage value
         self.ode_block.eps_scale = (1 / self.ode_block.offset_eps) * ((4.16e-21 * 10e9 * 4 / self.R) ** 0.5 / self.C_fb)
+        # self.ode_block.eps_scale = 2
 
         self._patch()
         self.ode_block.option_init["proj_fn"] = self.proj_fn
