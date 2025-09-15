@@ -233,10 +233,10 @@ def run_ode_inference():
                 args.method, args.model_name, len(noise_level_list_)))
     else:
         spec_path = os.path.join(
-            "logs/ode_noisy_acc", "TEnd{}_{}_{}_{}_{}{}b_{}NL.pkl".format(
+            "logs/ode_noisy_acc", "TEnd{}_{}_{}Cap_{}_{}_{}{}b_{}NL.pkl".format(
                 str(round(t_end_list[0], 2)).replace(".", "p"),
                 str(round(t_end_list[-1], 2)).replace(".", "p"),
-                args.method, args.model_name, args.ode_wrapper, args.w_bits,
+                args.C, args.method, args.model_name, args.ode_wrapper, args.w_bits,
                 len(noise_level_list_)))
     with open(spec_path, "wb") as fp:
         pickle.dump(acc_dict, fp)
