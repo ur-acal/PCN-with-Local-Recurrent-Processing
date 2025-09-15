@@ -10,7 +10,7 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # running with
 # module swap slurm slurm/24.05.0.b1
 # ( source ./launch_scripts/slurm_schedule_ode_train.sh ) \
-#  > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
+#  > ./logs/scheduler_slurm/scheduler_0915.log 2>&1 < /dev/null &
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
@@ -20,16 +20,18 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # Define blocks per ARCH (must match names used inside the sbatch script)
 declare -A BLOCKS_BY_ARCH
 # 6L3p
-BLOCKS_BY_ARCH[A]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH["A"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 # Deep
-BLOCKS_BY_ARCH[B]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
+BLOCKS_BY_ARCH["B"]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
-BLOCKS_BY_ARCH[C]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
+# 7L2p
+BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 
 # Which ARCH/PCN combos to run
-ARCHES=(C)
+ARCHES=("C" "C2")
 PCNS=("PCNetNoBatchNorm")
-IMG_TYPES=( "rgb" "rggb" "cycleisp" )
+IMG_TYPES=( "rggb" "cycleisp" )
 #IMG_TYPES=( "rgb" )
 ###############################################################################################
 
@@ -68,7 +70,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_0914_2State_Wrapped_Test_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0915_2State_Wrapped_Test_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

@@ -44,16 +44,24 @@ if [[ "$ARCH_SET" == "A" ]]; then
   INP=(3  32 32 64 64  128)
   OUT=(32 32 64 64 128 128)
   POOL=(0  1  1  0  1   0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "B" ]]; then
   INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
   OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
   POOL=(0  0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "C" ]]; then
   INP=(3  32 32 64 64  128 128)
   OUT=(32 32 64 64 128 128 128)
   POOL=(0  0  1  0  1   0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "C2" ]]; then
+  INP=(   3  32 32 64 64  128 128)
+  OUT=(   32 32 64 64 128 128 128)
+  POOL=(  0  0  0  0  0   0   0)
+  STRIDE=(1  1  2  1  2   1   1)
 else
-  echo "ARCH_SET must be A or B or C"; exit 2
+  echo "ARCH_SET must be A or B or C[2]"; exit 2
 fi
 
 if [[ "$IMG_TYPE" != "rgb" ]]; then
@@ -125,6 +133,7 @@ run_one () {
     --inp_channels  "${INP[@]}" \
     --out_channels  "${OUT[@]}" \
     --max_pool      "${POOL[@]}" \
+    --stride        "${STRIDE[@]}" \
     --dropout       0.25 \
     --tie_weights   "false" \
     --tie_bp        "false" \

@@ -8,8 +8,9 @@ export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
-N_BITS_VALS=(8)
+N_BITS_VALS=(6)
 METHOD_VALS=("dopri5")
+CAP_VALS=("5e-9" "500e-9")
 #METHOD_VALS=("euler")
 #METHOD_VALS=("rk4")
 
@@ -36,7 +37,12 @@ MODEL_NAMES=(
 
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
 #  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -53,9 +59,19 @@ run_model(){
   local name="$1"
   local method="$2"
   local n_bits="$3"
+  local cap_val="$4"
 
   local __rest="${name#*_}"
   local _pc_conv="${__rest%%_*}"
+
+  IFS='_' read -r -a parts <<< "$name"
+  local _ode_block="${parts[3]}"
+  prev="${parts[${#parts[@]}-2]}"
+  if [[ "$prev" == *Layers || "$prev" == *Pool ]]; then
+    local _img_type="rgb"
+  else
+    local _img_type="$prev"
+  fi
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -73,11 +89,12 @@ run_model(){
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --R               1e5 \
-    --C               5e-9 \
+    --C               "$cap_val" \
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
-    --ode_block       "S2NoMinusZChgZNoisyI" \
+    --ode_block       "${_ode_block}" \
     --ode_wrapper     "ODEWrapper2State" \
+    --img_type        "${_img_type}" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
@@ -90,7 +107,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="0821_3pooling_wrapped_ODESumAsBInitY_${method}Method_${tol}Tol.log"
+  EXP_NAME="0915_2State_RaWImg_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
@@ -101,9 +118,10 @@ for method in "${METHOD_VALS[@]}"; do
     --jobs 4 \
     --joblog "$JOB_LOG" \
     --keep-order \
-    run_model {1} "${method}" {2} \
+    run_model {1} "${method}" {2} {3} \
     ::: "${MODEL_NAMES[@]}" \
-    ::: "${N_BITS_VALS[@]}"
+    ::: "${N_BITS_VALS[@]}" \
+    ::: "${CAP_VALS[@]}"
   echo "All jobs finished — merging logs into $MASTER_LOG"
   # ─────────────── merge logs sequentially ───────────────
   : >"$MASTER_LOG"
