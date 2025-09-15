@@ -20,17 +20,17 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # Define blocks per ARCH (must match names used inside the sbatch script)
 declare -A BLOCKS_BY_ARCH
 # 6L3p
-BLOCKS_BY_ARCH[A]="S2NoMinusZChgZMinusNoisyI, S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH[A]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 # Deep
 BLOCKS_BY_ARCH[B]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
-BLOCKS_BY_ARCH[C]="S2NoMinusZChgZMinusNoisyI, S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH[C]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 
 # Which ARCH/PCN combos to run
-ARCHES=(A C)
+ARCHES=(C)
 PCNS=("PCNetNoBatchNorm")
-#IMG_TYPES=( "rggb" "cycleisp" )
-IMG_TYPES=( "rgb" )
+IMG_TYPES=( "rgb" "rggb" "cycleisp" )
+#IMG_TYPES=( "rgb" )
 ###############################################################################################
 
 # Paths
@@ -68,7 +68,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_0910_2State_Noisy_RAWImg_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0914_2State_Wrapped_Test_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

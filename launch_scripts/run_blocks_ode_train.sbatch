@@ -158,7 +158,7 @@ echo "Completed all ode_blocks for ${EXP} (job $SLURM_JOB_ID)."
 
 MODEL_DIR="./saved_ckpt"
 METHOD="dopri5"
-TOL="1e-4"
+TOL="1e-6"
 EVAL_BASE="${LOGDIR}/evals"
 MASTER_LOG="${LOGDIR}/eval_master_merged.log"
 mkdir -p "${EVAL_BASE}"
@@ -181,6 +181,14 @@ for b in "${BLOCKS[@]}"; do
   TEST_BLOCKS+=( "$(map_test_block "$b")" )
 done
 
+map_test_wrapper() {
+  if [[ "$1" == *S2* || "$1" == *State2* ]]; then
+    echo "ODEWrapper2State"
+  else
+    echo "WrapQuantizeW"
+  fi
+}
+
 # Helpers
 extract_model_name() {
   local logfile="$1"
@@ -196,6 +204,13 @@ eval_model() {
   local dir="${EVAL_BASE}/${tag}/${name}_method_${METHOD}_tol_${TOL}"
   mkdir -p "$dir"
   local ckpt="best"
+  ################################
+  # Todo: Set n_bits, R, C value as fixed for now
+  local n_bits=6
+  local R_val="1e5"
+  local C_val="5e-9"
+  local wrapper="$(map_test_wrapper "$test_block")"
+  ################################
   if [[ "$tag" == "post_ft" ]]; then ckpt="last"; fi
 
   echo "[EVAL ${tag}] ${name} (test_block=${test_block}, ckpt=${ckpt}) → $dir/job.log"
@@ -213,8 +228,12 @@ eval_model() {
     --d_end           1 \
     --n_sweep_left    0 \
     --n_sweep_right   1 \
+    --R               "$R_val" \
+    --C               "$C_val" \
+    --w_bits          "$n_bits" \
     --pc_conv         "${pc_conv}Noisy" \
     --ode_block       "$test_block" \
+    --ode_wrapper     "$wrapper" \
     --mem_frac        "${MEM_FRAC}" \
     2>&1 | tee -a "$dir/job.log"
 }

@@ -9,8 +9,8 @@ export tol="1e-6"
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
 N_BITS_VALS=(8)
-#METHOD_VALS=("dopri5")
-METHOD_VALS=("euler")
+METHOD_VALS=("dopri5")
+#METHOD_VALS=("euler")
 #METHOD_VALS=("rk4")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
