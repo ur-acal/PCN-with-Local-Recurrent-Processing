@@ -1,3 +1,4 @@
+from typing import List
 import torch
 import os
 import argparse
@@ -148,7 +149,7 @@ def main():
         "max_pool": args.max_pool,
         "num_classes": args.num_classes,
         "kernel_size": args.kernel_size,
-        "stride": args.stride,
+        "stride": args.stride if not (isinstance(args.stride, List) and len(args.stride) == 1) else args.stride[0],
         "padding": args.padding if args.patch_dim is None else "same",
         "cls": 0,
         "bias": args.bias,

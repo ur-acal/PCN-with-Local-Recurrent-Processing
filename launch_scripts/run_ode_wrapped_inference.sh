@@ -95,7 +95,6 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "ODEWrapper2State" \
     --img_type        "${_img_type}" \
-    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model

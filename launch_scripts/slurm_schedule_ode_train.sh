@@ -29,9 +29,9 @@ BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 
 # Which ARCH/PCN combos to run
-ARCHES=("C" "C2")
+ARCHES=("C2")
 PCNS=("PCNetNoBatchNorm")
-IMG_TYPES=( "rggb" "cycleisp" )
+IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 #IMG_TYPES=( "rgb" )
 ###############################################################################################
 
@@ -70,7 +70,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_0915_2State_Wrapped_Test_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0915_2State_Stride2_Wrapped_Test_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

@@ -951,6 +951,9 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
         self.eps_scale = None
 
     def init_y(self, x):
+        z0 = torch.zeros_like(x, device=x.device)  # Todo: add option for z0 = x
+        if self.FFconv.stride == 2 or self.FFconv.stride == (2, 2):
+            x = F.avg_pool2d(x, kernel_size=2, stride=2)
         # init y with x
         if self.chan_diff == 0:
             y0 = x
@@ -961,7 +964,6 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
                          (0, 0, 0, 0, 0, self.out_chan % self.in_chan), "constant", 0)
 
         # init z
-        z0 = torch.zeros_like(x, device=x.device) # Todo: add option for z0 = x
         z0 = aca_ode_solve(self._make_z_ode_fn(y0), z0, self.option_init)[-1]
         return y0, z0
 
