@@ -325,19 +325,22 @@ class AdaptiveGridSolver(ODESolver):
             y_current, error, variables = self.step(self.func, t_current, h_current * self.time_direction,
                                                     y_current, return_variables=True)
             if self.eps is not None:
-                _std = (h_current ** 0.5) * self.eps
+                if isinstance(self.eps, tuple):
+                    _std = ((h_current ** 0.5) * _eps for _eps in self.eps)
+                    y_current = tuple(_y + _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                      for _y, _sigma in zip(y_current, _std))
+                else:
+                    _std = (h_current ** 0.5) * self.eps
+                    y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                      for _y in y_current)
                 if hasattr(self, "proj_fn"):
                     # print("------------------------------------")
-                    # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(), y_current[0].min()))
-                    y_current = tuple(
-                        self.proj_fn(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device))
-                        for _y in y_current)
+                    # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(),
+                    #                                                       y_current[0].min()))
+                    y_current = tuple(self.proj_fn(_y) for _y in y_current)
                     # print("after proj_fn _y mean: {}, max: {}, min: {}".format(y_current[0].mean(), y_current[0].max(),
                     #                                              y_current[0].min()))
                     # print("------------------------------------")
-                else:
-                    y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
-                                      for _y in y_current)
 
             if not self.end_point_mode: # evaluate at some points on the fly if not in end_time_mode
                 # if regenerate computation graph, do not save dense states at this step.

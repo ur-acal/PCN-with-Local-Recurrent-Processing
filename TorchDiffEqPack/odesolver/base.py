@@ -371,14 +371,16 @@ class ODESolver(nn.Module):
             y_current, error, variables = self.step(self.func, t_current, (point - t_current), y_current,
                                                     return_variables=True)
             if self.eps is not None:
-                _std = ((point - t_current) ** 0.5) * self.eps
-                if hasattr(self, "proj_fn"):
-                    y_current = tuple(
-                        self.proj_fn(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device))
-                        for _y in y_current)
+                if isinstance(self.eps, tuple):
+                    _std = (((point - t_current) ** 0.5) * _eps for _eps in self.eps)
+                    y_current = tuple(_y + _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                      for _y, _sigma in zip(y_current, _std))
                 else:
+                    _std = ((point - t_current) ** 0.5) * self.eps
                     y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                       for _y in y_current)
+                if hasattr(self, "proj_fn"):
+                    y_current = tuple(self.proj_fn(_y) for _y in y_current)
 
             if not self.end_point_mode:
                 self.update_dense_state(t_current, point, y_old, y_current)

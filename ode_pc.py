@@ -969,9 +969,15 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
 
     def _set_eps(self, x):
         if self.eps_scale is not None:
+            with torch.no_grad():
+                weight_sum = (self.FFconv.weight.data.view(
+                    self.out_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1),
+                              self.FBconv.weight.data.view(
+                    self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
+                              )
             # directly use the eps_scale
-            self.option_init["eps"] = self.eps_scale * self.offset_eps
-            self.option_aca["eps"] = self.eps_scale * self.offset_eps
+            self.option_init["eps"] = self.eps_scale * self.offset_eps * weight_sum[1]
+            self.option_aca["eps"] = tuple(self.eps_scale * self.offset_eps * _ws for _ws in weight_sum)
         else:
             # scale the eps according to the maximum activation
             self.option_init["eps"] = x.abs().max() * self.offset_eps
@@ -1192,8 +1198,9 @@ class ODEWrapper2State(WrapQuantizeW):
         self.original_make_z_fn = self.ode_block._make_z_ode_fn
         self.proj_fn = nn.Hardtanh(min_val=-self.v_dd, max_val=self.v_dd)
         # Todo: What's the right eps_scale?
-        self.ode_block.eps_scale = (1 / self.ode_block.offset_eps) * ((4.16e-21 * 10e9 * 4 / self.R) ** 0.5 / self.C_fb)
-        # self.ode_block.eps_scale = 2
+        # Pick sqrt(4 *k_B * T / R) / C
+        self.ode_block.eps_scale = (1 / self.ode_block.offset_eps) * ((4.16e-21 * 4 / self.R) ** 0.5 / self.C_fb)
+        # self.ode_block.eps_scale = 0
 
         self._patch()
         self.ode_block.option_init["proj_fn"] = self.proj_fn
