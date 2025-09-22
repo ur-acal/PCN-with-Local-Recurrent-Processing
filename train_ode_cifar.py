@@ -121,12 +121,13 @@ def _constr_model_name(args, rep=1):
         model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None:
-        ft_prefix = "ft" if args.ode_wrapper is None else "QAT_{}b_".format(args.w_bits)
+        ft_prefix = "ft" if args.ode_wrapper is None else "QAT{}b".format(args.w_bits)
         eps_val = args.model_name.split("_")[2]
         ode_blk = args.model_name.split("_")[3]
-        model_name = ft_prefix + args.model_name.replace(
+        orig_rep = args.model_name.split("_")[-1]
+        model_name = ft_prefix + args.model_name.split(orig_rep)[0].replace(
             eps_val, "{}eps".format(args.offset_eps)).replace(
-            ode_blk, "{}".format(args.ode_block))
+            ode_blk, "{}".format(args.ode_block)) + str(rep) + 'REP'
     return model_name
 
 def get_model_name(args):

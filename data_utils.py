@@ -6,17 +6,42 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.utils.parametrize as P
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
+from ode_pc import QUANTIZER_CLASSES
 
 
-def load_and_register_buffer(model: nn.Module, sd, device):
+def get_parametrized_weight_mods(model):
+    """
+    Only applies to model with modules that have ONLY ONE parametrization.
+    """
+    out = {}
+    for name, mod in model.named_modules():
+        plist = getattr(getattr(mod, "parametrizations", None), "weight", None)
+        if plist is not None:
+            plist = list(plist)
+            out[name] = plist[0].__class__.__name__ if len(plist) > 0 else None
+    return out
+
+
+def load_and_register_buffer(model: nn.Module, sd, device, parametrized_map=None):
     inc = model.load_state_dict(sd, strict=False)
     unexpected = list(getattr(inc, "unexpected_keys", []))
     if len(unexpected) == 0:
         return inc
 
     mod_map = dict(model.named_modules())
+    # parametrize first
+    parametrized_map = parametrized_map if parametrized_map is not None else {}
+    param_str = ".parametrizations.weight"
+    p_list = set([_.rpartition(param_str)[0] for _ in unexpected if param_str in _])
+    for _p in p_list:
+        parent = mod_map.get(_p, None)
+        if parent is not None:
+            P.register_parametrization(
+                parent, "weight", QUANTIZER_CLASSES[parametrized_map[_p]]().to(device))
+
     for k in unexpected:
         parent_name, sep, child = k.rpartition(".")
         parent = mod_map.get(parent_name, None)

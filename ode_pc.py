@@ -64,6 +64,7 @@ class ODEBlockPC(nn.Module):
                 logging.warning("Initialize b0 as the summation of weights")
                 ff_weight = self.FFconv.weight.data
                 self.b0 = nn.ParameterList([ff_weight.view(ff_weight.shape[0], -1).sum(-1).view(1, -1, 1, 1)])
+        self._transfer_reg_buff(pc_conv)
 
         # cache clean parameters
         self.clean_params = {
@@ -93,6 +94,10 @@ class ODEBlockPC(nn.Module):
         self.option_aca = {"t0": self.integration_time[0], "t1": self.integration_time[-1],
                            "t_eval": self.integration_time.tolist(), "rtol": self.tol, "atol": self.tol,
                            "h": t_step, "method": self.method}
+
+    def _transfer_reg_buff(self, pc_conv):
+        for _name, _val in pc_conv.named_buffers():
+            self.register_buffer(_name, _val)
 
     def _make_ode_fn(self, x):
         def ode_func(t, y):
@@ -1028,10 +1033,10 @@ class QuantizationImpl(torch.autograd.Function):
 class SymQuantizeWeight(nn.Module):
     def __init__(self, w_bits=8, **kwargs):
         super().__init__()
-        self.w_bits = w_bits
-        self.upper = (1 << (w_bits - 1)) - 1
-        self.lower = -self.upper
-        self.s_w = None
+        self.register_buffer("w_bits", torch.tensor(w_bits))
+        self.register_buffer("upper", torch.tensor((1 << (w_bits - 1)) - 1))
+        self.register_buffer("lower", -self.upper)
+        self.register_buffer("s_w", torch.tensor(1.0))
 
     def forward(self, layer_weight: nn.Parameter):
         return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper)
@@ -1039,7 +1044,7 @@ class SymQuantizeWeight(nn.Module):
     def compute_s(self, layer_weight: nn.Parameter):
         with torch.no_grad():
             s_w = self.upper / layer_weight.data.abs().max()
-            self.s_w = s_w
+            self.s_w.copy_(s_w)
 
 
 class LSQWeight(SymQuantizeWeight):
@@ -1370,6 +1375,8 @@ class QATTester2State(ODEWrapper2State):
     def __init__(self, **kwargs):
         kwargs.update({"patch": True, "quantize": False})
         super().__init__(**kwargs)
+        # self.out_scale = self.beta if self.is_last else 1
+        self.out_scale = 1
 
     def _scale_act_fn(self):
         # Replace ReLU6 with clamp(x, 0, v_dd)
@@ -1390,7 +1397,8 @@ class QATWrapper2State(ODEWrapper2State):
         kwargs.update({"patch": False, "quantize": False})
         super().__init__(**kwargs)
         self.w_bits = kwargs.get("w_bits", 8)
-        self.FF_quantizer, self.FB_quantizer = SymQuantizeWeight(self.w_bits), SymQuantizeWeight(self.w_bits)
+        self.FF_quantizer = SymQuantizeWeight(self.w_bits).to(self.ode_block.FFconv.weight.device)
+        self.FB_quantizer = SymQuantizeWeight(self.w_bits).to(self.ode_block.FBconv.weight.device)
         self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
         self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
         P.register_parametrization(self.ode_block.FFconv, "weight", self.FF_quantizer)
@@ -1438,6 +1446,10 @@ class QATWrapper2State(ODEWrapper2State):
         self.time_scaler = self.get_time_scaler()
         self._scale_time_dynamically(module)
 
+        # Todo: During traning, we have to scaling back the last activation, but during test,
+        #  this seems can be removed.
+        self.out_scale = self.beta if self.is_last else 1
+
         return None
 
     def _scale_time_dynamically(self, module):
@@ -1473,7 +1485,7 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
 
 
 def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
-    calib_res = [10 for _ in range(pc_net.num_layers)]
+    calib_res = [6 for _ in range(pc_net.num_layers)]
     # Todo: Perform calibration for intermediate states if we are going to quantize them and the weights
     if calib_path is None:
         pass
@@ -1555,4 +1567,9 @@ ODEWrapper_CLASSES = {
     "ODEWrapper2State": ODEWrapper2State,
     "QATTester2State": QATTester2State,
     "QATWrapper2State": QATWrapper2State,
+}
+
+QUANTIZER_CLASSES = {
+    "SymQuantizeWeight": SymQuantizeWeight,
+    "LSQWeight": LSQWeight,
 }

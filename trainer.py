@@ -12,7 +12,7 @@ import argparse
 import tqdm
 
 from pc_model import PCNet
-from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer
+from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
@@ -158,7 +158,8 @@ class TrainerCiFar(object):
         tmp_sd = torch.load(tmp_sp)
         decoupled_model = model_class(
             **{**tmp_sd['init_args']['model_args'], **tmp_sd['init_args']['kwargs']}).to(self.device)
-        _ = load_and_register_buffer(decoupled_model, tmp_sd['net'], self.device)
+        p_dict = get_parametrized_weight_mods(self.model)
+        _ = load_and_register_buffer(decoupled_model, tmp_sd['net'], self.device, p_dict)
         return decoupled_model
 
     def _save_model_ckpt(self, acc, epoch, suffix=""):

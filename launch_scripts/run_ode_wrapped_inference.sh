@@ -8,7 +8,7 @@ export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
-N_BITS_VALS=(6)
+N_BITS_VALS=(4)
 #METHOD_VALS=("dopri5")
 CAP_VALS=("49e-12")
 #METHOD_VALS=("euler")
@@ -37,12 +37,14 @@ MODEL_NAMES=(
 
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
 #  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP" # S2NoMinusZChgZNoisyI baseline
+#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP" # S2NoMinusZChgZNoisyI baseline
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
+
+  "QAT4bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_3REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -93,7 +95,7 @@ run_model(){
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
-    --ode_wrapper     "ODEWrapper2State" \
+    --ode_wrapper     "QATTester2State" \
     --img_type        "${_img_type}" \
     --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
@@ -107,7 +109,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="0918_2State_rgb_${method}Method_${tol}Tol.log"
+  EXP_NAME="0922_2State_QAT_rgb_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
