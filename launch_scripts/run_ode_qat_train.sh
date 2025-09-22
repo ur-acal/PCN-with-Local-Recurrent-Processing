@@ -25,7 +25,6 @@ python train_ode_cifar.py \
   --C             "49e-12" \
   --w_bits        "$NBITS" \
   --ode_wrapper   "QATWrapper2State" \
-  --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
   --ode_block     "S2NoMinusZChgZNoisyI" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_1p5_1e-4.log"
