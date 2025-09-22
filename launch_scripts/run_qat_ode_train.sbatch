@@ -74,13 +74,16 @@ run_one () {
   local logfile="${LOGDIR}/train_${EXP}_No_2_ReLU6_${NBITS}.log"
   echo "[$(date +%T)] starting ${NBITS} -> ${logfile}"
 
-  local wrapper="$(map_test_wrapper "$ODE_BLOCK")"
+  local wrapper="$(map_qat_block "$ODE_BLOCK")"
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --optim         "SGD" \
     --img_type      "${IMG_TYPE}" \
+    --learning_rate 0.0001 \
+    --lr_reduce_on  "10,20" \
     --num_epochs    20 \
+    --model_name    "${MODEL_NAME}" \
     --eval_every    1 \
     --offset_eps    0.0 \
     --dropout       0.25 \
