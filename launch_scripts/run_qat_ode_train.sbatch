@@ -198,7 +198,7 @@ echo "Merging summaries into ${MASTER_LOG}"
 : > "${MASTER_LOG}"
 for i in "${!MODEL_NAMES_PRE[@]}"; do
   pre="${MODEL_NAMES_PRE[$i]}"
-  pre_log="${EVAL_BASE}/pre_ft/${pre}_method_${METHOD}_tol_${TOL}/job.log"
+  pre_log="${EVAL_BASE}/${NBITS}/${pre}_method_${METHOD}_tol_${TOL}/job.log"
 
   printf '========== %s (pre-finetune) ==========\n' "$pre" >>"$MASTER_LOG"
   if [[ -f "$pre_log" ]]; then
