@@ -17,7 +17,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
 from ode_pc import make_ode_block, wrap_ode_block
-from data_utils import ToPackedRGGB, RawImgDataset
+from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer
 
 import logging
 log = logging.getLogger(__name__)
@@ -163,10 +163,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
     net_ = net_.to(device)
     if data_parallel:
         net_ = nn.DataParallel(net_)
-        net_.load_state_dict(checkpoint_weight['net'])
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device)
         net_ = net_.module
     else:
-        net_.load_state_dict(checkpoint_weight['net'])
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device)
 
     if conv_only:
         log.warning("Replacing all transposed conv with conv")

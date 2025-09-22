@@ -8,7 +8,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 
-from ode_pc import ODEBLOCK_CLASSES, make_ode_block
+from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block
 from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
@@ -65,6 +65,13 @@ def get_args():
     p.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
     p.add_argument("--offset_eps", type=float, default=None, help="Noise level of the offset")
+    # Quantization-aware training related args
+    p.add_argument("--ode_wrapper", type=str, choices=list(ODEWrapper_CLASSES.keys()) + [None],
+                        default=None)
+    p.add_argument("--R", type=float, default=1e5, help="Resistance")
+    p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
+    p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
+    p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     # PCConv hyper-params
     # p.add_argument("--kernel_size",   type=int, default=3)
     # p.add_argument("--stride",        type=int, default=1)
@@ -114,9 +121,10 @@ def _constr_model_name(args, rep=1):
         model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None:
+        ft_prefix = "ft" if args.ode_wrapper is None else "QAT_{}b_".format(args.w_bits)
         eps_val = args.model_name.split("_")[2]
         ode_blk = args.model_name.split("_")[3]
-        model_name = "ft" + args.model_name.replace(
+        model_name = ft_prefix + args.model_name.replace(
             eps_val, "{}eps".format(args.offset_eps)).replace(
             ode_blk, "{}".format(args.ode_block))
     return model_name
@@ -187,6 +195,7 @@ def main():
     # build model
     if args.model_name is None:
         model = pcn_model(**model_args)
+        model = model.to("cuda" if torch.cuda.is_available() else "cpu")
     else:
         ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_best_ckpt.pth")
         noisy_params = {"noise_level": 0.0, "weight": None}
@@ -228,8 +237,15 @@ def main():
     # sanity check if resume training
     if args.model_name is not None:
         logging.warning("Before training, evaluate the accuracy of the loaded model")
-        test_once(model, device='cuda' if torch.cuda.is_available() else 'cpu', model_name=args.model_name)
+        # test_once(model, device='cuda' if torch.cuda.is_available() else 'cpu', model_name=args.model_name)
         model.train()
+
+    # wrap blocks for QAT
+    if args.ode_wrapper is not None:
+        wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
+                          "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits}
+        model = wrap_ode_block(model, **wrapper_params)
+        logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
 
     # Get trainer
     logging.warning("lr reduce on: {}, max grad norm: {}, cosine annealing T0: {}".format(

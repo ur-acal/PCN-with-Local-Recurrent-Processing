@@ -4,9 +4,26 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
+
+
+def load_and_register_buffer(model: nn.Module, sd, device):
+    inc = model.load_state_dict(sd, strict=False)
+    unexpected = list(getattr(inc, "unexpected_keys", []))
+    if len(unexpected) == 0:
+        return inc
+
+    mod_map = dict(model.named_modules())
+    for k in unexpected:
+        parent_name, sep, child = k.rpartition(".")
+        parent = mod_map.get(parent_name, None)
+        if parent is None or hasattr(parent, child):
+            continue
+        parent.register_buffer(child, torch.empty_like(sd[k], device=device))
+    return model.load_state_dict(sd, strict=True)
 
 
 # color space

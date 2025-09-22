@@ -3,13 +3,15 @@ import math
 import os
 import time
 import random
+from copy import deepcopy
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.parametrize as P
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Union
+from typing import Union, Any
 from functools import wraps
 
 from pc_model import PCNet
@@ -1008,6 +1010,47 @@ class S2NoMinusZChgZMinusNoisyI(S2NoMinusZChgZNoisyI):
 ####################################################################################
 ####################################################################################
 
+class QuantizationImpl(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, weight, s, q_min, q_max):
+        q_weight = weight * s
+        q_mask = (q_weight >= q_min) & (q_weight <= q_max)
+        ctx.save_for_backward(q_mask, s)
+        q_weight = torch.clamp(q_weight.round(), min=q_min, max=q_max)
+        return q_weight
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        q_mask, s = ctx.saved_tensors
+        return s * grad_output * q_mask, None, None, None
+
+
+class SymQuantizeWeight(nn.Module):
+    def __init__(self, w_bits=8, **kwargs):
+        super().__init__()
+        self.w_bits = w_bits
+        self.upper = (1 << (w_bits - 1)) - 1
+        self.lower = -self.upper
+        self.s_w = None
+
+    def forward(self, layer_weight: nn.Parameter):
+        return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper)
+
+    def compute_s(self, layer_weight: nn.Parameter):
+        with torch.no_grad():
+            s_w = self.upper / layer_weight.data.abs().max()
+            self.s_w = s_w
+
+
+class LSQWeight(SymQuantizeWeight):
+    def __init__(self, layer_weight, **kwargs):
+        super().__init__(**kwargs)
+        self.s_w = nn.Parameter(torch.tensor( self.upper / (2 * layer_weight.abs().mean()) ))
+
+    def forward(self, layer_weight: nn.Parameter):
+        return torch.clamp(layer_weight * self.s_w, min=self.lower, max=self.upper).round()
+
+
 class ODEWrapperRC(nn.Module):
     def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, patch=True, **kwargs):
         super().__init__()
@@ -1094,7 +1137,7 @@ class ODEWrapperRC(nn.Module):
 
 
 class WrapQuantizeW(ODEWrapperRC):
-    def __init__(self, w_bits=8, w_quant_mode="min_max", perc=None, **kwargs):
+    def __init__(self, w_bits=8, w_quant_mode="min_max", perc=None, quantize=True, **kwargs):
         patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
@@ -1102,13 +1145,27 @@ class WrapQuantizeW(ODEWrapperRC):
         self.w_quant_mode = w_quant_mode
         self.perc = perc
 
-        self.get_quantize_factor()
+        self.quantize = quantize
+        if self.quantize:
+            # Quantize the trained floating point weights
+            self.get_quantize_factor()
+        else:
+            # Load quantized parameters directly
+            self.set_quantized_params()
         self.alpha = self.s_ff * self.s_fb
         self.beta = self.q * self.s_fb
 
         # patch for the child method
         if patch:
             self._patch()
+
+    def set_quantized_params(self):
+        # loaded weights are already quantized
+        # the ode block must have registered s_ff/fb buffer
+        self.register_buffer("s_ff", self.ode_block.s_ff if hasattr(self.ode_block, "s_ff") else torch.tensor(1.0))
+        self.register_buffer("s_fb", self.ode_block.s_fb if hasattr(self.ode_block, "s_fb") else torch.tensor(1.0))
+        if self.ode_block.noise_level is not None and self.ode_block.noise_level > 0:
+            self.ode_block.add_noise()
 
     @staticmethod
     def cal_quant_factor_and_set(n_bits, p: nn.Parameter):
@@ -1178,10 +1235,11 @@ class WrapQuantizeW(ODEWrapperRC):
 
 class ODEWrapper2State(WrapQuantizeW):
     def __init__(self, is_first=False, is_last=False, **kwargs):
+        patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
         # Todo: Right now using the same cap value seems to be fine. Need more experiment.
-        self.cap_scale = self._round((self.s_ff / self.s_fb).item(), 1)
+        self.cap_scale = self._round(self.s_ff / self.s_fb, 1)
         # self.cap_scale = 1
         self.C_fb = self.C
         self.C_ff = self.C_fb * self.cap_scale
@@ -1202,7 +1260,8 @@ class ODEWrapper2State(WrapQuantizeW):
         self.ode_block.eps_scale = (1 / self.ode_block.offset_eps) * ((4.16e-21 * 4 / self.R) ** 0.5 / self.C_fb)
         # self.ode_block.eps_scale = 0
 
-        self._patch()
+        if patch:
+            self._patch()
         self.ode_block.option_init["proj_fn"] = self.proj_fn
         self.ode_block.option_aca["proj_fn"] = self.proj_fn
 
@@ -1294,12 +1353,107 @@ class ODEWrapper2State(WrapQuantizeW):
 
     @staticmethod
     def _round(x, n):
-        if abs(x) >= 1:
-            return round(x, n)
-        elif x != 0:
-            return round(x, -int(math.floor(math.log10(abs(x)))) + n - 1)
+        if x.abs().item() >= 1:
+            return torch.round(x, decimals=n)
+        elif not torch.allclose(x, torch.zeros_like(x)):
+            return torch.round(x, decimals=-int(math.floor(math.log10(x.abs().item()))) + n - 1)
         else:
             return 0
+
+
+class QATTester2State(ODEWrapper2State):
+    """
+    Same as the parent class except for:
+    1. Loading already quantized weights with s_ff/fb registered as buffers in ode_block.
+    2. Change the activation functon to align with the QATWrapper2State.
+    """
+    def __init__(self, **kwargs):
+        kwargs.update({"patch": True, "quantize": False})
+        super().__init__(**kwargs)
+
+    def _scale_act_fn(self):
+        # Replace ReLU6 with clamp(x, 0, v_dd)
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = ReLUX(self.v_dd)
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta, self.v_dd), max_val=min(self.beta, self.v_dd))
+
+
+class QATWrapper2State(ODEWrapper2State):
+    """
+    Same as the parent class except for:
+    1. Changed the activation function.
+    2. Dynamically update the scaling parameters before each forward pass based on the weights.
+    During test, use QATTester2State.
+    """
+    def __init__(self, **kwargs):
+        kwargs.update({"patch": False, "quantize": False})
+        super().__init__(**kwargs)
+        self.w_bits = kwargs.get("w_bits", 8)
+        self.FF_quantizer, self.FB_quantizer = SymQuantizeWeight(self.w_bits), SymQuantizeWeight(self.w_bits)
+        self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
+        self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
+        P.register_parametrization(self.ode_block.FFconv, "weight", self.FF_quantizer)
+        P.register_parametrization(self.ode_block.FBconv, "weight", self.FB_quantizer)
+        self.ode_block.register_buffer("s_ff", self.FF_quantizer.s_w)
+        self.ode_block.register_buffer("s_fb", self.FB_quantizer.s_w)
+        self.s_ff, self.s_fb = None, None
+
+        # Original copy of integration time
+        self.orig_integration_time = self.ode_block.integration_time.clone()
+        self.orig_option_init = deepcopy(self.ode_block.option_init)
+        self.orig_option_aca = deepcopy(self.ode_block.option_aca)
+
+        # Register hook
+        self.update_hook = self.ode_block.register_forward_pre_hook(self._update_vals)
+        self._patch()
+
+    def _set_quantize_s(self, module):
+        # Set the quantization step size before each patched forward call
+        # the quantization step size s is set in compute_s
+        self.FF_quantizer.compute_s(module.FFconv.parametrizations.weight.original)
+        self.FB_quantizer.compute_s(module.FBconv.parametrizations.weight.original)
+        # For saving and loading purpose
+        # module should be exactly self.ode_block
+        module.s_ff.copy_(self.FF_quantizer.s_w)
+        module.s_fb.copy_(self.FB_quantizer.s_w)
+        # For calculation in the wrapper
+        self.s_ff, self.s_fb = self.FF_quantizer.s_w, self.FB_quantizer.s_w
+
+    def _update_vals(self, module, inputs):
+        # Compute quantization step size first
+        self._set_quantize_s(module)
+
+        # Reset values based on new s_ff and s_fb before forward
+        self.cap_scale = self._round(self.s_ff / self.s_fb, 1)
+        # self.cap_scale = 1
+        self.C_fb = self.C
+        self.C_ff = self.C_fb * self.cap_scale
+
+        self.alpha = self.s_fb
+        self.beta = self.q
+        self.inp_scale = self.beta if self.is_first else 1
+
+        # The original patch
+        self.time_scaler = self.get_time_scaler()
+        self._scale_time_dynamically(module)
+
+        return None
+
+    def _scale_time_dynamically(self, module):
+        # scale integration time based on s_fb
+        end_time_scaler = self.R * self.C / self.alpha
+        module.integration_time = self.orig_integration_time * end_time_scaler
+
+        module.option_init = self._scale_time_impl(deepcopy(self.orig_option_init), end_time_scaler)
+        module.option_aca = self._scale_time_impl(deepcopy(self.orig_option_aca), end_time_scaler)
+
+    def _scale_act_fn(self):
+        # Replace ReLU6 with clamp(x, 0, v_dd)
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = ReLUX(self.v_dd)
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta, self.v_dd), max_val=min(self.beta, self.v_dd))
 
 
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
@@ -1336,6 +1490,7 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         else:
             ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
                                           R=R, C=C, v_dd=v_dd, is_first=False, is_last=False, **kwargs)
+        ode_wrapper_ins.to(pc_net.device)
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
     return pc_net
 
@@ -1398,4 +1553,6 @@ ODEWrapper_CLASSES = {
     "ODEWrapperRC": ODEWrapperRC,
     "WrapQuantizeW": WrapQuantizeW,
     "ODEWrapper2State": ODEWrapper2State,
+    "QATTester2State": QATTester2State,
+    "QATWrapper2State": QATWrapper2State,
 }

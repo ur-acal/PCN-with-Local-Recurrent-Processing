@@ -8,7 +8,7 @@ export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
-N_BITS_VALS=(4 5 6)
+N_BITS_VALS=(6)
 #METHOD_VALS=("dopri5")
 CAP_VALS=("49e-12")
 #METHOD_VALS=("euler")
@@ -95,6 +95,7 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "ODEWrapper2State" \
     --img_type        "${_img_type}" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
