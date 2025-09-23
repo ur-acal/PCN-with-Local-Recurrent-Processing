@@ -81,7 +81,6 @@ run_one () {
     --optim         "SGD" \
     --img_type      "${IMG_TYPE}" \
     --learning_rate 0.0001 \
-    --lr_reduce_on  "10,20" \
     --num_epochs    20 \
     --model_name    "${MODEL_NAME}" \
     --eval_every    1 \

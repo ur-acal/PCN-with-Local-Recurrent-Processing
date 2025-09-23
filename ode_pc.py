@@ -1255,8 +1255,8 @@ class ODEWrapper2State(WrapQuantizeW):
         self.is_last = is_last
         self.inp_scale = self.beta if self.is_first else 1
         # Todo: Right don't scaling back the last layer's output seems to be fine (when q >= 0.1 is not very small)
-        # self.out_scale = self.beta if self.is_last else 1
-        self.out_scale = 1
+        self.out_scale = self.beta if self.is_last else 1
+        # self.out_scale = 1
 
         self.original_make_z_fn = self.ode_block._make_z_ode_fn
         self.proj_fn = nn.Hardtanh(min_val=-self.v_dd, max_val=self.v_dd)
@@ -1375,8 +1375,8 @@ class QATTester2State(ODEWrapper2State):
     def __init__(self, **kwargs):
         kwargs.update({"patch": True, "quantize": False})
         super().__init__(**kwargs)
-        # self.out_scale = self.beta if self.is_last else 1
-        self.out_scale = 1
+        self.out_scale = self.beta if self.is_last else 1
+        # self.out_scale = 1
 
     def _scale_act_fn(self):
         # Replace ReLU6 with clamp(x, 0, v_dd)
