@@ -174,7 +174,7 @@ def run_ode_inference():
                           "w_quant_mode": args.w_quant_mode,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None
         noise_acc_spec = {}
-        real_t_end = t_end
+        max_real_t, min_real_t, real_t_end = t_end, t_end, t_end
         for noise_level in noise_level_list_:
             trials = noisy_trials if noise_level > 0 else 1
             acc_list = []
@@ -187,7 +187,10 @@ def run_ode_inference():
                                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                                   ode_wrapper_params=wrapper_params,
                                                   **noisy_params)
-                real_t_end = net_.PcConvs[0].integration_time[-1].cpu()
+                real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
+                max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
+                max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.2g}", f"{min_real_t.item():.2g}", f"{avg_real_t.item():.2g}"
+                real_t_end = avg_real_t
                 net_.eval()
                 total = 0
                 correct = 0
@@ -219,10 +222,10 @@ def run_ode_inference():
         if args.ode_wrapper is not None:
             log.warning("wrapper params: {}".format(wrapper_params))
         for _nl, _acc in noise_acc_spec.items():
-            log.warning("t_end: {}, real_t_end: {}, Noise level: {}, Acc:{:.2f}%".format(
-                t_end, real_t_end, _nl, sum(_acc) / len(_acc)))
+            log.warning("t_end: {}, real_t_end: {}, min_real_t: {}, max_real_t: {}, Noise level: {}, Acc:{:.2f}%".format(
+                t_end, real_t_end, min_real_t, max_real_t, _nl, sum(_acc) / len(_acc)))
 
-        acc_dict[real_t_end] = noise_acc_spec
+        acc_dict[real_t_end] = {"noise_acc_spec": noise_acc_spec, "t": (t_end, real_t_end, min_real_t, max_real_t)}
 
     # save noise acc spec to a pkl
     if args.ode_wrapper is None:
