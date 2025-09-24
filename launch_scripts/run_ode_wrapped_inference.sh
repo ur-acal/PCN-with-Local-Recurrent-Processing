@@ -8,9 +8,9 @@ export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
-N_BITS_VALS=(4 5 6)
+N_BITS_VALS=(6)
 METHOD_VALS=("dopri5")
-CAP_VALS=("49e-12" "5e-9")
+CAP_VALS=("49e-15")
 #METHOD_VALS=("euler")
 #METHOD_VALS=("rk4")
 
@@ -37,14 +37,16 @@ MODEL_NAMES=(
 
 #  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
 #  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP" # S2NoMinusZChgZNoisyI baseline
+#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP" # S2NoMinusZChgZNoisyI baseline
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
 
 #  "QAT4bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_3REP"
+#  "QAT4bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_5REP" # Use relu6 scaled
+#  "QAT6bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -112,7 +114,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="0922_2State_CAP_EXP_rgb_${method}Method_${tol}Tol.log"
+  EXP_NAME="0923_2State_CAP_EXP_rggb_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
@@ -130,13 +132,18 @@ for method in "${METHOD_VALS[@]}"; do
   echo "All jobs finished — merging logs into $MASTER_LOG"
   # ─────────────── merge logs sequentially ───────────────
   : >"$MASTER_LOG"
-  for name in "${MODEL_NAMES[@]}"; do
-    printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
-    if ! grep -A 11 "Model name: ${name} " \
-              "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log" >>"$MASTER_LOG"; then
-      echo "[Final Result not found]" >>"$MASTER_LOG"
-    fi
-    printf '\n\n' >>"$MASTER_LOG"
+  for n_bits in "${N_BITS_VALS[@]}"; do
+    for cap_val in "${CAP_VALS[@]}"; do
+      for name in "${MODEL_NAMES[@]}"; do
+        printf '========== %s | method=%s | n_bits=%s | cap=%s ==========\n' \
+               "$name" "$method" "$n_bits" "$cap_val" >>"$MASTER_LOG"
+        logfile="$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
+        if ! grep -A 11 "Model name: ${name} " "$logfile" >>"$MASTER_LOG"; then
+          echo "[Final Result not found] $logfile" >>"$MASTER_LOG"
+        fi
+        printf '\n\n' >>"$MASTER_LOG"
+      done
+    done
   done
   echo "All summaries written to $MASTER_LOG"
 done

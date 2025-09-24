@@ -1381,7 +1381,7 @@ class QATTester2State(ODEWrapper2State):
     def _scale_act_fn(self):
         # Replace ReLU6 with clamp(x, 0, v_dd)
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            self.ode_block.act_fn = ReLUX(self.v_dd)
+            self.ode_block.act_fn = ReLUX(min(6 * self.beta, self.v_dd))
         elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta, self.v_dd), max_val=min(self.beta, self.v_dd))
 
@@ -1463,7 +1463,7 @@ class QATWrapper2State(ODEWrapper2State):
     def _scale_act_fn(self):
         # Replace ReLU6 with clamp(x, 0, v_dd)
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            self.ode_block.act_fn = ReLUX(self.v_dd)
+            self.ode_block.act_fn = ReLUX(min(6 * self.beta, self.v_dd))
         elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta, self.v_dd), max_val=min(self.beta, self.v_dd))
 
@@ -1485,7 +1485,7 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
 
 
 def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
-    calib_res = [6 for _ in range(pc_net.num_layers)]
+    calib_res = [10 for _ in range(pc_net.num_layers)]
     # Todo: Perform calibration for intermediate states if we are going to quantize them and the weights
     if calib_path is None:
         pass

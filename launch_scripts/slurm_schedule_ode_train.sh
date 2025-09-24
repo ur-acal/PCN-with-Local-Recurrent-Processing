@@ -21,18 +21,22 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 declare -A BLOCKS_BY_ARCH
 # 6L3p
 BLOCKS_BY_ARCH["A"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
+# 6L2p
+BLOCKS_BY_ARCH["A2p"]="S2NoMinusZChgZNoisyI"
 # Deep
 BLOCKS_BY_ARCH["B"]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
 BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 # 7L2p
 BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
+# 4L2p
+BLOCKS_BY_ARCH["D2p"]="S2NoMinusZChgZNoisyI"
 
 # Which ARCH/PCN combos to run
-ARCHES=("C2")
+ARCHES=("A2p D2p")
 PCNS=("PCNetNoBatchNorm")
-IMG_TYPES=( "rgb" "rggb" "cycleisp" )
-#IMG_TYPES=( "rgb" )
+#IMG_TYPES=( "rgb" "rggb" "cycleisp" )
+IMG_TYPES=( "rggb" )
 ###############################################################################################
 
 # Paths
@@ -70,7 +74,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_0915_2State_Stride2_Wrapped_Test_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0923_2State_rggb_4L6L_Wrapped_Test_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

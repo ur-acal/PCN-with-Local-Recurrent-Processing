@@ -4,7 +4,7 @@ trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
-export tol="1e-4"
+export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
 METHOD_VALS=("dopri5")
@@ -144,7 +144,6 @@ run_model(){
     --n_sweep_right   1 \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "S2NoMinusZChgZNoisyI" \
-    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -154,7 +153,7 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0901_3pooling_rggb_State2NoMinusZ_${method}Method_${tol}Tol.log"
+  EXP_NAME="0923_2pooling_rgb_State2NoMinusZ_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

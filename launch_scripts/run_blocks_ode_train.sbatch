@@ -21,10 +21,16 @@ ARCH_SET=${ARCH_SET:-A}      # A or B
 PCN=${PCN:-PCNetNoBatchNorm} # "PCNetNoBatchNorm" | "PCNetWith1stConv"
 if [[ "$ARCH_SET" == "A" ]]; then
   ARCH_LABEL="6L3P"
+elif [[ "$ARCH_SET" == "A2p" ]]; then
+  ARCH_LABEL="6L2P"
 elif [[ "$ARCH_SET" == "B" ]]; then
   ARCH_LABEL="18L2P"
 elif [[ "$ARCH_SET" == "C" ]]; then
   ARCH_LABEL="7L2P"
+elif [[ "$ARCH_SET" == "C2" ]]; then
+  ARCH_LABEL="7L2PStride2"
+elif [[ "$ARCH_SET" == "D2p" ]]; then
+  ARCH_LABEL="4L2P"
 else
   ARCH_LABEL="Invalid"
 fi
@@ -45,6 +51,11 @@ if [[ "$ARCH_SET" == "A" ]]; then
   OUT=(32 32 64 64 128 128)
   POOL=(0  1  1  0  1   0)
   STRIDE=(1)
+elif [[ "$ARCH_SET" == "A2p" ]]; then
+  INP=(3  32 32 64 64  128)
+  OUT=(32 32 64 64 128 128)
+  POOL=(0  0  1  0  1   0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "B" ]]; then
   INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
   OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
@@ -60,6 +71,11 @@ elif [[ "$ARCH_SET" == "C2" ]]; then
   OUT=(   32 32 64 64 128 128 128)
   POOL=(  0  0  0  0  0   0   0)
   STRIDE=(1  1  2  1  2   1   1)
+elif [[ "$ARCH_SET" == "D2p" ]]; then
+  INP=(3  32 64 128)
+  OUT=(32 64 64 128)
+  POOL=(0 1  1  0)
+  STRIDE=(1)
 else
   echo "ARCH_SET must be A or B or C[2]"; exit 2
 fi
@@ -217,7 +233,7 @@ eval_model() {
   # Todo: Set n_bits, R, C value as fixed for now
   local n_bits=6
   local R_val="1e5"
-  local C_val="5e-9"
+  local C_val="49e-15"
   local wrapper="$(map_test_wrapper "$test_block")"
   ################################
   if [[ "$tag" == "post_ft" ]]; then ckpt="last"; fi
