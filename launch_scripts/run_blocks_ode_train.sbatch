@@ -72,7 +72,7 @@ elif [[ "$ARCH_SET" == "C2" ]]; then
   POOL=(  0  0  0  0  0   0   0)
   STRIDE=(1  1  2  1  2   1   1)
 elif [[ "$ARCH_SET" == "D2p" ]]; then
-  INP=(3  32 64 128)
+  INP=(3  32 64 64)
   OUT=(32 64 64 128)
   POOL=(0 1  1  0)
   STRIDE=(1)
