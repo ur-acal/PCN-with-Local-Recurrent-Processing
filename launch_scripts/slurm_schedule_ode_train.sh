@@ -10,7 +10,7 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 # running with
 # module swap slurm slurm/24.05.0.b1
 # ( source ./launch_scripts/slurm_schedule_ode_train.sh ) \
-#  > ./logs/scheduler_slurm/scheduler_0915.log 2>&1 < /dev/null &
+#  > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
@@ -33,7 +33,7 @@ BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["D2p"]="S2NoMinusZChgZNoisyI"
 
 # Which ARCH/PCN combos to run
-ARCHES=("A2p D2p")
+ARCHES=("A2p" "D2p")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "rggb" )
