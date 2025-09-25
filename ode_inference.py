@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 from tqdm import tqdm
 from copy import deepcopy
+from thop import profile, clever_format
 
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
@@ -60,6 +61,8 @@ def parse_args():
     parser.add_argument("--conv_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--mem_frac", type=float, default=1.0)
+    parser.add_argument("--count_mac", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     return parser.parse_args()
@@ -100,7 +103,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
     # _, predicted_raw = torch.max(_, 1)
-    test_once(net_, test_dataloader, device, args.model_name)
+    if not args.count_mac:
+        test_once(net_, test_dataloader, device, args.model_name)
     # net_.recover_params()
     # test_once(net_, test_dataloader, device)
 
@@ -123,6 +127,13 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
         print("Type: {}".format(_t))
         print(_range)
         print("================================")
+
+    if args.count_mac:
+        with torch.no_grad():
+            macs, params = profile(net_, inputs=(next(iter(test_dataloader))[0].to(device)[:1],), verbose=False)
+            logging.warning("Model Params: {}, Solver: {}, N steps: {}, MAC Count: {}".format(
+                clever_format([params], "%.1f"), args.method, args.n_steps, clever_format([macs], "%.1f")
+            ))
 
 
 def run_ode_inference():
