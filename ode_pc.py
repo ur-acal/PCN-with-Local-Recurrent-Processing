@@ -1018,11 +1018,11 @@ class S2NoMinusZChgZMinusNoisyI(S2NoMinusZChgZNoisyI):
 class QuantizationImpl(torch.autograd.Function):
     @staticmethod
     def forward(ctx, weight, s, q_min, q_max):
-        q_weight = weight * s
+        q_weight = weight * s * q_max
         q_mask = (q_weight >= q_min) & (q_weight <= q_max)
         ctx.save_for_backward(q_mask, s)
         q_weight = torch.clamp(q_weight.round(), min=q_min, max=q_max)
-        return q_weight
+        return q_weight / q_max
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -1043,7 +1043,7 @@ class SymQuantizeWeight(nn.Module):
 
     def compute_s(self, layer_weight: nn.Parameter):
         with torch.no_grad():
-            s_w = self.upper / layer_weight.data.abs().max()
+            s_w = 1 / layer_weight.data.abs().max()
             self.s_w.copy_(s_w)
 
 
@@ -1147,6 +1147,7 @@ class WrapQuantizeW(ODEWrapperRC):
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
         self.w_bits = w_bits
+        self.q_hi = (1 << (w_bits - 1)) - 1
         self.w_quant_mode = w_quant_mode
         self.perc = perc
 
@@ -1173,23 +1174,22 @@ class WrapQuantizeW(ODEWrapperRC):
             self.ode_block.add_noise()
 
     @staticmethod
-    def cal_quant_factor_and_set(n_bits, p: nn.Parameter):
+    def cal_quant_factor_and_set(q_hi, p: nn.Parameter):
         with torch.no_grad():
             abs_max = p.data.abs().max()
-            q_lo = -(1 << (n_bits - 1))
-            q_hi = (1 << (n_bits - 1)) - 1
             # -2 ** n is not used for symmetry
             s = q_hi / abs_max
             torch.clamp((s * p).round(), min=-q_hi, max=q_hi, out=p)
-            return s
+            p.div_(q_hi)
+            return s / q_hi
 
     def get_quantize_factor(self):
         # calculate quantization coefficient
         # the clean_params of the ode_block is set to the quantized weight in-place
         self.register_buffer(
-            "s_ff", self.cal_quant_factor_and_set(self.w_bits, self.ode_block.clean_params["FFconv"]))
+            "s_ff", self.cal_quant_factor_and_set(self.q_hi, self.ode_block.clean_params["FFconv"]))
         self.register_buffer(
-            "s_fb", self.cal_quant_factor_and_set(self.w_bits, self.ode_block.clean_params["FBconv"]))
+            "s_fb", self.cal_quant_factor_and_set(self.q_hi, self.ode_block.clean_params["FBconv"]))
         if not torch.allclose(torch.zeros_like(self.ode_block.b0[0]), self.ode_block.clean_params["b0"]):
             with torch.no_grad():
                 ff_weight = self.ode_block.clean_params["FFconv"].data

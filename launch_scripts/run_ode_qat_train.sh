@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-NBITS=(4 5 6)
-EXP="NODE_0923_QAT_1over_q_20_7Layers_2Pooling_${NBITS}bit"
+NBITS=(5)
+EXP="NODE_0929_QAT_min_R_7Layers_2Pooling_${NBITS}bit"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -23,7 +23,7 @@ for n_bits in "${NBITS[@]}"; do
     --tol           "0.0001" \
     --t_end         "1.5" \
     --R             "1e5" \
-    --C             "49e-12" \
+    --C             "49e-15" \
     --w_bits        "${n_bits}" \
     --ode_wrapper   "QATWrapper2State" \
     --pc_conv       "PCConvReLU6" \
