@@ -8,7 +8,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 
-from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block
+from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
@@ -68,6 +68,8 @@ def get_args():
     # Quantization-aware training related args
     p.add_argument("--ode_wrapper", type=str, choices=list(ODEWrapper_CLASSES.keys()) + [None],
                         default=None)
+    p.add_argument("--qat_cls", type=str, choices=list(QUANTIZER_CLASSES.keys()) + [None],
+                   default=None)
     p.add_argument("--R", type=float, default=1e5, help="Resistance")
     p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
@@ -121,7 +123,12 @@ def _constr_model_name(args, rep=1):
         model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None:
-        ft_prefix = "ft" if args.ode_wrapper is None else "QAT{}b".format(args.w_bits)
+        if args.ode_wrapper is None:
+            ft_prefix = "ft"
+        elif args.qat_cls is None or args.qat_cls == "SymQuantizeWeight":
+            ft_prefix = "QAT{}b".format(args.w_bits)
+        else:
+            ft_prefix = "QAT{}b{}".format(args.w_bits, args.qat_cls)
         eps_val = args.model_name.split("_")[2]
         ode_blk = args.model_name.split("_")[3]
         orig_rep = args.model_name.split("_")[-1]
@@ -244,7 +251,8 @@ def main():
     # wrap blocks for QAT
     if args.ode_wrapper is not None:
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
-                          "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits}
+                          "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "qat_cls": QUANTIZER_CLASSES[args.qat_cls]}
         model = wrap_ode_block(model, **wrapper_params)
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
 

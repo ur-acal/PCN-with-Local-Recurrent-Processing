@@ -1046,14 +1046,36 @@ class SymQuantizeWeight(nn.Module):
             s_w = 1 / layer_weight.data.abs().max()
             self.s_w.copy_(s_w)
 
+class LSQImpl(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, weight, s, q_min, q_max, s_g_scale):
+        q_weight = weight * s
+        q_mask = (q_weight >= q_min) & (q_weight <= q_max)
+        q_weight = q_weight.round()
+        ctx.save_for_backward(q_mask, s, q_weight, q_max, s_g_scale)
+        q_weight = torch.clamp(q_weight, min=q_min, max=q_max)
+        return q_weight / q_max
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        q_mask, s, q_weight, q_max, s_g_scale = ctx.saved_tensors
+        return s * grad_out * q_mask / q_max, s_g_scale * (q_weight * grad_out * q_mask).sum() / q_max, None, None, None
+
 
 class LSQWeight(SymQuantizeWeight):
-    def __init__(self, layer_weight, **kwargs):
+    def __init__(self, layer_weight=torch.tensor(1.0), **kwargs):
         super().__init__(**kwargs)
-        self.s_w = nn.Parameter(torch.tensor( self.upper / (2 * layer_weight.abs().mean()) ))
+        with torch.no_grad():
+            self.s_w_Param = nn.Parameter( torch.sqrt(self.upper.cpu()) / (2 * layer_weight.abs().mean().cpu()) )
+            self.register_buffer("s_g_scale", 1 / torch.sqrt(layer_weight.numel() * self.upper))
 
     def forward(self, layer_weight: nn.Parameter):
-        return torch.clamp(layer_weight * self.s_w, min=self.lower, max=self.upper).round()
+        return LSQImpl.apply(layer_weight, self.s_w_Param, self.lower, self.upper, self.s_g_scale)
+
+    def compute_s(self, layer_weight: nn.Parameter):
+        # Set the parameter to registered buffer for saving purpose
+        with torch.no_grad():
+            self.s_w.copy_(self.s_w_Param.data.div(self.upper))
 
 
 class ODEWrapperRC(nn.Module):
@@ -1393,12 +1415,14 @@ class QATWrapper2State(ODEWrapper2State):
     2. Dynamically update the scaling parameters before each forward pass based on the weights.
     During test, use QATTester2State.
     """
-    def __init__(self, **kwargs):
+    def __init__(self, qat_cls=SymQuantizeWeight, **kwargs):
         kwargs.update({"patch": False, "quantize": False})
         super().__init__(**kwargs)
         self.w_bits = kwargs.get("w_bits", 8)
-        self.FF_quantizer = SymQuantizeWeight(self.w_bits).to(self.ode_block.FFconv.weight.device)
-        self.FB_quantizer = SymQuantizeWeight(self.w_bits).to(self.ode_block.FBconv.weight.device)
+        self.FF_quantizer = qat_cls(w_bits=self.w_bits, layer_weight=self.ode_block.FFconv.weight).to(
+            self.ode_block.FFconv.weight.device)
+        self.FB_quantizer = qat_cls(w_bits=self.w_bits, layer_weight=self.ode_block.FBconv.weight).to(
+            self.ode_block.FBconv.weight.device)
         self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
         self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
         P.register_parametrization(self.ode_block.FFconv, "weight", self.FF_quantizer)
@@ -1572,4 +1596,5 @@ ODEWrapper_CLASSES = {
 QUANTIZER_CLASSES = {
     "SymQuantizeWeight": SymQuantizeWeight,
     "LSQWeight": LSQWeight,
+    None: SymQuantizeWeight,
 }

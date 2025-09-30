@@ -20,11 +20,13 @@ for n_bits in "${NBITS[@]}"; do
     --bypass        "false" \
     --batch_size    128 \
     --method        "dopri5" \
-    --tol           "0.0001" \
+    --tol           "1e-4" \
     --t_end         "1.5" \
-    --R             "1e5" \
-    --C             "49e-15" \
+    --R             "1" \
+    --C             "1" \
+    --v_dd          "1" \
     --w_bits        "${n_bits}" \
+    --qat_cls       "LSQWeight" \
     --ode_wrapper   "QATWrapper2State" \
     --pc_conv       "PCConvReLU6" \
     --ode_block     "S2NoMinusZChgZNoisyI" \
