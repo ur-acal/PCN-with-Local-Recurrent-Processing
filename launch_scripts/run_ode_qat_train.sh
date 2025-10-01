@@ -28,7 +28,7 @@ for n_bits in "${NBITS[@]}"; do
     --C             "49e-15" \
     --v_dd          "1" \
     --w_bits        "${n_bits}" \
-    --qat_cls       "SymQuantizeWeight" \
+    --qat_cls       "LSQWeight" \
     --ode_wrapper   "QATWrapper2State" \
     --pc_conv       "PCConvReLU6" \
     --ode_block     "S2NoMinusZChgZNoisyI" \

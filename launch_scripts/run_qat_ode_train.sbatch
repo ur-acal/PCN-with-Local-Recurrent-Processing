@@ -33,7 +33,7 @@ else
 fi
 
 R_val="1e5"
-C_val="49e-12"
+C_val="49e-15"
 t_end="1.5"
 
 EXP="${EXP:-no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp}"
@@ -82,7 +82,7 @@ run_one () {
     --img_type      "${IMG_TYPE}" \
     --learning_rate 0.01 \
     --cosine_t0     10 \
-    --num_epochs    20 \
+    --num_epochs    50 \
     --model_name    "${MODEL_NAME}" \
     --eval_every    1 \
     --offset_eps    0.0 \
