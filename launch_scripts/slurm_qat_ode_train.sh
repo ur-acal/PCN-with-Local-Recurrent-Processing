@@ -19,9 +19,10 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 ###############################################################################################
 # Which Model to finetune
 MODEL_NAMES=(
-  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
-)
-NBITS=(4 5 6)
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP" # RGGB
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2Pool_rggb_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_4Layers_2Pool_rggb_1REP")
+NBITS=(4 5)
 ###############################################################################################
 
 # Paths
@@ -40,7 +41,7 @@ split_and_submit() {
   ###############################################################################################
   # Change EXP name here
   ###############################################################################################
-  local EXP="no_bn_${ft_model_name}_NODE_QAT_0922_2State_Exp"
+  local EXP="no_bn_${ft_model_name}_NODE_QAT_1001_rggb_2State_Exp"
   ###############################################################################################
   echo "Submitting Model_Name=${ft_model_name} n_bits=${n_bits} → EXP=${EXP}"
   jid=$( sbatch --parsable \

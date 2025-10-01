@@ -80,7 +80,8 @@ run_one () {
   python -u train_ode_cifar.py \
     --optim         "SGD" \
     --img_type      "${IMG_TYPE}" \
-    --learning_rate 0.0001 \
+    --learning_rate 0.01 \
+    --cosine_t0     10 \
     --num_epochs    20 \
     --model_name    "${MODEL_NAME}" \
     --eval_every    1 \
@@ -95,6 +96,7 @@ run_one () {
     --R             "${R_val}" \
     --C             "${C_val}" \
     --w_bits        "${NBITS}" \
+    --qat_cls       "SymQuantizeWeight" \
     --ode_wrapper   "${wrapper}" \
     --t_end         "${t_end}" \
     --pc_conv       "${PC_CONV}" \
