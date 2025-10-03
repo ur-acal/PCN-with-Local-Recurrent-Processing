@@ -98,6 +98,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
+                      "thermal_noise": False, # Todo: Add thermal noise in validation?
                       "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     saved_wrappers = {}
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -111,9 +112,9 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.warning("Model pooling layers: {}".format(net_.max_pool))
 
     valid_ins = Validator(model=net_,
-                          expanded_weight_dir=os.path.join(args.expanded_w_dir, "{}b".format(args.w_bits), args.model_name),
+                          expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name, "{}b".format(args.w_bits)),
                           device=device, test_dataloader=test_dataloader,
-                          result_path=os.path.join(args.hw_val_path, "{}b".format(args.w_bits), args.model_name))
+                          result_path=os.path.join(args.hw_val_path, args.model_name, "{}b".format(args.w_bits)))
     logging.warning("Unroll or load expanded weights finished")
     if args.test_expanded:
         valid_ins.test_unroll()
@@ -198,8 +199,9 @@ def run_ode_inference():
             run_test_only(args, test_dataloader, ckpt_path, pc_conv, device)
             exit(0)
         elif args.hw_validate:
-            run_validation_data_gen(args, get_test_data(test_bs=32, img_type=args.img_type),
+            run_validation_data_gen(args, get_test_data(test_bs=128, img_type=args.img_type),
                                     ckpt_path, pc_conv, device)
+            exit(0)
 
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
     noise_level_list_ = [0, 0.1, .20, .30, .40]

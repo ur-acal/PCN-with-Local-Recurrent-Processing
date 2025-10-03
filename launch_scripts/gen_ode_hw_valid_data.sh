@@ -8,7 +8,7 @@ export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
-N_BITS_VALS=(4)
+N_BITS_VALS=(5)
 #N_BITS_VALS=(5 5 5 5 5 5 5 5 5 5)
 METHOD_VALS=("dopri5")
 CAP_VALS=("49e-15")
@@ -33,18 +33,19 @@ MODEL_NAMES=(
 #  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_6REP" # R=C=1 and v_dd=10
 #  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_7REP" # R=C=1, lr=1e-3
 #  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_8REP" # R=1e5, C=49e-15 lr=1e-3
+
 #  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_10REP" # LR=1e-2 Cosine Annealing, R=1e5, C=49e-15
 #  "QAT4bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_7REP" # Same as above, but 4-bit
-  "QAT4bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
+#  "QAT4bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
 
 #  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_3REP" # LSQ
 #  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_7REP" # R=C=1, lr=1e-3
 #  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_5REP" # R=1e5, C=49e-15
 #  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_6REP" # R=1e5, C=49e-15 lr=1e-3
 
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP" # RGGB
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2Pool_rggb_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_4Layers_2Pool_rggb_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP" # RGGB
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2Pool_rggb_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_4Layers_2Pool_rggb_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -100,8 +101,9 @@ run_model(){
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
-    --ode_wrapper     "QATTester2State" \
+    --ode_wrapper     "ODEWrapper2State" \
     --img_type        "${_img_type}" \
+    --conv_only       "true" \
     --hw_validate     "true" \
     --test_expanded   "true" \
     --hw_val_path     "./hw_validation_data" \
@@ -117,15 +119,16 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1001_Quant_Weight_neg1to1_${method}Method_${tol}Tol.log"
+  EXP_NAME="1002_gen_hw_validation_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
   > "$JOB_LOG"
   echo "Tail master with: tail -f $MASTER_LOG"
+  echo "Monitor job with: tail -f $BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/val_data_gen_job.log"
   # ─────────────── run in parallel ───────────────
   parallel \
-    --jobs 2 \
+    --jobs 1 \
     --joblog "$JOB_LOG" \
     --keep-order \
     run_model {1} "${method}" {2} {3} \
