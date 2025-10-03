@@ -17,6 +17,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLASSES, wrap_ode_block
 from cross_sim_inference import calibrate_input
+from validation import Validator
 
 import logging
 log = logging.getLogger(__name__)
@@ -65,6 +66,14 @@ def parse_args():
                         default=False)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
+    parser.add_argument("--hw_validate", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
+    parser.add_argument("--test_expanded", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
+    parser.add_argument("--expanded_w_dir", type=str, default="./expanded_weights")
+    parser.add_argument("--hw_val_path", type=str, default="./hw_validation_data")
+    parser.add_argument("--valid_samples", type=int, default=10,
+                        help="Number of samples used for validation")
     return parser.parse_args()
 
 
@@ -78,6 +87,37 @@ def get_t_end(args):
     else:
         assert args.t_end is not None
         return args.t_end
+
+
+def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
+    logging.info("----- Generating validation data for model: {} -----".format(args.model_name))
+    t_end = get_t_end(args)
+    noisy_params = {"noise_level": 0.0, "weight": None}
+    ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
+                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
+    wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
+                      "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "w_quant_mode": args.w_quant_mode,
+                      "w_perc": args.w_perc} if args.ode_wrapper is not None else None
+    saved_wrappers = {}
+    net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
+                                  pc_conv_layer=pc_conv, data_parallel=False,
+                                  noise_to_bn=True, noise_to_linear=True,
+                                  fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
+                                  ode_wrapper_params=wrapper_params, wrappers=saved_wrappers,
+                                  **noisy_params)
+    logging.warning("Model input channels: {}".format(net_.ics))
+    logging.warning("Model output channels: {}".format(net_.ocs))
+    logging.warning("Model pooling layers: {}".format(net_.max_pool))
+
+    valid_ins = Validator(model=net_,
+                          expanded_weight_dir=os.path.join(args.expanded_w_dir, "{}b".format(args.w_bits), args.model_name),
+                          device=device, test_dataloader=test_dataloader,
+                          result_path=os.path.join(args.hw_val_path, "{}b".format(args.w_bits), args.model_name))
+    logging.warning("Unroll or load expanded weights finished")
+    if args.test_expanded:
+        valid_ins.test_unroll()
+    valid_ins.gen_validate_data(wrappers=saved_wrappers["wrappers"], n_samples=args.valid_samples)
 
 
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
@@ -157,6 +197,9 @@ def run_ode_inference():
         if args.test_only:
             run_test_only(args, test_dataloader, ckpt_path, pc_conv, device)
             exit(0)
+        elif args.hw_validate:
+            run_validation_data_gen(args, get_test_data(test_bs=32, img_type=args.img_type),
+                                    ckpt_path, pc_conv, device)
 
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
     noise_level_list_ = [0, 0.1, .20, .30, .40]

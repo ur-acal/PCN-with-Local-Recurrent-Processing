@@ -253,7 +253,7 @@ def main():
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
                           "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "qat_cls": QUANTIZER_CLASSES[args.qat_cls]}
-        model = wrap_ode_block(model, **wrapper_params)
+        model, _ = wrap_ode_block(model, **wrapper_params)
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
 
     # Get trainer

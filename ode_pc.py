@@ -1510,6 +1510,7 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
 
 def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
     calib_res = [10 for _ in range(pc_net.num_layers)]
+    wrappers = []
     # Todo: Perform calibration for intermediate states if we are going to quantize them and the weights
     if calib_path is None:
         pass
@@ -1528,7 +1529,8 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
                                           R=R, C=C, v_dd=v_dd, is_first=False, is_last=False, **kwargs)
         ode_wrapper_ins.to(pc_net.device)
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
-    return pc_net
+        wrappers.append(ode_wrapper_ins)
+    return pc_net, wrappers
 
 
 ODEBLOCK_CLASSES = {

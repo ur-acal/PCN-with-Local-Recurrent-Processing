@@ -134,7 +134,7 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
-                           conv_only=False, ode_params=None, ode_wrapper_params=None, **kwargs):
+                           conv_only=False, ode_params=None, ode_wrapper_params=None, wrappers=None, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
@@ -191,8 +191,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
             net_ = make_ode_block(net_, noise_level=noise_level, **ode_params)
             logging.warning("PcConv converted to ODEBlock, ode_params={}".format(ode_params))
             if isinstance(ode_wrapper_params, dict):
-                net_ = wrap_ode_block(net_, **ode_wrapper_params)
+                net_, wrapper_lists = wrap_ode_block(net_, **ode_wrapper_params)
                 logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(ode_wrapper_params))
+                if isinstance(wrappers, dict):
+                    wrappers["wrappers"] = wrapper_lists
         #############################################################################
         if noise_level > 0.0:
             mean_abs = []

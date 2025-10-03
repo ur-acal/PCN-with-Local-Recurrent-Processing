@@ -28,6 +28,7 @@ loss_plot/
 expanded_weights/
 saved_ckpt/
 logs/
+hw_validation_data/
 run_single*
 run_multiple.sh
 test_model__.py
