@@ -23,14 +23,18 @@ if [[ "$ARCH_SET" == "A" ]]; then
   ARCH_LABEL="6L3P"
 elif [[ "$ARCH_SET" == "A2p" ]]; then
   ARCH_LABEL="6L2P"
+elif [[ "$ARCH_SET" == "A2" ]]; then
+  ARCH_LABEL="6LStride2"
 elif [[ "$ARCH_SET" == "B" ]]; then
   ARCH_LABEL="18L2P"
 elif [[ "$ARCH_SET" == "C" ]]; then
   ARCH_LABEL="7L2P"
 elif [[ "$ARCH_SET" == "C2" ]]; then
-  ARCH_LABEL="7L2PStride2"
+  ARCH_LABEL="7LStride2"
 elif [[ "$ARCH_SET" == "D2p" ]]; then
   ARCH_LABEL="4L2P"
+elif [[ "$ARCH_SET" == "D2" ]]; then
+  ARCH_LABEL="4LStride2"
 else
   ARCH_LABEL="Invalid"
 fi
@@ -56,6 +60,11 @@ elif [[ "$ARCH_SET" == "A2p" ]]; then
   OUT=(32 32 64 64 128 128)
   POOL=(0  0  1  0  1   0)
   STRIDE=(1)
+elif [[ "$ARCH_SET" == "A2" ]]; then
+  INP=(3  32 32 64 64  128)
+  OUT=(32 32 64 64 128 128)
+  POOL=(0  0  0  0  0   0)
+  STRIDE=(1  1  2  1  2   1)
 elif [[ "$ARCH_SET" == "B" ]]; then
   INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
   OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
@@ -76,6 +85,11 @@ elif [[ "$ARCH_SET" == "D2p" ]]; then
   OUT=(32 64 64 128)
   POOL=(0 1  1  0)
   STRIDE=(1)
+elif [[ "$ARCH_SET" == "D2" ]]; then
+  INP=(3  32 64 64)
+  OUT=(32 64 64 128)
+  POOL=(0 0  0  0)
+  STRIDE=(1 2  2  1)
 else
   echo "ARCH_SET must be A or B or C[2]"; exit 2
 fi
@@ -145,7 +159,7 @@ run_one () {
     --img_type      "${IMG_TYPE}" \
     --num_epochs    150 \
     --eval_every    10 \
-    --offset_eps    0.2 \
+    --offset_eps    0.0 \
     --inp_channels  "${INP[@]}" \
     --out_channels  "${OUT[@]}" \
     --max_pool      "${POOL[@]}" \
