@@ -11,7 +11,7 @@
 
 # ---- Conda activation (non-interactive safe) ----
 source activate base
-conda activate cross_sim
+conda activate scanbase
 
 ##########################################################################
 # Change exp name here.

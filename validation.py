@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import random
 from copy import deepcopy
 
-from example import handleError
 from tqdm import tqdm
 
 from pc_model import PCNet

@@ -155,7 +155,7 @@ class TrainerCiFar(object):
         }
         tmp_sp = os.path.join(str(save_to), "__tmp_model.pth")
         torch.save(tmp_sd, tmp_sp)
-        tmp_sd = torch.load(tmp_sp)
+        tmp_sd = torch.load(tmp_sp, weights_only=False)
         decoupled_model = model_class(
             **{**tmp_sd['init_args']['model_args'], **tmp_sd['init_args']['kwargs']}).to(self.device)
         p_dict = get_parametrized_weight_mods(self.model)

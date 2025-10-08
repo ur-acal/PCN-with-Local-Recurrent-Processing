@@ -11,7 +11,7 @@
 
 # ---- Conda activation (non-interactive safe) ----
 source activate base
-conda activate cross_sim
+conda activate scanbase
 
 ##########################################################################
 # Change exp name here.
@@ -245,7 +245,7 @@ eval_model() {
   local ckpt="best"
   ################################
   # Todo: Set n_bits, R, C value as fixed for now
-  local n_bits=6
+  local n_bits=5
   local R_val="1e5"
   local C_val="49e-15"
   local wrapper="$(map_test_wrapper "$test_block")"

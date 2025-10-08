@@ -135,7 +135,7 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
                            conv_only=False, ode_params=None, ode_wrapper_params=None, wrappers=None, **kwargs):
-    checkpoint_weight = torch.load(model_path, map_location=device)  # weights_only=False
+    checkpoint_weight = torch.load(model_path, map_location=device, weights_only=False)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
 
