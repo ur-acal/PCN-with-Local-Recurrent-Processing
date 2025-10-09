@@ -35,6 +35,12 @@ elif [[ "$ARCH_SET" == "D2p" ]]; then
   ARCH_LABEL="4L2P"
 elif [[ "$ARCH_SET" == "D2" ]]; then
   ARCH_LABEL="4LStride2"
+elif [[ "$ARCH_SET" == "Ker5_A" ]]; then
+  ARCH_LABEL="5LKer5"
+elif [[ "$ARCH_SET" == "Ker5_C" ]]; then
+  ARCH_LABEL="6LKer5"
+elif [[ "$ARCH_SET" == "Ker3_D" ]]; then
+  ARCH_LABEL="5LKer3"
 else
   ARCH_LABEL="Invalid"
 fi
@@ -49,6 +55,8 @@ mkdir -p "$LOGDIR"
 # On cancel/terminate, stop children too
 trap 'echo "Signal caught; killing children..."; kill -- -$$ 2>/dev/null || true' TERM INT
 
+KERNEL=(3)
+padding=1
 # ---- Arch definitions ----
 if [[ "$ARCH_SET" == "A" ]]; then
   INP=(3  32 32 64 64  128)
@@ -90,6 +98,22 @@ elif [[ "$ARCH_SET" == "D2" ]]; then
   OUT=(32 64 64 128)
   POOL=(0 0  0  0)
   STRIDE=(1 2  2  1)
+elif [[ "$ARCH_SET" == "Ker5_A" ]]; then
+  INP=(3  32 32 64 64)
+  OUT=(32 32 64 64 64)
+  POOL=(0  0  1  1  0)
+  KERNEL=(5)
+  padding=2
+elif [[ "$ARCH_SET" == "Ker5_C" ]]; then
+  INP=(3  32 32 64 64 64)
+  OUT=(32 32 64 64 64 64)
+  POOL=(0  0  1  0  1  0)
+  KERNEL=(5)
+  padding=2
+elif [[ "$ARCH_SET" == "Ker3_D" ]]; then
+  INP=(3  32 64 64 64)
+  OUT=(32 64 64 64 64)
+  POOL=(0  1  0  1  0)
 else
   echo "ARCH_SET must be A or B or C[2]"; exit 2
 fi
@@ -97,6 +121,7 @@ fi
 if [[ "$IMG_TYPE" != "rgb" ]]; then
   INP[0]=4
 fi
+
 
 ##########################################################################
 # Blocks are passed in
@@ -164,6 +189,8 @@ run_one () {
     --out_channels  "${OUT[@]}" \
     --max_pool      "${POOL[@]}" \
     --stride        "${STRIDE[@]}" \
+    --kernel_size   "${KERNEL[@]}" \
+    --padding       "${padding}" \
     --dropout       0.25 \
     --tie_weights   "false" \
     --tie_bp        "false" \

@@ -164,7 +164,7 @@ def main():
         "out_channels": args.out_channels,
         "max_pool": args.max_pool,
         "num_classes": args.num_classes,
-        "kernel_size": args.kernel_size,
+        "kernel_size": args.kernel_size if not (isinstance(args.kernel_size, List) and len(args.kernel_size) == 1) else args.kernel_size[0],
         "stride": args.stride if not (isinstance(args.stride, List) and len(args.stride) == 1) else args.stride[0],
         "padding": args.padding if args.patch_dim is None else "same",
         "cls": 0,
