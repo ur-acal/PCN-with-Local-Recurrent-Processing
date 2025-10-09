@@ -42,7 +42,7 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("Ker5_A" "Ker5_C" "Ker5_D")
+ARCHES=("Ker5_A" "Ker5_C" "Ker3_D")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "rggb" )

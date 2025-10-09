@@ -102,18 +102,21 @@ elif [[ "$ARCH_SET" == "Ker5_A" ]]; then
   INP=(3  32 32 64 64)
   OUT=(32 32 64 64 64)
   POOL=(0  0  1  1  0)
+  STRIDE=(1)
   KERNEL=(5)
   padding=2
 elif [[ "$ARCH_SET" == "Ker5_C" ]]; then
   INP=(3  32 32 64 64 64)
   OUT=(32 32 64 64 64 64)
   POOL=(0  0  1  0  1  0)
+  STRIDE=(1)
   KERNEL=(5)
   padding=2
 elif [[ "$ARCH_SET" == "Ker3_D" ]]; then
   INP=(3  32 64 64 64)
   OUT=(32 64 64 64 64)
   POOL=(0  1  0  1  0)
+  STRIDE=(1)
 else
   echo "ARCH_SET must be A or B or C[2]"; exit 2
 fi
