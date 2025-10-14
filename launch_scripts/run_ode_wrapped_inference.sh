@@ -114,10 +114,10 @@ run_model(){
     --tol             "$tol" \
     --n_steps         15 \
     --ts_scale        1 \
-    --d_start         0.1 \
-    --d_end           0.1 \
+    --d_start         0.2 \
+    --d_end           0.2 \
     --n_sweep_left    5 \
-    --n_sweep_right   5 \
+    --n_sweep_right   0 \
     --R               1e5 \
     --C               "$cap_val" \
     --v_dd            "1" \

@@ -245,7 +245,7 @@ def run_ode_inference():
                                                   **noisy_params)
                 real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
                 max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
-                max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.2g}", f"{min_real_t.item():.2g}", f"{avg_real_t.item():.2g}"
+                max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"
                 real_t_end = avg_real_t
                 net_.eval()
                 total = 0
