@@ -10,10 +10,10 @@ export tol="1e-6"
 #N_BITS_VALS=(4 5 6 7 8)
 N_BITS_VALS=(5)
 #N_BITS_VALS=(5 5 5 5 5 5 5 5 5 5)
-#METHOD_VALS=("dopri5")
+METHOD_VALS=("dopri5")
 CAP_VALS=("49e-15")
 #METHOD_VALS=("euler")
-METHOD_VALS=("rk4")
+#METHOD_VALS=("rk4")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
 # MASTER_LOG and JOB_LOG will be set per noise combination
@@ -67,7 +67,8 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2Pool_rggb_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_4Layers_2Pool_rggb_1REP"
 
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_3REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -113,10 +114,10 @@ run_model(){
     --tol             "$tol" \
     --n_steps         15 \
     --ts_scale        1 \
-    --d_start         0 \
-    --d_end           1 \
-    --n_sweep_left    0 \
-    --n_sweep_right   1 \
+    --d_start         0.1 \
+    --d_end           0.1 \
+    --n_sweep_left    5 \
+    --n_sweep_right   5 \
     --R               1e5 \
     --C               "$cap_val" \
     --v_dd            "1" \
@@ -125,7 +126,6 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "ODEWrapper2State" \
     --img_type        "${_img_type}" \
-    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model
@@ -137,7 +137,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1013_Quant_Weight_neg1to1_${method}Method_${tol}Tol.log"
+  EXP_NAME="1014_scanGPI_sweep_time_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
