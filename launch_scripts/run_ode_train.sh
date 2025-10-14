@@ -11,7 +11,7 @@ python train_ode_cifar.py \
   --optim         "SGD" \
   --img_type      "scanGFI" \
   --num_epochs    150 \
-  --eval_every    3 \
+  --eval_every    10 \
   --offset_eps    0.0 \
   --inp_channels  4  32 64 64 64 \
   --out_channels  32 64 64 64 64 \

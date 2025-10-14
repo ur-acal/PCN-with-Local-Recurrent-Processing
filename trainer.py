@@ -270,6 +270,10 @@ class TrainerCiFar(object):
                 train=True,
                 noise_config=scangen_config["noise"],
                 device=self.device,
+                transform=transforms.Compose([
+                    transforms.RandomCrop(16, padding=2),
+                    transforms.RandomHorizontalFlip(),
+                ])
             )
             self.val_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
