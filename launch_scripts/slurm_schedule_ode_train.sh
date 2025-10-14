@@ -45,7 +45,7 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 ARCHES=("Ker5_A" "Ker5_C" "Ker3_D")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
-IMG_TYPES=( "rggb" )
+IMG_TYPES=( "scanGFI" )
 ###############################################################################################
 
 # Paths
@@ -83,7 +83,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1008_2State_rggb_kernel_5_3_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1013_2State_scanGFI_kernel_5_3_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

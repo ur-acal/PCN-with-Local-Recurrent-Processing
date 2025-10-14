@@ -6,6 +6,8 @@ import os
 import pickle
 import argparse
 import logging
+import json
+import subprocess
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -24,6 +26,7 @@ from simulator.algorithms.dnn.torch.convert import from_torch, convertible_modul
 from cross_sim.dnn_inference_params import dnn_inference_params
 from cross_sim.cross_bar_params import base_params_args
 from cross_sim.test_analog_model import test_analog_model, get_exp_name
+from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 
 
 def parse_args():
@@ -77,6 +80,19 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
                 transforms.RandomHorizontalFlip(),
             ])
         train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+    elif img_type == "scanGFI":
+        subprocess.run("uv run scangen create-config", shell=True)
+        with open("./config.json") as fp:
+            scangen_config = json.load(fp)
+        train_set = MyNoiseCIFARDataset(
+            root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
+                              "cifar-10-data", img_type),
+            input_name="cifar10",
+            train=True,
+            noise_config=scangen_config["noise"],
+            device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
+        )
+        subprocess.run("rm ./config.json", shell=True)
     else:
         transform_train = transforms.Compose([
             transforms.ToTensor(),

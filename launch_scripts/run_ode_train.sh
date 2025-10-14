@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_1008_S2NoMinusZChgZNoisyI"
+EXP="no_bn_pcn_NODE_1013_S2NoMinusZChgZNoisyI_scan_gfi"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -9,9 +9,9 @@ STRIDE=(1)
 KSZ=(3)
 python train_ode_cifar.py \
   --optim         "SGD" \
-  --img_type      "rggb" \
+  --img_type      "scanGFI" \
   --num_epochs    150 \
-  --eval_every    10 \
+  --eval_every    3 \
   --offset_eps    0.0 \
   --inp_channels  4  32 64 64 64 \
   --out_channels  32 64 64 64 64 \

@@ -10,9 +10,12 @@ import torchvision
 import torchvision.transforms as transforms
 import argparse
 import tqdm
+import subprocess
+import json
 
 from pc_model import PCNet
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods
+from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
@@ -256,6 +259,27 @@ class TrainerCiFar(object):
                     ToPackedRGGB(return_orig=False), ])
             self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
             self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+        elif img_type == "scanGFI":
+            subprocess.run("uv run scangen create-config", shell=True)
+            with open("./config.json") as fp:
+                scangen_config = json.load(fp)
+            self.train_set = MyNoiseCIFARDataset(
+                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
+                                  "cifar-10-data", img_type),
+                input_name="cifar10",
+                train=True,
+                noise_config=scangen_config["noise"],
+                device=self.device,
+            )
+            self.val_set = MyNoiseCIFARDataset(
+                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
+                                  "cifar-10-data", img_type),
+                input_name="cifar10",
+                train=False,
+                noise_config=scangen_config["noise"],
+                device=self.device,
+            )
+            subprocess.run("rm ./config.json", shell=True)
         else:
             transform_train = transforms.Compose([
                 transforms.ToTensor(),
