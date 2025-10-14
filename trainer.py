@@ -260,8 +260,9 @@ class TrainerCiFar(object):
             self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
             self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
         elif img_type == "scanGFI":
-            subprocess.run("uv run scangen create-config", shell=True)
-            with open("./config.json") as fp:
+            conf_file = "./{}config.json".format(self.model_name)
+            subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+            with open("./{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             self.train_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
@@ -283,7 +284,7 @@ class TrainerCiFar(object):
                 noise_config=scangen_config["noise"],
                 device=self.device,
             )
-            subprocess.run("rm ./config.json", shell=True)
+            subprocess.run("rm ./{}".format(conf_file), shell=True)
         else:
             transform_train = transforms.Compose([
                 transforms.ToTensor(),

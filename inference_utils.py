@@ -8,6 +8,7 @@ import sys
 import pickle
 import subprocess
 import json
+import time
 import matplotlib.pyplot as plt
 
 from torch.utils.data import DataLoader, Subset
@@ -44,8 +45,9 @@ def get_test_data(test_bs=2048, img_type="rgb"):
                 ToPackedRGGB(return_orig=False), ])
         test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
     elif img_type == "scanGFI":
-        subprocess.run("uv run scangen create-config", shell=True)
-        with open("./config.json") as fp:
+        conf_file = "./{}config.json".format(int(time.time() * 1000))
+        subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+        with open("./{}".format(conf_file)) as fp:
             scangen_config = json.load(fp)
         test_set = MyNoiseCIFARDataset(
             root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
@@ -55,7 +57,7 @@ def get_test_data(test_bs=2048, img_type="rgb"):
             noise_config=scangen_config["noise"],
             device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
         )
-        subprocess.run("rm ./config.json", shell=True)
+        subprocess.run("rm ./{}".format(conf_file), shell=True)
     else:
         transform_test = transforms.Compose([
             transforms.ToTensor(),
