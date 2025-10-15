@@ -212,10 +212,10 @@ def run_ode_inference():
     # For single t_end, set d_start=0, d_end=1, n_sweep=1
     sweep_start, sweep_end = gt_t_end - args.d_start, gt_t_end + args.d_end
     t_end_before, t_end_after = torch.tensor([]), torch.tensor([])
-    if args.d_start > 0:
+    if args.d_start > 0 and args.n_sweep_left > 0:
         t_end_before = torch.arange(sweep_start, gt_t_end, args.d_start / args.n_sweep_left, dtype=torch.float32)
         t_end_before = t_end_before[t_end_before < gt_t_end]
-    if args.d_end > 0:
+    if args.d_end > 0 and args.n_sweep_right > 0:
         t_end_after = torch.arange(gt_t_end, sweep_end, args.d_end / args.n_sweep_right, dtype=torch.float32)
     t_end_list = torch.cat([t_end_before, t_end_after]).tolist()
 
