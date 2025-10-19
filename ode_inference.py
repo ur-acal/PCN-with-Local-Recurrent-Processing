@@ -44,6 +44,8 @@ def parse_args():
     parser.add_argument("--R", type=float, default=1e5, help="Resistance")
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
+    parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=True)
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     parser.add_argument("--w_quant_mode", type=str, default="min_max", help="min_max or perc")
     parser.add_argument("--w_perc", type=float, default=0.99999, help="percentile for quantization")
@@ -70,6 +72,8 @@ def parse_args():
                         default=False)
     parser.add_argument("--test_expanded", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
+    parser.add_argument("--pvt_to_origin", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False,  help="Add weight non-ideality to the original or unrolled weights; works for test_expanded=True")
     parser.add_argument("--expanded_w_dir", type=str, default="./expanded_weights")
     parser.add_argument("--hw_val_path", type=str, default="./hw_validation_data")
     parser.add_argument("--valid_samples", type=int, default=10,
@@ -92,13 +96,18 @@ def get_t_end(args):
 def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Generating validation data for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
+    unrolled_noise_level = 0.2
     noisy_params = {"noise_level": 0.0, "weight": None}
+    if args.pvt_to_origin:
+        # addinig non-ideality to the original weights and then expand (expanded values have the same non-ideality)
+        # Todo: This needs unrolling at each forward pass, very inefficient. Thus is not used for now.
+        noisy_params["noise_level"] = unrolled_noise_level
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
-                      "thermal_noise": False, # Todo: Add thermal noise in validation?
+                      "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
                       "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     saved_wrappers = {}
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -116,6 +125,12 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                           device=device, test_dataloader=test_dataloader,
                           result_path=os.path.join(args.hw_val_path, args.model_name, "{}b".format(args.w_bits)))
     logging.warning("Unroll or load expanded weights finished")
+    if not args.pvt_to_origin:
+        # adding non-ideality to unrolled weights
+        for _blk in net_.PcConvs:
+            _blk.noise_level = unrolled_noise_level
+            _blk.add_noise()
+    logging.warning("Test unrolled with noise level: {} (Mismatch added to unrolled weights)".format(unrolled_noise_level))
     if args.test_expanded:
         valid_ins.test_unroll()
     valid_ins.gen_validate_data(wrappers=saved_wrappers["wrappers"], n_samples=args.valid_samples)
@@ -236,6 +251,9 @@ def run_ode_inference():
             acc_list = []
             for t in range(trials):
                 noisy_params = {"noise_level": noise_level, "weight": None}
+                if args.test_expanded:
+                    # Add non-ideality to expanded weights
+                    noisy_params["noise_level"] = 0.0
                 with torch.no_grad():
                     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                                   pc_conv_layer=pc_conv, data_parallel=False,
@@ -243,6 +261,20 @@ def run_ode_inference():
                                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                                   ode_wrapper_params=wrapper_params,
                                                   **noisy_params)
+                    if args.test_expanded:
+                        # Use validator to expand the weights of the model
+                        # Notice: Applicable to 2 state ode blocks only.
+                        valid_ins = Validator(model=net_,
+                                              expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name,
+                                                                               "{}b".format(args.w_bits)),
+                                              device=device, test_dataloader=test_dataloader,
+                                              result_path=os.path.join(args.hw_val_path, args.model_name,
+                                                                       "{}b".format(args.w_bits)))
+                        logging.warning("Unroll or load expanded weights finished")
+                        for _blk in net_.PcConvs:
+                            _blk.noise_level = noise_level
+                            _blk.add_noise()
+                        net_ = valid_ins.model
                 real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
                 max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
                 max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"

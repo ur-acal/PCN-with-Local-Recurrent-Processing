@@ -120,8 +120,13 @@ class ODEBlockPC(nn.Module):
         return out
 
     def _apply_noise(self, p):
-        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
-        p.mul_(1 + noise_)
+        if getattr(p, "is_sparse_csr", False):
+            v_ = p.values()
+            noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * self.noise_level
+            v_.mul_(1 + noise_)
+        else:
+            noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
+            p.mul_(1 + noise_)
 
     def add_noise(self):
         logging.warning("Adding noise to FFconv in ODEBlockPC")
@@ -977,11 +982,22 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
     def _set_eps(self, x):
         if self.eps_scale is not None:
             with torch.no_grad():
-                weight_sum = (self.FFconv.weight.data.view(
-                    self.out_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1),
-                              self.FBconv.weight.data.view(
-                    self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
-                              )
+                if isinstance(self.FFconv, nn.Conv2d):
+                    ff_ws = self.FFconv.weight.data.view(
+                        self.out_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
+                else:
+                    # Assuming unrolled
+                    ff_ws = self.FFconv.inp_param_sum(x)
+                if isinstance(self.FBconv, nn.ConvTranspose2d):
+                    fb_ws = self.FBconv.weight.data.view(
+                        self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
+                elif isinstance(self.FBconv, nn.Conv2d):
+                    fb_ws = self.FBconv.weight.data.flip([2,3]).permute([1,0,2,3]).view(
+                        self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
+                else:
+                    # Assuming unrolled
+                    fb_ws = self.FBconv.inp_param_sum(x)
+                weight_sum = (ff_ws, fb_ws)
             # directly use the eps_scale
             self.option_init["eps"] = self.eps_scale * self.offset_eps * weight_sum[1]
             self.option_aca["eps"] = tuple(self.eps_scale * self.offset_eps * _ws for _ws in weight_sum)

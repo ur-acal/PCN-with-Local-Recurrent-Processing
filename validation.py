@@ -186,6 +186,18 @@ class MVMConv(nn.Module):
         output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
         return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
 
+    @property
+    def weight(self):
+        return self.mat
+
+    def inp_param_sum(self, x):
+        _, input_channels, input_h, input_w = x.shape
+        output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
+        output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
+        inp_summed = torch.sparse.sum(self.mat.abs().to_sparse_coo(), dim=1).to_dense()
+        out_chan = self.meta["out_chan"]
+        # inp_summed = inp_summed.view(out_chan, output_h, output_w).sum(dim=1)
+        return inp_summed.sqrt().view(1, out_chan, output_h, output_w)
 
 class Validator(nn.Module):
     def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, **kwargs):
