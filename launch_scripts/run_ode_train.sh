@@ -6,7 +6,8 @@ mkdir -p "${LOGDIR}"
 
 ##STRIDE=(1  1  2  1  2   1   1)
 STRIDE=(1)
-KSZ=(3)
+KSZ=(5)
+PADDING=2 # For ksz=5, padding=2; o.w. padding=1
 python train_ode_cifar.py \
   --optim         "SGD" \
   --img_type      "scanGFI" \
@@ -17,7 +18,7 @@ python train_ode_cifar.py \
   --out_channels  32 64 64 64 64 \
   --max_pool      0  1  0  1  0   \
   --kernel_size   "${KSZ[@]}" \
-  --padding       1 \
+  --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
   --dropout       0.25 \
   --tie_weights   "false" \

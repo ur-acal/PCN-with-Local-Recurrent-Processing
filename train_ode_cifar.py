@@ -114,7 +114,8 @@ def _constr_model_name(args, rep=1):
         model_name += "{}CosLR{}T0_".format(str(args.learning_rate), args.cosine_t0)
     else:
         model_name += str(args.learning_rate) + 'LR_'
-    model_name += str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers_" \
+    model_name += "{}K{}S_".format(args.kernel_size[0], args.stride[0]) \
+                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers_" \
                   + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
     if args.tie_method is not None:

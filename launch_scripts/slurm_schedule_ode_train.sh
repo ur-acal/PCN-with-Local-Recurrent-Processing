@@ -83,7 +83,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1013_2State_scanGFI_kernel_5_3_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1018_2State_scanGFI_kernel_5_3_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
