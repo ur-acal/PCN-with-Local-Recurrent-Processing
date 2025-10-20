@@ -9,8 +9,8 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 ###############################################################################################
 # running with
 # module swap slurm slurm/24.05.0.b1
-# ( source ./launch_scripts/slurm_schedule_ode_train.sh ) \
-#  > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
+ ( source ./launch_scripts/slurm_schedule_ode_train.sh ) \
+  > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
@@ -85,7 +85,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1018_2State_scanGFI_kernel_5_3_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1020_2State_scanGFI_kernel_3_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

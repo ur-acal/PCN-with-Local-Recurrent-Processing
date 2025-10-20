@@ -262,7 +262,7 @@ class TrainerCiFar(object):
         elif img_type == "scanGFI":
             conf_file = "./{}config.json".format(self.model_name)
             subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
-            with open("./{}".format(conf_file)) as fp:
+            with open("{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             self.train_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
@@ -284,7 +284,7 @@ class TrainerCiFar(object):
                 noise_config=scangen_config["noise"],
                 device=self.device,
             )
-            subprocess.run("rm ./{}".format(conf_file), shell=True)
+            subprocess.run("rm {}".format(conf_file), shell=True)
         else:
             transform_train = transforms.Compose([
                 transforms.ToTensor(),
