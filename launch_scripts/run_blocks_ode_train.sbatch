@@ -41,6 +41,8 @@ elif [[ "$ARCH_SET" == "Ker5_C" ]]; then
   ARCH_LABEL="6LKer5"
 elif [[ "$ARCH_SET" == "Ker3_D" ]]; then
   ARCH_LABEL="5LKer3"
+elif [[ "$ARCH_SET" == "7L64Chan" ]]; then
+  ARCH_LABEL="7L64Chan"
 else
   ARCH_LABEL="Invalid"
 fi
@@ -116,6 +118,11 @@ elif [[ "$ARCH_SET" == "Ker3_D" ]]; then
   INP=(3  32 64 64 64)
   OUT=(32 64 64 64 64)
   POOL=(0  1  0  1  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "7L64Chan" ]]; then
+  INP=(4  64 64 64 64 64 64)
+  OUT=(64 64 64 64 64 64 64)
+  POOL=(0  1  0  1  0  0  0)
   STRIDE=(1)
 else
   echo "ARCH_SET must be A or B or C[2]"; exit 2

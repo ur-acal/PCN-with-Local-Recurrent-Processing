@@ -35,6 +35,8 @@ BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["D2p"]="S2NoMinusZChgZNoisyI"
 # 4L2p
 BLOCKS_BY_ARCH["D2"]="S2NoMinusZChgZNoisyI"
+# 7L2p - 64 Chan
+BLOCKS_BY_ARCH["7L64Chan"]="S2NoMinusZChgZNoisyI"
 # Kernel size=5
 BLOCKS_BY_ARCH["Ker5_A"]="S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["Ker5_C"]="S2NoMinusZChgZNoisyI"
@@ -42,7 +44,7 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("Ker5_A" "Ker5_C" "Ker3_D")
+ARCHES=("A2p" "C" "D2p" "7L64Chan")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )

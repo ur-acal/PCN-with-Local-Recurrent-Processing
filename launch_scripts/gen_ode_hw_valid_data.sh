@@ -131,7 +131,13 @@ for method in "${METHOD_VALS[@]}"; do
   > "$MASTER_LOG"
   > "$JOB_LOG"
   echo "Tail master with: tail -f $MASTER_LOG"
-  echo "Monitor job with: tail -f $BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/val_data_gen_job.log"
+  for n_bits in "${N_BITS_VALS[@]}"; do
+    for cap_val in "${CAP_VALS[@]}"; do
+      for name in "${MODEL_NAMES[@]}"; do
+        echo "Monitor job with: tail -f $BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/val_data_gen_job.log"
+      done
+    done
+  done
   # ─────────────── run in parallel ───────────────
   parallel \
     --jobs 1 \

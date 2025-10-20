@@ -6,17 +6,17 @@ mkdir -p "${LOGDIR}"
 
 ##STRIDE=(1  1  2  1  2   1   1)
 STRIDE=(1)
-KSZ=(5)
-PADDING=2 # For ksz=5, padding=2; o.w. padding=1
+KSZ=(3)
+PADDING=1 # For ksz=5, padding=2; o.w. padding=1
 python train_ode_cifar.py \
   --optim         "SGD" \
   --img_type      "scanGFI" \
   --num_epochs    150 \
   --eval_every    10 \
   --offset_eps    0.0 \
-  --inp_channels  4  32 64 64 64 \
-  --out_channels  32 64 64 64 64 \
-  --max_pool      0  1  0  1  0   \
+  --inp_channels  4  64 64 64 64 64 64 \
+  --out_channels  64 64 64 64 64 64 64 \
+  --max_pool      0  1  0  1  0  0  0   \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
