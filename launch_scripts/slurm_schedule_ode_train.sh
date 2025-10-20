@@ -9,8 +9,8 @@ GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 ###############################################################################################
 # running with
 # module swap slurm slurm/24.05.0.b1
- ( source ./launch_scripts/slurm_schedule_ode_train.sh ) \
-  > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
+# ( source ./launch_scripts/slurm_schedule_ode_train.sh ) \
+#  > ./logs/scheduler_slurm/scheduler.log 2>&1 < /dev/null &
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
