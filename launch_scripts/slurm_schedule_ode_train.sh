@@ -28,7 +28,7 @@ BLOCKS_BY_ARCH["A2"]="S2NoMinusZChgZNoisyI"
 # Deep
 BLOCKS_BY_ARCH["B"]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
 # 7L2p
-BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZNoisyI"
 # 7L2p
 BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZNoisyI"
 # 4L2p
@@ -44,7 +44,7 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("A2p" "C" "D2p" "7L64Chan")
+ARCHES=("C" "7L64Chan")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
