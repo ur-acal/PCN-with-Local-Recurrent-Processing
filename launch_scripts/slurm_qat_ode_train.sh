@@ -26,7 +26,7 @@ NBITS=(4 5)
 ###############################################################################################
 
 # Paths
-REPO_ROOT="/home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing"
+REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
 SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_qat_ode_train.sbatch"
 
 SLURM_LOG_DIR="${REPO_ROOT}/logs/slurm_jobs"

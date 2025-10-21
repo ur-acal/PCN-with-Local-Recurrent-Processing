@@ -28,7 +28,7 @@ else
   ARCH_LABEL="Invalid"
 fi
 EXP="no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp"
-LOGDIR="/home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}"
+LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}"
 mkdir -p "$LOGDIR"
 ##########################################################################
 

@@ -37,7 +37,7 @@ C_val="49e-15"
 t_end="1.5"
 
 EXP="${EXP:-no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp}"
-LOGDIR="/home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${NBITS}"
+LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${NBITS}"
 mkdir -p "$LOGDIR"
 ##########################################################################
 

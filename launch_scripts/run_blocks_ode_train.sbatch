@@ -50,7 +50,7 @@ fi
 SAN_BLOCKS="${BLOCKS_LIST:-ALL}"
 SAN_BLOCKS="${SAN_BLOCKS//,/+}"
 EXP="${EXP:-no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp}"
-LOGDIR="/home/rzeng7/Desktop/research/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${SAN_BLOCKS}"
+LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${SAN_BLOCKS}"
 mkdir -p "$LOGDIR"
 ##########################################################################
 
