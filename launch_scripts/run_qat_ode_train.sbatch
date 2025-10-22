@@ -102,6 +102,8 @@ run_one () {
     --pc_conv       "${PC_CONV}" \
     --ode_block     "${ODE_BLOCK}" \
     --mem_frac      "${MEM_FRAC}" \
+    --noise_level   "0.4" \
+    --noise_type    "mul" \
     2>&1 | tee "${logfile}"
 }
 

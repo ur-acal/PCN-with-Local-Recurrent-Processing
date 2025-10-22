@@ -1063,6 +1063,9 @@ class SymQuantizeWeight(nn.Module):
             self.s_w.copy_(s_w)
 
 class LSQImpl(torch.autograd.Function):
+    """
+    Todo: Add noise inject training related code here.
+    """
     @staticmethod
     def forward(ctx, weight, s, q_min, q_max, s_g_scale):
         q_weight = weight * s

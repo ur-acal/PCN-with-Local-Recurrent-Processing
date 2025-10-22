@@ -74,6 +74,11 @@ def get_args():
     p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
+    # Noise-inject training related args
+    p.add_argument('--noise_level', default=None, type=float,
+                        help='noise level in noise inject training. None means normal training without noise injection')
+    p.add_argument('--noise_type', default='mul', type=str, choices=['mul', 'add'],
+                        help='Multiplicative or additive noise')
     # PCConv hyper-params
     # p.add_argument("--kernel_size",   type=int, default=3)
     # p.add_argument("--stride",        type=int, default=1)
@@ -114,7 +119,9 @@ def _constr_model_name(args, rep=1):
         model_name += "{}CosLR{}T0_".format(str(args.learning_rate), args.cosine_t0)
     else:
         model_name += str(args.learning_rate) + 'LR_'
-    model_name += "{}K{}S{}C_".format(args.kernel_size[0], args.stride[0], max(args.inp_channels)) \
+    _ksz = args.kernel_size if not isinstance(args.kernel_size, List) else args.kernel_size[0]
+    _stride = args.stride if not isinstance(args.stride, List) else args.stride[0]
+    model_name += "{}K{}S{}C_".format(_ksz, _stride, max(args.inp_channels)) \
                   + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers_" \
                   + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
@@ -130,6 +137,8 @@ def _constr_model_name(args, rep=1):
             ft_prefix = "QAT{}b".format(args.w_bits)
         else:
             ft_prefix = "QAT{}b{}".format(args.w_bits, args.qat_cls)
+        if args.noise_level is not None:
+            ft_prefix += "NT{}{}".format(str(args.noise_level).replace('.', 'p'), args.noise_type)
         eps_val = args.model_name.split("_")[2]
         ode_blk = args.model_name.split("_")[3]
         orig_rep = args.model_name.split("_")[-1]
@@ -278,6 +287,8 @@ def main():
         T0            = args.cosine_t0,
         eval_every    = args.eval_every,
         img_type      = args.img_type,
+        noise_level   = args.noise_level,
+        noise_type    = args.noise_type,
     )
 
     if args.test_only:

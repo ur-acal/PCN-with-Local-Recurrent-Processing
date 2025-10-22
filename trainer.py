@@ -23,7 +23,7 @@ class TrainerCiFar(object):
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
-                 eval_every=1, img_type="rgb"):
+                 eval_every=1, img_type="rgb", noise_level=None, noise_type=None):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -50,6 +50,11 @@ class TrainerCiFar(object):
         self.max_norm = max_norm
         self.aug = aug # use the augmentation in convMixer or not
         self.eval_every = eval_every
+
+        # noise inject training
+        self.noisy_model = None
+        if noise_level is not None:
+            self.noisy_model = WrappedNoisyModel(model=self.model, noise_level=noise_level, noise_type=noise_type)
 
         self._prepare_cifar(img_type)
 
@@ -93,7 +98,10 @@ class TrainerCiFar(object):
             self.optimizer.zero_grad()
 
             # Forward + backward + optimize
-            outputs = self.model(inputs)
+            if self.noisy_model and isinstance(self.noisy_model, nn.Module):
+                outputs = self.noisy_model(inputs)
+            else:
+                outputs = self.model(inputs)
             loss = self.loss_fn(outputs, labels)
             loss.backward()
             if self.max_norm is not None:
@@ -303,3 +311,49 @@ class TrainerCiFar(object):
         self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False,
                                                           num_workers=2)
 
+
+class WrappedNoisyModel(nn.Module):
+    """
+    Todo: Used this module only when doing noise-inject training independent not with QAT.
+    """
+    def __init__(self, model: nn.Module, noise_level, noise_type="mul"):
+        super().__init__()
+        self.model = model
+        self.noise_level = noise_level
+        assert noise_type.lower() in {"mul", "add"}
+        self.noise_type = noise_type.lower()
+        self._gen_noisy_p = self._apply_noise_mul if self.noise_type == "mul" else self._apply_noise_add
+        # Keeps a list of params free from noise
+        self.noise_free_params = {"s_w_Param"}
+
+    def _check_noise_free(self, p_name):
+        for _nf_p in self.noise_free_params:
+            if _nf_p in p_name:
+                return True
+        return False
+
+    def gen_noisy_params(self):
+        noisy_params = {}
+        for _name, _param in self.model.named_parameters():
+            if self._check_noise_free(_name):
+                noisy_params[_name] = _param
+            else:
+                noisy_params[_name] = self._gen_noisy_p(_param) # type: ignore[misc]
+        return noisy_params
+
+    def _apply_noise_mul(self, p: nn.Parameter):
+        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
+        # Todo: In this case, the noise is also applied to the gradient. Should we use
+        #   return p + p.detach() * noise_ ?
+        return p.mul(1 + noise_)
+
+    def _apply_noise_add(self, p: nn.Parameter):
+        p_max = p.detach().abs().max()
+        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level * p_max
+        return p.add(noise_)
+
+    def forward(self, x):
+        if not self.model.training:
+            return self.model(x)
+        noisy_params = self.gen_noisy_params()
+        return torch.func.functional_call(self.model, noisy_params, (x,))
