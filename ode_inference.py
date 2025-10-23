@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
@@ -46,6 +47,8 @@ def parse_args():
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
+    parser.add_argument("--sweep_eps", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     parser.add_argument("--w_quant_mode", type=str, default="min_max", help="min_max or perc")
     parser.add_argument("--w_perc", type=float, default=0.99999, help="percentile for quantization")
@@ -108,7 +111,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
-                      "w_perc": args.w_perc} if args.ode_wrapper is not None else None
+                      # offset_eps None means using Johnson noise
+                      "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     saved_wrappers = {}
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
@@ -144,8 +148,9 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
-                      "w_quant_mode": args.w_quant_mode,
-                      "w_perc": args.w_perc} if args.ode_wrapper is not None else None
+                      "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
+                      # offset_eps None means using Johnson noise
+                      "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
                                   noise_to_bn=True, noise_to_linear=True,
@@ -219,6 +224,11 @@ def run_ode_inference():
             exit(0)
 
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
+    if args.sweep_eps:
+        # offset_eps None means using Johnson noise
+        offset_eps_list = [None, 0.05, 0.1, 0.15, 0.2]
+    else:
+        offset_eps_list = [None]
     noise_level_list_ = [0, 0.1, .20, .30, .40]
     noisy_trials = 20
     gt_t_end = get_t_end(args)
@@ -242,66 +252,70 @@ def run_ode_inference():
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
-                          "w_quant_mode": args.w_quant_mode,
+                          "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None
-        noise_acc_spec = {}
+        noise_acc_spec_all = {}
         max_real_t, min_real_t, real_t_end = t_end, t_end, t_end
-        for noise_level in noise_level_list_:
-            trials = noisy_trials if noise_level > 0 else 1
-            acc_list = []
-            for t in range(trials):
-                noisy_params = {"noise_level": noise_level, "weight": None}
-                if args.test_expanded:
-                    # Add non-ideality to expanded weights
-                    noisy_params["noise_level"] = 0.0
-                with torch.no_grad():
-                    net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
-                                                  pc_conv_layer=pc_conv, data_parallel=False,
-                                                  noise_to_bn=True, noise_to_linear=True,
-                                                  fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
-                                                  ode_wrapper_params=wrapper_params,
-                                                  **noisy_params)
+        for offset_eps_ in offset_eps_list:
+            wrapper_params.update({"offset_eps": offset_eps_})
+            noise_acc_spec = {}
+            for noise_level in noise_level_list_:
+                trials = noisy_trials if noise_level > 0 or args.thermal_noise else 1
+                acc_list = []
+                for t in range(trials):
+                    noisy_params = {"noise_level": noise_level, "weight": None}
                     if args.test_expanded:
-                        # Use validator to expand the weights of the model
-                        # Notice: Applicable to 2 state ode blocks only.
-                        valid_ins = Validator(model=net_,
-                                              expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name,
-                                                                               "{}b".format(args.w_bits)),
-                                              device=device, test_dataloader=test_dataloader,
-                                              result_path=os.path.join(args.hw_val_path, args.model_name,
-                                                                       "{}b".format(args.w_bits)))
-                        logging.warning("Unroll or load expanded weights finished")
-                        for _blk in net_.PcConvs:
-                            _blk.noise_level = noise_level
-                            _blk.add_noise()
-                        net_ = valid_ins.model
-                real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
-                max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
-                max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"
-                real_t_end = avg_real_t
-                net_.eval()
-                total = 0
-                correct = 0
-
-                for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False):
-                    inputs, targets = inputs.to(device), targets.to(device)
+                        # Add non-ideality to expanded weights
+                        noisy_params["noise_level"] = 0.0
                     with torch.no_grad():
-                        output_tensor = net_(inputs)
-                        if torch.isnan(output_tensor).any():
-                            logging.warning("=====> Output tensor contains nan values. <=====")
+                        net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
+                                                      pc_conv_layer=pc_conv, data_parallel=False,
+                                                      noise_to_bn=True, noise_to_linear=True,
+                                                      fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
+                                                      ode_wrapper_params=wrapper_params,
+                                                      **noisy_params)
+                        if args.test_expanded:
+                            # Use validator to expand the weights of the model
+                            # Notice: Applicable to 2 state ode blocks only.
+                            valid_ins = Validator(model=net_,
+                                                  expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name,
+                                                                                   "{}b".format(args.w_bits)),
+                                                  device=device, test_dataloader=test_dataloader,
+                                                  result_path=os.path.join(args.hw_val_path, args.model_name,
+                                                                           "{}b".format(args.w_bits)))
+                            logging.warning("Unroll or load expanded weights finished")
+                            for _blk in net_.PcConvs:
+                                _blk.noise_level = noise_level
+                                _blk.add_noise()
+                            net_ = valid_ins.model
+                    real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
+                    max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
+                    max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"
+                    real_t_end = avg_real_t
+                    net_.eval()
+                    total = 0
+                    correct = 0
 
-                    # Get the predicted class
-                    _, predicted = torch.max(output_tensor, 1)
-                    total += targets.size(0)
-                    correct += (predicted == targets).sum().item()
+                    for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False):
+                        inputs, targets = inputs.to(device), targets.to(device)
+                        with torch.no_grad():
+                            output_tensor = net_(inputs)
+                            if torch.isnan(output_tensor).any():
+                                logging.warning("=====> Output tensor contains nan values. <=====")
 
-                # Calculate the accuracy
-                accuracy = 100 * correct / total
-                acc_list.append(accuracy)
-                log.warning(f'Test Accuracy at noise level {noise_level}: {accuracy:.2f}%')
-            avg_acc = sum(acc_list) / len(acc_list)
-            noise_acc_spec[noise_level] = acc_list
-            log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
+                        # Get the predicted class
+                        _, predicted = torch.max(output_tensor, 1)
+                        total += targets.size(0)
+                        correct += (predicted == targets).sum().item()
+
+                    # Calculate the accuracy
+                    accuracy = 100 * correct / total
+                    acc_list.append(accuracy)
+                    log.warning(f'Test Accuracy at noise level {noise_level} thermal noise eps {offset_eps_}: {accuracy:.2f}%')
+                avg_acc = sum(acc_list) / len(acc_list)
+                noise_acc_spec[noise_level] = acc_list
+                log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
+            noise_acc_spec_all[offset_eps_ if offset_eps_ is not None else "Johnson"] = noise_acc_spec
         ###################################################################################################
         # Noisy Experiment finished for one t_end
         ###################################################################################################
@@ -309,11 +323,13 @@ def run_ode_inference():
         log.warning("-------- Model name: {} --------".format(args.model_name))
         if args.ode_wrapper is not None:
             log.warning("wrapper params: {}".format(wrapper_params))
-        for _nl, _acc in noise_acc_spec.items():
-            log.warning("t_end: {}, real_t_end: {}, min_real_t: {}, max_real_t: {}, Noise level: {}, Acc:{:.2f}%".format(
-                t_end, real_t_end, min_real_t, max_real_t, _nl, sum(_acc) / len(_acc)))
+        for _eps, _noise_acc_spec in noise_acc_spec_all.items():
+            log.warning("Thermal noise eps: {}".format(_eps if _eps is not None else "Johnson"))
+            for _nl, _acc in _noise_acc_spec.items():
+                log.warning("t_end: {}, real_t_end: {}, Noise level: {}, Acc:{:.2f}±{:.2f}%".format(
+                    t_end, real_t_end, _nl, sum(_acc) / len(_acc), np.std(_acc)))
 
-        acc_dict[real_t_end] = {"noise_acc_spec": noise_acc_spec, "t": (t_end, real_t_end, min_real_t, max_real_t)}
+        acc_dict[real_t_end] = {"noise_acc_spec": noise_acc_spec_all, "t": (t_end, real_t_end, min_real_t, max_real_t)}
 
     # save noise acc spec to a pkl
     if args.ode_wrapper is None:

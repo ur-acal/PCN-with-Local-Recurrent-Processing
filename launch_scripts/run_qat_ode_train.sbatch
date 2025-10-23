@@ -80,9 +80,9 @@ run_one () {
   python -u train_ode_cifar.py \
     --optim         "SGD" \
     --img_type      "${IMG_TYPE}" \
-    --learning_rate 0.01 \
-    --cosine_t0     10 \
-    --num_epochs    50 \
+    --learning_rate 0.005 \
+    --cosine_t0     20 \
+    --num_epochs    80 \
     --model_name    "${MODEL_NAME}" \
     --eval_every    1 \
     --offset_eps    0.0 \
@@ -205,7 +205,7 @@ for i in "${!MODEL_NAMES_PRE[@]}"; do
 
   printf '========== %s (pre-finetune) ==========\n' "$pre" >>"$MASTER_LOG"
   if [[ -f "$pre_log" ]]; then
-    if ! grep -A 11 "Model name: ${pre} " "$pre_log" >>"$MASTER_LOG"; then
+    if ! grep -A 1000 "Model name: ${pre} " "$pre_log" >>"$MASTER_LOG"; then
       echo "[Final Result not found]" >>"$MASTER_LOG"
     fi
   else

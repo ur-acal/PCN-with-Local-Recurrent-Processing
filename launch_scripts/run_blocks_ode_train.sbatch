@@ -413,7 +413,7 @@ for i in "${!BLOCKS[@]}"; do
 
   printf '========== %s (pre-finetune) ==========\n' "$pre" >>"$MASTER_LOG"
   if [[ -f "$pre_log" ]]; then
-    if ! grep -A 11 "Model name: ${pre} " "$pre_log" >>"$MASTER_LOG"; then
+    if ! grep -A 1000 "Model name: ${pre} " "$pre_log" >>"$MASTER_LOG"; then
       echo "[Final Result not found]" >>"$MASTER_LOG"
     fi
   else
@@ -427,7 +427,7 @@ for i in "${!BLOCKS[@]}"; do
 
     printf '%s\n' "---------- ${post} (post-finetune) ----------" >>"$MASTER_LOG"
     if [[ -f "$post_log" ]]; then
-      if ! grep -A 11 "Model name: ${post} " "$post_log" >>"$MASTER_LOG"; then
+      if ! grep -A 1000 "Model name: ${post} " "$post_log" >>"$MASTER_LOG"; then
         echo "[Final Result not found]" >>"$MASTER_LOG"
       fi
     else

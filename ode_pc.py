@@ -1280,7 +1280,7 @@ class WrapQuantizeW(ODEWrapperRC):
 
 
 class ODEWrapper2State(WrapQuantizeW):
-    def __init__(self, is_first=False, is_last=False, thermal_noise=True, **kwargs):
+    def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, **kwargs):
         patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
@@ -1304,8 +1304,11 @@ class ODEWrapper2State(WrapQuantizeW):
         # Todo: What's the right eps_scale?
         # Pick sqrt(4 * k_B * T / R) / C
         if thermal_noise:
-            self.ode_block.eps_scale = (1 / self.ode_block.offset_eps) * ((4.16e-21 * 4 / self.R) ** 0.5 / self.C_fb)
-            # self.ode_block.eps_scale = 0
+            if offset_eps is None:
+                self.ode_block.eps_scale = (1 / self.ode_block.offset_eps) * ((4.16e-21 * 4 / self.R) ** 0.5 / self.C_fb)
+            else:
+                self.ode_block.eps_scale = None
+                self.ode_block.offset_eps = offset_eps / ((self.R * self.C_fb) ** 0.5)
         else:
             self.ode_block.eps_scale, self.ode_block.offset_eps = None, 0.0
 
