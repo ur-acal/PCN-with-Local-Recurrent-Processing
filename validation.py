@@ -332,6 +332,9 @@ class Validator(nn.Module):
             res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item()
             res[cur_name]["C_fb"] = wrappers[_idx].C_fb
 
+            _inp_scale = wrappers[_idx].inp_scale
+            _out_scale = wrappers[_idx].out_scale
+
             def make_capture_init_res(key=cur_name):
                 def capture_init_res(orig_init_y, x, *args, **kwargs):
                     yz = orig_init_y(x, *args, **kwargs)
@@ -339,14 +342,18 @@ class Validator(nn.Module):
                     return yz
                 return capture_init_res
 
-            def pre_hook(mod, inputs, key=cur_name):
-                res[key]["inp"] = inputs[0].view(inputs[0].shape[0], -1).contiguous().detach().cpu().numpy()
+            def pre_hook(mod, inputs, key=cur_name, inp_scale=_inp_scale):
+                # Here the input captured hasn't been scaled by inp_scale, thus to
+                # match the input to the ode solver, we need to multiple inp_scale
+                res[key]["inp"] = inputs[0].view(inputs[0].shape[0], -1).contiguous().detach().cpu().numpy() * inp_scale
                 update_init_y = make_capture_init_res(key)
                 self.patch_init_y_for_capture(mod, update_init_y)
 
-            def post_hook(mod, inputs, output, key=cur_name):
+            def post_hook(mod, inputs, output, key=cur_name, out_scale=_out_scale):
                 # res[key]["init_res"] = mod.init_y(inputs[0])[-1]
-                res[key]["out"] = output.view(output.shape[0], -1).contiguous().detach().cpu().numpy()
+                # Here the output captured has already been scaled by 1 / out_scale, thus to
+                # match the output of the ode solver, we need to multiple out_scale
+                res[key]["out"] = output.view(output.shape[0], -1).contiguous().detach().cpu().numpy() * out_scale
 
             handlers.append(_layer.register_forward_pre_hook(pre_hook))
             handlers.append(_layer.register_forward_hook(post_hook))

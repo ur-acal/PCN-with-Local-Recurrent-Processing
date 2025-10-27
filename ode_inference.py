@@ -99,7 +99,7 @@ def get_t_end(args):
 def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Generating validation data for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    unrolled_noise_level = 0.2
+    unrolled_noise_level = 0.0
     noisy_params = {"noise_level": 0.0, "weight": None}
     if args.pvt_to_origin:
         # addinig non-ideality to the original weights and then expand (expanded values have the same non-ideality)
@@ -171,9 +171,9 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
 
     logging.info("===== Inspecting the range of the weights =====")
     for _name, _p in net_.named_parameters():
-        if "ff" in _name.lower():
+        if "ff" in _name.lower() or args.conv_only:
             print("Name: {}, max: {}, min: {}, median: {}, mean: {}, sum's mean: {}".format(
-                _name, _p.max(), _p.min(), _p.median(), _p.mean(), _p.view(_p.shape[0], -1).sum(-1).mean()))
+                _name, _p.max(), _p.min(), _p.median(), _p.mean(), _p.reshape(_p.shape[0], -1).sum(-1).mean()))
         elif "fb" in _name.lower():
             print("Name: {}, max: {}, min: {}, median: {}, mean: {}, sum's mean: {}".format(
                 _name, _p.max(), _p.min(), _p.median(), _p.mean(), _p.view(_p.shape[1], -1).sum(-1).mean()))
