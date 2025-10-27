@@ -1285,13 +1285,13 @@ class WrapQuantizeW(ODEWrapperRC):
 
 
 class ODEWrapper2State(WrapQuantizeW):
-    def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, **kwargs):
+    def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, tie_cap=False, **kwargs):
         patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
         # Todo: Right now using the same cap value seems to be fine. Need more experiment.
-        self.cap_scale = self._round(self.s_ff / self.s_fb, 1)
-        # self.cap_scale = 1
+        self.tie_cap = tie_cap
+        self.cap_scale = self._round(self.s_ff / self.s_fb, 1) if not self.tie_cap else 1
         self.C_fb = self.C
         self.C_ff = self.C_fb * self.cap_scale
 
@@ -1487,8 +1487,7 @@ class QATWrapper2State(ODEWrapper2State):
         self._set_quantize_s(module)
 
         # Reset values based on new s_ff and s_fb before forward
-        self.cap_scale = self._round(self.s_ff / self.s_fb, 1)
-        # self.cap_scale = 1
+        self.cap_scale = self._round(self.s_ff / self.s_fb, 1) if not self.tie_cap else 1
         self.C_fb = self.C
         self.C_ff = self.C_fb * self.cap_scale
 
@@ -1538,8 +1537,9 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
     return pc_net
 
 
-def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, **kwargs):
-    calib_res = [10 for _ in range(pc_net.num_layers)]
+def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1e5, C=49e-15, v_dd=1.0, one_over_q=10,
+                   **kwargs):
+    calib_res = [one_over_q for _ in range(pc_net.num_layers)]
     wrappers = []
     # Todo: Perform calibration for intermediate states if we are going to quantize them and the weights
     if calib_path is None:

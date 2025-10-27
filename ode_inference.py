@@ -52,6 +52,8 @@ def parse_args():
     parser.add_argument("--sweep_eps", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
+    parser.add_argument("--tie_cap", type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
+    parser.add_argument("--one_over_q", type=float, default=10, help="1/q")
     parser.add_argument("--w_quant_mode", type=str, default="min_max", help="min_max or perc")
     parser.add_argument("--w_perc", type=float, default=0.99999, help="percentile for quantization")
     parser.add_argument("--method", type=str, default="dopri5")
@@ -113,6 +115,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
+                      "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
@@ -152,6 +155,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
                   "sde_noise_type": args.sde_noise_type}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
@@ -257,6 +261,7 @@ def run_ode_inference():
                       "sde_noise_type": args.sde_noise_type}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None
         noise_acc_spec_all = {}

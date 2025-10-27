@@ -32,9 +32,13 @@ else
   IMG_TYPE="$prev"
 fi
 
+# EXP parameters
 R_val="1e5"
 C_val="49e-15"
 t_end="1.5"
+tie_cap="true"
+ONE_OVER_Q="6"
+TRAIN_TOL="1e-4"
 
 EXP="${EXP:-no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp}"
 LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${NBITS}"
@@ -92,10 +96,12 @@ run_one () {
     --bypass        "false" \
     --batch_size    128 \
     --method        "dopri5" \
-    --tol           "0.0001" \
+    --tol           "${TRAIN_TOL}" \
     --R             "${R_val}" \
     --C             "${C_val}" \
     --w_bits        "${NBITS}" \
+    --tie_cap       "${tie_cap}" \
+    --one_over_q    "${ONE_OVER_Q}" \
     --qat_cls       "SymQuantizeWeight" \
     --ode_wrapper   "${wrapper}" \
     --t_end         "${t_end}" \
@@ -173,6 +179,8 @@ eval_model() {
     --R               "${R_val}" \
     --C               "${C_val}" \
     --w_bits          "${NBITS}" \
+    --tie_cap         "${tie_cap}" \
+    --one_over_q      "${ONE_OVER_Q}" \
     --pc_conv         "${PC_CONV}Noisy" \
     --ode_block       "${ODE_BLOCK}" \
     --ode_wrapper     "${wrapper}" \
