@@ -64,7 +64,8 @@ def get_args():
     p.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     p.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
-    p.add_argument("--offset_eps", type=float, default=None, help="Noise level of the offset")
+    p.add_argument("--offset_eps", type=float, default=None,
+                   help="Noise level of the offset or noise level of noise in sde (used in wrapper)")
     # Quantization-aware training related args
     p.add_argument("--ode_wrapper", type=str, choices=list(ODEWrapper_CLASSES.keys()) + [None],
                         default=None)
@@ -79,6 +80,8 @@ def get_args():
                         help='noise level in noise inject training. None means normal training without noise injection')
     p.add_argument('--noise_type', default='mul', type=str, choices=['mul', 'add'],
                         help='Multiplicative or additive noise')
+    p.add_argument("--sde_noise_type", type=str, default="mul", choices=["mul", "add"],
+                   help="Only useful when self.eps is set in the ODESolver class")
     # PCConv hyper-params
     # p.add_argument("--kernel_size",   type=int, default=3)
     # p.add_argument("--stride",        type=int, default=1)
@@ -239,7 +242,8 @@ def main():
         logging.info("name: {}, shape: {}, param count: {}".format(name, param.shape, param.numel()))
 
     # convert block to Neural ode
-    ode_kw, ode_kwargs = ["offset_eps"], {}
+    # Todo: The offset eps in ode_block is currently useless. Need to pass that to the wrapper.
+    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type"], {}
     for _name, _val in vars(args).items():
         if _name in ode_kw and _val is not None:
             ode_kwargs[_name] = _val

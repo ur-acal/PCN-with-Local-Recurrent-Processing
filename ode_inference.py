@@ -47,6 +47,8 @@ def parse_args():
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
+    parser.add_argument("--sde_noise_type", type=str, default="mul", choices=["mul", "add"],
+                        help="Only useful when self.eps is set in the ODESolver class")
     parser.add_argument("--sweep_eps", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
@@ -106,7 +108,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
         # Todo: This needs unrolling at each forward pass, very inefficient. Thus is not used for now.
         noisy_params["noise_level"] = unrolled_noise_level
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
-                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
+                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
+                  "sde_noise_type": args.sde_noise_type}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
@@ -145,7 +148,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     t_end = get_t_end(args)
     noisy_params = {"noise_level": 0.2, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
-                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
+                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
+                  "sde_noise_type": args.sde_noise_type}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
@@ -226,7 +230,7 @@ def run_ode_inference():
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
     if args.sweep_eps:
         # offset_eps None means using Johnson noise
-        offset_eps_list = [None, 0.05, 0.1, 0.15, 0.2]
+        offset_eps_list = [0.2, 0.35, 0.5, 0.65, 0.8] if args.sde_noise_type == "mul" else [None, 0.05, 0.1, 0.15, 0.2]
     else:
         offset_eps_list = [None]
     noise_level_list_ = [0, 0.1, .20, .30, .40]
@@ -249,7 +253,8 @@ def run_ode_inference():
     for t_end in t_end_list:
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
-                      "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps}
+                      "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
+                      "sde_noise_type": args.sde_noise_type}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,

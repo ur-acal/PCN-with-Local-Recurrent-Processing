@@ -41,7 +41,7 @@ class ODESolver(nn.Module):
     def __init__(self, func, t0, y0, t1=1.0, h=0.1, rtol=1e-3, atol=1e-6, neval_max=500000,
                  print_neval=False, print_direction=False, step_dif_ratio=1e-3, safety=0.9,
                  regenerate_graph=False, dense_output=True, interpolation_method = 'cubic',
-                 print_time = False, end_point_mode = False, eps=None):
+                 print_time = False, end_point_mode = False, eps=None, noise_type="mul"):
         super(ODESolver, self).__init__()
         """
         ----------------
@@ -119,6 +119,7 @@ class ODESolver(nn.Module):
 
         self.end_point_mode = end_point_mode
         self.eps = eps
+        self.noise_type = noise_type
 
     def check_t(self, t_eval):
         if t_eval is  None:
@@ -325,6 +326,40 @@ class ODESolver(nn.Module):
     def step(self, *args, **kwargs):
         pass
 
+    def addi_noisy_update_and_proj(self, h, y_current):
+        if self.eps is not None:
+            if isinstance(self.eps, tuple):
+                _std = ((h ** 0.5) * _eps for _eps in self.eps)
+                y_current = tuple(_y + _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                  for _y, _sigma in zip(y_current, _std))
+            else:
+                _std = (h ** 0.5) * self.eps
+                y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                  for _y in y_current)
+            if hasattr(self, "proj_fn"):
+                y_current = tuple(self.proj_fn(_y) for _y in y_current)
+        return y_current
+
+    def mult_noisy_update_and_proj(self, h, y_current):
+        if self.eps is not None:
+            if isinstance(self.eps, tuple):
+                _std = ((h ** 0.5) * _eps for _eps in self.eps)
+                y_current = tuple(_y + _y * _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                  for _y, _sigma in zip(y_current, _std))
+            else:
+                _std = (h ** 0.5) * self.eps
+                y_current = tuple(_y + _y * _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                  for _y in y_current)
+            if hasattr(self, "proj_fn"):
+                # print("------------------------------------")
+                # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(),
+                #                                                       y_current[0].min()))
+                y_current = tuple(self.proj_fn(_y) for _y in y_current)
+                # print("after proj_fn _y mean: {}, max: {}, min: {}".format(y_current[0].mean(), y_current[0].max(),
+                #                                              y_current[0].min()))
+                # print("------------------------------------")
+        return y_current
+
     def integrate_predefined_grids(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None):
 
         if torch.is_tensor(y0):
@@ -370,17 +405,10 @@ class ODESolver(nn.Module):
             # time passed into step function must be of type Tensor with shape None
             y_current, error, variables = self.step(self.func, t_current, (point - t_current), y_current,
                                                     return_variables=True)
-            if self.eps is not None:
-                if isinstance(self.eps, tuple):
-                    _std = (((point - t_current) ** 0.5) * _eps for _eps in self.eps)
-                    y_current = tuple(_y + _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
-                                      for _y, _sigma in zip(y_current, _std))
-                else:
-                    _std = ((point - t_current) ** 0.5) * self.eps
-                    y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
-                                      for _y in y_current)
-                if hasattr(self, "proj_fn"):
-                    y_current = tuple(self.proj_fn(_y) for _y in y_current)
+            if self.noise_type == "mul":
+                y_current = self.mult_noisy_update_and_proj(h=point-t_current, y_current=y_current)
+            else:
+                y_current = self.addi_noisy_update_and_proj(h=point-t_current, y_current=y_current)
 
             if not self.end_point_mode:
                 self.update_dense_state(t_current, point, y_old, y_current)

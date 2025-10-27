@@ -46,7 +46,7 @@ class _TAddedModule(nn.Module):
 class ODEBlockPC(nn.Module):
 
     def __init__(self, pc_conv: Union[PCConvNoisy, PCConv], noise_level=0.0, method="dopri5", t_end=None, t_step=None,
-                 tol=1e-3, return_mid=False, init_b=False, **kwargs):
+                 tol=1e-3, return_mid=False, init_b=False, sde_noise_type="mul", **kwargs):
         super(ODEBlockPC, self).__init__()
         self.noise_level = noise_level
         self.tie_weights = pc_conv.tie_weights
@@ -91,9 +91,12 @@ class ODEBlockPC(nn.Module):
         self.tol = tol
         self.method = method
 
+        # noise type used in sde simulation; only useful when option["eps"] is set.
+        self.sde_noise_type = sde_noise_type
+
         self.option_aca = {"t0": self.integration_time[0], "t1": self.integration_time[-1],
                            "t_eval": self.integration_time.tolist(), "rtol": self.tol, "atol": self.tol,
-                           "h": t_step, "method": self.method}
+                           "h": t_step, "method": self.method, "noise_type": self.sde_noise_type}
 
     def _transfer_reg_buff(self, pc_conv):
         for _name, _val in pc_conv.named_buffers():
@@ -961,6 +964,8 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
         # Todo: use voltage or current?
         self.offset_eps = 0.002
         self.eps_scale = None
+        self.option_init["noise_type"] = self.sde_noise_type
+        self.option_aca["noise_type"] = self.sde_noise_type
 
     def init_y(self, x):
         z0 = torch.zeros_like(x, device=x.device)  # Todo: add option for z0 = x
@@ -1002,9 +1007,9 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
             self.option_init["eps"] = self.eps_scale * self.offset_eps * weight_sum[1]
             self.option_aca["eps"] = tuple(self.eps_scale * self.offset_eps * _ws for _ws in weight_sum)
         else:
-            # scale the eps according to the maximum activation
-            self.option_init["eps"] = x.abs().max() * self.offset_eps
-            self.option_aca["eps"] = x.abs().max() * self.offset_eps
+            eps_scale = 1 if self.sde_noise_type == "mul" else x.abs().max()
+            self.option_init["eps"] = eps_scale * self.offset_eps
+            self.option_aca["eps"] = eps_scale * self.offset_eps
 
     def forward(self, x, layer_idx=None):
         self._set_eps(x)
