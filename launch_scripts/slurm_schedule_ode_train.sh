@@ -25,8 +25,12 @@ BLOCKS_BY_ARCH["A"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["A2p"]="S2NoMinusZChgZNoisyI"
 # 6L2p
 BLOCKS_BY_ARCH["A2"]="S2NoMinusZChgZNoisyI"
-# Deep
-BLOCKS_BY_ARCH["B"]="ODEFixNoiseXInit ODEFixNoiseXInitFFFB ODEFixNoise0InitExpand"
+# Deep Tiny
+BLOCKS_BY_ARCH["DeepTi"]="S2NoMinusZChgZNoisyI"
+# DeepS
+BLOCKS_BY_ARCH["DeepS"]="S2NoMinusZChgZNoisyI"
+# DeepM
+BLOCKS_BY_ARCH["DeepM"]="S2NoMinusZChgZNoisyI"
 # 7L2p
 BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZNoisyI"
 # 7L2p
@@ -44,7 +48,7 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("C" "7L64Chan")
+ARCHES=("DeepTi" "DeepS" "DeepM")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
@@ -85,7 +89,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1020_2State_scanGFI_kernel_3_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1030_2State_scanGFI_Deep_Models_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

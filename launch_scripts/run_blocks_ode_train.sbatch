@@ -25,7 +25,11 @@ elif [[ "$ARCH_SET" == "A2p" ]]; then
   ARCH_LABEL="6L2P"
 elif [[ "$ARCH_SET" == "A2" ]]; then
   ARCH_LABEL="6LStride2"
-elif [[ "$ARCH_SET" == "B" ]]; then
+elif [[ "$ARCH_SET" == "DeepTi" ]]; then
+  ARCH_LABEL="18L2P32C"
+elif [[ "$ARCH_SET" == "DeepS" ]]; then
+  ARCH_LABEL="9L2P"
+elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   ARCH_LABEL="18L2P"
 elif [[ "$ARCH_SET" == "C" ]]; then
   ARCH_LABEL="7L2P"
@@ -75,7 +79,20 @@ elif [[ "$ARCH_SET" == "A2" ]]; then
   OUT=(32 32 64 64 128 128)
   POOL=(0  0  0  0  0   0)
   STRIDE=(1  1  2  1  2   1)
-elif [[ "$ARCH_SET" == "B" ]]; then
+elif [[ "$ARCH_SET" == "DeepTi" ]]; then
+  # deep 0.14M model - 32 Chan
+  INP=(3  8 8 8 8 8 8  16 16 16 16 16 32 32 32 32 32 32)
+  OUT=(16 8 8 8 8 8 16 16 16 16 16 32 32 32 32 32 32 32)
+  POOL=(0 0 0 0 0 0 1  0  0  0  0  1  0  0  0  0  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepS" ]]; then
+  # deep 0.24M model
+  INP=(3  16 16 16 32 32 32 64 64)
+  OUT=(16 16 16 32 32 32 64 64 64)
+  POOL=(0  0  0  1  0  0  1  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
+  # deep 0.58M model
   INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
   OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
   POOL=(0  0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0)
