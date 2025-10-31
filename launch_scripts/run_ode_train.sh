@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_1030_S2NoMinusZChgZNoisyI_scan_gfi_deep"
+EXP="no_bn_pcn_NODE_1031_S2NoMinusZChgZNoisyI_scan_gfi_deep"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -20,7 +20,9 @@ python train_ode_cifar.py \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
-  --dropout       0.25 \
+  --dropout       0.0 \
+  --weight_decay  "1e-4" \
+  --lr_reduce_on  "80,122" \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --bypass        "false" \

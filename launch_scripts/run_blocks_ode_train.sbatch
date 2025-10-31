@@ -82,7 +82,7 @@ elif [[ "$ARCH_SET" == "A2" ]]; then
 elif [[ "$ARCH_SET" == "DeepTi" ]]; then
   # deep 0.14M model - 32 Chan
   INP=(3  8 8 8 8 8 8  16 16 16 16 16 32 32 32 32 32 32)
-  OUT=(16 8 8 8 8 8 16 16 16 16 16 32 32 32 32 32 32 32)
+  OUT=(8  8 8 8 8 8 16 16 16 16 16 32 32 32 32 32 32 32)
   POOL=(0 0 0 0 0 0 1  0  0  0  0  1  0  0  0  0  0  0)
   STRIDE=(1)
 elif [[ "$ARCH_SET" == "DeepS" ]]; then
