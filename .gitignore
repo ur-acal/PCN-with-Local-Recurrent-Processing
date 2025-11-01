@@ -1,0 +1,43 @@
+# Compiled python modules.
+*.pyc
+
+# Byte-compiled
+_pycache__/
+.cache/
+
+# Python egg metadata, regenerated from source files by setuptools.
+/*.egg-info
+.eggs/
+
+# PyPI distribution artifacts.
+build/
+dist/
+
+# Sublime project files
+*.sublime-project
+*.sublime-workspace
+
+# Tests
+.pytest_cache/
+
+# Other
+*.DS_Store
+.idea/
+
+loss_plot/
+expanded_weights/
+saved_ckpt/
+logs/
+hw_validation_data/
+run_single*
+run_multiple.sh
+test_model__.py
+shell_utils/parse_res/
+*.ipynb
+run_30_cls.sh
+run_val_scale_noisy_test.sh
+cross_sim/models/
+cross_sim/calibrated_config/
+launch_scripts/run_2*
+launch_scripts/run_slurm*
+
