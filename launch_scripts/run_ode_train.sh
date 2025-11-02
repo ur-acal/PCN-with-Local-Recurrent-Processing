@@ -20,8 +20,8 @@ python train_ode_cifar.py \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
-  --dropout       0.0 \
-  --weight_decay  "1e-4" \
+  --dropout       0.25 \
+  --weight_decay  "1e-2" \
   --lr_reduce_on  "80,122" \
   --tie_weights   "false" \
   --tie_bp        "false" \
