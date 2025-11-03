@@ -39,6 +39,12 @@ elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   ARCH_LABEL="18L2P"
 elif [[ "$ARCH_SET" == "C" ]]; then
   ARCH_LABEL="7L2P"
+elif [[ "$ARCH_SET" == "Large8L" ]]; then
+  ARCH_LABEL="Large8L"
+elif [[ "$ARCH_SET" == "Large9L" ]]; then
+  ARCH_LABEL="Large9L"
+elif [[ "$ARCH_SET" == "Large10L" ]]; then
+  ARCH_LABEL="Large10L"
 elif [[ "$ARCH_SET" == "C2" ]]; then
   ARCH_LABEL="7LStride2"
 elif [[ "$ARCH_SET" == "D2p" ]]; then
@@ -122,6 +128,21 @@ elif [[ "$ARCH_SET" == "C" ]]; then
   INP=(3  32 32 64 64  128 128)
   OUT=(32 32 64 64 128 128 128)
   POOL=(0  0  1  0  1   0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Large8L" ]]; then
+  INP=(3  32 32 64 64  128 128 128)
+  OUT=(32 32 64 64 128 128 128 128)
+  POOL=(0  0  1  0  1   0   0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Large9L" ]]; then
+  INP=(3  32 32 64 64 64  128 128 128)
+  OUT=(32 32 64 64 64 128 128 128 128)
+  POOL=(0  0  1  0  0  1   0   0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Large10L" ]]; then
+  INP=(3  32 32 32 64 64 64  128 128 128)
+  OUT=(32 32 32 64 64 64 128 128 128 128)
+  POOL=(0  0  0  1  0  0  1   0   0  0)
   STRIDE=(1)
 elif [[ "$ARCH_SET" == "C2" ]]; then
   INP=(   3  32 32 64 64  128 128)
