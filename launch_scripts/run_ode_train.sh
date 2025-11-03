@@ -14,9 +14,9 @@ python train_ode_cifar.py \
   --num_epochs    150 \
   --eval_every    10 \
   --offset_eps    0.0 \
-  --inp_channels  4 8 8 8 8 8 8  16 16 16 16 16 32 32 32 32 32 32 \
-  --out_channels  8 8 8 8 8 8 16 16 16 16 16 32 32 32 32 32 32 32 \
-  --max_pool      0 0 0 0 0 0 1  0  0  0  0  1  0  0  0  0  0  0  \
+  --inp_channels  4 8 8 8 8 8 8  16 16 16 16 16 32 32 32 \
+  --out_channels  8 8 8 8 8 8 16 16 16 16 16 32 32 32 32 \
+  --max_pool      0 0 0 0 0 0 1  0  0  0  0  0  0  0  0  \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
