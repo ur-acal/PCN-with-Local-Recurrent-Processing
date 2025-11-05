@@ -82,6 +82,10 @@ class TrainerCiFar(object):
                     best_acc = val_acc
                     best_epoch = epoch + 1
                     best_model_path = self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
+
+                if val_acc <= 0.15 and epoch + 1 >= 20:
+                    print("Train failed, stopped at epoch: {}".format(epoch + 1))
+                    break
             self.scheduler.step()
         _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
@@ -162,7 +166,8 @@ class TrainerCiFar(object):
                     loss = self.loss_fn(outputs, labels)
                 else:
                     # Distillation
-                    loss = self._calc_distill_loss(inputs, outputs, labels)
+                    loss_fn_cls = self.loss_fn[0]
+                    loss = loss_fn_cls(outputs, labels)
                 running_loss += loss.item()
 
                 # the class with the highest energy is what we choose as prediction

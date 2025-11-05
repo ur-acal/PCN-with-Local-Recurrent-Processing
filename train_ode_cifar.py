@@ -170,7 +170,7 @@ def _constr_model_name(args, rep=1):
     if args.kd_type is not None:
         kd_prefix = "{}{}T{}".format(args.kd_type if args.kd_type != "VanillaKD" else "KD",
                                      str(args.distill_T).replace(".", "p"),
-                                     args.distill_w.replace(".", "p"))
+                                     args.distill_w.replace(".", "p").replace("|", "w"))
         model_name = kd_prefix + model_name
     return model_name
 
