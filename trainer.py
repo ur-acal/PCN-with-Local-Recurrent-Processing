@@ -25,7 +25,7 @@ class TrainerCiFar(object):
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
                  eval_every=1, img_type="rgb", noise_level=None, noise_type=None,
-                 distill_type=None, teacher=None, distill_T=1, distill_w="1,0,0"):
+                 distill_type=None, teacher=None, distill_T=1, distill_w="1|0|0"):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -63,7 +63,7 @@ class TrainerCiFar(object):
             self.loss_fn = self._get_distill_cls(distill_type, distill_T)
             self.teacher = teacher.to(self.device)
             self.teacher.eval()
-            self.distill_weights = list(map(lambda _x: float(_x), distill_w.split(",")))
+            self.distill_weights = list(map(lambda _x: float(_x), distill_w.split("|")))
 
     def train(self):
         train_loss_list, val_acc_list = [], []

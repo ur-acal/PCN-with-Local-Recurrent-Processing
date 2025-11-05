@@ -99,7 +99,7 @@ def get_args():
     p.add_argument("--t_wrapper", type=lambda s: None if s.lower() in {"none", ""} else s,
                    choices=list(ODEWrapper_CLASSES.keys()) + [None], default=None)
     p.add_argument("--distill_T", type=float, default=4.0, help="Temperature in KD")
-    p.add_argument('--distill_w', default='1,0,0', type=str,
+    p.add_argument('--distill_w', default='1|0|0', type=str,
                    help='Weights of different distillation loss')
     # PCConv hyper-params
     # p.add_argument("--kernel_size",   type=int, default=3)
@@ -170,7 +170,7 @@ def _constr_model_name(args, rep=1):
     if args.kd_type is not None:
         kd_prefix = "{}{}T{}".format(args.kd_type if args.kd_type != "VanillaKD" else "KD",
                                      str(args.distill_T).replace(".", "p"),
-                                     args.distill_w.replace(".", "p").replace(",", "w"))
+                                     args.distill_w.replace(".", "p"))
         model_name = kd_prefix + model_name
     return model_name
 
