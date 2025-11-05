@@ -161,15 +161,17 @@ def _constr_model_name(args, rep=1):
             ft_prefix = "QAT{}b{}".format(args.w_bits, args.qat_cls)
         if args.noise_level is not None:
             ft_prefix += "NT{}{}".format(str(args.noise_level).replace('.', 'p'), args.noise_type)
-        if args.kd_type is not None:
-            ft_prefix += "{}T{}".format(str(args.distill_T).replace(".", "p"),
-                                        args.distill_w.replace(".", "p").replace(",", "w"))
         eps_val = args.model_name.split("_")[2]
         ode_blk = args.model_name.split("_")[3]
         orig_rep = args.model_name.split("_")[-1]
         model_name = ft_prefix + args.model_name.split(orig_rep)[0].replace(
             eps_val, "{}eps".format(args.offset_eps)).replace(
             ode_blk, "{}".format(args.ode_block)) + str(rep) + 'REP'
+    if args.kd_type is not None:
+        kd_prefix = "{}{}T{}".format(args.kd_type if args.kd_type != "VanillaKD" else "KD",
+                                     str(args.distill_T).replace(".", "p"),
+                                     args.distill_w.replace(".", "p").replace(",", "w"))
+        model_name = kd_prefix + model_name
     return model_name
 
 def get_model_name(args):
