@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.nn.utils.parametrize as P
+import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
 import argparse
@@ -23,7 +24,8 @@ class TrainerCiFar(object):
                  loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
-                 eval_every=1, img_type="rgb", noise_level=None, noise_type=None):
+                 eval_every=1, img_type="rgb", noise_level=None, noise_type=None,
+                 distill_type=None, teacher=None, distill_T=1, distill_w="1,0,0"):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -57,6 +59,11 @@ class TrainerCiFar(object):
             self.noisy_model = WrappedNoisyModel(model=self.model, noise_level=noise_level, noise_type=noise_type)
 
         self._prepare_cifar(img_type)
+        if distill_type is not None and teacher is not None:
+            self.loss_fn = self._get_distill_cls(distill_type, distill_T)
+            self.teacher = teacher.to(self.device)
+            self.teacher.eval()
+            self.distill_weights = list(map(lambda _x: float(_x), distill_w.split(",")))
 
     def train(self):
         train_loss_list, val_acc_list = [], []
@@ -102,7 +109,14 @@ class TrainerCiFar(object):
                 outputs = self.noisy_model(inputs)
             else:
                 outputs = self.model(inputs)
-            loss = self.loss_fn(outputs, labels)
+
+            # Loss calculation
+            if not isinstance(self.loss_fn, nn.ModuleList):
+                # Normal training process
+                loss = self.loss_fn(outputs, labels)
+            else:
+                # Distillation
+                loss = self._calc_distill_loss(inputs, outputs, labels)
             loss.backward()
             if self.max_norm is not None:
                 nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.max_norm)
@@ -144,7 +158,11 @@ class TrainerCiFar(object):
                 # calculate outputs by running inputs through the network
                 outputs = self.model(inputs)
 
-                loss = self.loss_fn(outputs, labels)
+                if not isinstance(self.loss_fn, nn.ModuleList):
+                    loss = self.loss_fn(outputs, labels)
+                else:
+                    # Distillation
+                    loss = self._calc_distill_loss(inputs, outputs, labels)
                 running_loss += loss.item()
 
                 # the class with the highest energy is what we choose as prediction
@@ -311,6 +329,33 @@ class TrainerCiFar(object):
         self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False,
                                                           num_workers=2)
 
+    def _get_distill_cls(self, distill_type, distill_T):
+        self.distill_type = distill_type
+        if distill_type == "VanillaKD":
+            return nn.ModuleList([self.loss_fn, VanillaKD(distill_T)])
+        elif distill_type == "CRD":
+            return nn.ModuleList([self.loss_fn, VanillaKD(distill_T), CRD()])
+
+    def _calc_distill_loss(self, inputs, outputs, labels):
+        gamma, alpha, beta = self.distill_weights
+        criterion_cls = self.loss_fn[0]
+        loss_cls = criterion_cls(outputs, labels)
+
+        criterion_kl = self.loss_fn[1]
+        with torch.no_grad():
+            out_teacher = self.teacher(inputs)
+        loss_kl = criterion_kl(y_t=out_teacher.detach(), y_s=outputs)
+
+        # Loss from different kinds of distillation methods
+        if self.distill_type == "VanillaKD":
+            return gamma * loss_cls + alpha * loss_kl
+        elif self.distill_type == "CRD":
+            # Todo: Implement CRD
+            criterion_crd = self.loss_fn[2]
+            return gamma * loss_cls
+        else:
+            return loss_cls
+
 
 class WrappedNoisyModel(nn.Module):
     """
@@ -357,3 +402,24 @@ class WrappedNoisyModel(nn.Module):
             return self.model(x)
         noisy_params = self.gen_noisy_params()
         return torch.func.functional_call(self.model, noisy_params, (x,))
+
+
+class VanillaKD(nn.Module):
+    def __init__(self, T):
+        super().__init__()
+        self.T = T
+
+    def forward(self, y_t, y_s):
+        log_p_s = F.log_softmax(y_s / self.T, dim=1)
+        p_t = F.softmax(y_t / self.T, dim=1)
+        return F.kl_div(log_p_s, p_t, reduction="batchmean") * (self.T ** 2)
+
+
+class CRD(nn.Module):
+    pass
+
+
+KD_CLASSES = {
+    "VanillaKD": VanillaKD,
+    "CRD": CRD,
+}

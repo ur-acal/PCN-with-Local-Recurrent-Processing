@@ -25,6 +25,14 @@ elif [[ "$ARCH_SET" == "A2p" ]]; then
   ARCH_LABEL="6L2P"
 elif [[ "$ARCH_SET" == "A2" ]]; then
   ARCH_LABEL="6LStride2"
+elif [[ "$ARCH_SET" == "Tiny_5L1P" ]]; then
+  ARCH_LABEL="5L1P64C"
+elif [[ "$ARCH_SET" == "Tiny_5L2P" ]]; then
+  ARCH_LABEL="5L2P64C"
+elif [[ "$ARCH_SET" == "Tiny_7L1P" ]]; then
+  ARCH_LABEL="7L1P64C"
+elif [[ "$ARCH_SET" == "Tiny_7L2P" ]]; then
+  ARCH_LABEL="7L2P64C"
 elif [[ "$ARCH_SET" == "Tiny_8L" ]]; then
   ARCH_LABEL="8L1P32C"
 elif [[ "$ARCH_SET" == "Tiny_11L1P" ]]; then
@@ -47,6 +55,12 @@ elif [[ "$ARCH_SET" == "Large9L" ]]; then
   ARCH_LABEL="Large9L"
 elif [[ "$ARCH_SET" == "Large10L" ]]; then
   ARCH_LABEL="Large10L"
+elif [[ "$ARCH_SET" == "Large8L1P" ]]; then
+  ARCH_LABEL="Large8L1P"
+elif [[ "$ARCH_SET" == "Large9L1P" ]]; then
+  ARCH_LABEL="Large9L1P"
+elif [[ "$ARCH_SET" == "Large10L1P" ]]; then
+  ARCH_LABEL="Large10L1P"
 elif [[ "$ARCH_SET" == "C2" ]]; then
   ARCH_LABEL="7LStride2"
 elif [[ "$ARCH_SET" == "D2p" ]]; then
@@ -93,6 +107,26 @@ elif [[ "$ARCH_SET" == "A2" ]]; then
   OUT=(32 32 64 64 128 128)
   POOL=(0  0  0  0  0   0)
   STRIDE=(1  1  2  1  2   1)
+elif [[ "$ARCH_SET" == "Tiny_5L1P" ]]; then
+  INP=(3  16 16 32 64)
+  OUT=(16 16 32 64 64)
+  POOL=(0  0  1  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Tiny_5L2P" ]]; then
+  INP=(3  16 16 32 64)
+  OUT=(16 16 32 64 64)
+  POOL=(0  0  1  1  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Tiny_7L1P" ]]; then
+  INP=( 3 8 8 8  16 32 64)
+  OUT=( 8 8 8 16 32 64 64)
+  POOL=(0 0 0 1  0  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Tiny_7L2P" ]]; then
+  INP=( 3 8 8 8  16 32 64)
+  OUT=( 8 8 8 16 32 64 64)
+  POOL=(0 0 0 1  0  1  0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "Tiny_8L" ]]; then
   INP=(3  32 32 32 32 32 32 32)
   OUT=(32 32 32 32 32 32 32 32)
@@ -152,6 +186,21 @@ elif [[ "$ARCH_SET" == "Large10L" ]]; then
   OUT=(32 32 32 64 64 64 128 128 128 128)
   POOL=(0  0  0  1  0  0  1   0   0  0)
   STRIDE=(1)
+elif [[ "$ARCH_SET" == "Large8L1P" ]]; then
+  INP=(3  32 32 64 64  128 128 128)
+  OUT=(32 32 64 64 128 128 128 128)
+  POOL=(0  0  0  0  1   0   0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Large9L1P" ]]; then
+  INP=(3  32 32 64 64 64  128 128 128)
+  OUT=(32 32 64 64 64 128 128 128 128)
+  POOL=(0  0  0  0  0  1   0   0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "Large10L1P" ]]; then
+  INP=(3  32 32 32 64 64 64  128 128 128)
+  OUT=(32 32 32 64 64 64 128 128 128 128)
+  POOL=(0  0  0  0  0  0  1   0   0  0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "C2" ]]; then
   INP=(   3  32 32 64 64  128 128)
   OUT=(   32 32 64 64 128 128 128)
@@ -187,7 +236,7 @@ elif [[ "$ARCH_SET" == "Ker3_D" ]]; then
   POOL=(0  1  0  1  0)
   STRIDE=(1)
 elif [[ "$ARCH_SET" == "7L64Chan" ]]; then
-  INP=(4  64 64 64 64 64 64)
+  INP=(3  64 64 64 64 64 64)
   OUT=(64 64 64 64 64 64 64)
   POOL=(0  1  0  1  0  0  0)
   STRIDE=(1)

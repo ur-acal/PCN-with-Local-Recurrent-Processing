@@ -11,7 +11,7 @@ import numpy as np
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
-from trainer import TrainerCiFar
+from trainer import TrainerCiFar, KD_CLASSES
 from inference_utils import load_and_prepare_model, test_once
 
 
@@ -84,6 +84,23 @@ def get_args():
                         help='Multiplicative or additive noise')
     p.add_argument("--sde_noise_type", type=str, default="mul", choices=["mul", "add"],
                    help="Only useful when self.eps is set in the ODESolver class")
+    # Knowledge distillation related args
+    p.add_argument("--kd_type", type=str, choices=list(KD_CLASSES.keys()) + [None],
+                   default=None)
+    p.add_argument("--teacher", type=str, default=None,
+                   help="Model name of the teacher")
+    p.add_argument("--t_pc_conv", type=str, choices=list(PC_CONV_CLASS.keys()) + [None],
+                   default=None)
+    p.add_argument("--t_method", type=str, default="dopri5")
+    p.add_argument("--t_tol", type=float, default=1e-6, help="Teacher model's ODE solver tolerance")
+    p.add_argument("--t_n_steps", type=float, default=20,
+                   help="Teacher model's ODE solver number of steps")
+    p.add_argument("--t_t_end", type=float, default=None, help="Teacher model's stop time of the solver")
+    p.add_argument("--t_wrapper", type=lambda s: None if s.lower() in {"none", ""} else s,
+                   choices=list(ODEWrapper_CLASSES.keys()) + [None], default=None)
+    p.add_argument("--distill_T", type=float, default=4.0, help="Temperature in KD")
+    p.add_argument('--distill_w', default='1,0,0', type=str,
+                   help='Weights of different distillation loss')
     # PCConv hyper-params
     # p.add_argument("--kernel_size",   type=int, default=3)
     # p.add_argument("--stride",        type=int, default=1)
@@ -144,6 +161,9 @@ def _constr_model_name(args, rep=1):
             ft_prefix = "QAT{}b{}".format(args.w_bits, args.qat_cls)
         if args.noise_level is not None:
             ft_prefix += "NT{}{}".format(str(args.noise_level).replace('.', 'p'), args.noise_type)
+        if args.kd_type is not None:
+            ft_prefix += "{}T{}".format(str(args.distill_T).replace(".", "p"),
+                                        args.distill_w.replace(".", "p").replace(",", "w"))
         eps_val = args.model_name.split("_")[2]
         ode_blk = args.model_name.split("_")[3]
         orig_rep = args.model_name.split("_")[-1]
@@ -161,6 +181,32 @@ def get_model_name(args):
         model_name = _constr_model_name(args, rep)
         model_dir = os.path.join(args.save_path, model_name)
     return model_name
+
+def load_teacher_model(args):
+    ckpt_path = os.path.join(args.save_path, args.teacher, args.teacher + "_best_ckpt.pth")
+    logging.warning("Loading teacher model from: {}".format(ckpt_path))
+    noisy_params = {"noise_level": 0.0, "weight": None}
+    try:
+        t_end = float(args.teacher.split("TEnd")[0].split("_")[-1])
+    except:
+        t_end = args.t_t_end
+    ode_params = {"ode_block": ODEBLOCK_CLASSES[args.teacher.split("_")[3]], "t_end": t_end,
+                  "method": args.t_method, "tol": args.t_tol, "ts_scale": 1, "n_steps": args.t_n_steps}
+    # Use the same wrap parameters as the student model
+    wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.t_wrapper], "calib_path": None,
+                      "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                      "thermal_noise": True,
+                      # offset_eps None means using Johnson noise
+                      "offset_eps": None} if args.t_wrapper is not None else None
+    teacher_model = load_and_prepare_model(model_path=ckpt_path, device="cuda" if torch.cuda.is_available() else "cpu",
+                                  model_struct=PCNet,
+                                  pc_conv_layer=PC_CONV_CLASS.get(args.t_pc_conv, PCConv), data_parallel=False,
+                                  noise_to_bn=True, noise_to_linear=True,
+                                  fuse_bn=False, conv_only=False, ode_params=ode_params,
+                                  ode_wrapper_params=wrapper_params,
+                                  **noisy_params)
+    return teacher_model
 
 def main():
     args = get_args()
@@ -273,6 +319,15 @@ def main():
         model, _ = wrap_ode_block(model, **wrapper_params)
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
 
+    # Knowledge Distillation
+    teacher = None
+    if args.kd_type is not None:
+        teacher = load_teacher_model(args)
+        logging.warning("Evaluting the accuracy of the teacher model")
+        teacher.eval()
+        test_once(teacher, device='cuda' if torch.cuda.is_available() else 'cpu', model_name=args.teacher,
+                  img_type=args.img_type)
+
     # Get trainer
     logging.warning("lr reduce on: {}, max grad norm: {}, cosine annealing T0: {}".format(
         args.lr_reduce_on, args.max_g_norm, args.cosine_t0))
@@ -296,6 +351,10 @@ def main():
         img_type      = args.img_type,
         noise_level   = args.noise_level,
         noise_type    = args.noise_type,
+        distill_type  = args.kd_type,
+        teacher       = teacher,
+        distill_T     = args.distill_T,
+        distill_w     = args.distill_w,
     )
 
     if args.test_only:

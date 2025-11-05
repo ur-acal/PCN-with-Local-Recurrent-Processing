@@ -67,11 +67,11 @@ def get_test_data(test_bs=2048, img_type="rgb"):
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=False, num_workers=2)
     return test_loader
 
-def test_once(net, test_dataloader=None, device='cpu', model_name=None):
+def test_once(net, test_dataloader=None, device='cpu', model_name=None, img_type="rgb"):
     net = net.to(device)
     net.eval()
     if test_dataloader is None:
-        test_dataloader = get_test_data(128)
+        test_dataloader = get_test_data(128, img_type=img_type)
     _total, _correct = 0, 0
     for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=True):
         inputs, targets = inputs.to(device), targets.to(device)

@@ -25,6 +25,14 @@ BLOCKS_BY_ARCH["A"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["A2p"]="S2NoMinusZChgZNoisyI"
 # 6L2p
 BLOCKS_BY_ARCH["A2"]="S2NoMinusZChgZNoisyI"
+# Tiny 5L1P
+BLOCKS_BY_ARCH["Tiny_5L1P"]="S2NoMinusZChgZNoisyI"
+# Tiny 5L2P
+BLOCKS_BY_ARCH["Tiny_5L2P"]="S2NoMinusZChgZNoisyI"
+# Tiny 7L1P
+BLOCKS_BY_ARCH["Tiny_7L1P"]="S2NoMinusZChgZNoisyI"
+# Tiny 7L2P
+BLOCKS_BY_ARCH["Tiny_7L2P"]="S2NoMinusZChgZNoisyI"
 # Tiny 8L1P
 BLOCKS_BY_ARCH["Tiny_8L"]="S2NoMinusZChgZNoisyI"
 # Tiny 11L1P
@@ -45,6 +53,12 @@ BLOCKS_BY_ARCH["Large8L"]="S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["Large9L"]="S2NoMinusZChgZNoisyI"
 # 10L2p
 BLOCKS_BY_ARCH["Large10L"]="S2NoMinusZChgZNoisyI"
+# 8L1p
+BLOCKS_BY_ARCH["Large8L1P"]="S2NoMinusZChgZNoisyI"
+# 9L1p
+BLOCKS_BY_ARCH["Large9L1P"]="S2NoMinusZChgZNoisyI"
+# 10L1p
+BLOCKS_BY_ARCH["Large10L1P"]="S2NoMinusZChgZNoisyI"
 # 7L2p
 BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZNoisyI"
 # 7L2p
@@ -62,7 +76,7 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("DeepTi1P")
+ARCHES=("Tiny_5L2P" "Tiny_7L1P" "Tiny_7L2P" "Large8L1P" "Large9L1P" "Large10L1P")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
@@ -103,7 +117,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1103_2State_scanGFI_Tiny_Models_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1103_2State_scanGFI_Tiny_Large_Models_${arch}_${img_type}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

@@ -14,14 +14,14 @@ python train_ode_cifar.py \
   --num_epochs    150 \
   --eval_every    10 \
   --offset_eps    0.0 \
-  --inp_channels  4 8 8 8 8 8 8  16 16 16 16 16 32 32 32 \
-  --out_channels  8 8 8 8 8 8 16 16 16 16 16 32 32 32 32 \
-  --max_pool      0 0 0 0 0 0 1  0  0  0  0  0  0  0  0  \
+  --inp_channels  4  16 16 32 64 \
+  --out_channels  16 16 32 64 64 \
+  --max_pool      0  0  1  0  0  \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
   --dropout       0.25 \
-  --weight_decay  "1e-2" \
+  --weight_decay  "1e-3" \
   --lr_reduce_on  "80,122" \
   --tie_weights   "false" \
   --tie_bp        "false" \
