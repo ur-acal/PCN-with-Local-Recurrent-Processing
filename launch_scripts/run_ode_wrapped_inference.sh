@@ -73,7 +73,12 @@ MODEL_NAMES=(
 #  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_2REP"
 
 #  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_6Layers_2Pool_scanGFI_1REP" # model on bluehive
-  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_6Layers_2Pool_scanGFI_2REP"
+#  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_6Layers_2Pool_scanGFI_2REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_5Layers_1Pool_scanGFI_2REP"
+#  "KD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
+#  "QAT5bNT0p2mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
+#  "QAT5bNT0p2mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_2REP"
+#  "QAT5bNT0p25mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -108,6 +113,7 @@ run_model(){
     local _img_type="$prev"
   fi
 
+#  local _ode_wrapper="ODEWrapperRC"
   local _ode_wrapper="WrapQuantizeW"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
     if [[ "$name" == *QAT* ]]; then
@@ -134,7 +140,7 @@ run_model(){
     --n_sweep_right   1 \
     --thermal_noise   "true" \
     --sde_noise_type  "mul" \
-    --sweep_eps       "true" \
+    --sweep_eps       "false" \
     --R               1e5 \
     --C               "$cap_val" \
     --v_dd            "1" \
@@ -143,6 +149,7 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model
@@ -154,7 +161,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1027_scanGPI_noise_inject_test_${method}Method_${tol}Tol.log"
+  EXP_NAME="1107_scanGPI_Tiny_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

@@ -47,6 +47,8 @@ elif [[ "$ARCH_SET" == "DeepS" ]]; then
   ARCH_LABEL="9L2P"
 elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   ARCH_LABEL="18L2P"
+elif [[ "$ARCH_SET" == "DeepM1P" ]]; then
+  ARCH_LABEL="18L1P"
 elif [[ "$ARCH_SET" == "C" ]]; then
   ARCH_LABEL="7L2P"
 elif [[ "$ARCH_SET" == "Large8L" ]]; then
@@ -75,6 +77,8 @@ elif [[ "$ARCH_SET" == "Ker3_D" ]]; then
   ARCH_LABEL="5LKer3"
 elif [[ "$ARCH_SET" == "7L64Chan" ]]; then
   ARCH_LABEL="7L64Chan"
+elif [[ "$ARCH_SET" == "7L64Chan1P" ]]; then
+  ARCH_LABEL="7L64Chan1P"
 else
   ARCH_LABEL="Invalid"
 fi
@@ -166,6 +170,12 @@ elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
   POOL=(0  0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0)
   STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepM1P" ]]; then
+  # deep 0.58M model
+  INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
+  OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
+  POOL=(0  0  0  0  0  0  1  0  0  0  0  0  0  0  0  0  0  0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "C" ]]; then
   INP=(3  32 32 64 64  128 128)
   OUT=(32 32 64 64 128 128 128)
@@ -239,6 +249,11 @@ elif [[ "$ARCH_SET" == "7L64Chan" ]]; then
   INP=(3  64 64 64 64 64 64)
   OUT=(64 64 64 64 64 64 64)
   POOL=(0  1  0  1  0  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "7L64Chan1P" ]]; then
+  INP=(3  64 64 64 64 64 64)
+  OUT=(64 64 64 64 64 64 64)
+  POOL=(0  0  0  1  0  0  0)
   STRIDE=(1)
 else
   echo "ARCH_SET must be A or B or C[2]"; exit 2

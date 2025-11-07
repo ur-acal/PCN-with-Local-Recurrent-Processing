@@ -816,11 +816,45 @@ class ODEState2FFFB(ODEBlockXInit):
         self.y_init_with = "x"
         self.z_init_with = "conv"
 
+        # SDE noise related members
+        self.offset_eps = 0.002
+        self.eps_scale = None
+        self.option_aca["noise_type"] = self.sde_noise_type
+
+    def _set_eps(self, x):
+        if self.eps_scale is not None:
+            with torch.no_grad():
+                if isinstance(self.FFconv, nn.Conv2d):
+                    ff_ws = self.FFconv.weight.data.view(
+                        self.out_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
+                else:
+                    # Assuming unrolled
+                    ff_ws = self.FFconv.inp_param_sum(x)
+                if isinstance(self.FBconv, nn.ConvTranspose2d):
+                    fb_ws = self.FBconv.weight.data.view(
+                        self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
+                elif isinstance(self.FBconv, nn.Conv2d):
+                    fb_ws = self.FBconv.weight.data.flip([2,3]).permute([1,0,2,3]).view(
+                        self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
+                else:
+                    # Assuming unrolled
+                    fb_ws = self.FBconv.inp_param_sum(x)
+                weight_sum = (ff_ws, fb_ws)
+            # directly use the eps_scale
+            if hasattr(self, "option_init"):
+                self.option_init["eps"] = self.eps_scale * self.offset_eps * weight_sum[1]
+            self.option_aca["eps"] = tuple(self.eps_scale * self.offset_eps * _ws for _ws in weight_sum)
+        else:
+            eps_scale = 1 if self.sde_noise_type == "mul" else x.abs().max()
+            if hasattr(self, "option_init"):
+                self.option_init["eps"] = eps_scale * self.offset_eps
+            self.option_aca["eps"] = eps_scale * self.offset_eps
+
     def init_y(self, x):
         if self.y_init_with == "x":
             y0 = super().init_y(x)
         elif self.y_init_with == "0":
-            y0 = torch.zeros((x.shape[0], self.FFconv.weight.shape[0], x.shape[2], x.shape[3]), device=x.device)
+            y0 = torch.zeros((x.shape[0], self.out_chan, x.shape[2], x.shape[3]), device=x.device)
         elif self.y_init_with == "conv":
             y0 = self.act_fn(self.FFconv(x))
         else:
@@ -829,7 +863,7 @@ class ODEState2FFFB(ODEBlockXInit):
         if self.z_init_with == "x":
             z0 = x
         elif self.z_init_with == "0":
-            z0 = torch.zeros((x.shape[0], self.FFconv.weight.shape[1], x.shape[2], x.shape[3]), device=x.device)
+            z0 = torch.zeros((x.shape[0], self.in_chan, x.shape[2], x.shape[3]), device=x.device)
         elif self.z_init_with == "conv":
             z0 = self.FBconv(y0)
         else:
@@ -962,10 +996,7 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
         super().__init__(**kwargs)
         # sqrt((k_B * T) * R * df * 4) = sqrt(4.16e-21 * 1e5 * 10e9 * 4)
         # Todo: use voltage or current?
-        self.offset_eps = 0.002
-        self.eps_scale = None
         self.option_init["noise_type"] = self.sde_noise_type
-        self.option_aca["noise_type"] = self.sde_noise_type
 
     def init_y(self, x):
         z0 = torch.zeros_like(x, device=x.device)  # Todo: add option for z0 = x
@@ -983,33 +1014,6 @@ class S2NoMinusZChgZNoisyI(S2NoMinusZChargeZ):
         # init z
         z0 = aca_ode_solve(self._make_z_ode_fn(y0), z0, self.option_init)[-1]
         return y0, z0
-
-    def _set_eps(self, x):
-        if self.eps_scale is not None:
-            with torch.no_grad():
-                if isinstance(self.FFconv, nn.Conv2d):
-                    ff_ws = self.FFconv.weight.data.view(
-                        self.out_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
-                else:
-                    # Assuming unrolled
-                    ff_ws = self.FFconv.inp_param_sum(x)
-                if isinstance(self.FBconv, nn.ConvTranspose2d):
-                    fb_ws = self.FBconv.weight.data.view(
-                        self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
-                elif isinstance(self.FBconv, nn.Conv2d):
-                    fb_ws = self.FBconv.weight.data.flip([2,3]).permute([1,0,2,3]).view(
-                        self.in_chan, -1).abs().sum(-1).sqrt().view(1, -1, 1, 1)
-                else:
-                    # Assuming unrolled
-                    fb_ws = self.FBconv.inp_param_sum(x)
-                weight_sum = (ff_ws, fb_ws)
-            # directly use the eps_scale
-            self.option_init["eps"] = self.eps_scale * self.offset_eps * weight_sum[1]
-            self.option_aca["eps"] = tuple(self.eps_scale * self.offset_eps * _ws for _ws in weight_sum)
-        else:
-            eps_scale = 1 if self.sde_noise_type == "mul" else x.abs().max()
-            self.option_init["eps"] = eps_scale * self.offset_eps
-            self.option_aca["eps"] = eps_scale * self.offset_eps
 
     def forward(self, x, layer_idx=None):
         self._set_eps(x)
@@ -1033,6 +1037,47 @@ class S2NoMinusZChgZMinusNoisyI(S2NoMinusZChgZNoisyI):
         def ode_func(t, z):
             return self.FBconv(y) - z
         return ode_func
+
+
+class S2NoisyIYAsXZAsX(State2NoMinusZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "x"
+
+    def forward(self, x, layer_idx=None):
+        self._set_eps(x)
+        return super().forward(x, layer_idx)
+
+class S2NoisyIYAs0ZAsX(State2NoMinusZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "0"
+        self.z_init_with = "x"
+
+    def forward(self, x, layer_idx=None):
+        self._set_eps(x)
+        return super().forward(x, layer_idx)
+
+class S2NoisyIYAsXZAs0(State2NoMinusZ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "0"
+
+    def forward(self, x, layer_idx=None):
+        self._set_eps(x)
+        return super().forward(x, layer_idx)
+
+
+class S2Circ(S2NoMinusZChgZNoisyI):
+    def __init__(self, patch_node=8, patch_stride=2, patch_cycle=5, **kwargs):
+        super().__init__(**kwargs)
+        self.patch_node = patch_node
+        self.patch_stride = patch_stride
+        self.patch_cycle = patch_cycle
+
+
 ####################################################################################
 ####################################################################################
 
@@ -1610,6 +1655,9 @@ ODEBLOCK_CLASSES = {
     "S2NoMinusZChargeZMinus": S2NoMinusZChargeZMinus,
     "S2NoMinusZChgZNoisyI": S2NoMinusZChgZNoisyI,
     "S2NoMinusZChgZMinusNoisyI": S2NoMinusZChgZMinusNoisyI,
+    "S2NoisyIYAsXZAsX": S2NoisyIYAsXZAsX,
+    "S2NoisyIYAs0ZAsX": S2NoisyIYAs0ZAsX,
+    "S2NoisyIYAsXZAs0": S2NoisyIYAsXZAs0,
     # Using summation of abs value
     "SelfCUAbsSumFFFB": SelfCUAbsSumFFFB,
     "SelfCUAbsSumFFFBInitB": SelfCUAbsSumFFFBInitB,

@@ -107,7 +107,8 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_SelfCUAbsSumFFFBInitB_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+  "KD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -133,6 +134,7 @@ run_model(){
   python -u ode_inference.py \
     --model_name      "$name" \
     --ckpt            "best" \
+    --img_type        "scanGFI" \
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
     --tol             "$tol" \
@@ -144,6 +146,7 @@ run_model(){
     --n_sweep_right   1 \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "S2NoMinusZChgZNoisyI" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}/job.log"
 }
 export -f run_model
@@ -153,7 +156,7 @@ for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="0923_2pooling_rgb_State2NoMinusZ_${method}Method_${tol}Tol.log"
+  EXP_NAME="1105_Tiny_State2NoMinusZ_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

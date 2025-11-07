@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_1031_S2NoMinusZChgZNoisyI_scan_gfi_deep"
+EXP="no_bn_pcn_NODE_1107_S2NoisyIYAsXZAsX_scan_gfi_deep"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -32,7 +32,7 @@ python train_ode_cifar.py \
   --t_end         "1.5" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
-  --ode_block     "S2NoMinusZChgZNoisyI" \
+  --ode_block     "S2NoisyIYAsXZAs0" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_rggb_S2NoMinusZChgZNoisyI_deep.log"
 
 # 6L64 Chan
