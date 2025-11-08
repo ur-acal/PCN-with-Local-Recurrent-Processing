@@ -313,7 +313,7 @@ run_one () {
   echo "[$(date +%T)] starting ${block} -> ${logfile}"
 
   local t_end="0.75"
-  if [[ "$block" == *0Init* || "$block" == *As0* ]]; then
+  if [[ "$block" == *0Init* || "$block" == *As0* || "$block" == *YAsXZAsX* ]]; then
     t_end="1.75"
   elif [[ "$block" == *Charge* || "$block" == *Chg* ]]; then
     t_end="1.5"

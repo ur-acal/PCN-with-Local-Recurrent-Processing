@@ -1430,7 +1430,9 @@ class ODEWrapper2State(WrapQuantizeW):
         self.out_scale = self.beta if self.is_last else 1
         # self.out_scale = 1
 
-        self.original_make_z_fn = self.ode_block._make_z_ode_fn
+        self._has_init_ode = hasattr(self.ode_block, "_make_z_ode_fn")
+        if self._has_init_ode:
+            self.original_make_z_fn = self.ode_block._make_z_ode_fn
         self.proj_fn = nn.Hardtanh(min_val=-self.v_dd, max_val=self.v_dd)
         # Todo: What's the right eps_scale?
         # Pick sqrt(4 * k_B * T / R) / C
@@ -1445,7 +1447,8 @@ class ODEWrapper2State(WrapQuantizeW):
 
         if patch:
             self._patch()
-        self.ode_block.option_init["proj_fn"] = self.proj_fn
+        if self._has_init_ode:
+            self.ode_block.option_init["proj_fn"] = self.proj_fn
         self.ode_block.option_aca["proj_fn"] = self.proj_fn
 
     def get_time_scaler(self):
@@ -1466,10 +1469,10 @@ class ODEWrapper2State(WrapQuantizeW):
         end_time_scaler = self.R * self.C / self.alpha
         self.ode_block.integration_time = self.ode_block.integration_time * end_time_scaler
 
-        self.ode_block.option_init = self._scale_time_impl(self.ode_block.option_init, end_time_scaler)
+        if self._has_init_ode:
+            self.ode_block.option_init = self._scale_time_impl(self.ode_block.option_init, end_time_scaler)
+            logging.info("Scaled init end time: {} s".format(self.ode_block.option_init["t1"]))
         self.ode_block.option_aca = self._scale_time_impl(self.ode_block.option_aca, end_time_scaler)
-
-        logging.info("Scaled init end time: {} s".format(self.ode_block.option_init["t1"]))
         logging.info("Scaled compute end time: {} s".format(self.ode_block.option_aca["t1"]))
 
     def _scale_act_fn(self):
@@ -1532,7 +1535,8 @@ class ODEWrapper2State(WrapQuantizeW):
         self._patch_make_fn()
         self._patch_forward()
         self._patch_init_y()
-        self._patch_make_z_fn()
+        if self._has_init_ode:
+            self._patch_make_z_fn()
 
     @staticmethod
     def _round(x, n):
@@ -1589,7 +1593,8 @@ class QATWrapper2State(ODEWrapper2State):
 
         # Original copy of integration time
         self.orig_integration_time = self.ode_block.integration_time.clone()
-        self.orig_option_init = deepcopy(self.ode_block.option_init)
+        if self._has_init_ode:
+            self.orig_option_init = deepcopy(self.ode_block.option_init)
         self.orig_option_aca = deepcopy(self.ode_block.option_aca)
 
         # Register hook
@@ -1636,7 +1641,8 @@ class QATWrapper2State(ODEWrapper2State):
         end_time_scaler = self.R * self.C / self.alpha
         module.integration_time = self.orig_integration_time * end_time_scaler
 
-        module.option_init = self._scale_time_impl(deepcopy(self.orig_option_init), end_time_scaler)
+        if self._has_init_ode:
+            module.option_init = self._scale_time_impl(deepcopy(self.orig_option_init), end_time_scaler)
         module.option_aca = self._scale_time_impl(deepcopy(self.orig_option_aca), end_time_scaler)
 
     def _scale_act_fn(self):

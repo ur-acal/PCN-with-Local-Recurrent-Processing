@@ -79,6 +79,21 @@ MODEL_NAMES=(
 #  "QAT5bNT0p2mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
 #  "QAT5bNT0p2mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_2REP"
 #  "QAT5bNT0p25mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAs0ZAsX_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_1Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAs0ZAsX_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_1Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_1Pool_scanGFI_1REP"
+
+  # YAs0ZAsX Failed to train for the 18 Layer model
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -149,7 +164,6 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
-    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model
@@ -161,7 +175,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1107_scanGPI_Tiny_${method}Method_${tol}Tol.log"
+  EXP_NAME="1108_scanGPI_Medium_NoInitODE_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
@@ -169,7 +183,7 @@ for method in "${METHOD_VALS[@]}"; do
   echo "Tail master with: tail -f $MASTER_LOG"
   # ─────────────── run in parallel ───────────────
   parallel \
-    --jobs 2 \
+    --jobs 3 \
     --joblog "$JOB_LOG" \
     --keep-order \
     run_model {1} "${method}" {2} {3} \
