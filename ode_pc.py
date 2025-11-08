@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torch.nn.utils.parametrize as P
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Union, Any
+from typing import Union, Any, Tuple
 from functools import wraps
 
 from pc_model import PCNet
@@ -1071,13 +1071,94 @@ class S2NoisyIYAsXZAs0(State2NoMinusZ):
 
 
 class S2Circ(S2NoMinusZChgZNoisyI):
-    def __init__(self, patch_node=8, patch_stride=2, patch_cycle=5, **kwargs):
+    def __init__(self, patch_node=8, patch_stride=4, patch_cycle=5, **kwargs):
+        kwargs.update({"time_split": 0.6})
         super().__init__(**kwargs)
         self.patch_node = patch_node
         self.patch_stride = patch_stride
         self.patch_cycle = patch_cycle
 
+        self.option_aca_raw = deepcopy(self.option_aca)
 
+        # Each patch's compute time = [t_end * (1 - time_split)] / patch_cycle
+
+    def _make_ode_fn(self, x):
+        def ode_func(t, yz):
+            y_, z_ = yz
+            dy = self.FFconv(self.act_fn(z_))
+            dz = self.FBconv(y_)
+            return dy, dz
+        return _FuncWrapper(ode_func)
+
+    def forward(self, x, layer_idx=None):
+        self._set_eps(x)
+        yz = self.init_y(x)
+
+        x_h, x_w = x.shape[2], x.shape[3]
+
+        # Always true
+        # if x_h > 0 and x_w > 0:
+        if x_h > self.patch_node and x_w > self.patch_node:
+            for i in range(self.patch_cycle):
+                # logging.warning("Cycle: {}, yz shape: {}, yz mean: {}".format(i, [_s.shape for _s in yz], [_s.mean() for _s in yz]))
+                yz = self._run_one_cycle(x, yz)
+            yz = yz[0]
+        else:
+            cur_t_aca, cur_h = self.option_aca_raw["t1"], self.option_aca_raw["h"]
+            self.integration_time[-1] = cur_t_aca
+            self.option_aca = self._set_ode_option(self.option_aca, max(1.0, self.patch_cycle - 3), cur_t_aca, cur_h)
+            yz = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
+            yz = yz[0][-1]
+            # logging.warning(
+            #     "Cycle: {}, yz shape: {}, yz mean: {}".format("One Time solve", yz.shape, yz.mean()))
+
+        # logging.warning("Option_aca: {}".format(self.option_aca))
+
+        if self.bypass is not None:
+            yz = self.bypass(yz) + yz
+        return yz
+
+    def _run_one_cycle(self, x, yz):
+        if not isinstance(yz, Tuple):
+            yz = (yz,)
+        bs = x.shape[0]
+        yz_c = tuple(_s.shape[1] for _s in yz)
+        yz_h = tuple(_s.shape[2] for _s in yz)
+        yz_w = tuple(_s.shape[3] for _s in yz)
+        # If patch_node is bigger than the input feature size, don't split into multiple patches.
+        yz_psz = tuple((min(self.patch_node, _h), min(self.patch_node, _w)) for _h, _w in zip(yz_h, yz_w))
+        yz_stride = tuple((self.patch_stride if self.patch_node < _h else 1, self.patch_stride if self.patch_node < _w else 1)
+                          for _h, _w in zip(yz_h, yz_w))
+
+        with torch.no_grad():
+            yz_ones = tuple(x.new_ones(bs, 1, _h, _w) for _h, _w in zip(yz_h, yz_w))
+            yz_cnt_cols = tuple(F.unfold(_ones, kernel_size=_p_sz, stride=_p_stride)
+                             for _ones, _p_sz, _p_stride in zip(yz_ones, yz_psz, yz_stride))
+            yz_cnt_map = tuple(F.fold(_cnt_cols, output_size=(_h, _w),
+                             kernel_size=_p_sz, stride=_p_stride)
+                               for _cnt_cols, _h, _w, _p_sz, _p_stride in zip(yz_cnt_cols, yz_h, yz_w, yz_psz, yz_stride))
+
+            # Unfold and transpose to (BS, N_Patches, N_Chan * patch_node * patch_node)
+        yz = tuple(F.unfold(
+            _s, kernel_size=_p_sz, stride=_p_stride).transpose(1, 2)
+                   for _s, _p_sz, _p_stride in zip(yz, yz_psz, yz_stride))
+        yz_patch_num = tuple(_s.shape[1] for _s in yz)
+        # Reshape to (BS*N_Patches, N_Chan, patch_node, patch_node)
+        yz = tuple(_s.reshape(bs * _np, _nc, _p_sz[0], _p_sz[1])
+                   for _s, _np, _nc, _p_sz in zip(yz, yz_patch_num, yz_c, yz_psz))
+
+        self.integration_time = self.integration_time.type_as(x)
+
+        # Shape remains the same (BS*N_Patches, N_Chan, patch_node, patch_node)
+        yz = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
+        yz = tuple(_s[-1] for _s in yz)
+
+        # Reshape to (BS, N_Patches, N_Chan * patch_node * patch_node), then fold it back
+        yz = tuple(F.fold(_s.reshape(bs, _np, _nc*_p_sz[0]*_p_sz[1]).transpose(1, 2).contiguous(),
+                          # output_size=(_h, _w), kernel_size=_p_sz, stride=_p_stride) / _cnt_map
+                          output_size = (_h, _w), kernel_size = _p_sz, stride = _p_stride) / (_p_sz[0]**0.7)
+                   for _s, _np, _nc, _h, _w, _p_sz, _p_stride, _cnt_map in zip(yz, yz_patch_num, yz_c, yz_h, yz_w, yz_psz, yz_stride, yz_cnt_map))
+        return yz
 ####################################################################################
 ####################################################################################
 
@@ -1658,6 +1739,7 @@ ODEBLOCK_CLASSES = {
     "S2NoisyIYAsXZAsX": S2NoisyIYAsXZAsX,
     "S2NoisyIYAs0ZAsX": S2NoisyIYAs0ZAsX,
     "S2NoisyIYAsXZAs0": S2NoisyIYAsXZAs0,
+    "S2Circ": S2Circ,
     # Using summation of abs value
     "SelfCUAbsSumFFFB": SelfCUAbsSumFFFB,
     "SelfCUAbsSumFFFBInitB": SelfCUAbsSumFFFBInitB,

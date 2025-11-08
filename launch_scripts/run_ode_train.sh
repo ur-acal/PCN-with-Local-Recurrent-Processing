@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EXP="no_bn_pcn_NODE_1107_S2NoisyIYAsXZAsX_scan_gfi_deep"
+EXP="no_bn_pcn_NODE_1107_S2Circ_scan_gfi_deep"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
@@ -14,9 +14,9 @@ python train_ode_cifar.py \
   --num_epochs    150 \
   --eval_every    10 \
   --offset_eps    0.0 \
-  --inp_channels  4  16 16 32 64 \
-  --out_channels  16 16 32 64 64 \
-  --max_pool      0  0  1  0  0  \
+  --inp_channels  4  64 64 64 64 64 64 \
+  --out_channels  64 64 64 64 64 64 64 \
+  --max_pool      1  0  0  0  0  0  0  \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
@@ -28,12 +28,12 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.0001" \
-  --t_end         "1.5" \
+  --tol           "1e-4" \
+  --t_end         "1.25" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
-  --ode_block     "S2NoisyIYAsXZAs0" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_rggb_S2NoMinusZChgZNoisyI_deep.log"
+  --ode_block     "S2Circ" \
+  2>&1 | tee "${LOGDIR}/train_${EXP}_rggb_S2Circ.log"
 
 # 6L64 Chan
 #python train_ode_cifar.py \
