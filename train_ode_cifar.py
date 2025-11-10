@@ -66,6 +66,9 @@ def get_args():
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
     p.add_argument("--offset_eps", type=float, default=None,
                    help="Noise level of the offset or noise level of noise in sde (used in wrapper)")
+    p.add_argument("--patch_node", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    p.add_argument("--patch_stride", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    p.add_argument("--patch_cycle", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
     # Quantization-aware training related args
     p.add_argument("--ode_wrapper", type=str, choices=list(ODEWrapper_CLASSES.keys()) + [None],
                         default=None)
@@ -172,6 +175,8 @@ def _constr_model_name(args, rep=1):
                                      str(args.distill_T).replace(".", "p"),
                                      args.distill_w.replace(".", "p").replace("|", "w"))
         model_name = kd_prefix + model_name
+    if args.patch_node is not None and "circ" in args.ode_block.lower():
+        model_name = "{}P{}PS{}PC".format(args.patch_node, args.patch_stride, args.patch_cycle) + model_name
     return model_name
 
 def get_model_name(args):
@@ -293,7 +298,7 @@ def main():
 
     # convert block to Neural ode
     # Todo: The offset eps in ode_block is currently useless. Need to pass that to the wrapper.
-    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type"], {}
+    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "patch_node", "patch_stride", "patch_cycle"], {}
     for _name, _val in vars(args).items():
         if _name in ode_kw and _val is not None:
             ode_kwargs[_name] = _val

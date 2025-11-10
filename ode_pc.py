@@ -821,6 +821,13 @@ class ODEState2FFFB(ODEBlockXInit):
         self.eps_scale = None
         self.option_aca["noise_type"] = self.sde_noise_type
 
+    def _set_ode_option(self, option_dict, time_ratio, t1_all, t_step):
+        # Note: Avoid calling this function multiple times with the same copy.
+        option_dict["t1"] = t1_all * time_ratio
+        option_dict["t_eval"] = [_ts * time_ratio for _ts in self.integration_time.tolist()]
+        option_dict["h"] = t_step * time_ratio if t_step is not None else t_step
+        return option_dict
+
     def _set_eps(self, x):
         if self.eps_scale is not None:
             with torch.no_grad():
@@ -961,12 +968,6 @@ class S2NoMinusZChargeZ(State2NoMinusZ):
         self.option_init = self._set_ode_option(self.option_init, time_split, t1_all, t_step)
         self.option_aca = self._set_ode_option(self.option_aca, 1 - time_split, t1_all, t_step)
 
-    def _set_ode_option(self, option_dict, time_ratio, t1_all, t_step):
-        option_dict["t1"] = t1_all * time_ratio
-        option_dict["t_eval"] = [_ts * time_ratio for _ts in self.integration_time.tolist()]
-        option_dict["h"] = t_step * time_ratio if t_step is not None else t_step
-        return option_dict
-
     def _make_z_ode_fn(self, y):
         def ode_func(t, z):
             return self.FBconv(y)
@@ -1070,7 +1071,7 @@ class S2NoisyIYAsXZAs0(State2NoMinusZ):
         return super().forward(x, layer_idx)
 
 
-class S2Circ(S2NoMinusZChgZNoisyI):
+class S2Circ(State2NoMinusZ):
     def __init__(self, patch_node=8, patch_stride=4, patch_cycle=5, **kwargs):
         kwargs.update({"time_split": 0.6})
         super().__init__(**kwargs)
@@ -1079,6 +1080,7 @@ class S2Circ(S2NoMinusZChgZNoisyI):
         self.patch_cycle = patch_cycle
 
         self.option_aca_raw = deepcopy(self.option_aca)
+        self.fold_scalar = patch_node
 
         # Each patch's compute time = [t_end * (1 - time_split)] / patch_cycle
 
@@ -1106,13 +1108,12 @@ class S2Circ(S2NoMinusZChgZNoisyI):
         else:
             cur_t_aca, cur_h = self.option_aca_raw["t1"], self.option_aca_raw["h"]
             self.integration_time[-1] = cur_t_aca
-            self.option_aca = self._set_ode_option(self.option_aca, max(1.0, self.patch_cycle - 3), cur_t_aca, cur_h)
+            self.option_aca = self._set_ode_option(
+                self.option_aca, min(1.5, max(1.0, self.patch_cycle - 3)), cur_t_aca, cur_h)
             yz = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
             yz = yz[0][-1]
             # logging.warning(
             #     "Cycle: {}, yz shape: {}, yz mean: {}".format("One Time solve", yz.shape, yz.mean()))
-
-        # logging.warning("Option_aca: {}".format(self.option_aca))
 
         if self.bypass is not None:
             yz = self.bypass(yz) + yz
@@ -1156,9 +1157,31 @@ class S2Circ(S2NoMinusZChgZNoisyI):
         # Reshape to (BS, N_Patches, N_Chan * patch_node * patch_node), then fold it back
         yz = tuple(F.fold(_s.reshape(bs, _np, _nc*_p_sz[0]*_p_sz[1]).transpose(1, 2).contiguous(),
                           # output_size=(_h, _w), kernel_size=_p_sz, stride=_p_stride) / _cnt_map
-                          output_size = (_h, _w), kernel_size = _p_sz, stride = _p_stride) / (_p_sz[0]**0.7)
+                          output_size = (_h, _w), kernel_size = _p_sz, stride = _p_stride) / self.fold_scalar
                    for _s, _np, _nc, _h, _w, _p_sz, _p_stride, _cnt_map in zip(yz, yz_patch_num, yz_c, yz_h, yz_w, yz_psz, yz_stride, yz_cnt_map))
         return yz
+
+
+class S2CircYAsXZasX(S2Circ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "x"
+        self.fold_scalar = self.patch_node
+
+class S2CircYAs0ZasX(S2Circ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "0"
+        self.z_init_with = "x"
+        self.fold_scalar = int(self.patch_node ** 0.8)
+
+class S2CircYAsXZas0(S2Circ):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y_init_with = "x"
+        self.z_init_with = "0"
+        self.fold_scalar = int(self.patch_node ** 0.8)
 ####################################################################################
 ####################################################################################
 
@@ -1746,6 +1769,9 @@ ODEBLOCK_CLASSES = {
     "S2NoisyIYAs0ZAsX": S2NoisyIYAs0ZAsX,
     "S2NoisyIYAsXZAs0": S2NoisyIYAsXZAs0,
     "S2Circ": S2Circ,
+    "S2CircYAsXZasX": S2CircYAsXZasX,
+    "S2CircYAs0ZasX": S2CircYAs0ZasX,
+    "S2CircYAsXZas0": S2CircYAsXZas0,
     # Using summation of abs value
     "SelfCUAbsSumFFFB": SelfCUAbsSumFFFB,
     "SelfCUAbsSumFFFBInitB": SelfCUAbsSumFFFBInitB,

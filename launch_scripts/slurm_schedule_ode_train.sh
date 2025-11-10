@@ -46,7 +46,9 @@ BLOCKS_BY_ARCH["DeepTi1P"]="S2NoMinusZChgZNoisyI"
 # DeepS
 BLOCKS_BY_ARCH["DeepS"]="S2NoMinusZChgZNoisyI"
 # DeepM
-BLOCKS_BY_ARCH["DeepM"]="S2NoisyIYAsXZAsX"
+BLOCKS_BY_ARCH["DeepM"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
+# Deep48C
+BLOCKS_BY_ARCH["DeepM48C"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
 # DeepM1P
 BLOCKS_BY_ARCH["DeepM1P"]="S2NoisyIYAsXZAsX"
 # 8L2p
@@ -70,9 +72,9 @@ BLOCKS_BY_ARCH["D2p"]="S2NoMinusZChgZNoisyI"
 # 4L2p
 BLOCKS_BY_ARCH["D2"]="S2NoMinusZChgZNoisyI"
 # 7L2p - 64 Chan
-BLOCKS_BY_ARCH["7L64Chan"]="S2NoisyIYAsXZAsX"
+BLOCKS_BY_ARCH["7L64Chan"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
 # 7L1p - 64 Chan
-BLOCKS_BY_ARCH["7L64Chan1P"]="S2NoisyIYAsXZAsX"
+BLOCKS_BY_ARCH["7L64Chan1P"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
 # Kernel size=5
 BLOCKS_BY_ARCH["Ker5_A"]="S2NoMinusZChgZNoisyI"
 BLOCKS_BY_ARCH["Ker5_C"]="S2NoMinusZChgZNoisyI"
@@ -80,10 +82,11 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("7L64Chan" "7L64Chan1P" "DeepM" "DeepM1P")
+ARCHES=("7L64Chan" "7L64Chan1P" "DeepM" "DeepM48C")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
+CIRC_CONFS=( "8|4|5" "10|6|5" "12|4|5")
 ###############################################################################################
 
 # Paths
@@ -98,7 +101,7 @@ MERGE_OUT_DIR="${REPO_ROOT}/shell_utils/parse_res/neural_ode_res"
 MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
 
 split_and_submit() {
-  local arch="$1" pcn="$2" img_type="$3"
+  local arch="$1" pcn="$2" img_type="$3" circ_conf="$4"
   local blocks_str="${BLOCKS_BY_ARCH[$arch]:-}"
   if [[ -z "$blocks_str" ]]; then
     echo "No blocks defined for ARCH=$arch" >&2
@@ -121,14 +124,14 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1108_2State_scanGFI_Medium_Models_YAsXZAsX_${arch}_${img_type}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1110_2State_scanGFI_Medium_Models_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
     jid=$( BLOCKS_LIST="${csv}" \
       sbatch --parsable \
              --gres=gpu:${GPUS_PER_JOB} \
-             --export=ALL,ARCH_SET="${arch}",PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}" \
+             --export=ALL,ARCH_SET="${arch}",PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}",CIRC_CONF="${circ_conf}" \
              "${SBATCH_SCRIPT}" )
     echo "  -> job ${jid}"
     JOBS_BY_EXP["${EXP}"]+="${jid}:"
@@ -207,7 +210,9 @@ merge_csvs_for_exp() {
 for IMG_TYPE in "${IMG_TYPES[@]}"; do
   for ARCH in "${ARCHES[@]}"; do
     for PCN in "${PCNS[@]}"; do
-      split_and_submit "$ARCH" "$PCN" "$IMG_TYPE"
+      for CIRC_CONF in "${CIRC_CONFS[@]}"; do
+        split_and_submit "$ARCH" "$PCN" "$IMG_TYPE" "$CIRC_CONF"
+      done
     done
   done
 done

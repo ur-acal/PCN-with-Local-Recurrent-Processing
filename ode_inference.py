@@ -51,6 +51,9 @@ def parse_args():
                         help="Only useful when self.eps is set in the ODESolver class")
     parser.add_argument("--sweep_eps", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
+    parser.add_argument("--patch_node", type=int, default=8)
+    parser.add_argument("--patch_stride", type=int, default=4)
+    parser.add_argument("--patch_cycle", type=int, default=5)
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     parser.add_argument("--tie_cap", type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
     parser.add_argument("--one_over_q", type=float, default=10, help="1/q")
@@ -111,7 +114,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
         noisy_params["noise_level"] = unrolled_noise_level
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
-                  "sde_noise_type": args.sde_noise_type}
+                  "sde_noise_type": args.sde_noise_type,
+                  "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
@@ -152,7 +156,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     noisy_params = {"noise_level": 0.2, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
-                  "sde_noise_type": args.sde_noise_type}
+                  "sde_noise_type": args.sde_noise_type,
+                  "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
@@ -258,7 +263,8 @@ def run_ode_inference():
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
-                      "sde_noise_type": args.sde_noise_type}
+                      "sde_noise_type": args.sde_noise_type,
+                      "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,

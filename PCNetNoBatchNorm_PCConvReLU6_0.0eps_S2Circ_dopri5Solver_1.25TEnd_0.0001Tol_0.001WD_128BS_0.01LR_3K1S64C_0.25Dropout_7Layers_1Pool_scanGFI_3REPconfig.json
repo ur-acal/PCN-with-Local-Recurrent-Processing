@@ -1,0 +1,31 @@
+{
+  "dataset": {
+    "name": "cifar10",
+    "batch_size": 32,
+    "root": "."
+  },
+  "rawmodel": {
+    "name": "CycleISP"
+  },
+  "noise": {
+    "type": "pointwise",
+    "min_shot_noise": 0.0001,
+    "max_shot_noise": 0.012,
+    "read_noise_offset_width": 0.26,
+    "read_noise_offset": 1.2,
+    "read_noise_slope": 2.18
+  },
+  "output": {
+    "directory": "./output",
+    "target_size": [
+      16,
+      16
+    ],
+    "save_png": true,
+    "save_labels": true,
+    "normalize_png": false
+  },
+  "device": {
+    "num_workers": 4
+  }
+}

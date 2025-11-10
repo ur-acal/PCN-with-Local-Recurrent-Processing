@@ -47,6 +47,8 @@ elif [[ "$ARCH_SET" == "DeepS" ]]; then
   ARCH_LABEL="9L2P"
 elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   ARCH_LABEL="18L2P"
+elif [[ "$ARCH_SET" == "DeepM48C" ]]; then
+  ARCH_LABEL="18L1P48C"
 elif [[ "$ARCH_SET" == "DeepM1P" ]]; then
   ARCH_LABEL="18L1P"
 elif [[ "$ARCH_SET" == "C" ]]; then
@@ -83,11 +85,18 @@ else
   ARCH_LABEL="Invalid"
 fi
 
+CIRC_CONF="${CIRC_CONF:-NoCirc}"
 SAN_BLOCKS="${BLOCKS_LIST:-ALL}"
 SAN_BLOCKS="${SAN_BLOCKS//,/+}"
 EXP="${EXP:-no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp}"
 LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${SAN_BLOCKS}"
 mkdir -p "$LOGDIR"
+
+if [[ "${CIRC_CONF}" == "NoCirc" ]]; then
+  patch_node=""; patch_stride=""; patch_cycle=""
+else
+  IFS='|' read -r patch_node patch_stride patch_cycle <<< "${CIRC_CONF}"
+fi
 ##########################################################################
 
 # On cancel/terminate, stop children too
@@ -168,6 +177,12 @@ elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   # deep 0.58M model
   INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
   OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
+  POOL=(0  0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepM48C" ]]; then
+  # deep 48C model
+  INP=(3  12 12 12 12 12 12 24 24 24 24 24 48 48 48 48 48 48)
+  OUT=(12 12 12 12 12 12 24 24 24 24 24 48 48 48 48 48 48 48)
   POOL=(0  0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0)
   STRIDE=(1)
 elif [[ "$ARCH_SET" == "DeepM1P" ]]; then
@@ -313,7 +328,9 @@ run_one () {
   echo "[$(date +%T)] starting ${block} -> ${logfile}"
 
   local t_end="0.75"
-  if [[ "$block" == *0Init* || "$block" == *As0* || "$block" == *YAsXZAsX* ]]; then
+  if [[ "$block" == *Circ* ]]; then
+    t_end="1.25"
+  elif [[ "$block" == *0Init* || "$block" == *As0* || "$block" == *YAsXZAsX* ]]; then
     t_end="1.75"
   elif [[ "$block" == *Charge* || "$block" == *Chg* ]]; then
     t_end="1.5"
@@ -332,6 +349,9 @@ run_one () {
     --stride        "${STRIDE[@]}" \
     --kernel_size   "${KERNEL[@]}" \
     --padding       "${padding}" \
+    --patch_node    "${patch_node}" \
+    --patch_stride  "${patch_stride}" \
+    --patch_cycle   "${patch_cycle}" \
     --dropout       0.25 \
     --tie_weights   "false" \
     --tie_bp        "false" \
@@ -427,6 +447,9 @@ eval_model() {
     --ckpt            "$ckpt" \
     --model_dir       "$MODEL_DIR" \
     --img_type        "${IMG_TYPE}" \
+    --patch_node      "${patch_node}" \
+    --patch_stride    "${patch_stride}" \
+    --patch_cycle     "${patch_cycle}" \
     --method          "$METHOD" \
     --tol             "$TOL" \
     --n_steps         15 \
