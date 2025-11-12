@@ -46,9 +46,9 @@ BLOCKS_BY_ARCH["DeepTi1P"]="S2NoMinusZChgZNoisyI"
 # DeepS
 BLOCKS_BY_ARCH["DeepS"]="S2NoMinusZChgZNoisyI"
 # DeepM
-BLOCKS_BY_ARCH["DeepM"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
+BLOCKS_BY_ARCH["DeepM"]="S2CircYAsXZas0"
 # Deep48C
-BLOCKS_BY_ARCH["DeepM48C"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
+BLOCKS_BY_ARCH["DeepM48C"]="S2CircYAsXZas0"
 # DeepM1P
 BLOCKS_BY_ARCH["DeepM1P"]="S2NoisyIYAsXZAsX"
 # 8L2p
@@ -72,7 +72,7 @@ BLOCKS_BY_ARCH["D2p"]="S2NoMinusZChgZNoisyI"
 # 4L2p
 BLOCKS_BY_ARCH["D2"]="S2NoMinusZChgZNoisyI"
 # 7L2p - 64 Chan
-BLOCKS_BY_ARCH["7L64Chan"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
+BLOCKS_BY_ARCH["7L64Chan"]="S2CircYAsXZas0"
 # 7L1p - 64 Chan
 BLOCKS_BY_ARCH["7L64Chan1P"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
 # Kernel size=5
@@ -82,11 +82,11 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("7L64Chan" "7L64Chan1P" "DeepM" "DeepM48C")
+ARCHES=("7L64Chan" "DeepM")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
-CIRC_CONFS=( "8|4|5" "10|6|5" "12|4|5")
+CIRC_CONFS=( "8|4|5|0|5" "6|3|5|1|4|32")
 ###############################################################################################
 
 # Paths
@@ -124,7 +124,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1110_2State_scanGFI_Medium_Models_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1111_2State_scanGFI_Medium_Models_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

@@ -13,6 +13,7 @@ python train_ode_cifar.py \
   --img_type      "scanGFI" \
   --num_epochs    150 \
   --eval_every    10 \
+  --learning_rate 0.01 \
   --offset_eps    0.0 \
   --inp_channels  4  64 64 64 64 64 64 \
   --out_channels  64 64 64 64 64 64 64 \
@@ -20,19 +21,23 @@ python train_ode_cifar.py \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
+  --patch_node    "6" \
+  --patch_stride  "3" \
+  --patch_cycle   "3" \
+  --patch_pad     "1" \
   --dropout       0.25 \
   --weight_decay  "1e-3" \
   --lr_reduce_on  "80,122" \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --bypass        "false" \
-  --batch_size    128 \
+  --batch_size    32 \
   --method        "dopri5" \
   --tol           "1e-4" \
-  --t_end         "1.25" \
+  --t_end         "0.5" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
-  --ode_block     "S2CircYAs0ZasX" \
+  --ode_block     "S2CircYAsXZas0" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_rggb_S2Circ.log"
 
 

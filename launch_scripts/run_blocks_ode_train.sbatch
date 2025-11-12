@@ -93,10 +93,11 @@ LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${
 mkdir -p "$LOGDIR"
 
 if [[ "${CIRC_CONF}" == "NoCirc" ]]; then
-  patch_node=""; patch_stride=""; patch_cycle=""
+  patch_node=""; patch_stride=""; patch_cycle=""; patch_pad=""; fold_scalar=""; patch_bs=""
 else
-  IFS='|' read -r patch_node patch_stride patch_cycle <<< "${CIRC_CONF}"
+  IFS='|' read -r patch_node patch_stride patch_cycle patch_pad fold_scalar patch_bs <<< "${CIRC_CONF}"
 fi
+TRAIN_BATCH_SIZE="${patch_bs:-128}"
 ##########################################################################
 
 # On cancel/terminate, stop children too
@@ -329,7 +330,7 @@ run_one () {
 
   local t_end="0.75"
   if [[ "$block" == *Circ* ]]; then
-    t_end="1.25"
+    t_end="1.75"
   elif [[ "$block" == *0Init* || "$block" == *As0* || "$block" == *YAsXZAsX* ]]; then
     t_end="1.75"
   elif [[ "$block" == *Charge* || "$block" == *Chg* ]]; then
@@ -352,11 +353,13 @@ run_one () {
     --patch_node    "${patch_node}" \
     --patch_stride  "${patch_stride}" \
     --patch_cycle   "${patch_cycle}" \
+    --patch_pad     "${patch_pad}" \
+    --fold_scalar   "${fold_scalar}" \
     --dropout       0.25 \
     --tie_weights   "false" \
     --tie_bp        "false" \
     --bypass        "false" \
-    --batch_size    128 \
+    --batch_size    "${TRAIN_BATCH_SIZE}" \
     --method        "dopri5" \
     --tol           "0.0001" \
     --t_end         "${t_end}" \
@@ -437,6 +440,8 @@ eval_model() {
   local R_val="1e5"
   local C_val="49e-15"
   local wrapper="$(map_test_wrapper "$test_block")"
+  local test_bs=128
+  if [[ "${test_block}" == *Circ* ]]; then test_bs=64; fi
   ################################
   if [[ "$tag" == "post_ft" ]]; then ckpt="last"; fi
 
@@ -446,10 +451,13 @@ eval_model() {
     --model_name      "$name" \
     --ckpt            "$ckpt" \
     --model_dir       "$MODEL_DIR" \
+    --test_bs         "${test_bs}" \
     --img_type        "${IMG_TYPE}" \
     --patch_node      "${patch_node}" \
     --patch_stride    "${patch_stride}" \
     --patch_cycle     "${patch_cycle}" \
+    --patch_pad       "${patch_pad}" \
+    --fold_scalar     "${fold_scalar}" \
     --method          "$METHOD" \
     --tol             "$TOL" \
     --n_steps         15 \

@@ -34,6 +34,7 @@ def parse_args():
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
     parser.add_argument("--img_type", type=str, default="rgb")
+    parser.add_argument("--test_bs", type=int, default=128)
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
     parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
@@ -54,6 +55,8 @@ def parse_args():
     parser.add_argument("--patch_node", type=int, default=8)
     parser.add_argument("--patch_stride", type=int, default=4)
     parser.add_argument("--patch_cycle", type=int, default=5)
+    parser.add_argument("--patch_pad", type=int, default=0)
+    parser.add_argument("--fold_scalar", type=int, default=None)
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     parser.add_argument("--tie_cap", type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
     parser.add_argument("--one_over_q", type=float, default=10, help="1/q")
@@ -115,7 +118,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
-                  "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle}
+                  "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
+                  "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
@@ -157,7 +161,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
-                  "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle}
+                  "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
+                  "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
@@ -224,7 +229,7 @@ def run_ode_inference():
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_dataloader = get_test_data(test_bs=128, img_type=args.img_type)
+    test_dataloader = get_test_data(test_bs=args.test_bs, img_type=args.img_type)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
 
     with torch.no_grad():
@@ -232,7 +237,7 @@ def run_ode_inference():
             run_test_only(args, test_dataloader, ckpt_path, pc_conv, device)
             exit(0)
         elif args.hw_validate:
-            run_validation_data_gen(args, get_test_data(test_bs=128, img_type=args.img_type),
+            run_validation_data_gen(args, get_test_data(test_bs=args.test_bs, img_type=args.img_type),
                                     ckpt_path, pc_conv, device)
             exit(0)
 
@@ -264,7 +269,8 @@ def run_ode_inference():
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                       "sde_noise_type": args.sde_noise_type,
-                      "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle}
+                      "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
+                      "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,

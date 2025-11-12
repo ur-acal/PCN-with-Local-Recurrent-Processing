@@ -1072,15 +1072,20 @@ class S2NoisyIYAsXZAs0(State2NoMinusZ):
 
 
 class S2Circ(State2NoMinusZ):
-    def __init__(self, patch_node=8, patch_stride=4, patch_cycle=5, **kwargs):
-        kwargs.update({"time_split": 0.6})
+    def __init__(self, patch_node=8, patch_stride=4, patch_cycle=5, patch_pad=0, fold_scalar=None,
+                 time_patch_ratio=0.5, **kwargs):
         super().__init__(**kwargs)
         self.patch_node = patch_node
         self.patch_stride = patch_stride
         self.patch_cycle = patch_cycle
+        self.patch_pad = patch_pad
 
-        self.option_aca_raw = deepcopy(self.option_aca)
-        self.fold_scalar = patch_node
+        # self.option_aca_raw = deepcopy(self.option_aca)
+        self.option_patch = deepcopy(self.option_aca)
+        t1_all = self.option_aca["t1"]
+        t_step = self.option_aca["h"]
+        self.option_patch = self._set_ode_option(self.option_patch, time_patch_ratio, t1_all, t_step)
+        self.fold_scalar = patch_node if fold_scalar is None else fold_scalar
 
         # Each patch's compute time = [t_end * (1 - time_split)] / patch_cycle
 
@@ -1099,17 +1104,16 @@ class S2Circ(State2NoMinusZ):
         x_h, x_w = x.shape[2], x.shape[3]
 
         # Always true
-        # if x_h > 0 and x_w > 0:
         if x_h > self.patch_node and x_w > self.patch_node:
             for i in range(self.patch_cycle):
                 # logging.warning("Cycle: {}, yz shape: {}, yz mean: {}".format(i, [_s.shape for _s in yz], [_s.mean() for _s in yz]))
                 yz = self._run_one_cycle(x, yz)
             yz = yz[0]
         else:
-            cur_t_aca, cur_h = self.option_aca_raw["t1"], self.option_aca_raw["h"]
-            self.integration_time[-1] = cur_t_aca
-            self.option_aca = self._set_ode_option(
-                self.option_aca, min(1.5, max(1.0, self.patch_cycle - 3)), cur_t_aca, cur_h)
+            # cur_t_aca, cur_h = self.option_aca_raw["t1"], self.option_aca_raw["h"]
+            # self.integration_time[-1] = cur_t_aca
+            # self.option_aca = self._set_ode_option(
+            #     self.option_aca, 3.5, cur_t_aca, cur_h)
             yz = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
             yz = yz[0][-1]
             # logging.warning(
@@ -1141,7 +1145,7 @@ class S2Circ(State2NoMinusZ):
 
             # Unfold and transpose to (BS, N_Patches, N_Chan * patch_node * patch_node)
         yz = tuple(F.unfold(
-            _s, kernel_size=_p_sz, stride=_p_stride).transpose(1, 2)
+            _s, kernel_size=_p_sz, stride=_p_stride, padding=self.patch_pad).transpose(1, 2)
                    for _s, _p_sz, _p_stride in zip(yz, yz_psz, yz_stride))
         yz_patch_num = tuple(_s.shape[1] for _s in yz)
         # Reshape to (BS*N_Patches, N_Chan, patch_node, patch_node)
@@ -1151,13 +1155,13 @@ class S2Circ(State2NoMinusZ):
         self.integration_time = self.integration_time.type_as(x)
 
         # Shape remains the same (BS*N_Patches, N_Chan, patch_node, patch_node)
-        yz = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
+        yz = aca_ode_solve(self._make_ode_fn(x), yz, self.option_patch)
         yz = tuple(_s[-1] for _s in yz)
 
         # Reshape to (BS, N_Patches, N_Chan * patch_node * patch_node), then fold it back
         yz = tuple(F.fold(_s.reshape(bs, _np, _nc*_p_sz[0]*_p_sz[1]).transpose(1, 2).contiguous(),
                           # output_size=(_h, _w), kernel_size=_p_sz, stride=_p_stride) / _cnt_map
-                          output_size = (_h, _w), kernel_size = _p_sz, stride = _p_stride) / self.fold_scalar
+                          output_size=(_h, _w), kernel_size=_p_sz, stride=_p_stride, padding=self.patch_pad) / self.fold_scalar
                    for _s, _np, _nc, _h, _w, _p_sz, _p_stride, _cnt_map in zip(yz, yz_patch_num, yz_c, yz_h, yz_w, yz_psz, yz_stride, yz_cnt_map))
         return yz
 
@@ -1167,21 +1171,24 @@ class S2CircYAsXZasX(S2Circ):
         super().__init__(**kwargs)
         self.y_init_with = "x"
         self.z_init_with = "x"
-        self.fold_scalar = self.patch_node
+        # self.fold_scalar = self.patch_node
 
 class S2CircYAs0ZasX(S2Circ):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.y_init_with = "0"
         self.z_init_with = "x"
-        self.fold_scalar = int(self.patch_node ** 0.8)
+        # self.fold_scalar = int(self.patch_node ** 0.8)
+        # self.fold_scalar = int(self.patch_node ** 0.8) * (self.patch_node * (self.patch_node - self.patch_stride) / 32)
 
 class S2CircYAsXZas0(S2Circ):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.y_init_with = "x"
         self.z_init_with = "0"
-        self.fold_scalar = int(self.patch_node ** 0.8)
+        # self.fold_scalar = int(self.patch_node ** 0.8)
+        # self.fold_scalar = int((self.patch_node * (self.patch_node * (self.patch_node - self.patch_stride) / 32)) ** 1.2)
+        # logging.warning("Fold scaler: {}".format(self.fold_scalar))
 ####################################################################################
 ####################################################################################
 
@@ -1454,6 +1461,7 @@ class ODEWrapper2State(WrapQuantizeW):
         # self.out_scale = 1
 
         self._has_init_ode = hasattr(self.ode_block, "_make_z_ode_fn")
+        self._patch_conv = hasattr(self.ode_block, "option_patch")
         if self._has_init_ode:
             self.original_make_z_fn = self.ode_block._make_z_ode_fn
         self.proj_fn = nn.Hardtanh(min_val=-self.v_dd, max_val=self.v_dd)
@@ -1472,6 +1480,8 @@ class ODEWrapper2State(WrapQuantizeW):
             self._patch()
         if self._has_init_ode:
             self.ode_block.option_init["proj_fn"] = self.proj_fn
+        if self._patch_conv:
+            self.ode_block.option_patch["proj_fn"] = self.proj_fn
         self.ode_block.option_aca["proj_fn"] = self.proj_fn
 
     def get_time_scaler(self):
@@ -1495,6 +1505,9 @@ class ODEWrapper2State(WrapQuantizeW):
         if self._has_init_ode:
             self.ode_block.option_init = self._scale_time_impl(self.ode_block.option_init, end_time_scaler)
             logging.info("Scaled init end time: {} s".format(self.ode_block.option_init["t1"]))
+        if self._patch_conv:
+            self.ode_block.option_patch = self._scale_time_impl(self.ode_block.option_patch, end_time_scaler)
+            logging.info("Scaled patch end time: {} s".format(self.ode_block.option_patch["t1"]))
         self.ode_block.option_aca = self._scale_time_impl(self.ode_block.option_aca, end_time_scaler)
         logging.info("Scaled compute end time: {} s".format(self.ode_block.option_aca["t1"]))
 
@@ -1618,6 +1631,8 @@ class QATWrapper2State(ODEWrapper2State):
         self.orig_integration_time = self.ode_block.integration_time.clone()
         if self._has_init_ode:
             self.orig_option_init = deepcopy(self.ode_block.option_init)
+        if self._patch_conv:
+            self.orig_option_patch = deepcopy(self.ode_block.option_patch)
         self.orig_option_aca = deepcopy(self.ode_block.option_aca)
 
         # Register hook
@@ -1666,6 +1681,8 @@ class QATWrapper2State(ODEWrapper2State):
 
         if self._has_init_ode:
             module.option_init = self._scale_time_impl(deepcopy(self.orig_option_init), end_time_scaler)
+        if self._patch_conv:
+            module.option_patch = self._scale_time_impl(deepcopy(self.orig_option_patch), end_time_scaler)
         module.option_aca = self._scale_time_impl(deepcopy(self.orig_option_aca), end_time_scaler)
 
     def _scale_act_fn(self):
