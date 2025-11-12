@@ -41,10 +41,18 @@ elif [[ "$ARCH_SET" == "Tiny_11L2P" ]]; then
   ARCH_LABEL="11L2P32C"
 elif [[ "$ARCH_SET" == "DeepTi" ]]; then
   ARCH_LABEL="18L2P32C"
+elif [[ "$ARCH_SET" == "DeepTi2P32Chan" ]]; then
+  ARCH_LABEL="18L2P32CBeforePool"
+elif [[ "$ARCH_SET" == "DeepTi2P40Chan" ]]; then
+  ARCH_LABEL="18L2P40CBeforePool"
+elif [[ "$ARCH_SET" == "DeepTi2P48Chan" ]]; then
+  ARCH_LABEL="18L2P48CBeforePool"
 elif [[ "$ARCH_SET" == "DeepTi1P" ]]; then
   ARCH_LABEL="18L1P32C"
 elif [[ "$ARCH_SET" == "DeepS" ]]; then
   ARCH_LABEL="9L2P"
+elif [[ "$ARCH_SET" == "DeepM11L" ]]; then
+  ARCH_LABEL="11L2PMedium"
 elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   ARCH_LABEL="18L2P"
 elif [[ "$ARCH_SET" == "DeepM48C" ]]; then
@@ -162,6 +170,24 @@ elif [[ "$ARCH_SET" == "DeepTi" ]]; then
   OUT=(8  8 8 8 8 8 16 16 16 16 16 32 32 32 32 32 32 32)
   POOL=(0 0 0 0 0 0 1  0  0  0  0  1  0  0  0  0  0  0)
   STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepTi2P32Chan" ]]; then
+  # deep 0.14M model - 32 Chan 2 Pooling - Pooling before channel expand
+  INP=(3  8 8 8 8 8 8  16 16 16 16 16 32 32 32 32 32 32)
+  OUT=(8  8 8 8 8 8 16 16 16 16 16 32 32 32 32 32 32 32)
+  POOL=(0 0 0 0 0 1 0  0  0  0  1  0  0  0  0  0  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepTi2P40Chan" ]]; then
+  # deep model - 40 Chan 2 Pooling - Pooling before channel expand
+  INP=(3  10 10 10 10 10 10 20 20 20 20 20 40 40 40 40 40 40)
+  OUT=(10 10 10 10 10 10 20 20 20 20 20 40 40 40 40 40 40 40)
+  POOL=(0 0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepTi2P48Chan" ]]; then
+  # deep model - 48 Chan 2 Pooling - Pooling before channel expand
+  INP=(3  12 12 12 12 12 12 24 24 24 24 24 48 48 48 48 48 48)
+  OUT=(12 12 12 12 12 12 24 24 24 24 24 48 48 48 48 48 48 48)
+  POOL=(0 0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0  0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "DeepTi1P" ]]; then
   # deep 0.14M model - 32 Chan 1 Pooling
   INP=(3  8 8 8 8 8 8  16 16 16 16 16 32 32 32 32 32 32)
@@ -173,6 +199,12 @@ elif [[ "$ARCH_SET" == "DeepS" ]]; then
   INP=(3  16 16 16 32 32 32 64 64)
   OUT=(16 16 16 32 32 32 64 64 64)
   POOL=(0  0  0  1  0  0  1  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepM11L" ]]; then
+  # deep 0.58M model
+  INP=(3  16 16 32 32 64 64 64 64 64 64)
+  OUT=(16 16 32 32 64 64 64 64 64 64 64)
+  POOL=(0  1  0  1  0  0  0  0  0  0  0)
   STRIDE=(1)
 elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   # deep 0.58M model

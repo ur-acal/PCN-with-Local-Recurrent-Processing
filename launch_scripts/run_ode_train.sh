@@ -15,9 +15,9 @@ python train_ode_cifar.py \
   --eval_every    10 \
   --learning_rate 0.01 \
   --offset_eps    0.0 \
-  --inp_channels  4  64 64 64 64 64 64 \
-  --out_channels  64 64 64 64 64 64 64 \
-  --max_pool      0  1  0  1  0  0  0  \
+  --inp_channels  4  16 16 32 32 64 64 64 64 64 64 \
+  --out_channels  16 16 32 32 64 64 64 64 64 64 64 \
+  --max_pool      0  1  0  1  0  0  0  0  0  0  0  \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
@@ -25,6 +25,7 @@ python train_ode_cifar.py \
   --patch_stride  "3" \
   --patch_cycle   "3" \
   --patch_pad     "1" \
+  --fold_scalar   "4" \
   --dropout       0.25 \
   --weight_decay  "1e-3" \
   --lr_reduce_on  "80,122" \
