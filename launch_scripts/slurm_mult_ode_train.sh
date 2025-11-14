@@ -1,17 +1,236 @@
 #!/usr/bin/env bash
-
 #set -euo pipefail
 
-#for ARCH in A B; do
-#  for PCN in "PCNetNoBatchNorm" "PCNetWith1stConv"; do
-#    echo "Submitting ARCH=${ARCH} PCN=${PCN}"
-#    sbatch --export=ALL,ARCH_SET=${ARCH},PCN="${PCN}" ./launch_scripts/run_mult_ode_train.sbatch
-#  done
-#done
+# How many blocks to launch together on ONE GPU per sbatch job
+MAX_TASKS_PER_GPU=${MAX_TASKS_PER_GPU:-1}
+# GPUs per job (kept at 1; override here if you need to)
+GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 
-for ARCH in A C; do
-  for PCN in "PCNetNoBatchNorm"; do
-    echo "Submitting ARCH=${ARCH} PCN=${PCN}"
-    sbatch --export=ALL,ARCH_SET=${ARCH},PCN="${PCN}" ./launch_scripts/run_mult_ode_train.sbatch
+###############################################################################################
+# running with
+# module swap slurm slurm/24.05.0.b1
+# ( source ./launch_scripts/slurm_mult_ode_train.sh ) \
+#  > ./logs/scheduler_slurm/scheduler_mult.log 2>&1 < /dev/null &
+#
+# sched_pid=$!
+# disown -h "$sched_pid"
+###############################################################################################
+# Change exp parameter here
+###############################################################################################
+# Define blocks per ARCH (must match names used inside the sbatch script)
+declare -A BLOCKS_BY_ARCH
+# 6L3p
+BLOCKS_BY_ARCH["A"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
+# 6L2p
+BLOCKS_BY_ARCH["A2p"]="S2NoMinusZChgZNoisyI"
+# 6L2p
+BLOCKS_BY_ARCH["A2"]="S2NoMinusZChgZNoisyI"
+# Tiny 5L1P
+BLOCKS_BY_ARCH["Tiny_5L1P"]="S2NoMinusZChgZNoisyI"
+# Tiny 5L2P
+BLOCKS_BY_ARCH["Tiny_5L2P"]="S2NoMinusZChgZNoisyI"
+# Tiny 7L1P
+BLOCKS_BY_ARCH["Tiny_7L1P"]="S2NoMinusZChgZNoisyI"
+# Tiny 7L2P
+BLOCKS_BY_ARCH["Tiny_7L2P"]="S2NoMinusZChgZNoisyI"
+# Tiny 8L1P
+BLOCKS_BY_ARCH["Tiny_8L"]="S2NoMinusZChgZNoisyI"
+# Tiny 11L1P
+BLOCKS_BY_ARCH["Tiny_11L1P"]="S2NoMinusZChgZNoisyI"
+# Tiny 11L2P
+BLOCKS_BY_ARCH["Tiny_11L2P"]="S2NoMinusZChgZNoisyI"
+# Deep Tiny
+BLOCKS_BY_ARCH["DeepTi"]="S2NoMinusZChgZNoisyI"
+# Deep Tiny
+BLOCKS_BY_ARCH["DeepTi2P32Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAsXZAs0"
+# Deep Tiny
+BLOCKS_BY_ARCH["DeepTi2P40Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAsXZAs0"
+# Deep Tiny
+BLOCKS_BY_ARCH["DeepTi2P48Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAsXZAs0"
+# Deep Tiny-1P
+BLOCKS_BY_ARCH["DeepTi1P"]="S2NoMinusZChgZNoisyI"
+# DeepS
+BLOCKS_BY_ARCH["DeepS"]="S2NoMinusZChgZNoisyI"
+# DeepM11L
+BLOCKS_BY_ARCH["DeepM11L"]="S2CircYAsXZas0"
+# DeepM
+BLOCKS_BY_ARCH["DeepM"]="S2CircYAsXZas0"
+# Deep48C
+BLOCKS_BY_ARCH["DeepM48C"]="S2CircYAsXZas0"
+# DeepM1P
+BLOCKS_BY_ARCH["DeepM1P"]="S2NoisyIYAsXZAsX"
+# 8L2p
+BLOCKS_BY_ARCH["Large8L"]="S2NoMinusZChgZNoisyI"
+# 9L2p
+BLOCKS_BY_ARCH["Large9L"]="S2NoMinusZChgZNoisyI"
+# 10L2p
+BLOCKS_BY_ARCH["Large10L"]="S2NoMinusZChgZNoisyI"
+# 8L1p
+BLOCKS_BY_ARCH["Large8L1P"]="S2NoMinusZChgZNoisyI"
+# 9L1p
+BLOCKS_BY_ARCH["Large9L1P"]="S2NoMinusZChgZNoisyI"
+# 10L1p
+BLOCKS_BY_ARCH["Large10L1P"]="S2NoMinusZChgZNoisyI"
+# 7L2p
+BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZNoisyI"
+# 7L2p
+BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZNoisyI"
+# 4L2p
+BLOCKS_BY_ARCH["D2p"]="S2NoMinusZChgZNoisyI"
+# 4L2p
+BLOCKS_BY_ARCH["D2"]="S2NoMinusZChgZNoisyI"
+# 7L2p - 64 Chan
+BLOCKS_BY_ARCH["7L64Chan"]="S2CircYAsXZas0"
+# 7L1p - 64 Chan
+BLOCKS_BY_ARCH["7L64Chan1P"]="S2CircYAsXZasX S2CircYAs0ZasX S2CircYAsXZas0"
+# Kernel size=5
+BLOCKS_BY_ARCH["Ker5_A"]="S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH["Ker5_C"]="S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
+
+
+# Which ARCH/PCN combos to run
+ARCHES=("DeepTi2P32Chan" "DeepTi2P40Chan" "DeepTi2P48Chan")
+PCNS=("PCNetNoBatchNorm")
+#IMG_TYPES=( "rgb" "rggb" "cycleisp" )
+IMG_TYPES=( "scanGFI" )
+CIRC_CONFS=( "")
+###############################################################################################
+
+# Paths
+REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
+SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_mult_ode_train.sbatch"
+
+SLURM_LOG_DIR="${REPO_ROOT}/logs/slurm_jobs"
+# track jobids per EXP
+declare -A JOBS_BY_EXP
+# where we’ll save merged CSVs (same subtree as your parser output)
+MERGE_OUT_DIR="${REPO_ROOT}/shell_utils/parse_res/neural_ode_res"
+MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
+
+split_and_submit() {
+  local arch="$1" pcn="$2" img_type="$3" circ_conf="$4"
+  local blocks_str="${BLOCKS_BY_ARCH[$arch]:-}"
+  if [[ -z "$blocks_str" ]]; then
+    echo "No blocks defined for ARCH=$arch" >&2
+    return 1
+  fi
+
+  read -r -a blocks <<< "$blocks_str"
+  local n=${#blocks[@]}
+  local i=0
+
+  while (( i < n )); do
+    local end=$(( i + MAX_TASKS_PER_GPU ))
+    (( end > n )) && end=$n
+    local chunk=( "${blocks[@]:i:end-i}" )
+
+    # Comma-separated list for the sbatch script to consume
+    local csv; csv=$(IFS=,; echo "${chunk[*]}")
+    # Tag EXP with arch + joined block names + timestamp (unique per chunk)
+    local tag; tag=$(echo "$csv" | tr ',' '+')
+    ###############################################################################################
+    # Change EXP name here
+    ###############################################################################################
+    local EXP="no_bn_${pcn}_NODE_1114_2State_scanGFI_DeepTi_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
+    ###############################################################################################
+
+    echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
+    jid=$( BLOCKS_LIST="${csv}" \
+      sbatch --parsable \
+             --gres=gpu:${GPUS_PER_JOB} \
+             --export=ALL,ARCH_SET="${arch}",PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}",CIRC_CONF="${circ_conf}" \
+             "${SBATCH_SCRIPT}" )
+    echo "  -> job ${jid}"
+    JOBS_BY_EXP["${EXP}"]+="${jid}:"
+
+    i=$end
   done
+}
+
+wait_for_jobs() {
+  local -a ids=("$@")
+  for i in "${!ids[@]}"; do
+    ids[$i]="${ids[$i]%%;*}"
+    ids[$i]="${ids[$i]%%.*}"
+  done
+  [[ ${#ids[@]} -gt 0 ]] || return 0
+
+  while :; do
+    local done=0
+    for j in "${ids[@]}"; do
+      # first line = job summary (not steps)
+      local state
+      state=$(sacct -X -n -j "$j" -o State 2>/dev/null | head -n1)
+      case "$state" in
+        *COMPLETED*|*FAILED*|*CANCELLED*|*TIMEOUT*|*OUT_OF_MEMORY*) ((done++)) ;;
+        ""|RUNNING|PENDING|CONFIGURING|COMPLETING|SUSPENDED|REQUEUED|RESIZING|PREEMPTED|NODE_FAIL) : ;;
+        *) : ;;
+      esac
+    done
+    (( done == ${#ids[@]} )) && break
+    sleep 20
+  done
+}
+
+merge_csvs_for_exp() {
+  local exp="$1"
+  local joblist="${JOBS_BY_EXP[$exp]}"
+  joblist="${joblist%:}"          # trim trailing colon
+  IFS=':' read -r -a ids <<< "$joblist"
+  echo "EXP: ${exp}, joblist: ${joblist}"
+
+  # Wait for these jobs
+  wait_for_jobs "${ids[@]}"
+
+  mkdir -p "${MERGE_OUT_DIR}"
+  local merged_out="${MERGE_OUT_DIR}/${exp}_merged.csv"
+
+  # Collect CSVs from slurm logs
+  local csvs=()
+  for j in "${ids[@]}"; do
+    local slog="${SLURM_LOG_DIR}/slurm_${j}.out"
+    [[ -s "$slog" ]] || { echo "[WARN] Missing slurm log $slog"; continue; }
+    # read last line; expect: Wrote /path/to/file.csv
+    local last; last=$(tail -n 1 "$slog" || true)
+    # extract path after 'Wrote '
+    local csv_path
+    csv_path=$(sed -nE 's/^Wrote[[:space:]]+(.+\.csv)$/\1/p' <<< "$last")
+    if [[ -n "$csv_path" && -f "$csv_path" ]]; then
+      csvs+=("$csv_path")
+    else
+      echo "[WARN] No CSV path found in last line of $slog: $last"
+    fi
+  done
+
+  if ((${#csvs[@]}==0)); then
+    echo "[WARN] No CSVs to merge for ${exp}"
+    return 0
+  fi
+
+  # Call merge script (assumed interface: first arg is output, rest are inputs)
+  echo "[MERGE] ${exp}: ${#csvs[@]} files -> ${merged_out}"
+  python -u "${MERGE_SCRIPT}" "${merged_out}" "${csvs[@]}"
+  echo "[MERGED SAVED] ${merged_out}"
+}
+
+# Launch jobs
+for IMG_TYPE in "${IMG_TYPES[@]}"; do
+  for ARCH in "${ARCHES[@]}"; do
+    for PCN in "${PCNS[@]}"; do
+      for CIRC_CONF in "${CIRC_CONFS[@]}"; do
+        split_and_submit "$ARCH" "$PCN" "$IMG_TYPE" "$CIRC_CONF"
+      done
+    done
+  done
+done
+
+# Wait and merge CSVs
+for exp in "${!JOBS_BY_EXP[@]}"; do
+  merge_csvs_for_exp "$exp"
+done
+
+echo "Merged CSVs:"
+for exp in "${!JOBS_BY_EXP[@]}"; do
+  echo "  ${MERGE_OUT_DIR}/${exp}_merged.csv"
 done

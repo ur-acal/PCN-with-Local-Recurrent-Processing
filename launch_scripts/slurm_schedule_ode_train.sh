@@ -2,7 +2,7 @@
 #set -euo pipefail
 
 # How many blocks to launch together on ONE GPU per sbatch job
-MAX_TASKS_PER_GPU=${MAX_TASKS_PER_GPU:-2}
+MAX_TASKS_PER_GPU=${MAX_TASKS_PER_GPU:-1}
 # GPUs per job (kept at 1; override here if you need to)
 GPUS_PER_JOB=${GPUS_PER_JOB:-1}
 
@@ -42,11 +42,11 @@ BLOCKS_BY_ARCH["Tiny_11L2P"]="S2NoMinusZChgZNoisyI"
 # Deep Tiny
 BLOCKS_BY_ARCH["DeepTi"]="S2NoMinusZChgZNoisyI"
 # Deep Tiny
-BLOCKS_BY_ARCH["DeepTi2P32Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAs0ZAsX S2NoisyIYAsXZAs0"
+BLOCKS_BY_ARCH["DeepTi2P32Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAsXZAs0"
 # Deep Tiny
-BLOCKS_BY_ARCH["DeepTi2P40Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAs0ZAsX S2NoisyIYAsXZAs0"
+BLOCKS_BY_ARCH["DeepTi2P40Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAsXZAs0"
 # Deep Tiny
-BLOCKS_BY_ARCH["DeepTi2P48Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAs0ZAsX S2NoisyIYAsXZAs0"
+BLOCKS_BY_ARCH["DeepTi2P48Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAsXZAs0"
 # Deep Tiny-1P
 BLOCKS_BY_ARCH["DeepTi1P"]="S2NoMinusZChgZNoisyI"
 # DeepS
@@ -90,11 +90,11 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("7L64Chan" "DeepM11L")
+ARCHES=("DeepTi2P32Chan" "DeepTi2P40Chan" "DeepTi2P48Chan")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
-CIRC_CONFS=( "8|4|5|0|5" "6|3|5|1|4|32")
+CIRC_CONFS=( "" )
 ###############################################################################################
 
 # Paths
@@ -132,7 +132,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1112_2State_scanGFI_Medium_Models_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1114_2State_scanGFI_DeepTi_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

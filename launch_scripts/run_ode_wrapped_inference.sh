@@ -95,7 +95,8 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
 
-  "8P4PS5PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.25TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+#  "8P4PS5PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.25TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -166,11 +167,11 @@ run_model(){
     --C               "$cap_val" \
     --v_dd            "1" \
     --w_bits          "$n_bits" \
-    --patch_node      "8" \
-    --patch_stride    "4" \
-    --patch_cycle     "5" \
-    --patch_pad       "0" \
-    --fold_scalar     "5" \
+    --patch_node      "" \
+    --patch_stride    "" \
+    --patch_cycle     "" \
+    --patch_pad       "" \
+    --fold_scalar     "" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
