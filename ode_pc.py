@@ -1073,7 +1073,7 @@ class S2NoisyIYAsXZAs0(State2NoMinusZ):
 
 class S2Circ(State2NoMinusZ):
     def __init__(self, patch_node=8, patch_stride=4, patch_cycle=5, patch_pad=0, fold_scalar=None,
-                 time_patch_ratio=0.5, **kwargs):
+                 time_patch_ratio=0.6, **kwargs):
         super().__init__(**kwargs)
         self.patch_node = patch_node
         self.patch_stride = patch_stride
@@ -1086,6 +1086,10 @@ class S2Circ(State2NoMinusZ):
         t_step = self.option_aca["h"]
         self.option_patch = self._set_ode_option(self.option_patch, time_patch_ratio, t1_all, t_step)
         self.fold_scalar = patch_node if fold_scalar is None else fold_scalar
+
+        self.patch_overlap = patch_node != patch_stride
+        if self.patch_overlap:
+            self.fold_scalar = 1
 
         # Each patch's compute time = [t_end * (1 - time_split)] / patch_cycle
 
@@ -1107,7 +1111,13 @@ class S2Circ(State2NoMinusZ):
         if x_h > self.patch_node and x_w > self.patch_node:
             for i in range(self.patch_cycle):
                 # logging.warning("Cycle: {}, yz shape: {}, yz mean: {}".format(i, [_s.shape for _s in yz], [_s.mean() for _s in yz]))
-                yz = self._run_one_cycle(x, yz)
+                if self.patch_overlap:
+                    yz = self._run_one_cycle(x, yz)
+                else:
+                    yz = self._run_one_cycle(x, yz, "raw")
+                    yz = self._run_one_cycle(x, yz, "h")
+                    yz = self._run_one_cycle(x, yz, "raw")
+                    yz = self._run_one_cycle(x, yz, "v")
             yz = yz[0]
         else:
             # cur_t_aca, cur_h = self.option_aca_raw["t1"], self.option_aca_raw["h"]
@@ -1123,46 +1133,109 @@ class S2Circ(State2NoMinusZ):
             yz = self.bypass(yz) + yz
         return yz
 
-    def _run_one_cycle(self, x, yz):
+    def _run_one_cycle(self, x, yz, mode="raw"):
         if not isinstance(yz, Tuple):
             yz = (yz,)
+
         bs = x.shape[0]
         yz_c = tuple(_s.shape[1] for _s in yz)
         yz_h = tuple(_s.shape[2] for _s in yz)
         yz_w = tuple(_s.shape[3] for _s in yz)
+
         # If patch_node is bigger than the input feature size, don't split into multiple patches.
         yz_psz = tuple((min(self.patch_node, _h), min(self.patch_node, _w)) for _h, _w in zip(yz_h, yz_w))
-        yz_stride = tuple((self.patch_stride if self.patch_node < _h else 1, self.patch_stride if self.patch_node < _w else 1)
+        yz_stride = tuple((self.patch_stride if self.patch_node < _h else 1,
+                           self.patch_stride if self.patch_node < _w else 1)
                           for _h, _w in zip(yz_h, yz_w))
 
-        with torch.no_grad():
-            yz_ones = tuple(x.new_ones(bs, 1, _h, _w) for _h, _w in zip(yz_h, yz_w))
-            yz_cnt_cols = tuple(F.unfold(_ones, kernel_size=_p_sz, stride=_p_stride)
-                             for _ones, _p_sz, _p_stride in zip(yz_ones, yz_psz, yz_stride))
-            yz_cnt_map = tuple(F.fold(_cnt_cols, output_size=(_h, _w),
-                             kernel_size=_p_sz, stride=_p_stride)
-                               for _cnt_cols, _h, _w, _p_sz, _p_stride in zip(yz_cnt_cols, yz_h, yz_w, yz_psz, yz_stride))
+        # Keep the padding
+        pad = int(getattr(self, "patch_pad", 0))
+        p_h, p_w = yz_psz[0]
+        s_h, s_w = yz_stride[0]
+        H, W = yz_h[0], yz_w[0]
+        H_pad, W_pad = H + 2 * pad, W + 2 * pad
 
-            # Unfold and transpose to (BS, N_Patches, N_Chan * patch_node * patch_node)
-        yz = tuple(F.unfold(
-            _s, kernel_size=_p_sz, stride=_p_stride, padding=self.patch_pad).transpose(1, 2)
-                   for _s, _p_sz, _p_stride in zip(yz, yz_psz, yz_stride))
+        # half-patch shifts
+        sh_h = p_h // 2
+        sh_w = p_w // 2
+
+        # roll helper
+        def maybe_roll(t):
+            if mode == "h":
+                return torch.roll(t, shifts=(0, -sh_w), dims=(-2, -1))
+            elif mode == "v":
+                return torch.roll(t, shifts=(-sh_h, 0), dims=(-2, -1))
+            else:
+                return t
+
+        # unfold grid sizes on the padded canvas
+        n_h = (H_pad - p_h) // s_h + 1
+        n_w = (W_pad - p_w) // s_w + 1
+
+        # which columns to KEEP (full windows only after shift)
+        if mode == "raw":
+            keep_i_max = n_h
+            keep_j_max = n_w
+        elif mode == "h":
+            keep_i_max = n_h
+            keep_j_max = max(0, (W_pad - p_w - sh_w) // s_w + 1)
+        elif mode == "v":
+            keep_i_max = max(0, (H_pad - p_h - sh_h) // s_h + 1)
+            keep_j_max = n_w
+        else:
+            raise ValueError(f"unknown mode: {mode}")
+
+        keep_cols = [i * n_w + j
+                     for i in range(keep_i_max)
+                     for j in range(keep_j_max)]
+
+        # Unfold after roll
+        yz_src = tuple(maybe_roll(_s) for _s in yz)
+
+        yz_cols_full = tuple(F.unfold(_s, kernel_size=_p_sz, stride=_p_stride, padding=pad)
+                             for _s, _p_sz, _p_stride in zip(yz_src, yz_psz, yz_stride))
+
+        # (bs, C*k*k, n_h*n_w) -> keep cols -> (bs, N_kept, C*k*k)
+        yz = tuple(_cols.index_select(2, _cols.new_tensor(keep_cols, dtype=torch.long)).transpose(1, 2)
+                   for _cols in yz_cols_full)
+
         yz_patch_num = tuple(_s.shape[1] for _s in yz)
-        # Reshape to (BS*N_Patches, N_Chan, patch_node, patch_node)
-        yz = tuple(_s.reshape(bs * _np, _nc, _p_sz[0], _p_sz[1])
-                   for _s, _np, _nc, _p_sz in zip(yz, yz_patch_num, yz_c, yz_psz))
+
+        # Reshape to (BS*N_kept, C, p_h, p_w)
+        yz = tuple(_s.reshape(bs * _np, _nc, p_h, p_w)
+                   for _s, _np, _nc in zip(yz, yz_patch_num, yz_c))
 
         self.integration_time = self.integration_time.type_as(x)
 
-        # Shape remains the same (BS*N_Patches, N_Chan, patch_node, patch_node)
+        # Run node on each patch
         yz = aca_ode_solve(self._make_ode_fn(x), yz, self.option_patch)
         yz = tuple(_s[-1] for _s in yz)
 
-        # Reshape to (BS, N_Patches, N_Chan * patch_node * patch_node), then fold it back
-        yz = tuple(F.fold(_s.reshape(bs, _np, _nc*_p_sz[0]*_p_sz[1]).transpose(1, 2).contiguous(),
-                          # output_size=(_h, _w), kernel_size=_p_sz, stride=_p_stride) / _cnt_map
-                          output_size=(_h, _w), kernel_size=_p_sz, stride=_p_stride, padding=self.patch_pad) / self.fold_scalar
-                   for _s, _np, _nc, _h, _w, _p_sz, _p_stride, _cnt_map in zip(yz, yz_patch_num, yz_c, yz_h, yz_w, yz_psz, yz_stride, yz_cnt_map))
+        # Place kept patch to full feature map, then fold back
+        yz_cols_kept = tuple(_s.reshape(bs, _np, _nc * p_h * p_w).transpose(1, 2).contiguous()
+                             for _s, _np, _nc in zip(yz, yz_patch_num, yz_c))
+
+        # logging.warning("yz_cols_kept shape: {}".format([_.shape for _ in yz_cols_kept]))
+
+        yz_cols_scatter = []
+        for _cols_full, _cols_kept in zip(yz_cols_full, yz_cols_kept):
+            _cols_out = _cols_full.clone()
+            _cols_out.index_copy_(2, _cols_full.new_tensor(keep_cols, dtype=torch.long), _cols_kept)
+            yz_cols_scatter.append(_cols_out)
+
+        yz = tuple(F.fold(_cols_sc, output_size=(_h, _w),
+                          kernel_size=_p_sz, stride=_p_stride, padding=pad)
+                   for _cols_sc, _h, _w, _p_sz, _p_stride in
+                   zip(yz_cols_scatter, yz_h, yz_w, yz_psz, yz_stride))
+
+        # reverse the roll so outputs align with the canonical grid
+        if mode == "h":
+            yz = tuple(torch.roll(_s, shifts=(0, +sh_w), dims=(-2, -1)) for _s in yz)
+        elif mode == "v":
+            yz = tuple(torch.roll(_s, shifts=(+sh_h, 0), dims=(-2, -1)) for _s in yz)
+
+        yz = tuple(_s / self.fold_scalar for _s in yz)
+
         return yz
 
 

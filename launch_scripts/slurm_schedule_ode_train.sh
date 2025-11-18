@@ -51,8 +51,12 @@ BLOCKS_BY_ARCH["DeepTi2P48Chan"]="S2NoisyIYAsXZAsX S2NoisyIYAsXZAs0"
 BLOCKS_BY_ARCH["DeepTi1P"]="S2NoMinusZChgZNoisyI"
 # DeepS
 BLOCKS_BY_ARCH["DeepS"]="S2NoMinusZChgZNoisyI"
+# DeepM11L56C
+BLOCKS_BY_ARCH["DeepM11L56C"]="S2CircYAsXZas0"
 # DeepM11L
 BLOCKS_BY_ARCH["DeepM11L"]="S2CircYAsXZas0"
+# DeepM11L
+BLOCKS_BY_ARCH["DeepMPBE"]="S2CircYAsXZas0"
 # DeepM
 BLOCKS_BY_ARCH["DeepM"]="S2CircYAsXZas0"
 # Deep48C
@@ -90,11 +94,12 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("DeepTi2P32Chan" "DeepTi2P40Chan" "DeepTi2P48Chan")
+ARCHES=("DeepM11L56C" "DeepM11L" "DeepMPBE")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
-CIRC_CONFS=( "" )
+# patch_node patch_stride patch_cycle patch_pad fold_scalar patch_bs
+CIRC_CONFS=( "8|8|1|0|1" "8|8|2|0|1" )
 ###############################################################################################
 
 # Paths
@@ -132,7 +137,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1114_2State_scanGFI_DeepTi_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
+    local EXP="no_bn_${pcn}_NODE_1117_2State_scanGFI_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"

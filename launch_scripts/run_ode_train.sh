@@ -21,21 +21,21 @@ python train_ode_cifar.py \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
-  --patch_node    "6" \
-  --patch_stride  "3" \
-  --patch_cycle   "3" \
-  --patch_pad     "1" \
-  --fold_scalar   "4" \
+  --patch_node    "8" \
+  --patch_stride  "8" \
+  --patch_cycle   "1" \
+  --patch_pad     "0" \
+  --fold_scalar   "1" \
   --dropout       0.25 \
   --weight_decay  "1e-3" \
   --lr_reduce_on  "80,122" \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --bypass        "false" \
-  --batch_size    32 \
+  --batch_size    128 \
   --method        "dopri5" \
   --tol           "1e-4" \
-  --t_end         "0.5" \
+  --t_end         "1.75" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
   --ode_block     "S2CircYAsXZas0" \

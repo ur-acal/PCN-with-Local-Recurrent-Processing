@@ -51,10 +51,14 @@ elif [[ "$ARCH_SET" == "DeepTi1P" ]]; then
   ARCH_LABEL="18L1P32C"
 elif [[ "$ARCH_SET" == "DeepS" ]]; then
   ARCH_LABEL="9L2P"
+elif [[ "$ARCH_SET" == "DeepM11L56C" ]]; then
+  ARCH_LABEL="DeepM11L56C"
 elif [[ "$ARCH_SET" == "DeepM11L" ]]; then
   ARCH_LABEL="11L2PMedium"
 elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   ARCH_LABEL="18L2P"
+elif [[ "$ARCH_SET" == "DeepMPBE" ]]; then
+  ARCH_LABEL="DeepMPoolingBeforeExpansion"
 elif [[ "$ARCH_SET" == "DeepM48C" ]]; then
   ARCH_LABEL="18L1P48C"
 elif [[ "$ARCH_SET" == "DeepM1P" ]]; then
@@ -200,11 +204,23 @@ elif [[ "$ARCH_SET" == "DeepS" ]]; then
   OUT=(16 16 16 32 32 32 64 64 64)
   POOL=(0  0  0  1  0  0  1  0  0)
   STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepM11L56C" ]]; then
+  # deep 0.58M model
+  INP=(3  14 14 28 28 56 56 56 56 56 56)
+  OUT=(14 14 28 28 56 56 56 56 56 56 56)
+  POOL=(0  1  0  1  0  0  0  0  0  0  0)
+  STRIDE=(1)
 elif [[ "$ARCH_SET" == "DeepM11L" ]]; then
   # deep 0.58M model
   INP=(3  16 16 32 32 64 64 64 64 64 64)
   OUT=(16 16 32 32 64 64 64 64 64 64 64)
   POOL=(0  1  0  1  0  0  0  0  0  0  0)
+  STRIDE=(1)
+elif [[ "$ARCH_SET" == "DeepMPBE" ]]; then
+  # deep 0.58M model
+  INP=(3  16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64)
+  OUT=(16 16 16 16 16 16 32 32 32 32 32 64 64 64 64 64 64 64)
+  POOL=(0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0  0  0)
   STRIDE=(1)
 elif [[ "$ARCH_SET" == "B" || "$ARCH_SET" == "DeepM" ]]; then
   # deep 0.58M model
