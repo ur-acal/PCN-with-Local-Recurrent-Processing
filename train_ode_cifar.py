@@ -177,7 +177,7 @@ def _constr_model_name(args, rep=1):
                                      str(args.distill_T).replace(".", "p"),
                                      args.distill_w.replace(".", "p").replace("|", "w"))
         model_name = kd_prefix + model_name
-    if args.patch_node is not None and "circ" in args.ode_block.lower():
+    if args.patch_node is not None and "circ" in args.ode_block.lower() and args.model_name is None:
         model_name = "{}P{}PS{}PC".format(args.patch_node, args.patch_stride, args.patch_cycle) + model_name
     return model_name
 

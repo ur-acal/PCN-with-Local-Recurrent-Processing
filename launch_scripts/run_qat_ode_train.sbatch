@@ -34,13 +34,29 @@ else
   IMG_TYPE="$prev"
 fi
 
+
+if [[ "${ODE_BLOCK}" == *Circ* ]]; then
+  first_part=${MODEL_NAME%%_*}
+  # Extract numbers in pattern  <num>P<num>PS<num>PC  from the first part of model_name
+  if [[ $first_part =~ ([0-9]+)P([0-9]+)PS([0-9]+)PC ]]; then
+      patch_node=${BASH_REMATCH[1]}
+      patch_stride=${BASH_REMATCH[2]}
+      patch_cycle=${BASH_REMATCH[3]}
+  fi
+  patch_pad=0
+  fold_scalar=1
+  echo "Extracted patch_node=${patch_node} patch_stride=${patch_stride} patch_cycle=${patch_cycle}"
+else
+  patch_node=""; patch_stride=""; patch_cycle=""; patch_pad=""; fold_scalar=""
+fi
+
 __before_tend="${MODEL_NAME%%TEnd*}"
 t_end="${__before_tend##*_}"
 
 # EXP parameters
 R_val="1e5"
 C_val="49e-15"
-tie_cap="true"
+tie_cap="false"
 ONE_OVER_Q="6"
 TRAIN_TOL="1e-4"
 
@@ -74,7 +90,7 @@ map_qat_block() {
   case "$1" in
     S2NoMinusZChgZNoisyI)          echo "QATWrapper2State" ;;
     S2NoMinusZChgZMinusNoisyI)     echo "QATWrapper2State" ;;
-    *)                         echo "$1" ;;
+    *)                             echo "QATWrapper2State" ;;
   esac
 }
 
@@ -104,6 +120,11 @@ run_one () {
     --R             "${R_val}" \
     --C             "${C_val}" \
     --w_bits        "${NBITS}" \
+    --patch_node    "${patch_node}" \
+    --patch_stride  "${patch_stride}" \
+    --patch_cycle   "${patch_cycle}" \
+    --patch_pad     "${patch_pad}" \
+    --fold_scalar   "${fold_scalar}" \
     --tie_cap       "${tie_cap}" \
     --one_over_q    "${ONE_OVER_Q}" \
     --qat_cls       "${QAT_CLS}" \

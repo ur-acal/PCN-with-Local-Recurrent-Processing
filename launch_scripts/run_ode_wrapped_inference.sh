@@ -8,8 +8,9 @@ export tol="1e-6"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
-N_BITS_VALS=(5)
-#N_BITS_VALS=(5 5 5 5 5 5 5 5 5 5)
+#N_BITS_VALS=(5)
+N_BITS_VALS=(5 5 5 5 5 5 5 5 5 5)
+#N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
 METHOD_VALS=("dopri5")
 CAP_VALS=("49e-15")
 #METHOD_VALS=("euler")
@@ -96,7 +97,8 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
 
 #  "8P4PS5PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.25TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
+  "8P8PS1PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_11Layers_2Pool_scanGFI_2REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -142,7 +144,7 @@ run_model(){
   fi
 
   local test_bs=128
-  if [[ "${_ode_block}" == *Circ* ]]; then test_bs=64; fi
+  if [[ "${_ode_block}" == *Circ* ]]; then test_bs=128; fi
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -167,11 +169,12 @@ run_model(){
     --C               "$cap_val" \
     --v_dd            "1" \
     --w_bits          "$n_bits" \
-    --patch_node      "" \
-    --patch_stride    "" \
-    --patch_cycle     "" \
-    --patch_pad       "" \
-    --fold_scalar     "" \
+    --patch_node      "8" \
+    --patch_stride    "8" \
+    --patch_cycle     "1" \
+    --patch_pad       "0" \
+    --fold_scalar     "1" \
+    --one_over_q      "10" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
@@ -188,7 +191,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1110_scanGPI_Medium_Circ_${method}Method_${tol}Tol.log"
+  EXP_NAME="1118_scanGPI_Medium_Circ_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"
