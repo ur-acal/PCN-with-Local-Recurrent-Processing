@@ -21,9 +21,10 @@ python train_ode_cifar.py \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
+  --avg_pooling   "true" \
   --patch_node    "8" \
   --patch_stride  "8" \
-  --patch_cycle   "1" \
+  --patch_cycle   "2" \
   --patch_pad     "0" \
   --fold_scalar   "1" \
   --dropout       0.25 \

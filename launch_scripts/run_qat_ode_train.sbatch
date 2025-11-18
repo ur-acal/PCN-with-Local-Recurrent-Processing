@@ -18,8 +18,10 @@ conda activate scanbase
 ##########################################################################
 MODEL_NAME=${MODEL_NAME:-""}
 NBITS=${NBITS:-""}
+NOISE_LEVEL=${NOISE_LEVEL:-"0.35"}
+QAT_CLS=${QAT_CLS:-"SymQuantizeWeight"}
 
-# Get PC_CONV, ODE_BLOCK, IMG_TYPE
+# Get PC_CONV, ODE_BLOCK, IMG_TYPE and TEnd
 __rest="${MODEL_NAME#*_}"
 PC_CONV="${__rest%%_*}"
 
@@ -32,16 +34,18 @@ else
   IMG_TYPE="$prev"
 fi
 
+__before_tend="${MODEL_NAME%%TEnd*}"
+t_end="${__before_tend##*_}"
+
 # EXP parameters
 R_val="1e5"
 C_val="49e-15"
-t_end="1.5"
 tie_cap="true"
 ONE_OVER_Q="6"
 TRAIN_TOL="1e-4"
 
 EXP="${EXP:-no_bn_${PCN}_NODE_0822_relu6_FFFB_DYN_${ARCH_LABEL}_Exp}"
-LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${NBITS}"
+LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${NBITS}_${NOISE_LEVEL}"
 mkdir -p "$LOGDIR"
 ##########################################################################
 
@@ -63,7 +67,7 @@ echo "Per-proc --mem_frac=${MEM_FRAC}  (MAX_MEM_FRAC=${MAX_MEM_FRAC}, PROCS=${PR
 echo "Host: $(hostname)"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}  (SLURM set)"
 echo "CPUs per task: $CPUS  → OMP_NUM_THREADS per proc: $THREADS_PER_PROC"
-echo "EXP=${EXP}  MODEL_NAME=${MODEL_NAME}  NBITS=${NBITS}"
+echo "EXP=${EXP}  MODEL_NAME=${MODEL_NAME}  NBITS=${NBITS} NOISE_LEVEL=${NOISE_LEVEL}"
 echo "Logs in: $LOGDIR"
 
 map_qat_block() {
@@ -75,8 +79,8 @@ map_qat_block() {
 }
 
 run_one () {
-  local logfile="${LOGDIR}/train_${EXP}_No_2_ReLU6_${NBITS}.log"
-  echo "[$(date +%T)] starting ${NBITS} -> ${logfile}"
+  local logfile="${LOGDIR}/train_${EXP}_No_2_ReLU6_${NBITS}_${NOISE_LEVEL}.log"
+  echo "[$(date +%T)] starting ${NBITS} ${NOISE_LEVEL} -> ${logfile}"
 
   local wrapper="$(map_qat_block "$ODE_BLOCK")"
 
@@ -102,13 +106,13 @@ run_one () {
     --w_bits        "${NBITS}" \
     --tie_cap       "${tie_cap}" \
     --one_over_q    "${ONE_OVER_Q}" \
-    --qat_cls       "SymQuantizeWeight" \
+    --qat_cls       "${QAT_CLS}" \
     --ode_wrapper   "${wrapper}" \
     --t_end         "${t_end}" \
     --pc_conv       "${PC_CONV}" \
     --ode_block     "${ODE_BLOCK}" \
     --mem_frac      "${MEM_FRAC}" \
-    --noise_level   "0.4" \
+    --noise_level   "${NOISE_LEVEL}" \
     --noise_type    "mul" \
     2>&1 | tee "${logfile}"
 }
@@ -155,13 +159,13 @@ extract_model_name() {
 eval_model() {
   # name, tag (pre_ft|post_ft), TEST_BLOCK
   local name="$1"
-  local dir="${EVAL_BASE}/${NBITS}/${name}_method_${METHOD}_tol_${TOL}"
+  local dir="${EVAL_BASE}/${NBITS}_${NOISE_LEVEL}/${name}_method_${METHOD}_tol_${TOL}"
   mkdir -p "$dir"
   local ckpt="best"
   ################################
   local wrapper="$(map_test_wrapper "$ODE_BLOCK")"
   ################################
-  echo "[EVAL ${NBITS}] ${name} (test_block=${ODE_BLOCK}, ckpt=${ckpt}) → $dir/job.log"
+  echo "[EVAL ${NBITS} ${NOISE_LEVEL}] ${name} (test_block=${ODE_BLOCK}, ckpt=${ckpt}) → $dir/job.log"
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u ode_inference.py \
     --model_name      "$name" \
@@ -190,7 +194,7 @@ eval_model() {
 
 # Collect model names from training logs
 declare -a MODEL_NAMES_PRE=()
-logf="${LOGDIR}/train_${EXP}_No_2_ReLU6_${NBITS}.log"
+logf="${LOGDIR}/train_${EXP}_No_2_ReLU6_${NBITS}_${NOISE_LEVEL}.log"
 mn="$(extract_model_name "$logf")"
 if [[ -z "$mn" ]]; then
   echo "[WARN] Could not extract model name from $logf"
@@ -209,7 +213,7 @@ echo "Merging summaries into ${MASTER_LOG}"
 : > "${MASTER_LOG}"
 for i in "${!MODEL_NAMES_PRE[@]}"; do
   pre="${MODEL_NAMES_PRE[$i]}"
-  pre_log="${EVAL_BASE}/${NBITS}/${pre}_method_${METHOD}_tol_${TOL}/job.log"
+  pre_log="${EVAL_BASE}/${NBITS}_${NOISE_LEVEL}/${pre}_method_${METHOD}_tol_${TOL}/job.log"
 
   printf '========== %s (pre-finetune) ==========\n' "$pre" >>"$MASTER_LOG"
   if [[ -f "$pre_log" ]]; then

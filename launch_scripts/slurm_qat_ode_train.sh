@@ -29,11 +29,15 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_4Layers_2Pool_scanGFI_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_5Layers_2Pool_scanGFI_2REP"
 
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_9Layers_2Pool_scanGFI_2REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_9Layers_2Pool_scanGFI_2REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
+
+  "8P8PS1PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_11Layers_2Pool_scanGFI_1REP"
+  "8P8PS1PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S56C_0.25Dropout_11Layers_2Pool_scanGFI_1REP"
 )
 NBITS=(5)
+NOISE_LEVELS=("0.25" "0.3" "0.35")
 ###############################################################################################
 
 # Paths
@@ -48,16 +52,16 @@ MERGE_OUT_DIR="${REPO_ROOT}/shell_utils/parse_res/neural_ode_res"
 MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
 
 split_and_submit() {
-  local ft_model_name="$1" n_bits="$2"
+  local ft_model_name="$1" n_bits="$2" noise_level="$3"
   ###############################################################################################
   # Change EXP name here
   ###############################################################################################
-  local EXP="no_bn_${ft_model_name}_NODE_QAT_noise_inject_1031_tie_cap_scanGFI_2State_Deep_Exp"
+  local EXP="no_bn_${ft_model_name}_QAT${n_bits}b_noise${noise_level}_1118_tie_cap_2State_Circ_Exp"
   ###############################################################################################
-  echo "Submitting Model_Name=${ft_model_name} n_bits=${n_bits} → EXP=${EXP}"
+  echo "Submitting Model_Name=${ft_model_name} n_bits=${n_bits} noise_level=${noise_level} → EXP=${EXP}"
   jid=$( sbatch --parsable \
            --gres=gpu:${GPUS_PER_JOB} \
-           --export=ALL,MODEL_NAME="${ft_model_name}",NBITS="${n_bits}",EXP="${EXP}" \
+           --export=ALL,MODEL_NAME="${ft_model_name}",NBITS="${n_bits}",NOISE_LEVEL="${noise_level}",EXP="${EXP}" \
            "${SBATCH_SCRIPT}" )
   echo "  -> job ${jid}"
   JOBS_BY_EXP["${EXP}"]+="${jid}:"
@@ -133,7 +137,9 @@ merge_csvs_for_exp() {
 # Launch jobs
 for MODEL_NAME in "${MODEL_NAMES[@]}"; do
   for NBIT in "${NBITS[@]}"; do
-    split_and_submit "$MODEL_NAME" "$NBIT"
+    for NL in "${NOISE_LEVELS[@]}"; do
+      split_and_submit "$MODEL_NAME" "$NBIT" "$NL"
+    done
   done
 done
 

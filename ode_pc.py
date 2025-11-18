@@ -1088,7 +1088,7 @@ class S2Circ(State2NoMinusZ):
         self.fold_scalar = patch_node if fold_scalar is None else fold_scalar
 
         self.patch_overlap = patch_node != patch_stride
-        if self.patch_overlap:
+        if not self.patch_overlap:
             self.fold_scalar = 1
 
         # Each patch's compute time = [t_end * (1 - time_split)] / patch_cycle
