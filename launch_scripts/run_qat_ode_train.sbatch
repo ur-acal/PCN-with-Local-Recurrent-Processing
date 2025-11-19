@@ -165,7 +165,7 @@ map_test_wrapper() {
   case "$1" in
     S2NoMinusZChgZNoisyI)          echo "QATTester2State" ;;
     S2NoMinusZChgZMinusNoisyI)     echo "QATTester2State" ;;
-    *)                         echo "$1" ;;
+    *)                             echo "QATTester2State" ;;
   esac
 }
 
@@ -204,6 +204,11 @@ eval_model() {
     --R               "${R_val}" \
     --C               "${C_val}" \
     --w_bits          "${NBITS}" \
+    --patch_node      "${patch_node}" \
+    --patch_stride    "${patch_stride}" \
+    --patch_cycle     "${patch_cycle}" \
+    --patch_pad       "${patch_pad}" \
+    --fold_scalar     "${fold_scalar}" \
     --tie_cap         "${tie_cap}" \
     --one_over_q      "${ONE_OVER_Q}" \
     --pc_conv         "${PC_CONV}Noisy" \
