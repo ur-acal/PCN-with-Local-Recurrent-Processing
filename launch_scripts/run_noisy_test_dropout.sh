@@ -14,8 +14,9 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-MASTER_LOG="$BASE_LOGDIR/master_0822_ppcn_no_bn_noise_to_all_weight_relu6_fffb.log"
-JOB_LOG="$BASE_LOGDIR/parallel_job_master_0822_ppcn_no_bn_noise_to_all_relu6_fffb.log"
+EXP_NAME="1121_ppcn_cifar10"
+MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
@@ -34,8 +35,16 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvFFReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 2p ~0.9M
 #  "PCNetNoBatchNorm_PCConvFFReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP" # 3p ~0.6M
 
-  "PCNetWith1stConv_PCConvFFReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 2p ~89M
-  "PCNetWith1stConv_PCConvFFReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP" # 3p ~0.59M
+#  "PCNetWith1stConv_PCConvFFReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_6Layers_1REP" # 2p ~89M
+#  "PCNetWith1stConv_PCConvFFReLU6_5CLS_0.15LRPC_0.001WD_noTied_noBPtied_withRelu_noBP_noReluBP_withPC_128BS_0.01LR_0.25Dropout_5Layers_1REP" # 3p ~0.59M
+
+#  "PCNetNoBatchNorm_FFFBReLU6_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_FFFBReLU6_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_FFFBReLU6_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"
+
+  "PCNetNoBatchNorm_FFFBReLU6_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_1REP"
+  "PCNetNoBatchNorm_FFFBReLU6_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_1REP"
+  "PCNetNoBatchNorm_FFFBReLU6_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -52,10 +61,21 @@ run_model(){
   local name="$1"
   local __rest="${name#*_}"
   local _pc_conv="${__rest%%_*}"
+
+  IFS='_' read -r -a parts <<< "$name"
+  local _ode_block="${parts[3]}"
+  prev="${parts[${#parts[@]}-2]}"
+  if [[ "$prev" == *Layers || "$prev" == *Pool ]]; then
+    local _img_type="rgb"
+  else
+    local _img_type="$prev"
+  fi
+
   set -o pipefail
   python -u run_test.py \
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
+    --img_type        "$_img_type" \
     --weight          "$WEIGHT_PATH" \
     --plot_path       "$PLOT_PATH" \
     --w_type          "$W_TYPE" \
@@ -76,7 +96,7 @@ echo "Tail master with: tail -f $MASTER_LOG"
 
 # ─────────────── run in parallel ───────────────
 parallel \
-  --jobs 1 \
+  --jobs 3 \
   --joblog "$JOB_LOG" \
   --keep-order \
   run_model {} \
@@ -88,7 +108,7 @@ echo "All jobs finished — merging logs into $MASTER_LOG"
 : >"$MASTER_LOG"
 for name in "${MODEL_NAMES[@]}"; do
   printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
-  if ! grep -A 11 "Final Result " \
+  if ! grep -A 20 "Final Result " \
              "$BASE_LOGDIR/$name/job.log" >>"$MASTER_LOG"; then
      echo "[Final Result not found]" >>"$MASTER_LOG"
   fi
@@ -99,7 +119,7 @@ echo "All summaries written to $MASTER_LOG"
 
 #######################################################
 # running
-# nohup bash run_noisy_test_dropout.sh > logs/run_script_output/launcher.out 2>&1 &
+# nohup bash ./launch_scripts/run_noisy_test_dropout.sh > logs/run_script_output/launcher.out 2>&1 &
 # tail -f logs/run_script_output/launcher.out
 # After the run is finished, the master_log file will be printed out
 # then cat master_log

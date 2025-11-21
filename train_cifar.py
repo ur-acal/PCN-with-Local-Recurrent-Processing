@@ -20,6 +20,8 @@ def get_args():
     model_save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_ckpt")
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
+    p.add_argument("--img_type",      type=str, default="rgb")
+    p.add_argument("--eval_every", type=int, default=1)
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="Adam",
                    help="optimizer")
@@ -72,14 +74,19 @@ def _constr_model_name(args, rep=1):
     if not args.first_bn:
         model_name = model_name + "_No1stBN"
     model_name += '_' + str(args.cls) + 'CLS_' + str(args.lr_pc) + 'LRPC_'+ str(args.weight_decay) + 'WD_' \
-                  + name_dict[str(args.tie_weights)] + 'Tied_' + name_dict[str(args.tie_bp)] + 'BPtied_' \
-                  + name_dict[str(args.relu_between)] + 'Relu_'+ name_dict[str(args.bypass)] + 'BP_' \
-                  + name_dict[str(args.relu_bp)] + 'ReluBP_' + name_dict[str(args.use_pc)] + 'PC_' \
-                  + str(args.batch_size) + 'BS_' + str(args.learning_rate) + 'LR_' \
-                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers"
+                  + name_dict[str(args.tie_bp)] + 'BPtied_' \
+                  + name_dict[str(args.bypass)] + 'BP_'
+    if not args.use_pc:
+        model_name += 'noPC_'
+    model_name += str(args.batch_size) + 'BS_' \
+                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers" \
+                  + "_{}Chan_".format(max(args.inp_channels)) \
+                  + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
+    if args.img_type != "rgb":
+        model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
     return model_name
 
@@ -160,9 +167,11 @@ def main():
         optim_type    = args.optim,
         weight_decay  = args.weight_decay,
         loss_fn       = loss_fn,
+        img_type      = args.img_type,
         learning_rate = args.learning_rate,
         num_epochs    = args.num_epochs,
         warmup_epoch  = args.warmup_epoch,
+        eval_every    = args.eval_every,
     )
 
     if args.test_only:

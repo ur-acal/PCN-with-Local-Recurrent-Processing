@@ -24,6 +24,7 @@ def parse_args():
                         help="Directory containing the saved model checkpoint")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
+    parser.add_argument("--img_type", type=str, default="rgb")
     parser.add_argument("--weight", type=str, default=None,
                         help="The large dir that holds expanded weights")
     parser.add_argument("--plot_path", type=str, default=None,
@@ -83,7 +84,7 @@ def run_test():
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_dataloader = get_test_data()
+    test_dataloader = get_test_data(test_bs=1024, img_type=args.img_type)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
 
     # DO NOT USE print with logging, the outputs of the two will be out-of-order
@@ -122,7 +123,6 @@ def run_test():
             for _name, _buf in net_.named_buffers():
                 if "beta" in _name:
                     print("Name: {}, val: {}".format(_name, _buf))
-            exit(0)
 
         # Get val_scale
         noisy_params_vs = deepcopy(noisy_params)
@@ -148,7 +148,10 @@ def run_test():
                                 noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                 loss_plot_dir=args.plot_path, model_name=args.model_name)
 
-        noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
+        # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
+        noise_level_list_ = [0, 0.1, .20, .30, .40]
+        if args.test_only:
+            noise_level_list_ = [0]
         # noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07,
         #                      0.08, 0.09, 0.1, 0.12, 0.14, 0.16, 0.18, 0.20,
         #                      .25, .30, .35, .40]

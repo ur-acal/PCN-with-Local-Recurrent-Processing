@@ -926,3 +926,34 @@ class FFFBReLU6Noisy(PlainFFFBConvResNoisy):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.relu = nn.ReLU6()
+
+
+class FFFBReLU6NoLastConv(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6()
+
+    def find_optimal_r(self, x, y, layer_idx=None):
+        # outside of find_optimal_r, y = self.relu(self.FFconv(x))
+        for _ in range(self.cls):
+            y = y + self.lr * self.FFconv(self.relu(self.FBconv(y)))
+        return y
+
+
+class FFFBReLU6NoLastConvNoisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6()
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
+        # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
+        # of the model and before calling forward
+        for _ in range(self.cls):
+            if self.diff_noise:
+                log.info("Calling PlainFFFB conv; Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            y = y + self.lr * torch.conv2d(
+                self.relu(torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)),
+                self.noisy_ff, padding=self.FFconv.padding)
+        return y
