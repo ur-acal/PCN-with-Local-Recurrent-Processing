@@ -1,0 +1,377 @@
+import logging
+import pickle
+import types
+from functools import wraps
+
+import numpy as np
+import torch
+import os
+import torch.nn as nn
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import random
+from copy import deepcopy
+
+from tqdm import tqdm
+
+from pc_model import PCNet
+
+
+def mask_set_val(dst_mat, src_val):
+    mask = (dst_mat > 0).flatten()
+    # print("src_val shape: {}, dst_mat shape: {}, non-zero vals in dst_mat: {}".format(src_val.shape, dst_mat.shape, torch.sum(mask)))
+    dst_shape = dst_mat.shape
+
+    dst_mat = dst_mat.flatten()
+    src_val_flat = src_val.flatten()
+
+    dst_mat.masked_scatter_(mask, src_val_flat)
+    dst_mat = dst_mat.view(dst_shape)
+
+    return dst_mat
+
+
+def build_unrolled_csr_padded(C_in, H_pad, W_pad, C_out, k_h, k_w,
+                              H_out, W_out, rows, stride, kernel):
+    device, dtype = kernel.device, kernel.dtype
+    out_dim    = C_out * rows
+    in_dim_pad = C_in * H_pad * W_pad
+    s = stride
+
+    nnz_per_row = C_in * k_h * k_w
+    crow = torch.arange(0, out_dim + 1, device=device, dtype=torch.int64) * nnz_per_row
+
+    # base columns per output-spatial row (within one input channel)
+    base_cols_per_row = []
+    for i in range(H_out):
+        for j in range(W_out):
+            cols = []
+            for ki in range(k_h):
+                for kj in range(k_w):
+                    ui = i * s + ki
+                    vj = j * s + kj
+                    cols.append(ui * W_pad + vj)
+            base_cols_per_row.append(cols)
+    base_cols = torch.tensor(base_cols_per_row, device=device, dtype=torch.int64)  # [rows, k_h*k_w]
+
+    # expand across input channels for ONE oc-block
+    ic_offsets = (torch.arange(C_in, device=device, dtype=torch.int64) * (H_pad * W_pad)).view(1, -1, 1)
+    cols_one_block = (base_cols.unsqueeze(1) + ic_offsets).reshape(rows, -1)      # [rows, C_in*k_h*k_w]
+
+    # tile for all output channels
+    col_indices = cols_one_block.repeat(C_out, 1).reshape(-1)                      # [out_dim * nnz_per_row]
+
+    # values: per row, concat ker[oc, ic].flatten() for ic over 0..C_in-1
+    ker_flat = kernel.reshape(C_out, C_in, -1)                                     # [C_out, C_in, k_h*k_w]
+    vals_one_row_order = ker_flat.reshape(-1)                                      # oc-major, then ic, then elems
+    values = vals_one_row_order.repeat_interleave(rows).to(dtype)
+
+    return torch.sparse_csr_tensor(crow, col_indices, values,
+                                   size=(out_dim, in_dim_pad),
+                                   dtype=dtype, device=device)
+
+
+def build_unrolled_csr_trimmed(C_in, H, W, C_out, k_h, k_w,
+                               H_out, W_out, rows, stride, padding, kernel):
+    device, dtype = kernel.device, kernel.dtype
+    out_dim = C_out * rows
+    in_dim  = C_in * H * W
+    s, p = stride, padding
+
+    crow = [0]
+    cols = []
+    vals = []
+
+    for oc in range(C_out):
+        for i in range(H_out):
+            for j in range(W_out):
+                nnz_row = 0
+                for ic in range(C_in):
+                    for ki in range(k_h):
+                        for kj in range(k_w):
+                            ui = i * s + ki
+                            vj = j * s + kj
+                            # keep only if (ui, vj) lies inside unpadded window
+                            if (p <= ui < p + H) and (p <= vj < p + W):
+                                raw_col = (ui - p) * W + (vj - p)       # within one input channel
+                                cols.append(ic * (H * W) + raw_col)     # global column
+                                vals.append(kernel[oc, ic, ki, kj].item())
+                                nnz_row += 1
+                crow.append(crow[-1] + nnz_row)
+
+    crow = torch.tensor(crow, dtype=torch.int64, device=device)
+    cols = torch.tensor(cols, dtype=torch.int64, device=device)
+    vals = torch.tensor(vals, dtype=dtype, device=device)
+
+    return torch.sparse_csr_tensor(crow, cols, vals,
+                                   size=(out_dim, in_dim),
+                                   dtype=dtype, device=device)
+
+def conv2d_to_matrix_fixed_padding(input_shape, kernel, stride=1, padding=0, *,
+                                   return_padded_input=False):
+    C_in, H, W = input_shape
+    C_out, _, k_h, k_w = kernel.shape
+    p, s = padding, stride
+
+    # Output dims
+    H_out = (H + 2 * p - k_h) // s + 1
+    W_out = (W + 2 * p - k_w) // s + 1
+    rows = H_out * W_out
+
+    # Work on padded grid first
+    H_pad, W_pad = H + 2 * p, W + 2 * p
+    in_pad_size = H_pad * W_pad
+
+    # Base mask on padded grid
+    base_matrix_pad = torch.zeros((rows, in_pad_size), dtype=kernel.dtype, device=kernel.device)
+    for i in range(H_out):
+        for j in range(W_out):
+            r = i * W_out + j
+            for ki in range(k_h):
+                for kj in range(k_w):
+                    ui = i * s + ki
+                    vj = j * s + kj
+                    c = ui * W_pad + vj
+                    base_matrix_pad[r, c] = 1
+
+    # Label on padded grid
+    B_labeled_pad = np.full((rows, in_pad_size), "", dtype=object)
+    for i in range(H_out):
+        for j in range(W_out):
+            r = i * W_out + j
+            for ki in range(k_h):
+                for kj in range(k_w):
+                    ui = i * s + ki
+                    vj = j * s + kj
+                    c = ui * W_pad + vj
+                    if base_matrix_pad[r, c] != 0:
+                        B_labeled_pad[r, c] = f"{ki + 1}{kj + 1}"
+
+    if not return_padded_input and p > 0:
+        # trimmed (unpadded) CSR
+        kernel_matrix = build_unrolled_csr_trimmed(
+            C_in, H, W, C_out, k_h, k_w, H_out, W_out, rows, s, p, kernel
+        )
+
+        # keep mask for labels/mask (unchanged behavior)
+        keep = torch.zeros((H_pad, W_pad), dtype=torch.bool, device=kernel.device)
+        keep[p:H_pad - p, p:W_pad - p] = True
+        keep = keep.flatten()
+
+        base_matrix = base_matrix_pad[:, keep]
+        B_labeled = B_labeled_pad[:, keep.cpu().numpy()]
+    else:
+        # padded CSR
+        kernel_matrix = build_unrolled_csr_padded(
+            C_in, H_pad, W_pad, C_out, k_h, k_w, H_out, W_out, rows, s, kernel
+        )
+        base_matrix = base_matrix_pad
+        B_labeled = B_labeled_pad
+
+    return kernel_matrix, base_matrix, B_labeled
+
+
+class MVMConv(nn.Module):
+    def __init__(self, mat, meta):
+        super().__init__()
+        self.mat = mat
+        self.meta = meta
+        for _k, _v in meta.items():
+            setattr(self, _k, _v)
+
+    def forward(self, x):
+        batch_size, input_channels, input_h, input_w = x.shape
+        x = x.view(batch_size, -1).t()
+        output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
+        output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
+        return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
+
+    @property
+    def weight(self):
+        return self.mat
+
+    def inp_param_sum(self, x):
+        _, input_channels, input_h, input_w = x.shape
+        output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
+        output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
+        inp_summed = torch.sparse.sum(self.mat.abs().to_sparse_coo(), dim=1).to_dense()
+        out_chan = self.meta["out_chan"]
+        # inp_summed = inp_summed.view(out_chan, output_h, output_w).sum(dim=1)
+        return inp_summed.sqrt().view(1, out_chan, output_h, output_w)
+
+class Validator(nn.Module):
+    def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, **kwargs):
+        super().__init__()
+        # The model should contain conv layers only. All transposed conv layers should be converted to conv layers.
+        # The model needs to be converted to ode blocks and wrapped with wrapper before.
+        self.model = model
+        self.model.eval()
+        self.device = device
+        self.exp_w_path = os.path.join(expanded_weight_dir, "expanded_weights_{}.pth")
+        os.makedirs(expanded_weight_dir, exist_ok=True)
+        self.dataloader = test_dataloader
+
+        self.unroll_or_load()
+        self.result_path = result_path
+
+    @torch.no_grad()
+    def _register_hook_for_unroll(self, layer_idx, layer):
+        exp_w_path = self.exp_w_path.format(layer_idx)
+        if os.path.exists(exp_w_path):
+            stored = torch.load(exp_w_path, map_location=self.device)
+        else:
+            stored = {}
+
+        def make_hook(parent, mod_name, m):
+            hook_handlers = {}
+            def pre_hook(mod, inputs):
+                # Register hook to unroll the conv weights
+                # If the unrolled weights are already stored, load it
+                # Otherwise perform unrolling
+                if mod_name in stored:
+                    return
+                _, inp_channels, inp_h, inp_w = inputs[0].shape
+                stride = mod.stride[0] if isinstance(mod.stride, tuple) else mod.stride
+                padding = mod.padding[0] if isinstance(mod.padding, tuple) else mod.padding
+                unrolled, _, _ = conv2d_to_matrix_fixed_padding(
+                    (inp_channels, inp_h, inp_w), mod.weight.detach(), stride=stride, padding=padding)
+                k_h, k_w = mod.kernel_size if isinstance(mod.kernel_size, tuple) else (mod.kernel_size, mod.kernel_size)
+                stored[mod_name] = {
+                    "weight": unrolled,
+                    "meta": {
+                        "padding": padding,
+                        "stride": stride,
+                        "ker_h": int(k_h),
+                        "ker_w": int(k_w),
+                        "inp_chan": int(mod.in_channels),
+                        "out_chan": int(mod.out_channels),
+                    }
+                }
+                torch.save(stored, exp_w_path)
+
+            def post_hook(mod, inputs, output):
+                # Replace plain conv with unrolled weights
+                unrolled, meta = stored[mod_name]["weight"], stored[mod_name]["meta"]
+                setattr(parent, mod_name, MVMConv(unrolled, meta))
+                hook_handlers["pre_hook"].remove()
+                hook_handlers["post_hook"].remove()
+
+            hook_handlers["pre_hook"] = m.register_forward_pre_hook(pre_hook)
+            hook_handlers["post_hook"] = m.register_forward_hook(post_hook)
+
+        for _name, _mod in layer.named_modules():
+            if isinstance(_mod, nn.Conv2d):
+                make_hook(parent=layer, mod_name=_name, m=_mod)
+
+    @torch.no_grad()
+    def unroll_or_load(self):
+        for _idx, _layer in enumerate(self.model.PcConvs):
+            self._register_hook_for_unroll(_idx, _layer)
+
+        # One forward pass to trigger the hooks and unroll the weights
+        _ = self.model(next(iter(self.dataloader))[0][:2].to(self.device))
+
+    @torch.no_grad()
+    def test_unroll(self):
+        _total, _correct = 0, 0
+        for batch_idx, (inputs, targets) in tqdm(enumerate(self.dataloader), total=len(self.dataloader), disable=False):
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            with torch.no_grad():
+                output_tensor = self.model(inputs)
+            _, predicted = torch.max(output_tensor, 1)
+            _total += targets.size(0)
+            _correct += (predicted == targets).sum().item()
+        # Calculate the accuracy
+        _acc = 100 * _correct / _total
+        logging.warning("Accuracy using unrolled weights: {}".format(_acc))
+
+    @staticmethod
+    def patch_init_y_for_capture(mod, update_init_y):
+        if getattr(mod, "_init_y_wrapped_for_capture", False):
+            return
+        # Todo: Do we need to bind all patched functions in the wrapper
+        orig_init_y = mod.init_y
+
+        @wraps(orig_init_y)
+        def patched_init_y(x, *args, **kwargs):
+            # if getattr(orig_init_y, "__self__", None) is not None:
+            #     bound_orig = orig_init_y
+            # else:
+            #     bound_orig = types.MethodType(orig_init_y, mod)
+            # return update_init_y(bound_orig, x, *args, **kwargs)
+            return update_init_y(orig_init_y, x, *args, **kwargs)
+
+        mod.init_y = patched_init_y
+        setattr(mod, "_init_y_wrapped_for_capture", True)
+
+    @staticmethod
+    def _get_csr_data(mat):
+        mat = mat.detach().to_sparse_csr().cpu()
+        return {
+            "shape": tuple(mat.size()),
+            "row_ptr": mat.crow_indices().numpy(),
+            "col_idx": mat.col_indices().numpy(),
+            "val": mat.values().numpy(),
+        }
+
+    @torch.no_grad()
+    def _register_hook_for_record(self, wrappers):
+        res = {}
+        handlers = []
+        for _idx, _layer in enumerate(self.model.PcConvs):
+            # dict_keys(['R', 'q', 'kernel_0', 'kernel_1', 'kernel_2', 'kernel_3'])
+            # dict_keys(['inp', 'init_res', 'out', 'init_time', 'compute_time', 'FF_mat', 'FB_mat', 'C_ff', 'C_fb'])
+            cur_name = "layer_{}".format(_idx)
+            res[cur_name] = {}
+            res[cur_name]["init_time"] = _layer.option_init["t1"].cpu().item()
+            res[cur_name]["compute_time"] = _layer.option_aca["t1"].cpu().item()
+            res[cur_name]["FF_mat"] = self._get_csr_data(_layer.FFconv.mat)
+            res[cur_name]["FB_mat"] = self._get_csr_data(_layer.FBconv.mat)
+            res[cur_name]["R"] = wrappers[_idx].R
+            res[cur_name]["q"] = wrappers[_idx].beta.cpu().item() if isinstance(wrappers[_idx].beta, torch.Tensor) else wrappers[_idx].beta
+            res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item()
+            res[cur_name]["C_fb"] = wrappers[_idx].C_fb
+
+            _inp_scale = wrappers[_idx].inp_scale
+            _out_scale = wrappers[_idx].out_scale
+
+            def make_capture_init_res(key=cur_name):
+                def capture_init_res(orig_init_y, x, *args, **kwargs):
+                    yz = orig_init_y(x, *args, **kwargs)
+                    res[key]["init_res"] = yz[-1].view(yz[-1].shape[0], -1).contiguous().detach().cpu().numpy()
+                    return yz
+                return capture_init_res
+
+            def pre_hook(mod, inputs, key=cur_name, inp_scale=_inp_scale):
+                # Here the input captured hasn't been scaled by inp_scale, thus to
+                # match the input to the ode solver, we need to multiple inp_scale
+                res[key]["inp"] = inputs[0].view(inputs[0].shape[0], -1).contiguous().detach().cpu().numpy() * inp_scale
+                update_init_y = make_capture_init_res(key)
+                self.patch_init_y_for_capture(mod, update_init_y)
+
+            def post_hook(mod, inputs, output, key=cur_name, out_scale=_out_scale):
+                # res[key]["init_res"] = mod.init_y(inputs[0])[-1]
+                # Here the output captured has already been scaled by 1 / out_scale, thus to
+                # match the output of the ode solver, we need to multiple out_scale
+                res[key]["out"] = output.view(output.shape[0], -1).contiguous().detach().cpu().numpy() * out_scale
+
+            handlers.append(_layer.register_forward_pre_hook(pre_hook))
+            handlers.append(_layer.register_forward_hook(post_hook))
+        return res, handlers
+
+    @torch.no_grad()
+    def gen_validate_data(self, wrappers, n_samples=10):
+        res, handlers = self._register_hook_for_record(wrappers)
+
+        _inp = next(iter(self.dataloader))[0][:n_samples].to(self.device)
+        _ = self.model(_inp)
+
+        # Save res and remove hooks via handlers
+        os.makedirs(self.result_path, exist_ok=True)
+        sample_path = os.path.join(self.result_path, "{}samples.pkl".format(n_samples))
+        with open(sample_path, "wb") as fp:
+            pickle.dump(res, fp)
+        for _h in handlers:
+            _h.remove()
+
+        logging.warning("Validation samples dumped to: {}".format(sample_path))
