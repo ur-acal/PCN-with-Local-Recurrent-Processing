@@ -957,3 +957,71 @@ class FFFBReLU6NoLastConvNoisy(PCConvNoisy):
                 self.relu(torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)),
                 self.noisy_ff, padding=self.FFconv.padding)
         return y
+
+
+class FFFBReLU6NoLastConvYasX(PCConv):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6()
+        self.in_chan = self.FFconv.in_channels
+        self.out_chan = self.FFconv.out_channels
+        self.chan_diff = self.out_chan - self.in_chan
+
+    def init_y(self, x):
+        if self.chan_diff == 0:
+            return x
+        elif self.in_chan * 2 == self.out_chan:
+            return torch.cat([x, x], dim=1)
+        else:
+            return F.pad(torch.cat([x for _ in range(self.out_chan // self.in_chan)], dim=1),
+                         (0, 0, 0, 0, 0, self.out_chan % self.in_chan), "constant", 0)
+
+    def forward(self, x, layer_idx=None):
+        log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
+        # Initializer of recurrent
+        y = self.init_y(x)
+        y = self.find_optimal_r(x, y, layer_idx)
+        return y
+
+    def find_optimal_r(self, x, y, layer_idx=None):
+        # outside of find_optimal_r, y = self.relu(self.FFconv(x))
+        for _ in range(self.cls):
+            y = y + self.lr * self.FFconv(self.relu(self.FBconv(y)))
+        return y
+
+
+class FFFBReLU6NoLastConvYasXNoisy(PCConvNoisy):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = nn.ReLU6()
+        self.in_chan = self.FFconv.in_channels
+        self.out_chan = self.FFconv.out_channels
+        self.chan_diff = self.out_chan - self.in_chan
+
+    def init_y(self, x):
+        if self.chan_diff == 0:
+            return x
+        elif self.in_chan * 2 == self.out_chan:
+            return torch.cat([x, x], dim=1)
+        else:
+            return F.pad(torch.cat([x for _ in range(self.out_chan // self.in_chan)], dim=1),
+                         (0, 0, 0, 0, 0, self.out_chan % self.in_chan), "constant", 0)
+
+    def forward(self, x, layer_idx=None, w_type_used=None, use_relu=True):
+        log.info("--- Forward in PC layer: {} ---".format(self.layer_idx))
+        y = self.init_y(x)
+        y = self.find_optimal_r(x, y, self.layer_idx, w_type_used, use_relu)
+        return y
+
+    def find_optimal_r(self, x, y, layer_idx=None, w_type_used=None, use_relu=None):
+        # if weights are tied, must call add_noise or tie_weights_impl after loading the weights
+        # of the model and before calling forward
+        for _ in range(self.cls):
+            if self.diff_noise:
+                log.info("Calling PlainFFFB conv; Set different noise at each cycle")
+                self.noisy_fb = self._gen_noisy_weight(self.FBconv.weight)
+                self.noisy_ff = self._gen_noisy_weight(self.FFconv.weight)
+            y = y + self.lr * torch.conv2d(
+                self.relu(torch.conv_transpose2d(y, self.noisy_fb, padding=self.FBconv.padding)),
+                self.noisy_ff, padding=self.FFconv.padding)
+        return y

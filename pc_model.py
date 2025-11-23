@@ -16,7 +16,7 @@ from pc_conv import PCConvHardTanh, PCConvHardTanhNoisy, PCConvHardTanhDyn, PCCo
 from pc_conv import PCConvHardTanh2, PCConvHardTanh2Noisy, PCConvHardTanh2Dyn, PCConvHardTanh2DynNoisy
 from pc_conv import PCConvHardTanhWSFF, PCConvHardTanhWSFFNoisy, PCConvHardTanhWSFFFB, PCConvHardTanhWSFFFBNoisy
 from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvReLU6Limit, PCConvReLU6LimitNoisy
-from pc_conv import FFFBReLU6NoLastConv, FFFBReLU6NoLastConvNoisy
+from pc_conv import FFFBReLU6NoLastConv, FFFBReLU6NoLastConvNoisy, FFFBReLU6NoLastConvYasX, FFFBReLU6NoLastConvYasXNoisy
 from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
 
@@ -382,6 +382,7 @@ PC_CONV_CLASS = {
     "PlainFFFBConvResFixedX": PlainFFFBConvResFixedX,
     "PCConvFFReLU6": PCConvFFReLU6,
     "FFFBReLU6NoLastConv": FFFBReLU6NoLastConv,
+    "FFFBReLU6NoLastConvYasX": FFFBReLU6NoLastConvYasX,
     "FFFBReLU6": FFFBReLU6,
     # noisy pc conv
     "PCConvNoisy": PCConvNoisy,
@@ -405,5 +406,6 @@ PC_CONV_CLASS = {
     "PCConvFFReLU6Noisy": PCConvFFReLU6Noisy,
     "FFFBReLU6Noisy": FFFBReLU6Noisy,
     "FFFBReLU6NoLastConvNoisy": FFFBReLU6NoLastConvNoisy,
+    "FFFBReLU6NoLastConvYasXNoisy": FFFBReLU6NoLastConvYasXNoisy,
     "PCConvDS": PCConvDS,
 }
