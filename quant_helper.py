@@ -1,0 +1,250 @@
+import torch.nn as nn
+import torch
+import torch.nn.functional as F
+import numpy as np
+from copy import deepcopy
+
+
+class QuantHelper(nn.Module):
+    def __init__(self, quant_type="per_tensor", sym_quant=False, n_bits=8, static=True, channel_dim=1):
+        super().__init__()
+        assert quant_type in {"per_tensor", "per_channel"}
+        self.static = static
+        self.quant_type = quant_type
+        self.sym_quant = sym_quant
+        self.n_bits = n_bits
+        self.channel_dim = channel_dim
+        self.q_min, self.q_max = self.calc_quant_range()
+        self.eps_ = 1e-8
+
+    def calc_quant_range(self):
+        if self.sym_quant:
+            q_max = 2 ** (self.n_bits - 1) - 1
+            q_min = -q_max
+        else:
+            q_max = 2 ** self.n_bits - 1
+            q_min = 0
+        return q_min, q_max
+
+    @torch.no_grad()
+    def _per_tensor_sym(self, x):
+        if not hasattr(self, "s_q"):
+            x_max = x.abs().max()
+            self.register_buffer("s_q", torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
+        elif not self.static:
+            x_max = x.abs().max()
+            self.s_q.copy_(torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
+        return torch.clamp((x * self.s_q).round(), min=self.q_min, max=self.q_max)
+
+    def _per_tenser_non_sym(self, x):
+        pass
+
+    @torch.no_grad()
+    def _per_channel_sym(self, x: torch.Tensor):
+        reduced_dim = [d for d in range(x.ndim) if d != self.channel_dim]
+        if not hasattr(self, "s_q"):
+            x_max = x.abs().amax(dim=reduced_dim)
+            self.register_buffer("s_q", torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
+        elif not self.static:
+            x_max = x.abs().amax(dim=reduced_dim)
+            self.s_q.copy_(torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
+
+        s_shape = [1] * x.ndim
+        s_shape[self.channel_dim] = x.shape[self.channel_dim]
+        return torch.clamp((x * self.s_q.view(*s_shape)).round(), min=self.q_min, max=self.q_max)
+
+    def _per_channel_non_sym(self, x):
+        pass
+
+    def forward(self, x):
+        if self.quant_type == "per_tensor" and self.sym_quant:
+            return self._per_tensor_sym(x)
+        elif self.quant_type == "per_tensor" and not self.sym_quant:
+            return self._per_tensor_sym(x)
+        elif self.quant_type == "per_channel" and self.sym_quant:
+            return self._per_channel_sym(x)
+        elif self.quant_type == "per_channel" and not self.sym_quant:
+            return self._per_channel_sym(x)
+
+
+class QuantConv2d(nn.Module):
+    def __init__(self, conv: nn.Conv2d, w_quant, act_quant,
+                 w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
+                 agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+        super().__init__()
+        self.conv = conv
+        self.w_q_helper = w_quant_cls(**w_quant)
+        self.act_q_helper = act_quant_cls(**act_quant)
+        self.agg_bits = agg_bits
+        self.sigma_lsb = sigma_lsb
+        self.adc = adc_quant_cls(quant_type="per_tensor", sym_quant=True, n_bits=self.agg_bits,
+                                 static=True, channel_dim=1)
+        self.pvt_level = pvt_level
+
+    @torch.no_grad()
+    def _apply_noise(self, p, p_type="weight"):
+        # One time set; for mismatch aware training, don't use this method
+        if self.pvt_level is not None and self.pvt_level > 0.0:
+            err_type = "{}_err".format(p_type)
+            if not hasattr(self, err_type):
+                setattr(self, err_type, torch.randn_like(p, device=p.device, requires_grad=False) * p * self.pvt_level)
+            return p + getattr(self, err_type)
+        return p
+
+    def forward(self, x):
+        x_q = self.act_q_helper(x)
+        w_q = self.w_q_helper(self.conv.weight.data)
+        w_q = self._apply_noise(w_q, "weight")
+
+        x_q = F.conv2d(x_q, w_q, bias=None, stride=self.conv.stride, padding=self.conv.padding,
+                       groups=self.conv.groups, dilation=self.conv.dilation)
+        if hasattr(self.adc, "s_q"):
+            x_q += torch.randn_like(x_q) * self.sigma_lsb / self.adc.s_q
+        # if not, assume we do calibration with zero-noise; if calibrated before, we do quantization after adding noise
+        x_q = self.adc(x_q) / self.adc.s_q
+
+        q_scale = self.w_q_helper.s_q * self.act_q_helper.s_q
+        if q_scale.ndim > 0:
+            q_scale = q_scale.view(1, -1, 1, 1)
+        x_q = x_q / q_scale
+        if self.conv.bias is None:
+            return x_q
+        else:
+            return x_q + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
+
+
+class QuantConvTranspose2d(nn.Module):
+    def __init__(self, conv_transpose: nn.ConvTranspose2d, w_quant, act_quant,
+                 w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
+                 agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+        super().__init__()
+        self.conv = conv_transpose
+        self.w_q_helper = w_quant_cls(**w_quant)
+        self.act_q_helper = act_quant_cls(**act_quant)
+        self.agg_bits = agg_bits
+        self.sigma_lsb = sigma_lsb
+        self.adc = adc_quant_cls(quant_type="per_tensor", sym_quant=True, n_bits=self.agg_bits,
+                                 static=True, channel_dim=1)
+        self.pvt_level = pvt_level
+
+    @torch.no_grad()
+    def _apply_noise(self, p, p_type="weight"):
+        # One time set; for mismatch aware training, don't use this method
+        if self.pvt_level is not None and self.pvt_level > 0.0:
+            err_type = "{}_err".format(p_type)
+            if not hasattr(self, err_type):
+                setattr(self, err_type, torch.randn_like(p, device=p.device, requires_grad=False) * p * self.pvt_level)
+            return p + getattr(self, err_type)
+        return p
+
+    def forward(self, x):
+        x_q = self.act_q_helper(x)
+        w_q = self.w_q_helper(self.conv.weight.data)
+        w_q = self._apply_noise(w_q, "weight")
+
+        x_q = F.conv_transpose2d(x_q, w_q, bias=None, stride=self.conv.stride,
+                                 padding=self.conv.padding, output_padding=self.conv.output_padding,
+                                 groups=self.conv.groups, dilation=self.conv.dilation)
+        if hasattr(self.adc, "s_q"):
+            x_q += torch.randn_like(x_q) * self.sigma_lsb / self.adc.s_q
+        # if not, assume we do calibration with zero-noise; if calibrated before, we do quantization after adding noise
+        x_q = self.adc(x_q) / self.adc.s_q
+
+        q_scale = self.w_q_helper.s_q * self.act_q_helper.s_q
+        if q_scale.ndim > 0:
+            q_scale = q_scale.view(1, -1, 1, 1)
+        x_q = x_q / q_scale
+        if self.conv.bias is None:
+            return x_q
+        else:
+            return x_q + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
+
+class QuantLinear(nn.Module):
+    def __init__(self, linear: nn.Linear, w_quant, act_quant,
+                 w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
+                 agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+        super().__init__()
+        self.linear = linear
+        self.w_q_helper = w_quant_cls(**w_quant)
+        self.act_q_helper = act_quant_cls(**act_quant)
+        self.agg_bits = agg_bits
+        self.sigma_lsb = sigma_lsb
+        self.adc = adc_quant_cls(quant_type="per_tensor", sym_quant=True, n_bits=self.agg_bits,
+                                 static=True, channel_dim=1)
+        self.pvt_level = pvt_level
+
+    @torch.no_grad()
+    def _apply_noise(self, p, p_type="weight"):
+        # One time set; for mismatch aware training, don't use this method
+        if self.pvt_level is not None and self.pvt_level > 0.0:
+            err_type = "{}_err".format(p_type)
+            if not hasattr(self, err_type):
+                setattr(self, err_type, torch.randn_like(p, device=p.device, requires_grad=False) * p * self.pvt_level)
+            return p + getattr(self, err_type)
+        return p
+
+    def forward(self, x):
+        x_q = self.act_q_helper(x)
+        w_q = self.w_q_helper(self.linear.weight.data)
+        w_q = self._apply_noise(w_q, "weight")
+
+        x_q = F.linear(x_q, w_q, bias=None)
+        if hasattr(self.adc, "s_q"):
+            x_q += torch.randn_like(x_q) * self.sigma_lsb / self.adc.s_q
+        # if not, assume we do calibration with zero-noise; if calibrated before, we do quantization after adding noise
+        x_q = self.adc(x_q) / self.adc.s_q
+
+        q_scale = self.w_q_helper.s_q * self.act_q_helper.s_q
+        if q_scale.ndim > 0:
+            q_scale = q_scale.view(1, -1)
+        return x_q / q_scale + self._apply_noise(self.linear.bias, "bias")
+
+
+def replace_with_quant_layers(model: nn.Module, w_conv_quant, act_conv_quant,
+                              w_conv_trans_quant, act_conv_trans_quant,
+                              w_linear_quant, act_linear_quant,
+                              w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
+                              agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+    # Todo: How do we set this correctly for possibly first stem conv?
+    for _name, _child in model.named_children():
+        if isinstance(_child, (QuantConv2d, QuantConvTranspose2d, QuantLinear)):
+            continue
+
+        if isinstance(_child, nn.Conv2d):
+            setattr(model, _name, QuantConv2d(_child, w_quant=w_conv_quant, act_quant=act_conv_quant,
+                                              w_quant_cls=w_quant_cls, act_quant_cls=act_quant_cls,
+                                              adc_quant_cls=adc_quant_cls, agg_bits=agg_bits,
+                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level))
+
+        elif isinstance(_child, nn.ConvTranspose2d):
+            setattr(model, _name, QuantConvTranspose2d(_child, w_quant=w_conv_trans_quant, act_quant=act_conv_trans_quant,
+                                              w_quant_cls=w_quant_cls, act_quant_cls=act_quant_cls,
+                                              adc_quant_cls=adc_quant_cls, agg_bits=agg_bits,
+                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level))
+
+        elif isinstance(_child, nn.Linear):
+            setattr(model, _name, QuantLinear(_child, w_quant=w_linear_quant, act_quant=act_linear_quant,
+                                              w_quant_cls=w_quant_cls, act_quant_cls=act_quant_cls,
+                                              adc_quant_cls=adc_quant_cls, agg_bits=agg_bits,
+                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level))
+
+        replace_with_quant_layers(_child, w_conv_quant, act_conv_quant,
+                                  w_conv_trans_quant, act_conv_trans_quant,
+                                  w_linear_quant, act_linear_quant,
+                                  w_quant_cls, act_quant_cls, adc_quant_cls,
+                                  agg_bits, sigma_lsb, pvt_level)
+
+
+QUANT_HELPER_CLS = {
+    "QuantHelper": QuantHelper,
+}
+
+QUANT_SCHEME_PC = {
+    "default": {
+        # y0 = init with x; y += lr * FFConv(ReLU(FBConv(y)))
+        "w_conv": {"sym_quant": True}, "act_conv": {"sym_quant": False},
+        "w_conv_trans": {"sym_quant": True}, "act_conv_trans": {"sym_quant": True},
+        # By default, there is a relu before linear
+        "w_linear": {"sym_quant": True}, "act_linear": {"sym_quant": False}
+    }
+}
