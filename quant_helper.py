@@ -6,7 +6,7 @@ from copy import deepcopy
 
 
 class QuantHelper(nn.Module):
-    def __init__(self, quant_type="per_tensor", sym_quant=False, n_bits=8, static=True, channel_dim=1):
+    def __init__(self, quant_type="per_tensor", sym_quant=False, n_bits=8, static=True, channel_dim=1, **kwargs):
         super().__init__()
         assert quant_type in {"per_tensor", "per_channel"}
         self.static = static
@@ -26,13 +26,19 @@ class QuantHelper(nn.Module):
             q_min = 0
         return q_min, q_max
 
+    def get_act_max(self, x, reduced_dim=None):
+        if reduced_dim is None:
+            return x.abs().max()
+        else:
+            return x.abs().amax(dim=reduced_dim)
+
     @torch.no_grad()
     def _per_tensor_sym(self, x):
         if not hasattr(self, "s_q"):
-            x_max = x.abs().max()
+            x_max = self.get_act_max(x)
             self.register_buffer("s_q", torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
         elif not self.static:
-            x_max = x.abs().max()
+            x_max = self.get_act_max(x)
             self.s_q.copy_(torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
         return torch.clamp((x * self.s_q).round(), min=self.q_min, max=self.q_max)
 
@@ -43,10 +49,10 @@ class QuantHelper(nn.Module):
     def _per_channel_sym(self, x: torch.Tensor):
         reduced_dim = [d for d in range(x.ndim) if d != self.channel_dim]
         if not hasattr(self, "s_q"):
-            x_max = x.abs().amax(dim=reduced_dim)
+            x_max = self.get_act_max(x, reduced_dim)
             self.register_buffer("s_q", torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
         elif not self.static:
-            x_max = x.abs().amax(dim=reduced_dim)
+            x_max = self.get_act_max(x, reduced_dim)
             self.s_q.copy_(torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
 
         s_shape = [1] * x.ndim
@@ -65,6 +71,19 @@ class QuantHelper(nn.Module):
             return self._per_channel_sym(x)
         elif self.quant_type == "per_channel" and not self.sym_quant:
             return self._per_channel_sym(x)
+
+
+class PercQuantHelper(QuantHelper):
+    def __init__(self, calib_perc=0.9999, **kwargs):
+        self.calib_perc = calib_perc
+        super().__init__(**kwargs)
+
+    def get_act_max(self, x, reduced_dim=None):
+        if reduced_dim is None:
+            return x.abs().quantile(self.calib_perc)
+        else:
+            return x.abs().transpose(0, self.channel_dim).contiguous()\
+                    .reshape(x.shape[self.channel_dim], -1).quantile(self.calib_perc, dim=1)
 
 
 class QuantConv2d(nn.Module):
@@ -237,14 +256,15 @@ def replace_with_quant_layers(model: nn.Module, w_conv_quant, act_conv_quant,
 
 QUANT_HELPER_CLS = {
     "QuantHelper": QuantHelper,
+    "PercQuantHelper": PercQuantHelper,
 }
 
 QUANT_SCHEME_PC = {
     "default": {
         # y0 = init with x; y += lr * FFConv(ReLU(FBConv(y)))
-        "w_conv": {"sym_quant": True}, "act_conv": {"sym_quant": False},
-        "w_conv_trans": {"sym_quant": True}, "act_conv_trans": {"sym_quant": True},
+        "w_conv": {"sym_quant": True, "channel_dim": 0}, "act_conv": {"sym_quant": False, "channel_dim": 0},
+        "w_conv_trans": {"sym_quant": True, "channel_dim": 1}, "act_conv_trans": {"sym_quant": True, "channel_dim": 1},
         # By default, there is a relu before linear
-        "w_linear": {"sym_quant": True}, "act_linear": {"sym_quant": False}
+        "w_linear": {"sym_quant": True, "channel_dim": 0}, "act_linear": {"sym_quant": False, "channel_dim": 0}
     }
 }

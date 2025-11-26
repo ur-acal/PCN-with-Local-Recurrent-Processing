@@ -59,8 +59,12 @@ def parse_args():
                         default=False, help="Test quantization")
     parser.add_argument("--quant_cls", type=str, choices=list(QUANT_HELPER_CLS.keys()),
                         default="QuantHelper")
+    parser.add_argument("--act_quant_cls", type=str, choices=list(QUANT_HELPER_CLS.keys()),
+                        default="QuantHelper")
     parser.add_argument("--q_calib_bs", type=int,
                         default=256, help="Number of samples used for calibration")
+    parser.add_argument("--act_perc", type=float, default=0.9999,
+                        help="Percentile used in activation calibration; valid only for percentile based calibration")
     parser.add_argument("--agg_bits", type=int,
                         default=8, help="Number of bits for accumulating result")
     parser.add_argument("--w_quant_type", type=str,
@@ -186,7 +190,7 @@ def run_test():
             calib_loader = get_calib_loader(bs=args.q_calib_bs, img_type=args.img_type)
             sigma_lsb_list_ = [0.5, 1.0, 1.5, 2.0, 2.5]
             if args.test_only:
-                sigma_lsb_ = 3.0
+                sigma_lsb_ = 1.0
                 sigma_lsb_list_ = [sigma_lsb_]
                 noisy_trials = 3 if sigma_lsb_ > 0.0 else 1
             _ = run_quant_experiment(ckpt_path, test_loader=test_dataloader, calib_loader=calib_loader,
@@ -195,8 +199,9 @@ def run_test():
                                      device=device, noisy_trials=noisy_trials, model_name=args.model_name,
                                      noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                      fuse_bn=args.fuse_bn, val_scale=val_scale, conv_only=args.conv_only,
-                                     pvt_level=None, quant_cls=args.quant_cls, agg_bits=args.agg_bits,
-                                     q_calib_bs=args.q_calib_bs, w_quant_type=args.w_quant_type,
+                                     pvt_level=None, quant_cls=args.quant_cls, act_quant_cls=args.act_quant_cls,
+                                     agg_bits=args.agg_bits, q_calib_bs=args.q_calib_bs,
+                                     w_quant_type=args.w_quant_type, act_perc=args.act_perc,
                                      w_bits=args.w_bits, act_bits=args.act_bits, **noisy_params)
         else:
             # specify noise level inside, plot path omitted
