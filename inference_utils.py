@@ -22,7 +22,7 @@ from bn_fuse import fuse_bn_recursively
 from ode_pc import make_ode_block, wrap_ode_block
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
-
+from quant_helper import QUANT_HELPER_CLS, replace_with_quant_layers, QUANT_SCHEME_PC
 
 import logging
 log = logging.getLogger(__name__)
@@ -66,6 +66,51 @@ def get_test_data(test_bs=2048, img_type="rgb"):
     # Create a DataLoader
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=False, num_workers=2)
     return test_loader
+
+
+def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
+    if img_type in {"rgb", "rggb"}:
+        if img_type == "rgb":
+            # Todo: Should we keep the random crop here?
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+        else:
+            transform_train = transforms.Compose([
+                transforms.ToTensor(),
+                ToPackedRGGB(return_orig=False),
+                transforms.RandomCrop(16, padding=2),
+                transforms.RandomHorizontalFlip(),
+            ])
+        train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+    elif img_type == "scanGFI":
+        subprocess.run("uv run scangen create-config", shell=True)
+        with open("./config.json") as fp:
+            scangen_config = json.load(fp)
+        train_set = MyNoiseCIFARDataset(
+            root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
+                              "cifar-10-data", img_type),
+            input_name="cifar10",
+            train=True,
+            noise_config=scangen_config["noise"],
+            device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
+        )
+        subprocess.run("rm ./config.json", shell=True)
+    else:
+        transform_train = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomCrop(16, padding=2),
+            transforms.RandomHorizontalFlip(),
+        ])
+        train_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=True, transform=transform_train)
+    if n_samples is not None:
+        perm = torch.randperm(len(train_set))
+        train_set = Subset(train_set, perm[:n_samples])
+    calib_dataloader = torch.utils.data.DataLoader(train_set, batch_size=bs, shuffle=False, num_workers=2)
+    return calib_dataloader
+
 
 def test_once(net, test_dataloader=None, device='cpu', model_name=None, img_type="rgb"):
     net = net.to(device)
@@ -373,6 +418,30 @@ def plot_acc_diff_cls(noise_acc_dict, plot_path, model_name, cycles, lr_pc):
         pickle.dump(noise_acc_dict, fp)
 
 
+def run_cifar_once(net, test_loader, val_scale, device):
+    total = 0
+    correct = 0
+
+    for batch_idx, (inputs, targets) in tqdm(enumerate(test_loader), total=len(test_loader), disable=False):
+        inputs, targets = inputs.to(device), targets.to(device)
+        with torch.no_grad():
+            if val_scale > 0.0:
+                output_tensor = net(inputs / val_scale, False)
+            else:
+                output_tensor = net(inputs)
+            if torch.isnan(output_tensor).any():
+                logging.warning("=====> Output tensor contains nan values. <=====")
+
+        # Get the predicted class
+        _, predicted = torch.max(output_tensor, 1)
+        total += targets.size(0)
+        correct += (predicted == targets).sum().item()
+
+    # Calculate the accuracy
+    accuracy = 100 * correct / total
+    return accuracy
+
+
 def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0,
@@ -389,26 +458,7 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
                                           noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
                                           fuse_bn=fuse_bn, conv_only=conv_only, **params_)
             net_.eval()
-            total = 0
-            correct = 0
-
-            for batch_idx, (inputs, targets) in tqdm(enumerate(test_loader), total=len(test_loader), disable=False):
-                inputs, targets = inputs.to(device), targets.to(device)
-                with torch.no_grad():
-                    if val_scale > 0.0:
-                        output_tensor = net_(inputs / val_scale, False)
-                    else:
-                        output_tensor = net_(inputs)
-                    if torch.isnan(output_tensor).any():
-                        logging.warning("=====> Output tensor contains nan values. <=====")
-
-                # Get the predicted class
-                _, predicted = torch.max(output_tensor, 1)
-                total += targets.size(0)
-                correct += (predicted == targets).sum().item()
-
-            # Calculate the accuracy
-            accuracy = 100 * correct / total
+            accuracy = run_cifar_once(net_, test_loader, val_scale, device)
             acc_list.append(accuracy)
             log.warning(f'Test Accuracy at noise level {noise_level}: {accuracy:.2f}%')
         avg_acc = sum(acc_list) / len(acc_list)
@@ -425,6 +475,74 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
 
     # save noise acc spec to a pkl
     spec_path = os.path.join("logs/acc_noisy_test", "{}_{}.pkl".format(model_name, noise_level_list))
+    with open(spec_path, "wb") as fp:
+        pickle.dump(noise_acc_spec, fp)
+    log.warning("-------- Noisy experiment finished, spec saved to {} --------".format(spec_path))
+    return noise_acc
+
+
+def get_quant_model(net, quant_cls, sigma_lsb, calib_loader, pvt_level=None, agg_bits=8, w_quant_type="per_tensor",
+                    w_bits=4, act_bits=4, device="cpu"):
+    pc_conv_cls = net.PcConvs[0].__class__.__name__
+    quant_scheme = QUANT_SCHEME_PC.get(pc_conv_cls, QUANT_SCHEME_PC["default"])
+    for _k, _vd in quant_scheme.items():
+        if "w_" in _vd:
+            _vd.update({"quant_type": w_quant_type, "n_bits": w_bits})
+        elif "act_" in _vd:
+            _vd.update({"quant_type": "per_tensor", "n_bits": act_bits})
+    replace_with_quant_layers(net,
+                              w_conv_quant=quant_scheme["w_conv"], act_conv_quant=quant_scheme["act_conv"],
+                              w_conv_trans_quant=quant_scheme["w_conv_trans"],
+                              act_conv_trans_quant=quant_scheme["act_conv_trans"],
+                              w_linear_quant=quant_scheme["w_linear"], act_linear_quant=quant_scheme["act_linear"],
+                              w_quant_cls=QUANT_HELPER_CLS[quant_cls], act_quant_cls=QUANT_HELPER_CLS[quant_cls],
+                              adc_quant_cls=QUANT_HELPER_CLS[quant_cls], agg_bits=agg_bits,
+                              sigma_lsb=sigma_lsb, pvt_level=pvt_level)
+    # Run one forward batch for calibration
+    calib_batch = next(iter(calib_loader))[0].to(device)
+    _ = net(calib_batch)
+
+
+def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, device="cpu", model_struct=PCNet,
+                         pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
+                         noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0,
+                         conv_only=False, pvt_level=None, quant_cls=None,
+                         agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, **kwargs):
+    noise_acc, noise_acc_spec = {}, {}
+    # Note: noise_level here is the sigma in LSB for modeling activation noise
+    for noise_level in sigma_lsb_list:
+        trials = noisy_trials if noise_level > 0 else 1
+        acc_list = []
+        for t in range(trials):
+            # reinitialize net with different noise during each trial
+            params_ = deepcopy(kwargs)
+            params_.update({"noise_level": 0.0})
+            net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
+                                          noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
+                                          fuse_bn=fuse_bn, conv_only=conv_only, **params_)
+            net_.eval()
+            get_quant_model(net_, quant_cls=quant_cls, calib_loader=calib_loader, sigma_lsb=noise_level,
+                            pvt_level=pvt_level, agg_bits=agg_bits, w_quant_type=w_quant_type,
+                            w_bits=w_bits, act_bits=act_bits, device=device)
+
+            # Calculate the accuracy
+            accuracy = run_cifar_once(net_, test_loader, val_scale, device)
+            acc_list.append(accuracy)
+            log.warning(f'Test Accuracy at activation noise level {noise_level} LSB: {accuracy:.2f}%')
+        avg_acc = sum(acc_list) / len(acc_list)
+        noise_acc[noise_level] = avg_acc
+        noise_acc_spec[noise_level] = acc_list
+        log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
+    if cls_scale == 1:
+        log.warning("-------- Final Result --------")
+    else:
+        log.warning("-------- Final Result Cycles LR PC Experiment with scale: {} --------".format(cls_scale))
+    log.warning("-------- Model name: {} --------".format(model_name))
+    for _nl, _acc in noise_acc.items():
+        log.warning("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
+
+    # save noise acc spec to a pkl
+    spec_path = os.path.join("logs/acc_noisy_test", "{}_{}act_noise.pkl".format(model_name, sigma_lsb_list))
     with open(spec_path, "wb") as fp:
         pickle.dump(noise_acc_spec, fp)
     log.warning("-------- Noisy experiment finished, spec saved to {} --------".format(spec_path))

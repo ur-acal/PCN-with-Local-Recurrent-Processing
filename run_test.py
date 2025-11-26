@@ -14,6 +14,7 @@ from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, expand_and_save_weights, plot_layer_pcn_loss, run_noise_experiment
 from inference_utils import run_lr_cls_experiment, get_val_scale, replace_transpose_conv, get_test_data
+from inference_utils import QUANT_HELPER_CLS, run_quant_experiment, get_calib_loader
 
 
 def parse_args():
@@ -53,6 +54,21 @@ def parse_args():
                         default=0.0, help="Input value scaler")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
+    # quantization test args
+    parser.add_argument("--quant_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="Test quantization")
+    parser.add_argument("--quant_cls", type=str, choices=list(QUANT_HELPER_CLS.keys()),
+                        default="QuantHelper")
+    parser.add_argument("--q_calib_bs", type=int,
+                        default=256, help="Number of samples used for calibration")
+    parser.add_argument("--agg_bits", type=int,
+                        default=8, help="Number of bits for accumulating result")
+    parser.add_argument("--w_quant_type", type=str,
+                        default="per_tensor", help="Weight quantization type")
+    parser.add_argument("--w_bits", type=int,
+                        default=4, help="Number of bits for the weight quantization")
+    parser.add_argument("--act_bits", type=int,
+                        default=4, help="Number of bits for the weight quantization")
     parser.add_argument("--noisy_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
     parser.add_argument("--conv_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -157,7 +173,7 @@ def run_test():
         #                      .25, .30, .35, .40]
         # noise_level_list_ = [0, 0.1, .20, .30, .40]
         noisy_trials = 20
-        if not args.noisy_test:
+        if not args.noisy_test and not args.quant_test:
             scale_factor = [1, 2, 4, 6, 8, 10, 12, 16]
             # scale_factor = [0] # Not use PC
             _ = run_lr_cls_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
@@ -166,6 +182,22 @@ def run_test():
                                       noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                       fuse_bn=args.fuse_bn, scale_factor=scale_factor, val_scale=val_scale,
                                       conv_only=args.conv_only, **noisy_params)
+        elif args.quant_test:
+            calib_loader = get_calib_loader(bs=args.q_calib_bs, img_type=args.img_type)
+            sigma_lsb_list_ = [0.5, 1.0, 1.5, 2.0, 2.5]
+            if args.test_only:
+                sigma_lsb_ = 3.0
+                sigma_lsb_list_ = [sigma_lsb_]
+                noisy_trials = 3 if sigma_lsb_ > 0.0 else 1
+            _ = run_quant_experiment(ckpt_path, test_loader=test_dataloader, calib_loader=calib_loader,
+                                     sigma_lsb_list=sigma_lsb_list_,
+                                     model_struct=PCNet, pc_conv_layer=pc_conv, data_parallel=False,
+                                     device=device, noisy_trials=noisy_trials, model_name=args.model_name,
+                                     noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
+                                     fuse_bn=args.fuse_bn, val_scale=val_scale, conv_only=args.conv_only,
+                                     pvt_level=None, quant_cls=args.quant_cls, agg_bits=args.agg_bits,
+                                     q_calib_bs=args.q_calib_bs, w_quant_type=args.w_quant_type,
+                                     w_bits=args.w_bits, act_bits=args.act_bits, **noisy_params)
         else:
             # specify noise level inside, plot path omitted
             _ = run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,

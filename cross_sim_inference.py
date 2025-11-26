@@ -18,7 +18,7 @@ from typing import List
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
-from inference_utils import load_and_prepare_model, replace_transpose_conv
+from inference_utils import load_and_prepare_model, replace_transpose_conv, get_calib_loader
 from data_utils import ToPackedRGGB, RawImgDataset
 
 from simulator import CrossSimParameters
@@ -63,48 +63,6 @@ def parse_args():
                         default=False)
     return parser.parse_args()
 
-def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
-    if img_type in {"rgb", "rggb"}:
-        if img_type == "rgb":
-            # Todo: Should we keep the random crop here?
-            transform_train = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
-        else:
-            transform_train = transforms.Compose([
-                transforms.ToTensor(),
-                ToPackedRGGB(return_orig=False),
-                transforms.RandomCrop(16, padding=2),
-                transforms.RandomHorizontalFlip(),
-            ])
-        train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
-    elif img_type == "scanGFI":
-        subprocess.run("uv run scangen create-config", shell=True)
-        with open("./config.json") as fp:
-            scangen_config = json.load(fp)
-        train_set = MyNoiseCIFARDataset(
-            root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                              "cifar-10-data", img_type),
-            input_name="cifar10",
-            train=True,
-            noise_config=scangen_config["noise"],
-            device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
-        )
-        subprocess.run("rm ./config.json", shell=True)
-    else:
-        transform_train = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.RandomCrop(16, padding=2),
-            transforms.RandomHorizontalFlip(),
-        ])
-        train_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=True, transform=transform_train)
-    if n_samples is not None:
-        perm = torch.randperm(len(train_set))
-        train_set = Subset(train_set, perm[:n_samples])
-    calib_dataloader = torch.utils.data.DataLoader(train_set, batch_size=bs, shuffle=False, num_workers=2)
-    return calib_dataloader
 
 def get_leaf_mods(model: nn.Module) -> List[nn.Module]:
     leaf_mod = []
