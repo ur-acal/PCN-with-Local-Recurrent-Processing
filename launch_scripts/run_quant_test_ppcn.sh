@@ -67,8 +67,10 @@ run_model(){
     --noisy_test      "false" \
     --quant_test      "true" \
     --quant_cls       "QuantHelper" \
+    --act_quant_cls   "PercQuantHelper" \
+    --act_perc        "0.999" \
     --agg_bits        "8" \
-    --w_quant_type    "per_tenspr" \
+    --w_quant_type    "per_channel" \
     --w_bits          "4" \
     --act_bits        "4" \
     --pc_conv         "${_pc_conv}" \

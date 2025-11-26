@@ -481,32 +481,34 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
     return noise_acc
 
 
-def get_quant_model(net, quant_cls, sigma_lsb, calib_loader, pvt_level=None, agg_bits=8, w_quant_type="per_tensor",
-                    w_bits=4, act_bits=4, device="cpu"):
+def get_quant_model(net, quant_cls, act_quant_cls, sigma_lsb, calib_loader, pvt_level=None, agg_bits=8,
+                    w_quant_type="per_tensor", act_perc=0.9999, w_bits=4, act_bits=4, device="cpu"):
     pc_conv_cls = net.PcConvs[0].__class__.__name__
     quant_scheme = QUANT_SCHEME_PC.get(pc_conv_cls, QUANT_SCHEME_PC["default"])
     for _k, _vd in quant_scheme.items():
-        if "w_" in _vd:
+        if "w_" in _k:
+            # use max calibration for weights
             _vd.update({"quant_type": w_quant_type, "n_bits": w_bits})
-        elif "act_" in _vd:
-            _vd.update({"quant_type": "per_tensor", "n_bits": act_bits})
+        elif "act_" in _k:
+            _vd.update({"quant_type": "per_tensor", "n_bits": act_bits, "calib_perc": act_perc})
     replace_with_quant_layers(net,
                               w_conv_quant=quant_scheme["w_conv"], act_conv_quant=quant_scheme["act_conv"],
                               w_conv_trans_quant=quant_scheme["w_conv_trans"],
                               act_conv_trans_quant=quant_scheme["act_conv_trans"],
                               w_linear_quant=quant_scheme["w_linear"], act_linear_quant=quant_scheme["act_linear"],
-                              w_quant_cls=QUANT_HELPER_CLS[quant_cls], act_quant_cls=QUANT_HELPER_CLS[quant_cls],
-                              adc_quant_cls=QUANT_HELPER_CLS[quant_cls], agg_bits=agg_bits,
+                              w_quant_cls=QUANT_HELPER_CLS[quant_cls], act_quant_cls=QUANT_HELPER_CLS[act_quant_cls],
+                              adc_quant_cls=QUANT_HELPER_CLS[act_quant_cls], agg_bits=agg_bits,
                               sigma_lsb=sigma_lsb, pvt_level=pvt_level)
     # Run one forward batch for calibration
     calib_batch = next(iter(calib_loader))[0].to(device)
     _ = net(calib_batch)
+    return quant_scheme
 
 
 def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0,
-                         conv_only=False, pvt_level=None, quant_cls=None,
+                         conv_only=False, pvt_level=None, quant_cls=None, act_quant_cls=None, act_perc=0.9999,
                          agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, **kwargs):
     noise_acc, noise_acc_spec = {}, {}
     # Note: noise_level here is the sigma in LSB for modeling activation noise
@@ -521,9 +523,11 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
                                           noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
                                           fuse_bn=fuse_bn, conv_only=conv_only, **params_)
             net_.eval()
-            get_quant_model(net_, quant_cls=quant_cls, calib_loader=calib_loader, sigma_lsb=noise_level,
-                            pvt_level=pvt_level, agg_bits=agg_bits, w_quant_type=w_quant_type,
-                            w_bits=w_bits, act_bits=act_bits, device=device)
+            quant_scheme = get_quant_model(net_, quant_cls=quant_cls, act_quant_cls=act_quant_cls,
+                                           calib_loader=calib_loader, sigma_lsb=noise_level,
+                                           pvt_level=pvt_level, agg_bits=agg_bits, w_quant_type=w_quant_type,
+                                           act_perc=act_perc, w_bits=w_bits, act_bits=act_bits, device=device)
+            logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
 
             # Calculate the accuracy
             accuracy = run_cifar_once(net_, test_loader, val_scale, device)
@@ -532,14 +536,14 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
         avg_acc = sum(acc_list) / len(acc_list)
         noise_acc[noise_level] = avg_acc
         noise_acc_spec[noise_level] = acc_list
-        log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
+        logging.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
     if cls_scale == 1:
-        log.warning("-------- Final Result --------")
+        logging.warning("-------- Final Result --------")
     else:
-        log.warning("-------- Final Result Cycles LR PC Experiment with scale: {} --------".format(cls_scale))
-    log.warning("-------- Model name: {} --------".format(model_name))
+        logging.warning("-------- Final Result Cycles LR PC Experiment with scale: {} --------".format(cls_scale))
+    logging.warning("-------- Model name: {} --------".format(model_name))
     for _nl, _acc in noise_acc.items():
-        log.warning("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
+        logging.warning("Noise level: {}, Acc:{:.2f}%".format(_nl, _acc))
 
     # save noise acc spec to a pkl
     spec_path = os.path.join("logs/acc_noisy_test", "{}_{}act_noise.pkl".format(model_name, sigma_lsb_list))
