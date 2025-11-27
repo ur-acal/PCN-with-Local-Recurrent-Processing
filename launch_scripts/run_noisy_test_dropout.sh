@@ -15,13 +15,19 @@ export NOISE_TO_BP=true
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
 <<<<<<< HEAD
+<<<<<<< HEAD
 EXP_NAME="1126_ppcn_scanGFI"
 =======
 <<<<<<< HEAD
+=======
+>>>>>>> colab_all
 EXP_NAME="1123_ppcn_scanGFI"
 =======
 EXP_NAME="1126_ppcn_scanGFI"
 >>>>>>> rz_dev
+<<<<<<< HEAD
+>>>>>>> colab_all
+=======
 >>>>>>> colab_all
 MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
 JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"

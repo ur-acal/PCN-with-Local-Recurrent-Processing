@@ -20,8 +20,8 @@ JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"  # S
-#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP" # M
+  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"  # S
+  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP" # M
   "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"  # L
 )
 
@@ -106,7 +106,7 @@ echo "All summaries written to $MASTER_LOG"
 
 #######################################################
 # running
-# nohup bash ./launch_scripts/run_noisy_test_dropout.sh > logs/run_script_output/launcher.out 2>&1 &
+# nohup bash ./launch_scripts/run_quant_test_ppcn.sh > logs/run_script_output/launcher.out 2>&1 &
 # tail -f logs/run_script_output/launcher.out
 # After the run is finished, the master_log file will be printed out
 # then cat master_log
