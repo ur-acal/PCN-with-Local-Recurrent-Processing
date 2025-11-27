@@ -86,6 +86,95 @@ class PercQuantHelper(QuantHelper):
                     .reshape(x.shape[self.channel_dim], -1).quantile(self.calib_perc, dim=1)
 
 
+class EntropyQuantHelper(QuantHelper):
+    """
+    Entropy-based (KL) calibration:
+    - Build a histogram of |x|
+    - For a range of thresholds, simulate clipping + quantization
+    - Pick the threshold that minimizes KL(P || Q)
+    """
+    def __init__(self, calib_bins: int = 2048, min_threshold_ratio: float = 0.6, **kwargs):
+        self.calib_bins = calib_bins
+        self.min_threshold_ratio = min_threshold_ratio
+        super().__init__(**kwargs)
+        # number of positive quantization bins; for symmetric we use q_max
+        if self.sym_quant:
+            self.n_quant_bins = int(self.q_max)
+        else:
+            self.n_quant_bins = int(self.q_max + 1)
+
+    def _find_kl_clip_1d(self, x_1d: torch.Tensor) -> torch.Tensor:
+        # x_1d: 1D tensor of activations
+        x_abs = x_1d.abs()
+        max_val = x_abs.max()
+        if max_val <= self.eps_:
+            return torch.tensor(0.0, device=x_1d.device, dtype=x_1d.dtype)
+
+        # histogram on [0, max_val]
+        hist = torch.histc(x_abs, bins=self.calib_bins, min=0.0, max=float(max_val))
+        hist_sum = hist.sum()
+        if hist_sum <= 0:
+            return torch.tensor(float(max_val), device=x_1d.device, dtype=x_1d.dtype)
+
+        pdf = hist / hist_sum
+        n_bins = self.calib_bins
+        n_quant = min(self.n_quant_bins, n_bins)
+
+        # search over candidate thresholds (in histogram-bin space)
+        start_bin = max(int(self.min_threshold_ratio * n_bins), n_quant)
+        best_kl = None
+        best_t = n_bins  # number of bins to keep
+
+        for t in range(start_bin, n_bins + 1):
+            # P: original distribution, clipped at bin t-1
+            P = pdf.clone()
+            if t < n_bins:
+                tail = P[t:].sum()
+                P[t - 1] = P[t - 1] + tail
+            P = P[:t]
+
+            # Q: distribution reconstructed after quantizing P into n_quant bins
+            idx = torch.arange(t, device=x_1d.device)
+            quant_idx = (idx * n_quant) // t  # map bins -> quant bins [0, n_quant-1]
+
+            Q = torch.zeros_like(P)
+            for qi in range(n_quant):
+                mask = (quant_idx == qi)
+                if mask.any():
+                    mass = P[mask].sum()
+                    # distribute mass uniformly over merged bins
+                    Q[mask] = mass / mask.sum()
+
+            # KL(P || Q)
+            P_ = P + self.eps_
+            Q_ = Q + self.eps_
+            kl = (P_ * (P_.log() - Q_.log())).sum()
+
+            if best_kl is None or kl < best_kl:
+                best_kl = kl
+                best_t = t
+
+        # convert best_t (number of bins) back to a threshold value
+        threshold = max_val * (best_t / n_bins)
+        return threshold.to(device=x_1d.device, dtype=x_1d.dtype)
+
+    def get_act_max(self, x: torch.Tensor, reduced_dim=None) -> torch.Tensor:
+        # per-tensor case
+        if reduced_dim is None:
+            x_flat = x.reshape(-1)
+            return self._find_kl_clip_1d(x_flat)
+
+        # per-channel case: move channel_dim to front, then process each channel
+        x_abs = x.abs().movedim(self.channel_dim, 0).contiguous()  # (C, ...)
+        C = x_abs.shape[0]
+        x_flat = x_abs.view(C, -1)
+
+        thresholds = []
+        for c in range(C):
+            thresholds.append(self._find_kl_clip_1d(x_flat[c]))
+        return torch.stack(thresholds, dim=0)
+
+
 class QuantConv2d(nn.Module):
     def __init__(self, conv: nn.Conv2d, w_quant, act_quant,
                  w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
@@ -257,6 +346,7 @@ def replace_with_quant_layers(model: nn.Module, w_conv_quant, act_conv_quant,
 QUANT_HELPER_CLS = {
     "QuantHelper": QuantHelper,
     "PercQuantHelper": PercQuantHelper,
+    "EntropyQuantHelper": EntropyQuantHelper,
 }
 
 QUANT_SCHEME_PC = {

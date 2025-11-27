@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 import copy
 import torch
 import torch.nn as nn
@@ -291,31 +292,31 @@ class TrainerCiFar(object):
             self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
             self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
         elif img_type == "scanGFI":
-            conf_file = "./{}config.json".format(self.model_name)
-            subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
-            with open("{}".format(conf_file)) as fp:
-                scangen_config = json.load(fp)
-            self.train_set = MyNoiseCIFARDataset(
-                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                  "cifar-10-data", img_type),
-                input_name="cifar10",
-                train=True,
-                noise_config=scangen_config["noise"],
-                device=self.device,
-                transform=transforms.Compose([
-                    transforms.RandomCrop(16, padding=2),
-                    transforms.RandomHorizontalFlip(),
-                ])
-            )
-            self.val_set = MyNoiseCIFARDataset(
-                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                  "cifar-10-data", img_type),
-                input_name="cifar10",
-                train=False,
-                noise_config=scangen_config["noise"],
-                device=self.device,
-            )
-            subprocess.run("rm {}".format(conf_file), shell=True)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                conf_file = os.path.join(tmpdir, "config.json")
+                subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+                with open("{}".format(conf_file)) as fp:
+                    scangen_config = json.load(fp)
+                self.train_set = MyNoiseCIFARDataset(
+                    root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
+                                      "cifar-10-data", img_type),
+                    input_name="cifar10",
+                    train=True,
+                    noise_config=scangen_config["noise"],
+                    device=self.device,
+                    transform=transforms.Compose([
+                        transforms.RandomCrop(16, padding=2),
+                        transforms.RandomHorizontalFlip(),
+                    ])
+                )
+                self.val_set = MyNoiseCIFARDataset(
+                    root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
+                                      "cifar-10-data", img_type),
+                    input_name="cifar10",
+                    train=False,
+                    noise_config=scangen_config["noise"],
+                    device=self.device,
+                )
         else:
             transform_train = transforms.Compose([
                 transforms.ToTensor(),
