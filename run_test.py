@@ -110,7 +110,7 @@ def run_test():
     # DO NOT USE print with logging, the outputs of the two will be out-of-order
     # IF have to use, run with python -u run_test.py
     with torch.no_grad():
-        if args.test_only:
+        if args.test_only and not args.quant_test:
             logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
             noisy_params["noise_level"] = 0.4
             noisy_params["weight"] = None
@@ -200,9 +200,9 @@ def run_test():
                                      noise_to_bn=args.noise_to_bn, noise_to_linear=args.noise_to_linear,
                                      fuse_bn=args.fuse_bn, val_scale=val_scale, conv_only=args.conv_only,
                                      pvt_level=None, quant_cls=args.quant_cls, act_quant_cls=args.act_quant_cls,
-                                     agg_bits=args.agg_bits, q_calib_bs=args.q_calib_bs,
-                                     w_quant_type=args.w_quant_type, act_perc=args.act_perc,
-                                     w_bits=args.w_bits, act_bits=args.act_bits, **noisy_params)
+                                     agg_bits=args.agg_bits, w_quant_type=args.w_quant_type, act_perc=args.act_perc,
+                                     w_bits=args.w_bits, act_bits=args.act_bits,
+                                     qat_model="QAT" in args.model_name, **noisy_params)
         else:
             # specify noise level inside, plot path omitted
             _ = run_noise_experiment(ckpt_path, test_dataloader, noise_level_list=noise_level_list_,
