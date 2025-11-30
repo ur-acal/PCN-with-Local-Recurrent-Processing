@@ -20,9 +20,12 @@ JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"  # S
-  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP" # M
-  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"  # L
+#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"  # S
+#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP" # M
+#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"  # L
+
+#  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP"
+  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_4REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -74,6 +77,7 @@ run_model(){
     --w_bits          "4" \
     --act_bits        "4" \
     --pc_conv         "${_pc_conv}" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model

@@ -14,11 +14,7 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-<<<<<<< HEAD
-EXP_NAME="1123_ppcn_scanGFI"
-=======
 EXP_NAME="1126_ppcn_scanGFI"
->>>>>>> rz_dev
 MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
 JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 

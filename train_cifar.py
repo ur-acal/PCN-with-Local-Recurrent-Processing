@@ -10,6 +10,8 @@ import numpy as np
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv, PlainFFFBConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
+from quant_helper import QUANT_HELPER_CLS
+from inference_utils import load_and_prepare_model, test_once, get_quant_model
 
 
 def str2bool(v):
@@ -22,6 +24,8 @@ def get_args():
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--img_type",      type=str, default="rgb")
     p.add_argument("--eval_every", type=int, default=1)
+    p.add_argument("--model_name", type=str, default=None,
+                   help="Resume from a checkpoint. None means training from scratch")
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="Adam",
                    help="optimizer")
@@ -29,6 +33,8 @@ def get_args():
     p.add_argument("--learning_rate", type=float, default=0.01)
     p.add_argument("--num_epochs",    type=int,   default=300)
     p.add_argument("--warmup_epoch",  type=int,   default=0)
+    p.add_argument("--cosine_t0", type=int, default=None,
+                   help="T0 of cosine annealing schedule; if None, using default reduce on epoch scheduler")
     # PCNet / PCConv args
     p.add_argument("--inp_channels",  type=int, nargs="+", default=[3,  64, 64, 128, 128, 256, 256, 512],
                    help="list of input-channel sizes, e.g. 3 16 32")
@@ -61,6 +67,23 @@ def get_args():
                    help="method used to select positions in the kernel to tie between FF/FB")
     p.add_argument("--tie_frac", type=float, default=1.0,
                    help="fraction to tie weights of FF/FB")
+    # QAT args
+    p.add_argument("--qat_cls", type=str, choices=list(QUANT_HELPER_CLS.keys()) + [None],
+                        default=None)
+    p.add_argument("--act_qat_cls", type=str, choices=list(QUANT_HELPER_CLS.keys()) + [None],
+                        default=None)
+    p.add_argument("--q_calib_bs", type=int,
+                        default=256, help="Number of samples used for calibration")
+    p.add_argument("--act_perc", type=float, default=0.9999,
+                        help="Percentile used in activation calibration; valid only for percentile based calibration")
+    p.add_argument("--agg_bits", type=int,
+                        default=8, help="Number of bits for accumulating result")
+    p.add_argument("--w_quant_type", type=str,
+                        default="per_tensor", help="Weight quantization type")
+    p.add_argument("--w_bits", type=int,
+                        default=4, help="Number of bits for the weight quantization")
+    p.add_argument("--act_bits", type=int,
+                        default=4, help="Number of bits for the weight quantization")
     p.add_argument("--test_only", type=str2bool, default=False)
     return p.parse_args()
 
@@ -88,6 +111,13 @@ def _constr_model_name(args, rep=1):
     if args.img_type != "rgb":
         model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
+    if args.model_name is not None:
+        if args.qat_cls is None or args.qat_cls == "QATHelper":
+            ft_prefix = "QAT{}w{}a".format(args.w_bits, args.act_bits)
+        else:
+            ft_prefix = "QAT{}w{}a{}".format(args.w_bits, args.act_bits, args.qat_cls)
+        orig_rep = args.model_name.split("_")[-1]
+        model_name = ft_prefix + args.model_name.split(orig_rep)[0] + str(rep) + 'REP'
     return model_name
 
 def get_model_name(args):
@@ -145,7 +175,20 @@ def main():
     logging.warning("----- Using PCN model: {} -----".format(pcn_model.__name__))
 
     # build model
-    model = pcn_model(**model_args)
+    device_ = "cuda" if torch.cuda.is_available() else "cpu"
+    if args.model_name is None:
+        model = pcn_model(**model_args)
+        model = model.to(device_)
+    else:
+        ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_best_ckpt.pth")
+        noisy_params = {"noise_level": 0.0, "weight": None}
+        model = load_and_prepare_model(model_path=ckpt_path, device="cuda" if torch.cuda.is_available() else "cpu",
+                                       model_struct=pcn_model,
+                                       pc_conv_layer=pc_conv_mod, data_parallel=False,
+                                       noise_to_bn=False, noise_to_linear=False,
+                                       fuse_bn=False, conv_only=False, ode_params=None,
+                                       **noisy_params)
+        model.dropout = args.dropout
 
     total_params = sum(p.numel() for p in model.parameters())
     model_name = get_model_name(args)
@@ -159,6 +202,18 @@ def main():
     for name, param in model.named_parameters():
         logging.info("name: {}, shape: {}, param count: {}".format(name, param.shape, param.numel()))
 
+    # Replace with quant helper if QAT
+    quant_params = None
+    if args.qat_cls is not None:
+        # ignore noise-aware-training for now
+        # Calibration done in the init method of the trainer
+        quant_params = {"quant_cls": args.qat_cls, "act_quant_cls": args.act_qat_cls,
+                        "calib_loader": None, "sigma_lsb": None,
+                        "pvt_level": None, "agg_bits": args.agg_bits, "w_quant_type": args.w_quant_type,
+                        "act_perc": args.act_perc, "w_bits": args.w_bits, "act_bits": args.act_bits}
+        quant_scheme = get_quant_model(model, device=device_, **quant_params)
+        logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
+
     trainer = TrainerCiFar(
         model         = model,
         model_name    = model_name,
@@ -169,9 +224,12 @@ def main():
         loss_fn       = loss_fn,
         img_type      = args.img_type,
         learning_rate = args.learning_rate,
+        T0            = args.cosine_t0,
         num_epochs    = args.num_epochs,
         warmup_epoch  = args.warmup_epoch,
         eval_every    = args.eval_every,
+        quant_params  = quant_params,
+        q_calib_bs    = args.q_calib_bs,
     )
 
     if args.test_only:

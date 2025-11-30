@@ -5,6 +5,21 @@ import numpy as np
 from copy import deepcopy
 
 
+class QuantImpl(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, s, q_min, q_max):
+        x_q = x * s
+        q_mask = (x_q >= q_min) & (x_q <= q_max)
+        ctx.save_for_backward(q_mask, s)
+        x_q = torch.clamp(x_q.round(), min=q_min, max=q_max)
+        return x_q
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        q_mask, s = ctx.saved_tensors
+        return s * grad_output * q_mask, None, None, None
+
+
 class QuantHelper(nn.Module):
     def __init__(self, quant_type="per_tensor", sym_quant=False, n_bits=8, static=True, channel_dim=1, **kwargs):
         super().__init__()
@@ -33,31 +48,37 @@ class QuantHelper(nn.Module):
             return x.abs().amax(dim=reduced_dim)
 
     @torch.no_grad()
-    def _per_tensor_sym(self, x):
+    def _per_tensor_sym(self, x, return_s=False):
         if not hasattr(self, "s_q"):
             x_max = self.get_act_max(x)
-            self.register_buffer("s_q", torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
+            self.register_buffer("s_q", self.q_max / (x_max + self.eps_))
         elif not self.static:
             x_max = self.get_act_max(x)
-            self.s_q.copy_(torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
+            self.s_q = self.q_max / (x_max + self.eps_)
+        if return_s:
+            return self.s_q
         return torch.clamp((x * self.s_q).round(), min=self.q_min, max=self.q_max)
 
     def _per_tenser_non_sym(self, x):
         pass
 
     @torch.no_grad()
-    def _per_channel_sym(self, x: torch.Tensor):
+    def _per_channel_sym(self, x: torch.Tensor, return_s=False):
         reduced_dim = [d for d in range(x.ndim) if d != self.channel_dim]
-        if not hasattr(self, "s_q"):
-            x_max = self.get_act_max(x, reduced_dim)
-            self.register_buffer("s_q", torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
-        elif not self.static:
-            x_max = self.get_act_max(x, reduced_dim)
-            self.s_q.copy_(torch.tensor(self.q_max / (x_max + self.eps_), device=x.device))
-
         s_shape = [1] * x.ndim
         s_shape[self.channel_dim] = x.shape[self.channel_dim]
-        return torch.clamp((x * self.s_q.view(*s_shape)).round(), min=self.q_min, max=self.q_max)
+
+        if not hasattr(self, "s_q"):
+            x_max = self.get_act_max(x, reduced_dim)
+            self.register_buffer(
+                "s_q", (self.q_max / (x_max + self.eps_)).view(*s_shape))
+        elif not self.static:
+            x_max = self.get_act_max(x, reduced_dim)
+            self.s_q = (self.q_max / (x_max + self.eps_)).view(*s_shape)
+
+        if return_s:
+            return self.s_q
+        return torch.clamp((x * self.s_q).round(), min=self.q_min, max=self.q_max)
 
     def _per_channel_non_sym(self, x):
         pass
@@ -84,6 +105,42 @@ class PercQuantHelper(QuantHelper):
         else:
             return x.abs().transpose(0, self.channel_dim).contiguous()\
                     .reshape(x.shape[self.channel_dim], -1).quantile(self.calib_perc, dim=1)
+
+
+class QATHelper(QuantHelper):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x):
+        if self.quant_type == "per_tensor" and self.sym_quant:
+            s_q = self._per_tensor_sym(x, True)
+        elif self.quant_type == "per_tensor" and not self.sym_quant:
+            s_q = self._per_tensor_sym(x, True)
+        elif self.quant_type == "per_channel" and self.sym_quant:
+            s_q = self._per_channel_sym(x, True)
+        elif self.quant_type == "per_channel" and not self.sym_quant:
+            s_q = self._per_channel_sym(x, True)
+        else:
+            raise NotImplementedError
+        return QuantImpl.apply(x, s_q, self.q_min, self.q_max)
+
+
+class PercQATHelper(PercQuantHelper):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, x):
+        if self.quant_type == "per_tensor" and self.sym_quant:
+            s_q = self._per_tensor_sym(x, True)
+        elif self.quant_type == "per_tensor" and not self.sym_quant:
+            s_q = self._per_tensor_sym(x, True)
+        elif self.quant_type == "per_channel" and self.sym_quant:
+            s_q = self._per_channel_sym(x, True)
+        elif self.quant_type == "per_channel" and not self.sym_quant:
+            s_q = self._per_channel_sym(x, True)
+        else:
+            raise NotImplementedError
+        return QuantImpl.apply(x, s_q, self.q_min, self.q_max)
 
 
 class EntropyQuantHelper(QuantHelper):
@@ -201,12 +258,12 @@ class QuantConv2d(nn.Module):
 
     def forward(self, x):
         x_q = self.act_q_helper(x)
-        w_q = self.w_q_helper(self.conv.weight.data)
+        w_q = self.w_q_helper(self.conv.weight)
         w_q = self._apply_noise(w_q, "weight")
 
         x_q = F.conv2d(x_q, w_q, bias=None, stride=self.conv.stride, padding=self.conv.padding,
                        groups=self.conv.groups, dilation=self.conv.dilation)
-        if hasattr(self.adc, "s_q"):
+        if hasattr(self.adc, "s_q") and self.sigma_lsb is not None and self.sigma_lsb > 0.0:
             x_q += torch.randn_like(x_q) * self.sigma_lsb / self.adc.s_q
         # if not, assume we do calibration with zero-noise; if calibrated before, we do quantization after adding noise
         x_q = self.adc(x_q) / self.adc.s_q
@@ -247,13 +304,13 @@ class QuantConvTranspose2d(nn.Module):
 
     def forward(self, x):
         x_q = self.act_q_helper(x)
-        w_q = self.w_q_helper(self.conv.weight.data)
+        w_q = self.w_q_helper(self.conv.weight)
         w_q = self._apply_noise(w_q, "weight")
 
         x_q = F.conv_transpose2d(x_q, w_q, bias=None, stride=self.conv.stride,
                                  padding=self.conv.padding, output_padding=self.conv.output_padding,
                                  groups=self.conv.groups, dilation=self.conv.dilation)
-        if hasattr(self.adc, "s_q"):
+        if hasattr(self.adc, "s_q") and self.sigma_lsb is not None and self.sigma_lsb > 0.0:
             x_q += torch.randn_like(x_q) * self.sigma_lsb / self.adc.s_q
         # if not, assume we do calibration with zero-noise; if calibrated before, we do quantization after adding noise
         x_q = self.adc(x_q) / self.adc.s_q
@@ -293,11 +350,11 @@ class QuantLinear(nn.Module):
 
     def forward(self, x):
         x_q = self.act_q_helper(x)
-        w_q = self.w_q_helper(self.linear.weight.data)
+        w_q = self.w_q_helper(self.linear.weight)
         w_q = self._apply_noise(w_q, "weight")
 
         x_q = F.linear(x_q, w_q, bias=None)
-        if hasattr(self.adc, "s_q"):
+        if hasattr(self.adc, "s_q") and self.sigma_lsb is not None and self.sigma_lsb > 0.0:
             x_q += torch.randn_like(x_q) * self.sigma_lsb / self.adc.s_q
         # if not, assume we do calibration with zero-noise; if calibrated before, we do quantization after adding noise
         x_q = self.adc(x_q) / self.adc.s_q
@@ -344,9 +401,13 @@ def replace_with_quant_layers(model: nn.Module, w_conv_quant, act_conv_quant,
 
 
 QUANT_HELPER_CLS = {
+    # Quantization helper
     "QuantHelper": QuantHelper,
     "PercQuantHelper": PercQuantHelper,
     "EntropyQuantHelper": EntropyQuantHelper,
+    # QAT related
+    "QATHelper": QATHelper,
+    "PercQATHelper": PercQATHelper,
 }
 
 QUANT_SCHEME_PC = {

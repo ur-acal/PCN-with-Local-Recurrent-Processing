@@ -21,7 +21,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
 from ode_pc import make_ode_block, wrap_ode_block
-from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer
+from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_quant_model
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from quant_helper import QUANT_HELPER_CLS, replace_with_quant_layers, QUANT_SCHEME_PC
 
@@ -200,7 +200,8 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
-                           conv_only=False, ode_params=None, ode_wrapper_params=None, wrappers=None, **kwargs):
+                           conv_only=False, ode_params=None, ode_wrapper_params=None, wrappers=None,
+                           quant_params=None, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device, weights_only=False)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
@@ -227,6 +228,9 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
     net_ = model_struct(**init_kwargs)
     net_ = net_.to(device)
+    if isinstance(quant_params, dict):
+        quant_scheme = get_quant_model(net_, device=device, **quant_params)
+        logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
     if data_parallel:
         net_ = nn.DataParallel(net_)
         _ = load_and_register_buffer(net_, checkpoint_weight['net'], device)
@@ -483,35 +487,11 @@ def run_noise_experiment(model_path, test_loader, noise_level_list, device="cpu"
     return noise_acc
 
 
-def get_quant_model(net, quant_cls, act_quant_cls, sigma_lsb, calib_loader, pvt_level=None, agg_bits=8,
-                    w_quant_type="per_tensor", act_perc=0.9999, w_bits=4, act_bits=4, device="cpu"):
-    pc_conv_cls = net.PcConvs[0].__class__.__name__
-    quant_scheme = QUANT_SCHEME_PC.get(pc_conv_cls, QUANT_SCHEME_PC["default"])
-    for _k, _vd in quant_scheme.items():
-        if "w_" in _k:
-            # use max calibration for weights
-            _vd.update({"quant_type": w_quant_type, "n_bits": w_bits})
-        elif "act_" in _k:
-            _vd.update({"quant_type": "per_tensor", "n_bits": act_bits, "calib_perc": act_perc})
-    replace_with_quant_layers(net,
-                              w_conv_quant=quant_scheme["w_conv"], act_conv_quant=quant_scheme["act_conv"],
-                              w_conv_trans_quant=quant_scheme["w_conv_trans"],
-                              act_conv_trans_quant=quant_scheme["act_conv_trans"],
-                              w_linear_quant=quant_scheme["w_linear"], act_linear_quant=quant_scheme["act_linear"],
-                              w_quant_cls=QUANT_HELPER_CLS[quant_cls], act_quant_cls=QUANT_HELPER_CLS[act_quant_cls],
-                              adc_quant_cls=QUANT_HELPER_CLS[act_quant_cls], agg_bits=agg_bits,
-                              sigma_lsb=sigma_lsb, pvt_level=pvt_level)
-    # Run one forward batch for calibration
-    calib_batch = next(iter(calib_loader))[0].to(device)
-    _ = net(calib_batch)
-    return quant_scheme
-
-
 def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, device="cpu", model_struct=PCNet,
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0,
                          conv_only=False, pvt_level=None, quant_cls=None, act_quant_cls=None, act_perc=0.9999,
-                         agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, **kwargs):
+                         agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, qat_model=False, **kwargs):
     noise_acc, noise_acc_spec = {}, {}
     # Note: noise_level here is the sigma in LSB for modeling activation noise
     for noise_level in sigma_lsb_list:
@@ -521,15 +501,25 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
             # reinitialize net with different noise during each trial
             params_ = deepcopy(kwargs)
             params_.update({"noise_level": 0.0})
+            quant_params = None
+            if qat_model:
+                # Convert to quant layers then load state dict
+                # Use loaded calibration result, pass calib_loader with None
+                quant_params = {"quant_cls": quant_cls, "act_quant_cls": act_quant_cls,
+                                "calib_loader": None, "sigma_lsb": noise_level,
+                                "pvt_level": pvt_level, "agg_bits": agg_bits, "w_quant_type": w_quant_type,
+                                "act_perc": act_perc, "w_bits": w_bits, "act_bits": act_bits}
             net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
                                           noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
-                                          fuse_bn=fuse_bn, conv_only=conv_only, **params_)
+                                          fuse_bn=fuse_bn, conv_only=conv_only, quant_params=quant_params, **params_)
             net_.eval()
-            quant_scheme = get_quant_model(net_, quant_cls=quant_cls, act_quant_cls=act_quant_cls,
-                                           calib_loader=calib_loader, sigma_lsb=noise_level,
-                                           pvt_level=pvt_level, agg_bits=agg_bits, w_quant_type=w_quant_type,
-                                           act_perc=act_perc, w_bits=w_bits, act_bits=act_bits, device=device)
-            logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
+            if not qat_model:
+                # Load model first, then do quant layer replacement and calibration
+                quant_scheme = get_quant_model(net_, quant_cls=quant_cls, act_quant_cls=act_quant_cls,
+                                               calib_loader=calib_loader, sigma_lsb=noise_level,
+                                               pvt_level=pvt_level, agg_bits=agg_bits, w_quant_type=w_quant_type,
+                                               act_perc=act_perc, w_bits=w_bits, act_bits=act_bits, device=device)
+                logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
 
             # Calculate the accuracy
             accuracy = run_cifar_once(net_, test_loader, val_scale, device)

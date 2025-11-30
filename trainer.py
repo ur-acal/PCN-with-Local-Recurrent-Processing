@@ -16,19 +16,19 @@ import subprocess
 import json
 
 from pc_model import PCNet
-from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods
+from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, get_quant_model
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
-                 loss_fn=nn.CrossEntropyLoss(),
+                 loss_fn=nn.CrossEntropyLoss(), quant_params=None, q_calib_bs=256,
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
                  eval_every=1, img_type="rgb", noise_level=None, noise_type=None,
                  distill_type=None, teacher=None, distill_T=1, distill_w="1|0|0"):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        print('----- Using {} device -----'.format(self.device))
+        logging.warning('----- Using {} device -----'.format(self.device))
 
         model = model.to(self.device)
         self.model = model
@@ -66,13 +66,39 @@ class TrainerCiFar(object):
             self.teacher.eval()
             self.distill_weights = list(map(lambda _x: float(_x), distill_w.split("|")))
 
+        # QAT for PPCN
+        self.qat_params = quant_params
+        if self.qat_params is not None:
+            self._calib_model(q_calib_bs)
+
+    def _calib_model(self, q_calib_bs):
+        if q_calib_bs <= self.batch_size:
+            calib_batch = next(iter(self.train_dataloader))[0][:q_calib_bs].to(self.device)
+            _ = self.model(calib_batch)
+        else:
+            n_batches = q_calib_bs // self.batch_size
+            rem_samples = q_calib_bs % self.batch_size
+            calib_batch = []
+            for _i, _batch in enumerate(self.train_dataloader):
+                _inp, _ = _batch
+                _inp = _inp.to(self.device)
+                if _i == n_batches:
+                    if rem_samples > 0:
+                        calib_batch.append(_inp[:rem_samples])
+                    break
+                calib_batch.append(_inp)
+            calib_batch = torch.cat(calib_batch, dim=0)
+            _ = self.model(calib_batch)
+        logging.warning("Calibration done with calib batch: {}".format(calib_batch.shape))
+
     def train(self):
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0
         best_model_path = None
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
-            train_loss = self.train_one_epoch(epoch)
+            with torch.autograd.set_detect_anomaly(True):
+                train_loss = self.train_one_epoch(epoch)
             if (epoch + 1) % self.eval_every == 0:
                 train_acc, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, _, _ = self.evaluate(self.val_dataloader)
@@ -193,6 +219,8 @@ class TrainerCiFar(object):
         tmp_sd = torch.load(tmp_sp, weights_only=False)
         decoupled_model = model_class(
             **{**tmp_sd['init_args']['model_args'], **tmp_sd['init_args']['kwargs']}).to(self.device)
+        if self.qat_params is not None:
+            _ = get_quant_model(decoupled_model, device=self.device, **self.qat_params)
         p_dict = get_parametrized_weight_mods(self.model)
         _ = load_and_register_buffer(decoupled_model, tmp_sd['net'], self.device, p_dict)
         return decoupled_model
