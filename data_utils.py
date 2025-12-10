@@ -54,7 +54,7 @@ def load_and_register_buffer(model: nn.Module, sd, device, parametrized_map=None
 
 
 def get_quant_model(net, quant_cls, act_quant_cls, sigma_lsb, calib_loader, pvt_level=None, agg_bits=8,
-                    w_quant_type="per_tensor", act_perc=0.9999, w_bits=4, act_bits=4, device="cpu"):
+                    w_quant_type="per_tensor", act_perc=0.9999, w_bits=4, act_bits=4, max_inp=None, device="cpu"):
     pc_conv_cls = net.PcConvs[0].__class__.__name__
     quant_scheme = QUANT_SCHEME_PC.get(pc_conv_cls, QUANT_SCHEME_PC["default"])
     for _k, _vd in quant_scheme.items():
@@ -70,7 +70,7 @@ def get_quant_model(net, quant_cls, act_quant_cls, sigma_lsb, calib_loader, pvt_
                               w_linear_quant=quant_scheme["w_linear"], act_linear_quant=quant_scheme["act_linear"],
                               w_quant_cls=QUANT_HELPER_CLS[quant_cls], act_quant_cls=QUANT_HELPER_CLS[act_quant_cls],
                               adc_quant_cls=QUANT_HELPER_CLS[act_quant_cls], agg_bits=agg_bits,
-                              sigma_lsb=sigma_lsb, pvt_level=pvt_level)
+                              sigma_lsb=sigma_lsb, pvt_level=pvt_level, max_inp=max_inp)
     # Run one forward batch for calibration
     if calib_loader is not None:
         calib_batch = next(iter(calib_loader))[0].to(device)

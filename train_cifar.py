@@ -84,6 +84,8 @@ def get_args():
                         default=4, help="Number of bits for the weight quantization")
     p.add_argument("--act_bits", type=int,
                         default=4, help="Number of bits for the weight quantization")
+    p.add_argument("--max_inp", type=int,
+                   default=None, help="Maximum number of inputs for each layer")
     p.add_argument("--test_only", type=str2bool, default=False)
     return p.parse_args()
 
@@ -208,7 +210,7 @@ def main():
         # ignore noise-aware-training for now
         # Calibration done in the init method of the trainer
         quant_params = {"quant_cls": args.qat_cls, "act_quant_cls": args.act_qat_cls,
-                        "calib_loader": None, "sigma_lsb": None,
+                        "calib_loader": None, "sigma_lsb": None, "max_inp": args.max_inp,
                         "pvt_level": None, "agg_bits": args.agg_bits, "w_quant_type": args.w_quant_type,
                         "act_perc": args.act_perc, "w_bits": args.w_bits, "act_bits": args.act_bits}
         quant_scheme = get_quant_model(model, device=device_, **quant_params)

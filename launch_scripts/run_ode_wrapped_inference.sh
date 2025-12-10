@@ -5,13 +5,13 @@ trap '' HUP   # ignore hangup so the children survive
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
-export R_VAL="15e3"
+export R_VAL="30e3"
 export R_MAX="180e3"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
 #N_BITS_VALS=(5)
-N_BITS_VALS=(5 5 5 5 5)
+N_BITS_VALS=(5)
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
 METHOD_VALS=("dopri5")
 CAP_VALS=("49e-15")
@@ -103,6 +103,8 @@ MODEL_NAMES=(
 #  "8P8PS1PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_11Layers_2Pool_scanGFI_2REP"
 
   "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
+  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
+  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_4REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -179,6 +181,7 @@ run_model(){
     --patch_cycle     "1" \
     --patch_pad       "0" \
     --fold_scalar     "1" \
+    --tie_cap         "false" \
     --one_over_q      "10" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
@@ -196,7 +199,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1208_scanGFI_deep_${method}Method_${tol}Tol.log"
+  EXP_NAME="1209_scanGFI_deep_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

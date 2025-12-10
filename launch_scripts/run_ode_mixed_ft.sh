@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 declare -A NOISE_LEVELS=(
-  [mul]="0.3"
+  [mul]="0.1"
   [add]="0.05 0.08 0.1 0.15 0.2"
 )
 NOISE_TYPES=(
@@ -20,12 +20,12 @@ for nt in "${NOISE_TYPES[@]}"; do
       echo "log dir: ${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}.log"
       python train_ode_cifar.py \
         --optim         "SGD" \
-        --learning_rate 0.0001 \
+        --learning_rate 0.005 \
         --cosine_t0     20 \
         --eval_every    2 \
         --num_epochs    80 \
         --img_type      "scanGFI" \
-        --model_name    "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_3REP" \
+        --model_name    "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP" \
         --offset_eps    0.0 \
         --dropout       0.25 \
         --tie_weights   "false" \
@@ -33,9 +33,10 @@ for nt in "${NOISE_TYPES[@]}"; do
         --bypass        "false" \
         --batch_size    128 \
         --method        "dopri5" \
-        --tol           "1e-4" \
-        --t_end         "1.5" \
-        --R             "1e5" \
+        --tol           "1e-6" \
+        --t_end         "1.75" \
+        --R             "50e3" \
+        --R_max         "180e3" \
         --C             "49e-15" \
         --v_dd          "1" \
         --w_bits        "${n_bits}" \
@@ -46,10 +47,10 @@ for nt in "${NOISE_TYPES[@]}"; do
         --fold_scalar   "1" \
         --tie_cap       "false" \
         --one_over_q    "10" \
-        --qat_cls       "LSQWeight" \
+        --qat_cls       "SymQuantizeWeight" \
         --ode_wrapper   "QATWrapper2State" \
         --pc_conv       "PCConvReLU6" \
-        --ode_block     "S2NoMinusZChgZNoisyI" \
+        --ode_block     "S2NoisyIYAsXZAs0" \
         --noise_level   "${nl}" \
         --noise_type    "${nt}" \
         2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}.log"

@@ -73,6 +73,8 @@ def parse_args():
                         default=4, help="Number of bits for the weight quantization")
     parser.add_argument("--act_bits", type=int,
                         default=4, help="Number of bits for the weight quantization")
+    parser.add_argument("--max_inp", type=int,
+                        default=None, help="Maximum number of inputs for each layer")
     parser.add_argument("--noisy_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
     parser.add_argument("--conv_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -201,7 +203,7 @@ def run_test():
                                      fuse_bn=args.fuse_bn, val_scale=val_scale, conv_only=args.conv_only,
                                      pvt_level=None, quant_cls=args.quant_cls, act_quant_cls=args.act_quant_cls,
                                      agg_bits=args.agg_bits, w_quant_type=args.w_quant_type, act_perc=args.act_perc,
-                                     w_bits=args.w_bits, act_bits=args.act_bits,
+                                     w_bits=args.w_bits, act_bits=args.act_bits, max_inp=args.max_inp,
                                      qat_model="QAT" in args.model_name, **noisy_params)
         else:
             # specify noise level inside, plot path omitted

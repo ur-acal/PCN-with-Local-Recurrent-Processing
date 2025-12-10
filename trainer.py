@@ -97,8 +97,7 @@ class TrainerCiFar(object):
         best_model_path = None
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
-            with torch.autograd.set_detect_anomaly(True):
-                train_loss = self.train_one_epoch(epoch)
+            train_loss = self.train_one_epoch(epoch)
             if (epoch + 1) % self.eval_every == 0:
                 train_acc, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, _, _ = self.evaluate(self.val_dataloader)

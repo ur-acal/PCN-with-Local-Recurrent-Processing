@@ -491,7 +491,8 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0,
                          conv_only=False, pvt_level=None, quant_cls=None, act_quant_cls=None, act_perc=0.9999,
-                         agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, qat_model=False, **kwargs):
+                         agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, qat_model=False, max_inp=None,
+                         **kwargs):
     noise_acc, noise_acc_spec = {}, {}
     # Note: noise_level here is the sigma in LSB for modeling activation noise
     for noise_level in sigma_lsb_list:
@@ -506,7 +507,7 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
                 # Convert to quant layers then load state dict
                 # Use loaded calibration result, pass calib_loader with None
                 quant_params = {"quant_cls": quant_cls, "act_quant_cls": act_quant_cls,
-                                "calib_loader": None, "sigma_lsb": noise_level,
+                                "calib_loader": None, "sigma_lsb": noise_level, "max_inp": max_inp,
                                 "pvt_level": pvt_level, "agg_bits": agg_bits, "w_quant_type": w_quant_type,
                                 "act_perc": act_perc, "w_bits": w_bits, "act_bits": act_bits}
             net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
@@ -516,7 +517,7 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
             if not qat_model:
                 # Load model first, then do quant layer replacement and calibration
                 quant_scheme = get_quant_model(net_, quant_cls=quant_cls, act_quant_cls=act_quant_cls,
-                                               calib_loader=calib_loader, sigma_lsb=noise_level,
+                                               calib_loader=calib_loader, sigma_lsb=noise_level, max_inp=max_inp,
                                                pvt_level=pvt_level, agg_bits=agg_bits, w_quant_type=w_quant_type,
                                                act_perc=act_perc, w_bits=w_bits, act_bits=act_bits, device=device)
                 logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
