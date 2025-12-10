@@ -77,6 +77,7 @@ def get_args():
     p.add_argument("--qat_cls", type=str, choices=list(QUANTIZER_CLASSES.keys()) + [None],
                    default=None)
     p.add_argument("--R", type=float, default=1e5, help="Resistance")
+    p.add_argument("--R_max", type=float, default=None, help="Maximum meaningful Resistance")
     p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
@@ -87,8 +88,8 @@ def get_args():
                         help='noise level in noise inject training. None means normal training without noise injection')
     p.add_argument('--noise_type', default='mul', type=str, choices=['mul', 'add'],
                         help='Multiplicative or additive noise')
-    p.add_argument("--sde_noise_type", type=str, default="mul", choices=["mul", "add"],
-                   help="Only useful when self.eps is set in the ODESolver class")
+    p.add_argument("--sde_noise_type", type=str, default="add", choices=["mul", "add"],
+                   help="Only useful when option['eps'] is set in the ODESolver class")
     # Knowledge distillation related args
     p.add_argument("--kd_type", type=str, choices=list(KD_CLASSES.keys()) + [None],
                    default=None)
@@ -203,7 +204,7 @@ def load_teacher_model(args):
                   "method": args.t_method, "tol": args.t_tol, "ts_scale": 1, "n_steps": args.t_n_steps}
     # Use the same wrap parameters as the student model
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.t_wrapper], "calib_path": None,
-                      "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": True,
                       # offset_eps None means using Johnson noise
@@ -323,7 +324,7 @@ def main():
     # wrap blocks for QAT
     if args.ode_wrapper is not None:
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
-                          "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q}
         model, _ = wrap_ode_block(model, **wrapper_params)

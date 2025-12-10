@@ -14,7 +14,7 @@ export NOISE_TO_BP=true
 # change the log names here to identify each run
 #######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-EXP_NAME="1126_ppcn_scanGFI_quant"
+EXP_NAME="1130_ppcn_scanGFI"
 MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
 JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 
@@ -26,6 +26,8 @@ MODEL_NAMES=(
 
 #  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP"
   "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_4REP"
+#  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_3REP"
+#  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────

@@ -3,6 +3,7 @@ import glob
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -75,6 +76,24 @@ def get_quant_model(net, quant_cls, act_quant_cls, sigma_lsb, calib_loader, pvt_
         calib_batch = next(iter(calib_loader))[0].to(device)
         _ = net(calib_batch)
     return quant_scheme
+
+
+def format_df_col_name(col, col_fmt, data_type="R_vs_SpinV"):
+    if data_type == "R_vs_SpinV":
+        var_name = "v_spin" if col.endswith("X") else "R"
+        v_ctrl = col.split("Vctrl=")[1].split(",")[0].replace(".", "p")
+        temp = col.split("temperature=")[1].split(")")[0].replace(".", "p")
+        return col_fmt.format(v_ctrl, temp, var_name)
+    return col
+
+
+def load_and_prepare_df(dir_path=os.path.dirname(os.path.abspath(__file__)), data_type="R_vs_SpinV", **kwargs):
+    data_dir = os.path.join(dir_path, "hardware_data")
+    if data_type == "R_vs_SpinV":
+        file_name = "CU_Resis_vs_Spin_V_Finer.csv"
+        col_fmt = "Vctrl{}Temp{}_{}"
+        df = pd.read_csv(os.path.join(data_dir, file_name))
+        df = df.rename(columns={_c: format_df_col_name(_c, col_fmt, data_type) for _c in df.columns})
 
 
 # color space

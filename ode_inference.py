@@ -44,6 +44,7 @@ def parse_args():
     parser.add_argument("--state_calib", type=str, required=False,
                         help="The calibration result of ode intermediate states for each layer")
     parser.add_argument("--R", type=float, default=1e5, help="Resistance")
+    parser.add_argument("--R_max", type=float, default=None, help="Resistance")
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -121,7 +122,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                      "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
@@ -164,7 +165,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                      "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       # offset_eps None means using Johnson noise
@@ -175,6 +176,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                   ode_wrapper_params=wrapper_params,
                                   **noisy_params)
+    logging.warning("Model Total number of parameters: {}M".format(sum(p.numel() for p in net_.parameters()) / 1e6))
     logging.warning("Model input channels: {}".format(net_.ics))
     logging.warning("Model output channels: {}".format(net_.ocs))
     logging.warning("Model pooling layers: {}".format(net_.max_pool))
@@ -272,7 +274,7 @@ def run_ode_inference():
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                          "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None

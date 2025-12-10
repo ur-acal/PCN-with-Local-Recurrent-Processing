@@ -336,8 +336,8 @@ class ODESolver(nn.Module):
                 _std = (h ** 0.5) * self.eps
                 y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                   for _y in y_current)
-            if hasattr(self, "proj_fn"):
-                y_current = tuple(self.proj_fn(_y) for _y in y_current)
+        if hasattr(self, "proj_fn"):
+            y_current = tuple(self.proj_fn(_y) for _y in y_current)
         return y_current
 
     def mult_noisy_update_and_proj(self, h, y_current):
@@ -350,14 +350,14 @@ class ODESolver(nn.Module):
                 _std = (h ** 0.5) * self.eps
                 y_current = tuple(_y + _y * _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                   for _y in y_current)
-            if hasattr(self, "proj_fn"):
-                # print("------------------------------------")
-                # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(),
-                #                                                       y_current[0].min()))
-                y_current = tuple(self.proj_fn(_y) for _y in y_current)
-                # print("after proj_fn _y mean: {}, max: {}, min: {}".format(y_current[0].mean(), y_current[0].max(),
-                #                                              y_current[0].min()))
-                # print("------------------------------------")
+        if hasattr(self, "proj_fn"):
+            # print("------------------------------------")
+            # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(),
+            #                                                       y_current[0].min()))
+            y_current = tuple(self.proj_fn(_y) for _y in y_current)
+            # print("after proj_fn _y mean: {}, max: {}, min: {}".format(y_current[0].mean(), y_current[0].max(),
+            #                                              y_current[0].min()))
+            # print("------------------------------------")
         return y_current
 
     def integrate_predefined_grids(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None):

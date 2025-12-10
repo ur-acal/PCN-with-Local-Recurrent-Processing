@@ -1514,10 +1514,19 @@ class WrapQuantizeW(ODEWrapperRC):
 
 
 class ODEWrapper2State(WrapQuantizeW):
-    def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, tie_cap=False, **kwargs):
+    def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, tie_cap=False,
+                 R_max=180e3, **kwargs):
         patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
+        self.R_max = R_max
+        self.s_R = None
+        if R_max is not None:
+            # Note: This applies only to dynamics like dy/dt = Wf(z) or Wf(y) or Wy, where W is applied to the
+            # output of non-linearity.
+            self.s_R = (1 - 1 / self.q_hi) / (1 / self.R - 1 / self.R_max)
+            # logging.warning("Scaled weight with s_R: {}".format(self.s_R))
+
         # Todo: Right now using the same cap value seems to be fine. Need more experiment.
         self.tie_cap = tie_cap
         self.cap_scale = self._round(self.s_ff / self.s_fb, 1) if not self.tie_cap else 1
@@ -1557,6 +1566,11 @@ class ODEWrapper2State(WrapQuantizeW):
             self.ode_block.option_patch["proj_fn"] = self.proj_fn
         self.ode_block.option_aca["proj_fn"] = self.proj_fn
 
+    def map_weight_to_G(self):
+        with torch.no_grad():
+            self.ode_block.FFconv.weight.div_(self.s_R)
+            self.ode_block.FBconv.weight.div_(self.s_R)
+
     def get_time_scaler(self):
         return self.R * self.C_ff, self.R * self.C_fb
 
@@ -1594,7 +1608,10 @@ class ODEWrapper2State(WrapQuantizeW):
         @wraps(inner_fn)
         def scaled(*f_args, **f_kwargs):
             y_, z_ = inner_fn(*f_args, **f_kwargs)
-            return y_ / self.time_scaler[0], z_ / self.time_scaler[1]
+            if self.s_R is None:
+                return y_ / self.time_scaler[0], z_ / self.time_scaler[1]
+            else:
+                return y_ / self.C_ff / self.s_R, z_ / self.C_fb / self.s_R
         return _FuncWrapper(scaled)
 
     def _patch_forward(self):
@@ -1618,7 +1635,10 @@ class ODEWrapper2State(WrapQuantizeW):
     def transform_z(self, inner_fn):
         @wraps(inner_fn)
         def scaled(*f_args, **f_kwargs):
-            return inner_fn(*f_args, **f_kwargs) / self.time_scaler[1]
+            if self.s_R is None:
+                return inner_fn(*f_args, **f_kwargs) / self.time_scaler[1]
+            else:
+                return inner_fn(*f_args, **f_kwargs) / self.C_fb / self.s_R
         return scaled
 
     def _patch_make_z_fn(self):
@@ -1741,8 +1761,8 @@ class QATWrapper2State(ODEWrapper2State):
         self.time_scaler = self.get_time_scaler()
         self._scale_time_dynamically(module)
 
-        # Todo: During traning, we have to scaling back the last activation, but during test,
-        #  this seems can be removed.
+        # Todo: During training, we have to scaling back the last activation, but during test,
+        #  this seems to be removable.
         self.out_scale = self.beta if self.is_last else 1
 
         return None
