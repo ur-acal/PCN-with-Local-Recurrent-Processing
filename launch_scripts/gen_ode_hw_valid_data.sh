@@ -51,8 +51,12 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_5K1S_0.25Dropout_5Layers_2Pool_scanGFI_3REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_5K1S_0.25Dropout_6Layers_2Pool_scanGFI_3REP"
 
-  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_5Layers_2Pool_scanGFI_5REP" # QAT S model
-  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_6Layers_2Pool_scanGFI_2REP" # QAT M model
+#  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_5Layers_2Pool_scanGFI_5REP" # QAT S model
+#  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_6Layers_2Pool_scanGFI_2REP" # QAT M model
+
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
+#  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP" # Wrong QAT model
+  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_4REP" # Correct QAT model
 )
 
 # ─────────────── prepare logs ───────────────
@@ -102,9 +106,12 @@ run_model(){
     --d_end           1 \
     --n_sweep_left    0 \
     --n_sweep_right   1 \
-    --R               1e5 \
     --C               "$cap_val" \
-    --v_dd            "1" \
+    --R               "50e3" \
+    --R_max           "180e3" \
+    --tie_cap         "false" \
+    --one_over_q      "6" \
+    --v_dd            "0.2" \
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
@@ -113,7 +120,7 @@ run_model(){
     --thermal_noise   "false" \
     --conv_only       "true" \
     --hw_validate     "true" \
-    --test_expanded   "false" \
+    --test_expanded   "true" \
     --pvt_to_origin   "false" \
     --hw_val_path     "./hw_validation_data" \
     --expanded_w_dir  "./expanded_weights" \
@@ -128,7 +135,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1024_test_expanded_${method}Method_${tol}Tol.log"
+  EXP_NAME="1227_test_expanded_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

@@ -249,7 +249,7 @@ def run_ode_inference():
         offset_eps_list = [0.2, 0.35, 0.5, 0.65, 0.8] if args.sde_noise_type == "mul" else [None, 0.05, 0.1, 0.15, 0.2]
     else:
         offset_eps_list = [None]
-    noise_level_list_ = [0, 0.1, .20, .30, .40]
+    noise_level_list_ = [0, 0.1, 0.15]
     noisy_trials = 20
     gt_t_end = get_t_end(args)
 

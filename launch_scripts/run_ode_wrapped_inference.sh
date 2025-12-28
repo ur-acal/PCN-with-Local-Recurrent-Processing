@@ -5,7 +5,7 @@ trap '' HUP   # ignore hangup so the children survive
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
-export R_VAL="30e3"
+export R_VAL="50e3"
 export R_MAX="180e3"
 
 # ─────────────── noise toggles ───────────────
@@ -103,8 +103,11 @@ MODEL_NAMES=(
 #  "8P8PS1PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_11Layers_2Pool_scanGFI_2REP"
 
   "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
-  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
-  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_4REP"
+  # Notice: Now after replacing the self.R in scaling time with self.s_R, we don't need extra tuning for R=50e3 and R_max=180e3
+#  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"  # R_max=30e3
+#  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_4REP"  # R_max=50e3
+
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -174,7 +177,7 @@ run_model(){
     --R               "$R_VAL" \
     --R_max           "$R_MAX" \
     --C               "$cap_val" \
-    --v_dd            "1" \
+    --v_dd            "0.2" \
     --w_bits          "$n_bits" \
     --patch_node      "8" \
     --patch_stride    "8" \
@@ -182,7 +185,7 @@ run_model(){
     --patch_pad       "0" \
     --fold_scalar     "1" \
     --tie_cap         "false" \
-    --one_over_q      "10" \
+    --one_over_q      "6" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \

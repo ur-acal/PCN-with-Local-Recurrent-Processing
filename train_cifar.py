@@ -114,10 +114,12 @@ def _constr_model_name(args, rep=1):
         model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None:
-        if args.qat_cls is None or args.qat_cls == "QATHelper":
+        if args.qat_cls == "QATHelper":
             ft_prefix = "QAT{}w{}a".format(args.w_bits, args.act_bits)
-        else:
+        elif args.qat_cls is not None:
             ft_prefix = "QAT{}w{}a{}".format(args.w_bits, args.act_bits, args.qat_cls)
+        else:
+            ft_prefix = ""
         orig_rep = args.model_name.split("_")[-1]
         model_name = ft_prefix + args.model_name.split(orig_rep)[0] + str(rep) + 'REP'
     return model_name

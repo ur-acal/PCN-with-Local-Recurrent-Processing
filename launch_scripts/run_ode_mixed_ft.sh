@@ -9,7 +9,7 @@ NOISE_TYPES=(
 #  "add"
 )
 NBITS=(5)
-EXP="NODE_1209_QAT_with_noise_inject_training"
+EXP="NODE_1226_QAT_with_noise_inject_training"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 

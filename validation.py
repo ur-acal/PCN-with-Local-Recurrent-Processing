@@ -323,11 +323,13 @@ class Validator(nn.Module):
             # dict_keys(['inp', 'init_res', 'out', 'init_time', 'compute_time', 'FF_mat', 'FB_mat', 'C_ff', 'C_fb'])
             cur_name = "layer_{}".format(_idx)
             res[cur_name] = {}
-            res[cur_name]["init_time"] = _layer.option_init["t1"].cpu().item()
+            res[cur_name]["init_time"] = getattr(_layer, "option_init", {}).get("t1", torch.tensor(0.0)).cpu().item()
             res[cur_name]["compute_time"] = _layer.option_aca["t1"].cpu().item()
             res[cur_name]["FF_mat"] = self._get_csr_data(_layer.FFconv.mat)
             res[cur_name]["FB_mat"] = self._get_csr_data(_layer.FBconv.mat)
-            res[cur_name]["R"] = wrappers[_idx].R
+            res[cur_name]["s_R"] = getattr(wrappers[_idx], "s_R", None)
+            res[cur_name]["R_max"] = getattr(wrappers[_idx], "R_max", None)
+            res[cur_name]["R"] = wrappers[_idx].R if res[cur_name]["s_R"] is None else None
             res[cur_name]["q"] = wrappers[_idx].beta.cpu().item() if isinstance(wrappers[_idx].beta, torch.Tensor) else wrappers[_idx].beta
             res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item()
             res[cur_name]["C_fb"] = wrappers[_idx].C_fb

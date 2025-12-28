@@ -186,6 +186,8 @@ class ODEBlockXInit(ODEBlockPC):
     def init_y(self, x):
         if self.chan_diff == 0:
             return x
+        elif self.in_chan > self.out_chan:
+            return x[:, :self.out_chan, :, :]
         elif self.in_chan * 2 == self.out_chan:
             return torch.cat([x, x], dim=1)
         else:
@@ -1572,7 +1574,8 @@ class ODEWrapper2State(WrapQuantizeW):
             self.ode_block.FBconv.weight.div_(self.s_R)
 
     def get_time_scaler(self):
-        return self.R * self.C_ff, self.R * self.C_fb
+        _R = self.s_R if self.s_R is not None else self.R
+        return _R * self.C_ff, _R * self.C_fb
 
     @staticmethod
     def _scale_time_impl(integral_option, end_time_scaler):
@@ -1586,7 +1589,8 @@ class ODEWrapper2State(WrapQuantizeW):
 
     def _scale_time(self):
         # scale integration time based on s_fb
-        end_time_scaler = self.R * self.C / self.alpha
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * self.C / self.alpha
         self.ode_block.integration_time = self.ode_block.integration_time * end_time_scaler
 
         if self._has_init_ode:
@@ -1619,7 +1623,7 @@ class ODEWrapper2State(WrapQuantizeW):
         orig_call = self.original_forward
         @wraps(orig_call)
         def patched_forward(x, *args, **kwargs):
-            return orig_call(self.inp_scale * x, *args, **kwargs) / self.out_scale
+            return orig_call(self.proj_fn(self.inp_scale * x), *args, **kwargs) / self.out_scale
         self.ode_block.forward = patched_forward
 
     def _patch_init_y(self):
@@ -1769,7 +1773,8 @@ class QATWrapper2State(ODEWrapper2State):
 
     def _scale_time_dynamically(self, module):
         # scale integration time based on s_fb
-        end_time_scaler = self.R * self.C / self.alpha
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * self.C / self.alpha
         module.integration_time = self.orig_integration_time * end_time_scaler
 
         if self._has_init_ode:
