@@ -11,8 +11,9 @@ export NOISE_TO_FF=true
 export NOISE_TO_BP=true
 
 # ─────────────── noise toggles ───────────────
-MAX_INPS=(9 36 144)
+MAX_INPS=(144)
 N_BITS_VALS=(4)
+export AGG_BITS=8
 export BASE_LOGDIR="./logs/noisy_test"
 # MASTER_LOG and JOB_LOG will be set per noise combination
 
@@ -23,9 +24,11 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"  # L
 
 #  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP"
-  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_4REP"
-  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_3REP"
-  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"
+#  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_4REP"
+#  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_3REP"
+#  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"
+
+  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_C100_64Chan_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -47,6 +50,12 @@ run_model(){
   local __rest="${name#*_}"
   local _pc_conv="${__rest%%_*}"
 
+  if [[ "$name" == *C100* ]]; then
+    local _task="cifar100"
+  else
+    local _task="cifar10"
+  fi
+
   IFS='_' read -r -a parts <<< "$name"
   local _ode_block="${parts[3]}"
   prev="${parts[${#parts[@]}-2]}"
@@ -61,6 +70,7 @@ run_model(){
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
     --img_type        "$_img_type" \
+    --task            "${_task}" \
     --weight          "$WEIGHT_PATH" \
     --plot_path       "$PLOT_PATH" \
     --w_type          "$W_TYPE" \
@@ -76,12 +86,13 @@ run_model(){
     --quant_cls       "QuantHelper" \
     --act_quant_cls   "PercQuantHelper" \
     --act_perc        "0.999" \
-    --agg_bits        "8" \
+    --agg_bits        "$AGG_BITS" \
     --w_quant_type    "per_channel" \
     --w_bits          "${n_bits}" \
     --act_bits        "${n_bits}" \
     --max_inp         "${max_inp}" \
     --pc_conv         "${_pc_conv}" \
+    --test_only       "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_maxInp_${max_inp}_nbits_${n_bits}/job.log"
 }
 export -f run_model
@@ -91,7 +102,7 @@ for n_bits in "${N_BITS_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-  EXP_NAME="1210_scanGFI_PPCN_split_${n_bits}NBit.log"
+  EXP_NAME="1228_scanGFI_PPCN_split_${n_bits}NBit.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

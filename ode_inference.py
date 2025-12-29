@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument("--ckpt", type=str, default="best")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
+    parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     parser.add_argument("--img_type", type=str, default="rgb")
     parser.add_argument("--test_bs", type=int, default=128)
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
@@ -185,7 +186,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     # _ = net_(test_batch)
     # _, predicted_raw = torch.max(_, 1)
     if not args.count_mac:
-        test_once(net_, test_dataloader, device, args.model_name)
+        test_once(net_, test_dataloader, device, args.model_name, img_type=args.img_type, task=args.task)
     # net_.recover_params()
     # test_once(net_, test_dataloader, device)
 
@@ -231,7 +232,7 @@ def run_ode_inference():
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_dataloader = get_test_data(test_bs=args.test_bs, img_type=args.img_type)
+    test_dataloader = get_test_data(test_bs=args.test_bs, img_type=args.img_type, task=args.task)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
 
     with torch.no_grad():
@@ -239,7 +240,7 @@ def run_ode_inference():
             run_test_only(args, test_dataloader, ckpt_path, pc_conv, device)
             exit(0)
         elif args.hw_validate:
-            run_validation_data_gen(args, get_test_data(test_bs=args.test_bs, img_type=args.img_type),
+            run_validation_data_gen(args, get_test_data(test_bs=args.test_bs, img_type=args.img_type, task=args.task),
                                     ckpt_path, pc_conv, device)
             exit(0)
 

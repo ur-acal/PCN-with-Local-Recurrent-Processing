@@ -24,6 +24,7 @@ def get_args():
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--img_type", type=str, default="rgb")
+    p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
@@ -147,6 +148,8 @@ def _constr_model_name(args, rep=1):
         model_name += "{}CosLR{}T0_".format(str(args.learning_rate), args.cosine_t0)
     else:
         model_name += str(args.learning_rate) + 'LR_'
+    if args.task == "cifar100":
+        model_name += "C100_"
     _ksz = args.kernel_size if not isinstance(args.kernel_size, List) else args.kernel_size[0]
     _stride = args.stride if not isinstance(args.stride, List) else args.stride[0]
     model_name += "{}K{}S{}C_".format(_ksz, _stride, max(args.inp_channels)) \
@@ -340,6 +343,7 @@ def main():
                   img_type=args.img_type)
 
     # Get trainer
+    logging.warning("Training task: {}".format(args.task))
     logging.warning("lr reduce on: {}, max grad norm: {}, cosine annealing T0: {}".format(
         args.lr_reduce_on, args.max_g_norm, args.cosine_t0))
     trainer = TrainerCiFar(
@@ -360,6 +364,7 @@ def main():
         T0            = args.cosine_t0,
         eval_every    = args.eval_every,
         img_type      = args.img_type,
+        task          = args.task,
         noise_level   = args.noise_level,
         noise_type    = args.noise_type,
         distill_type  = args.kd_type,

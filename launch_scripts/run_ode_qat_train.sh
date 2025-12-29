@@ -4,17 +4,23 @@ NBITS=(4)
 EXP="NODE_1001_QAT_min_R_7Layers_2Pooling_${NBITS}bit"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
-
+MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+if [[ "$MODEL_NAME" == *C100* ]]; then
+  _task="cifar100"
+else
+  _task="cifar10"
+fi
 # No 2
 for n_bits in "${NBITS[@]}"; do
   python train_ode_cifar.py \
+    --task          "${_task}" \
     --optim         "SGD" \
     --learning_rate 0.01 \
     --cosine_t0     10 \
     --eval_every    2 \
     --lr_reduce_on  "10,20" \
     --num_epochs    20 \
-    --model_name    "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP" \
+    --model_name    "${MODEL_NAME}" \
     --offset_eps    0.0 \
     --dropout       0.25 \
     --tie_weights   "false" \

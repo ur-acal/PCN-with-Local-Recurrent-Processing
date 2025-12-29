@@ -5,9 +5,11 @@ LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
 MODEL_NAMES=(
-  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"
-  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP"
-  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"
+
+  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_C100_64Chan_2Pool_scanGFI_1REP"
 )
 W_BITS="4"
 ACT_BITS="4"
@@ -18,9 +20,16 @@ for _name in "${MODEL_NAMES[@]}"; do
   __rest="${_name#*_}"
   pc_conv="${__rest%%_*}"
 
+  if [[ "$_name" == *C100* ]]; then
+    _task="cifar100"
+  else
+    _task="cifar10"
+  fi
+
   python train_cifar.py \
     --optim         "SGD" \
     --img_type      "scanGFI" \
+    --task          "${_task}" \
     --model_name    "${_name}" \
     --learning_rate 0.005 \
     --cosine_t0     20 \
@@ -53,9 +62,16 @@ for _name in "${MODEL_NAMES[@]}"; do
   __rest="${_name#*_}"
   pc_conv="${__rest%%_*}"
 
+  if [[ "$_name" == *C100* ]]; then
+    _task="cifar100"
+  else
+    _task="cifar10"
+  fi
+
   python train_cifar.py \
     --optim         "SGD" \
     --img_type      "scanGFI" \
+    --task          "${_task}" \
     --model_name    "${_name}" \
     --learning_rate 0.005 \
     --cosine_t0     20 \

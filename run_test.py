@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
     parser.add_argument("--img_type", type=str, default="rgb")
+    parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     parser.add_argument("--weight", type=str, default=None,
                         help="The large dir that holds expanded weights")
     parser.add_argument("--plot_path", type=str, default=None,
@@ -106,7 +107,8 @@ def run_test():
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv.__name__))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_dataloader = get_test_data(test_bs=1024, img_type=args.img_type)
+    logging.warning("Running test task: {}".format(args.task))
+    test_dataloader = get_test_data(test_bs=1024, img_type=args.img_type, task=args.task)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_best_ckpt.pth")
 
     # DO NOT USE print with logging, the outputs of the two will be out-of-order
@@ -189,7 +191,7 @@ def run_test():
                                       fuse_bn=args.fuse_bn, scale_factor=scale_factor, val_scale=val_scale,
                                       conv_only=args.conv_only, **noisy_params)
         elif args.quant_test:
-            calib_loader = get_calib_loader(bs=args.q_calib_bs, img_type=args.img_type)
+            calib_loader = get_calib_loader(bs=args.q_calib_bs, img_type=args.img_type, task=args.task)
             sigma_lsb_list_ = [0.5, 1.0, 1.5, 2.0, 2.5]
             if args.test_only:
                 sigma_lsb_ = 1.0

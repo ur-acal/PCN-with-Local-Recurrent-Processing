@@ -34,7 +34,7 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
-def get_test_data(test_bs=2048, img_type="rgb"):
+def get_test_data(test_bs=2048, img_type="rgb", task="cifar10"):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             transform_test = transforms.Compose([
@@ -48,13 +48,13 @@ def get_test_data(test_bs=2048, img_type="rgb"):
     elif img_type == "scanGFI":
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")
-            subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+            subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
             with open("{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             test_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                   "cifar-10-data", img_type),
-                input_name="cifar10",
+                input_name=task,
                 train=False,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
@@ -69,7 +69,7 @@ def get_test_data(test_bs=2048, img_type="rgb"):
     return test_loader
 
 
-def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
+def get_calib_loader(bs=128, n_samples=None, img_type="rgb", task="cifar10"):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             # Todo: Should we keep the random crop here?
@@ -89,13 +89,13 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
     elif img_type == "scanGFI":
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")
-            subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+            subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
             with open("{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             train_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                   "cifar-10-data", img_type),
-                input_name="cifar10",
+                input_name=task,
                 train=True,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
@@ -114,11 +114,11 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
     return calib_dataloader
 
 
-def test_once(net, test_dataloader=None, device='cpu', model_name=None, img_type="rgb"):
+def test_once(net, test_dataloader=None, device='cpu', model_name=None, img_type="rgb", task="cifar10"):
     net = net.to(device)
     net.eval()
     if test_dataloader is None:
-        test_dataloader = get_test_data(128, img_type=img_type)
+        test_dataloader = get_test_data(128, img_type=img_type, task=task)
     _total, _correct = 0, 0
     for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=True):
         inputs, targets = inputs.to(device), targets.to(device)

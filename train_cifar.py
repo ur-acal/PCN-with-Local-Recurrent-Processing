@@ -23,6 +23,7 @@ def get_args():
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--img_type",      type=str, default="rgb")
+    p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--eval_every", type=int, default=1)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
@@ -104,8 +105,10 @@ def _constr_model_name(args, rep=1):
     if not args.use_pc:
         model_name += 'noPC_'
     model_name += str(args.batch_size) + 'BS_' \
-                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers" \
-                  + "_{}Chan_".format(max(args.inp_channels)) \
+                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers_"
+    if args.task == "cifar100":
+        model_name += "C100_"
+    model_name += "{}Chan_".format(max(args.inp_channels)) \
                   + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
     if args.tie_method is not None:
@@ -218,6 +221,7 @@ def main():
         quant_scheme = get_quant_model(model, device=device_, **quant_params)
         logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
 
+    logging.warning("Training task: {}".format(args.task))
     trainer = TrainerCiFar(
         model         = model,
         model_name    = model_name,
@@ -227,6 +231,7 @@ def main():
         weight_decay  = args.weight_decay,
         loss_fn       = loss_fn,
         img_type      = args.img_type,
+        task          = args.task,
         learning_rate = args.learning_rate,
         T0            = args.cosine_t0,
         num_epochs    = args.num_epochs,
