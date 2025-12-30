@@ -6,7 +6,8 @@ trap '' HUP   # ignore hangup so the children survive
 export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
 export R_VAL="50e3"
-export R_MAX="180e3"
+export R_MAX="90e3"
+export CKPT="full_param_best"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
@@ -103,12 +104,13 @@ MODEL_NAMES=(
 #  "8P8PS1PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_11Layers_2Pool_scanGFI_2REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
-  # Notice: Now after replacing the self.R in scaling time with self.s_R, we don't need extra tuning for R=50e3 and R_max=180e3
-#  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"  # R_max=30e3
-#  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_4REP"  # R_max=50e3
+#  ""  # R_max=30e3
+  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_5REP"  # R=50e3, R_max=180e3
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_10Layers_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_10Layers_2Pool_scanGFI_1REP"
+
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -152,7 +154,7 @@ run_model(){
 #  local _ode_wrapper="ODEWrapperRC"
   local _ode_wrapper="WrapQuantizeW"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
-    if [[ "$name" == *QAT* ]]; then
+    if [[ "$name" == *QAT* && "$CKPT" != *full_param* ]]; then
       _ode_wrapper="QATTester2State"
     else
       _ode_wrapper="ODEWrapper2State"
@@ -167,7 +169,7 @@ run_model(){
   set -o pipefail
   python -u ode_inference.py \
     --model_name      "$name" \
-    --ckpt            "best" \
+    --ckpt            "${CKPT}" \
     --task            "${_task}" \
     --model_dir       "$MODEL_DIR" \
     --test_bs         "${test_bs}" \
@@ -193,7 +195,7 @@ run_model(){
     --patch_pad       "0" \
     --fold_scalar     "1" \
     --tie_cap         "false" \
-    --one_over_q      "6" \
+    --one_over_q      "10" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \

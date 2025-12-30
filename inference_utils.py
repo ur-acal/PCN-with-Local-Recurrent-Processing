@@ -233,10 +233,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
     if data_parallel:
         net_ = nn.DataParallel(net_)
-        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device)
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path)
         net_ = net_.module
     else:
-        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device)
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path)
 
     if conv_only:
         log.warning("Replacing all transposed conv with conv")

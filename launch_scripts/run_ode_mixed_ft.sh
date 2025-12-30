@@ -9,11 +9,16 @@ NOISE_TYPES=(
 #  "add"
 )
 NBITS=(5)
-EXP="NODE_1226_QAT_with_noise_inject_training"
+EXP="NODE_1229_QAT_with_noise_inject_training"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
-MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+#MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
+#MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_10Layers_2Pool_scanGFI_1REP"
+#######################################################################################################################
+# For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
+MODEL_NAME="QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_5REP"
+#######################################################################################################################
 if [[ "$MODEL_NAME" == *C100* ]]; then
   _task="cifar100"
 else
@@ -26,6 +31,7 @@ for nt in "${NOISE_TYPES[@]}"; do
       echo "log dir: ${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}.log"
       python train_ode_cifar.py \
         --task          "${_task}" \
+        --ckpt          "full_param_best" \
         --optim         "SGD" \
         --learning_rate 0.005 \
         --cosine_t0     20 \
@@ -43,7 +49,7 @@ for nt in "${NOISE_TYPES[@]}"; do
         --tol           "1e-6" \
         --t_end         "1.75" \
         --R             "50e3" \
-        --R_max         "180e3" \
+        --R_max         "90e3" \
         --C             "49e-15" \
         --v_dd          "1" \
         --w_bits        "${n_bits}" \

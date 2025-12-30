@@ -1269,29 +1269,58 @@ class S2CircYAsXZas0(S2Circ):
 
 class QuantizationImpl(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, weight, s, q_min, q_max):
+    def forward(ctx, weight, s, q_min, q_max, w_scalar=1.0):
         q_weight = weight * s * q_max
         q_mask = (q_weight >= q_min) & (q_weight <= q_max)
-        ctx.save_for_backward(q_mask, s)
+
+        # Quantize to {0, 1, ..., q_max}
         q_weight = torch.clamp(q_weight.round(), min=q_min, max=q_max)
-        return q_weight / q_max
+
+        # Remap quantize the range (w_scalar / q_max, 1) into (q_max - 1) girds
+        _sign = q_weight.sign()
+        _k = q_weight.abs()  # integer levels in [0, q_max]
+
+        _first = float(w_scalar) / float(q_max)                # first nonzero level
+        _delta = (1.0 - _first) / float(q_max - 1)            # spacing for the remaining levels
+
+        # q_weight in [-1,1] after remap, with the first quantization step being w_scalar / q_max
+        # and steps after being _delta
+        q_weight = torch.where(
+            _k == 0,
+            torch.zeros_like(q_weight),
+            q_weight.new_tensor((_first + (_k.to(dtype=weight.dtype) - 1.0) * _delta) * _sign)
+        )
+        q_weight = torch.clamp(q_weight, -1.0, 1.0)  # Guard
+
+        # Calculate d q_weight_remapped / d q_weight (q_weight here is {0, 1/q_max, 2/q_max, ..., 1}, not integer)
+        # for k>=1: gradient = _delta * q_max ; for k==0: gradient = 0
+        masked_scale = torch.where(
+            _k == 0,
+            q_weight.new_zeros(()).expand_as(q_weight),
+            q_weight.new_tensor(_delta * float(q_max)).expand_as(q_weight),
+        )
+
+        ctx.save_for_backward(q_mask, s, masked_scale)
+        return q_weight
 
     @staticmethod
     def backward(ctx, grad_output):
-        q_mask, s = ctx.saved_tensors
-        return s * grad_output * q_mask, None, None, None
+        q_mask, s, masked_scale = ctx.saved_tensors
+        return s * grad_output * q_mask * masked_scale, None, None, None, None
+
 
 
 class SymQuantizeWeight(nn.Module):
-    def __init__(self, w_bits=8, **kwargs):
+    def __init__(self, w_bits=8, w_scalar=1.0, **kwargs):
         super().__init__()
         self.register_buffer("w_bits", torch.tensor(w_bits))
         self.register_buffer("upper", torch.tensor((1 << (w_bits - 1)) - 1))
         self.register_buffer("lower", -self.upper)
         self.register_buffer("s_w", torch.tensor(1.0))
+        self.register_buffer("w_scalar", torch.tensor(w_scalar))
 
     def forward(self, layer_weight: nn.Parameter):
-        return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper)
+        return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper, self.w_scalar)
 
     def compute_s(self, layer_weight: nn.Parameter):
         with torch.no_grad():
@@ -1303,18 +1332,28 @@ class LSQImpl(torch.autograd.Function):
     Todo: Add noise inject training related code here.
     """
     @staticmethod
-    def forward(ctx, weight, s, q_min, q_max, s_g_scale):
+    def forward(ctx, weight, s, q_min, q_max, s_g_scale, w_scalar=1.0):
         q_weight = weight * s
         q_mask = (q_weight >= q_min) & (q_weight <= q_max)
         q_weight = q_weight.round()
         ctx.save_for_backward(q_mask, s, q_weight, q_max, s_g_scale)
         q_weight = torch.clamp(q_weight, min=q_min, max=q_max)
-        return q_weight / q_max
+        q_weight = q_weight / q_max
+
+        # scale_mask = q_weight.abs() < 1.0 # positions to scale
+        # masked_scale = torch.ones_like(q_weight)
+        # masked_scale[scale_mask] = w_scalar
+        # q_weight = q_weight * masked_scale
+        # q_weight = torch.clamp(q_weight, -1.0, 1.0)  # Guard
+        #
+        # ctx.save_for_backward(q_mask, s, masked_scale)
+
+        return q_weight
 
     @staticmethod
     def backward(ctx, grad_out):
         q_mask, s, q_weight, q_max, s_g_scale = ctx.saved_tensors
-        return s * grad_out * q_mask / q_max, s_g_scale * (q_weight * grad_out * q_mask).sum() / q_max, None, None, None
+        return s * grad_out * q_mask / q_max, s_g_scale * (q_weight * grad_out * q_mask).sum() / q_max, None, None, None, None
 
 
 class LSQWeight(SymQuantizeWeight):
@@ -1325,7 +1364,7 @@ class LSQWeight(SymQuantizeWeight):
             self.register_buffer("s_g_scale", 1 / torch.sqrt(layer_weight.numel() * self.upper))
 
     def forward(self, layer_weight: nn.Parameter):
-        return LSQImpl.apply(layer_weight, self.s_w_Param, self.lower, self.upper, self.s_g_scale)
+        return LSQImpl.apply(layer_weight, self.s_w_Param, self.lower, self.upper, self.s_g_scale, self.w_scalar)
 
     def compute_s(self, layer_weight: nn.Parameter):
         # Set the parameter to registered buffer for saving purpose
@@ -1519,14 +1558,32 @@ class ODEWrapper2State(WrapQuantizeW):
     def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, tie_cap=False,
                  R_max=180e3, **kwargs):
         patch = kwargs.get("patch", True)
+        quantize = kwargs.get("quantize", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
         self.R_max = R_max
-        self.s_R = None
-        if R_max is not None:
+        self.s_R, self.weight_scale = None, 1.0
+        R_max_ideal = self.R * self.q_hi
+        if R_max is not None and R_max_ideal > R_max:
+            assert R_max > self.R
+            self.weight_scale = R_max_ideal / R_max # Must be greater than 1 and smaller than q_hi
+            assert self.weight_scale <= self.q_hi
+            if quantize:
+                # Only do this after the weights are quantized
+                # logging.warning("Pre-scaling weight mean: {}, min: {}, max: {}".format(
+                #     self.ode_block.FFconv.weight.mean(), self.ode_block.FFconv.weight.min(),
+                #     self.ode_block.FFconv.weight.max()))
+                self.scale_weight_below_one(self.ode_block.FFconv.weight, self.weight_scale, self.q_hi)
+                self.scale_weight_below_one(self.ode_block.FBconv.weight, self.weight_scale, self.q_hi)
+                # logging.warning("Post-scaling weight mean: {}, min: {}, max: {}".format(
+                #     self.ode_block.FFconv.weight.mean(), self.ode_block.FFconv.weight.min(),
+                #     self.ode_block.FFconv.weight.max()))
             # Note: This applies only to dynamics like dy/dt = Wf(z) or Wf(y) or Wy, where W is applied to the
             # output of non-linearity.
-            self.s_R = (1 - 1 / self.q_hi) / (1 / self.R - 1 / self.R_max)
+            _delta = (1 - self.weight_scale / self.q_hi) / (self.q_hi - 1)
+            # self.s_R = self.R * (_delta * self.q_hi)
+            self.s_R = None
+            # self.s_R = (1 - 1 / self.q_hi) / (1 / self.R - 1 / self.R_max)
             # logging.warning("Scaled weight with s_R: {}".format(self.s_R))
 
         # Todo: Right now using the same cap value seems to be fine. Need more experiment.
@@ -1568,10 +1625,26 @@ class ODEWrapper2State(WrapQuantizeW):
             self.ode_block.option_patch["proj_fn"] = self.proj_fn
         self.ode_block.option_aca["proj_fn"] = self.proj_fn
 
-    def map_weight_to_G(self):
+    @staticmethod
+    def scale_weight_below_one(w, scalar, q_hi):
         with torch.no_grad():
-            self.ode_block.FFconv.weight.div_(self.s_R)
-            self.ode_block.FBconv.weight.div_(self.s_R)
+            sign = w.sign()
+            a = w.abs().clamp(0.0, 1.0)
+
+            # Get quantization levels, {0, 1, ..., q_hi}
+            k = torch.round(a * q_hi).clamp_(0, q_hi)
+
+            first = float(scalar) / q_hi
+            delta = (1.0 - first) / (q_hi - 1)
+
+            # Map: k=0 -> 0; k>=1 -> first + (k-1)*delta
+            a_new = torch.where(
+                k <= 0.0,
+                torch.zeros_like(a),
+                a.new_tensor(first) + (k - 1.0) * a.new_tensor(delta)
+            )
+
+            w.copy_((sign * a_new).clamp(-1.0, 1.0))
 
     def get_time_scaler(self):
         _R = self.s_R if self.s_R is not None else self.R
@@ -1612,10 +1685,7 @@ class ODEWrapper2State(WrapQuantizeW):
         @wraps(inner_fn)
         def scaled(*f_args, **f_kwargs):
             y_, z_ = inner_fn(*f_args, **f_kwargs)
-            if self.s_R is None:
-                return y_ / self.time_scaler[0], z_ / self.time_scaler[1]
-            else:
-                return y_ / self.C_ff / self.s_R, z_ / self.C_fb / self.s_R
+            return y_ / self.C_ff / self.R, z_ / self.C_fb / self.R
         return _FuncWrapper(scaled)
 
     def _patch_forward(self):
@@ -1639,10 +1709,7 @@ class ODEWrapper2State(WrapQuantizeW):
     def transform_z(self, inner_fn):
         @wraps(inner_fn)
         def scaled(*f_args, **f_kwargs):
-            if self.s_R is None:
-                return inner_fn(*f_args, **f_kwargs) / self.time_scaler[1]
-            else:
-                return inner_fn(*f_args, **f_kwargs) / self.C_fb / self.s_R
+            return inner_fn(*f_args, **f_kwargs) / self.C_fb / self.R
         return scaled
 
     def _patch_make_z_fn(self):
@@ -1712,10 +1779,10 @@ class QATWrapper2State(ODEWrapper2State):
         kwargs.update({"patch": False, "quantize": False})
         super().__init__(**kwargs)
         self.w_bits = kwargs.get("w_bits", 8)
-        self.FF_quantizer = qat_cls(w_bits=self.w_bits, layer_weight=self.ode_block.FFconv.weight).to(
-            self.ode_block.FFconv.weight.device)
-        self.FB_quantizer = qat_cls(w_bits=self.w_bits, layer_weight=self.ode_block.FBconv.weight).to(
-            self.ode_block.FBconv.weight.device)
+        self.FF_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FFconv.weight).to(self.ode_block.FFconv.weight.device)
+        self.FB_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FBconv.weight).to(self.ode_block.FBconv.weight.device)
         self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
         self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
         P.register_parametrization(self.ode_block.FFconv, "weight", self.FF_quantizer)

@@ -40,6 +40,7 @@ def get_args():
     p.add_argument("--eval_every", type=int, default=1)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
+    p.add_argument("--ckpt", type=str, default="best")
     # PCNet / PCConv args
     p.add_argument("--inp_channels",  type=int, nargs="+", default=[3,  64, 64, 128, 128, 256, 256, 512],
                    help="list of input-channel sizes, e.g. 3 16 32")
@@ -279,7 +280,7 @@ def main():
         model = pcn_model(**model_args)
         model = model.to("cuda" if torch.cuda.is_available() else "cpu")
     else:
-        ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_best_ckpt.pth")
+        ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
         noisy_params = {"noise_level": 0.0, "weight": None}
         model = load_and_prepare_model(model_path=ckpt_path, device="cuda" if torch.cuda.is_available() else "cpu",
                                        model_struct=pcn_model,

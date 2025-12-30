@@ -27,7 +27,28 @@ def get_parametrized_weight_mods(model):
     return out
 
 
-def load_and_register_buffer(model: nn.Module, sd, device, parametrized_map=None):
+def load_and_register_buffer(model: nn.Module, sd, device, parametrized_map=None, load_weight_only=False):
+    if load_weight_only:
+        # Load original un-parametrized weights only for the full_param checkpoints
+        # Works for:
+        # 1. Keep finetuning previously fine-tuned models;
+        # 2. Loading fine-tuned model and test with a different setting as used in finetuning.
+        _sd = {}
+        for k in model.state_dict().keys():
+            if not (k == "weight" or k.endswith(".weight")):
+                continue
+
+            if k in sd:
+                _sd[k] = sd[k]
+                continue
+
+            parent_name, sep, child = k.rpartition(".")  # child == "weight"
+            _k = f"{parent_name}.parametrizations.weight.original" if parent_name else "parametrizations.weight.original"
+            if _k in sd:
+                _sd[k] = sd[_k]
+
+        return model.load_state_dict(_sd, strict=False)
+
     inc = model.load_state_dict(sd, strict=False)
     unexpected = list(getattr(inc, "unexpected_keys", []))
     if len(unexpected) == 0:
