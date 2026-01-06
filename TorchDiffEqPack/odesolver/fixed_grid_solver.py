@@ -9,13 +9,14 @@ class FixedGridSolver(ODESolver):
     def __init__(self, func, t0, y0, t1=1.0, h=0.1, rtol=1e-3, atol=1e-6, neval_max=500000,
                  print_neval=False, print_direction=False, step_dif_ratio=1e-3, safety=0.9,
                  regenerate_graph=False, dense_output=True, interpolation_method = 'cubic', end_point_mode = False, print_time = False,
-                 eps=None):
+                 eps=None, noise_type="mul"):
         super(FixedGridSolver, self).__init__(func=func, t0=t0, y0=y0, t1=t1, h=h, rtol=rtol,
                                               atol=atol, neval_max=neval_max,
                  print_neval=print_neval, print_direction=print_direction, step_dif_ratio=step_dif_ratio, safety=safety,
                  regenerate_graph=regenerate_graph, dense_output=dense_output,
                                               interpolation_method = interpolation_method,
-                                              end_point_mode = end_point_mode, print_time = print_time, eps=eps)
+                                              end_point_mode = end_point_mode, print_time = print_time,
+                                              eps=eps, noise_type=noise_type)
 
         if h is None:
             print('Stepsize h is required for fixed grid solvers')
@@ -34,6 +35,8 @@ class FixedGridSolver(ODESolver):
         # determine integration steps
         if predefine_steps is None:  # use steps defined by h
             steps = [self.t0 + (n + 1) * torch.abs(self.h) * self.time_direction for n in range(self.Nt)]
+            # This solves the warning "Evaluation points outside integration range." caused by numerical issues
+            # steps[-1] = self.t1
             steps = torch.stack(steps).view(-1).float()
         else:
             steps = predefine_steps

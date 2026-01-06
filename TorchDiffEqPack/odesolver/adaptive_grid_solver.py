@@ -35,7 +35,8 @@ class AdaptiveGridSolver(ODESolver):
                                               atol=atol, neval_max=neval_max,
                  print_neval=print_neval, print_direction=print_direction, step_dif_ratio=step_dif_ratio, safety=safety,
                  regenerate_graph=regenerate_graph, dense_output=dense_output, interpolation_method = interpolation_method,
-                                                 print_time=print_time, end_point_mode = end_point_mode, eps = eps)
+                                                 print_time=print_time, end_point_mode = end_point_mode,
+                                                 eps = eps, noise_type=noise_type)
         self.eps = eps
         self.noise_type = noise_type
 

@@ -91,6 +91,19 @@ class TrainerCiFar(object):
             _ = self.model(calib_batch)
         logging.warning("Calibration done with calib batch: {}".format(calib_batch.shape))
 
+    @staticmethod
+    def max_param_change(before, after):
+        # before = {n: copy.deepcopy(p.detach().clone()) for n, p in m.named_parameters()}
+        # after = {n: p.detach() for n, p in m.named_parameters()}
+        mx = 0.0
+        arg = None
+        for n in before:
+            d = (before[n] - after[n]).abs().max().item()
+            if d > mx:
+                mx = d
+                arg = n
+        print("max |delta w| = {}".format(mx))
+
     def train(self):
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0

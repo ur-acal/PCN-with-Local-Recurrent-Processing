@@ -291,6 +291,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                     if _name.endswith(('running_mean', 'running_var')):
                         assert torch.allclose(_buf, torch.zeros_like(_buf)) or not torch.allclose(_buf, clean_buffs[_name])
             logging.warning("----- Noise added, sanity check passed -----")
+        else:
+            for _name, _p in net_.named_parameters():
+                logging.warning("name: {}, noisy params mean: {}, median: {}, min: {}, max: {}".format(
+                    _name, _p.mean(), _p.median(), _p.min(), _p.max()))
     logging.warning("----- Model loaded -----")
     return net_
 

@@ -144,10 +144,11 @@ class ODEBlockPC(nn.Module):
             self._apply_noise(self.b0[0])
             logging.warning("Adding noise to self.b0[0] in ODEBlockPC")
 
+    @torch.no_grad()
     def recover_params(self):
-        self.FFconv.weight = self.clean_params["FFconv"]
-        self.FBconv.weight = self.clean_params["FBconv"]
-        self.b0[0] = self.clean_params["b0"]
+        self.FFconv.weight.copy_(self.clean_params["FFconv"])
+        self.FBconv.weight.copy_(self.clean_params["FBconv"])
+        self.b0[0].copy_(self.clean_params["b0"])
 
     @property
     def nfe(self):
@@ -1276,38 +1277,38 @@ class QuantizationImpl(torch.autograd.Function):
         # Quantize to {0, 1, ..., q_max}
         q_weight = torch.clamp(q_weight.round(), min=q_min, max=q_max)
 
-        # Remap quantize the range (w_scalar / q_max, 1) into (q_max - 1) girds
-        _sign = q_weight.sign()
-        _k = q_weight.abs()  # integer levels in [0, q_max]
+        if w_scalar == 1.0:
+            ctx.save_for_backward(q_mask, s, q_weight.new_tensor(1.0))
+            return q_weight / q_max
 
-        _first = float(w_scalar) / float(q_max)                # first nonzero level
-        _delta = (1.0 - _first) / float(q_max - 1)            # spacing for the remaining levels
+        else:
+            # Remap quantize the range (w_scalar / q_max, 1) into (q_max - 1) girds
+            _sign = q_weight.sign()
+            _k = q_weight.abs()  # integer levels in [0, q_max]
 
-        # q_weight in [-1,1] after remap, with the first quantization step being w_scalar / q_max
-        # and steps after being _delta
-        q_weight = torch.where(
-            _k == 0,
-            torch.zeros_like(q_weight),
-            q_weight.new_tensor((_first + (_k.to(dtype=weight.dtype) - 1.0) * _delta) * _sign)
-        )
-        q_weight = torch.clamp(q_weight, -1.0, 1.0)  # Guard
+            _first = float(w_scalar) / float(q_max)                # first nonzero level
+            _delta = (1.0 - _first) / float(q_max - 1)            # spacing for the remaining levels
 
-        # Calculate d q_weight_remapped / d q_weight (q_weight here is {0, 1/q_max, 2/q_max, ..., 1}, not integer)
-        # for k>=1: gradient = _delta * q_max ; for k==0: gradient = 0
-        masked_scale = torch.where(
-            _k == 0,
-            q_weight.new_zeros(()).expand_as(q_weight),
-            q_weight.new_tensor(_delta * float(q_max)).expand_as(q_weight),
-        )
+            # q_weight in [-1,1] after remap, with the first quantization step being w_scalar / q_max
+            # and steps after being _delta
+            q_weight = (_first + (_k.to(dtype=weight.dtype) - 1.0) * _delta) * _sign
+            q_weight.masked_fill_(_k == 0, 0.0)
+            q_weight = torch.clamp(q_weight, -1.0, 1.0)  # Guard
 
-        ctx.save_for_backward(q_mask, s, masked_scale)
-        return q_weight
+            # Calculate d q_weight_remapped / d q_weight (q_weight here is {0, 1/q_max, 2/q_max, ..., 1}, not integer)
+            # for k>=1: gradient = _delta * q_max ; for k==0: gradient = 1
+            # Note: Previously, k > 0: gradient = _delta * q_max; k == 0: gradient = 0
+            masked_scale = q_weight.new_full(q_weight.shape, _delta * q_max)
+            masked_scale.masked_fill_(_k == 0, 1.0)
+            masked_scale.masked_fill_(_k == 1, w_scalar)
+
+            ctx.save_for_backward(q_mask, s, masked_scale)
+            return q_weight
 
     @staticmethod
     def backward(ctx, grad_output):
         q_mask, s, masked_scale = ctx.saved_tensors
         return s * grad_output * q_mask * masked_scale, None, None, None, None
-
 
 
 class SymQuantizeWeight(nn.Module):
@@ -1326,6 +1327,7 @@ class SymQuantizeWeight(nn.Module):
         with torch.no_grad():
             s_w = 1 / layer_weight.data.abs().max()
             self.s_w.copy_(s_w)
+
 
 class LSQImpl(torch.autograd.Function):
     """
@@ -1573,8 +1575,11 @@ class ODEWrapper2State(WrapQuantizeW):
                 # logging.warning("Pre-scaling weight mean: {}, min: {}, max: {}".format(
                 #     self.ode_block.FFconv.weight.mean(), self.ode_block.FFconv.weight.min(),
                 #     self.ode_block.FFconv.weight.max()))
+                self.ode_block.recover_params()
                 self.scale_weight_below_one(self.ode_block.FFconv.weight, self.weight_scale, self.q_hi)
                 self.scale_weight_below_one(self.ode_block.FBconv.weight, self.weight_scale, self.q_hi)
+                if self.ode_block.noise_level is not None and self.ode_block.noise_level > 0:
+                    self.ode_block.add_noise()
                 # logging.warning("Post-scaling weight mean: {}, min: {}, max: {}".format(
                 #     self.ode_block.FFconv.weight.mean(), self.ode_block.FFconv.weight.min(),
                 #     self.ode_block.FFconv.weight.max()))
