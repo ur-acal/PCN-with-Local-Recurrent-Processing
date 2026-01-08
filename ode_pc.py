@@ -1296,11 +1296,12 @@ class QuantizationImpl(torch.autograd.Function):
             q_weight = torch.clamp(q_weight, -1.0, 1.0)  # Guard
 
             # Calculate d q_weight_remapped / d q_weight (q_weight here is {0, 1/q_max, 2/q_max, ..., 1}, not integer)
-            # for k>=1: gradient = _delta * q_max ; for k==0: gradient = 1
-            # Note: Previously, k > 0: gradient = _delta * q_max; k == 0: gradient = 0
+            # Two options:
+            # 1. for k==0: gradient = 1
+            # 2. for k == 0: gradient = 0 (Seems to have higher acc and worse robustness)
             masked_scale = q_weight.new_full(q_weight.shape, _delta * q_max)
-            masked_scale.masked_fill_(_k == 0, 1.0)
-            masked_scale.masked_fill_(_k == 1, w_scalar)
+            masked_scale.masked_fill_(_k == 0, 0.0)
+            # masked_scale.masked_fill_(_k == 1, w_scalar)
 
             ctx.save_for_backward(q_mask, s, masked_scale)
             return q_weight
@@ -1758,6 +1759,9 @@ class QATTester2State(ODEWrapper2State):
     Same as the parent class except for:
     1. Loading already quantized weights with s_ff/fb registered as buffers in ode_block.
     2. Change the activation functon to align with the QATWrapper2State.
+
+    For 2 state ODEBlocks without QAT and want to test without quantization, use this class.
+    Do NOT use ODEWrapperRC in this case, because it did not wrap the make_fn as a nn.Module.
     """
     def __init__(self, **kwargs):
         kwargs.update({"patch": True, "quantize": False})

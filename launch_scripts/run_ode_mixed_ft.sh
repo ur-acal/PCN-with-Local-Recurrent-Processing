@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 declare -A NOISE_LEVELS=(
-  [mul]="0.2"
+  [mul]="0.1"
   [add]="0.05 0.08 0.1 0.15 0.2"
 )
 NOISE_TYPES=(
@@ -10,7 +10,7 @@ NOISE_TYPES=(
 )
 NBITS=(5)
 R_MAX_LIST=("180e3")
-EXP="NODE_0101_QAT_with_noise_inject_training"
+EXP="NODE_0107_QAT_with_noise_inject_training"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
