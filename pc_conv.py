@@ -494,15 +494,25 @@ class HardTanhByX(nn.Module):
     def __init__(self, factor, lb, ub):
         super().__init__()
         self.factor = factor
-        self._hardtanh = nn.Hardtanh(min_val=lb, max_val=ub)
+        self.lb = lb
+        self.ub = ub
+
+    def set_scale(self, factor, lb, ub):
+        self.factor = factor
+        self.lb = lb
+        self.ub = ub
 
     def forward(self, x):
-        return self.factor * self._hardtanh(x)
+        return self.factor * torch.clamp(x, min=self.lb, max=self.ub)
 
 class ReLUX(nn.Module):
     def __init__(self, ub):
         super().__init__()
         self.scale = 6 / float(ub)
+
+    def set_scale(self, ub):
+        self.scale = 6 / float(ub)
+
     def forward(self, x):
         return F.relu6(x * self.scale) / self.scale
 

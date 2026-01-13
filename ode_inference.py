@@ -159,7 +159,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.0, "weight": None}
+    noisy_params = {"noise_level": 0.15, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
@@ -250,7 +250,7 @@ def run_ode_inference():
         offset_eps_list = [0.2, 0.35, 0.5, 0.65, 0.8] if args.sde_noise_type == "mul" else [None, 0.05, 0.1, 0.15, 0.2]
     else:
         offset_eps_list = [None]
-    noise_level_list_ = [0, 0.1, 0.2, 0.3, 0.4]
+    noise_level_list_ = [0, 0.1, 0.15, 0.2, 0.3, 0.4]
     noisy_trials = 20
     gt_t_end = get_t_end(args)
 

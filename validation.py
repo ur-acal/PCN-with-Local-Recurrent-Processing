@@ -331,8 +331,11 @@ class Validator(nn.Module):
             res[cur_name]["R_max"] = getattr(wrappers[_idx], "R_max", None)
             res[cur_name]["R"] = wrappers[_idx].R if res[cur_name]["s_R"] is None else None
             res[cur_name]["q"] = wrappers[_idx].beta.cpu().item() if isinstance(wrappers[_idx].beta, torch.Tensor) else wrappers[_idx].beta
-            res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item()
-            res[cur_name]["C_fb"] = wrappers[_idx].C_fb
+            res[cur_name]["k"] = getattr(wrappers[_idx], "k", None)
+            res[cur_name]["beta_c"] = wrappers[_idx].beta_c.cpu().item() if hasattr(wrappers[_idx], "beta_c") else None
+            res[cur_name]["C"] = wrappers[_idx].C
+            res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item() if hasattr(wrappers[_idx], "C_ff") else None
+            res[cur_name]["C_fb"] = wrappers[_idx].C_fb if hasattr(wrappers[_idx], "C_fb") else None
 
             _inp_scale = wrappers[_idx].inp_scale
             _out_scale = wrappers[_idx].out_scale
@@ -340,7 +343,10 @@ class Validator(nn.Module):
             def make_capture_init_res(key=cur_name):
                 def capture_init_res(orig_init_y, x, *args, **kwargs):
                     yz = orig_init_y(x, *args, **kwargs)
-                    res[key]["init_res"] = yz[-1].view(yz[-1].shape[0], -1).contiguous().detach().cpu().numpy()
+                    if isinstance(yz, tuple):
+                        res[key]["init_res"] = yz[-1].view(yz[-1].shape[0], -1).contiguous().detach().cpu().numpy()
+                    else:
+                        res[key]["init_res"] = yz.view(yz.shape[0], -1).contiguous().detach().cpu().numpy()
                     return yz
                 return capture_init_res
 

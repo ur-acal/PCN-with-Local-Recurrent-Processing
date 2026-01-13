@@ -58,7 +58,8 @@ MODEL_NAMES=(
 #  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP" # Wrong QAT model
 #  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_4REP" # Wrong QAT model
 #  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
-  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_2REP"
+#  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_2REP"
+  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -92,6 +93,19 @@ run_model(){
   else
     local _img_type="$prev"
   fi
+
+  local _ode_wrapper="ODEWrapper1State"
+  if [[ "$name" == *S2* || "$name" == *State2* ]]; then
+    if [[ "$name" == *QAT* && "$CKPT" != *full_param* ]]; then
+      _ode_wrapper="QATTester2State"
+    else
+      _ode_wrapper="ODEWrapper2State"
+    fi
+  else
+    if [[ "$name" == *QAT* && "$CKPT" != *full_param* ]]; then
+      _ode_wrapper="QATTester1State"
+    fi
+  fi
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -117,7 +131,7 @@ run_model(){
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
-    --ode_wrapper     "QATTester2State" \
+    --ode_wrapper     "$_ode_wrapper" \
     --img_type        "${_img_type}" \
     --thermal_noise   "false" \
     --conv_only       "true" \
@@ -137,7 +151,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="1227_test_expanded_${method}Method_${tol}Tol.log"
+  EXP_NAME="0112_test_expanded_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

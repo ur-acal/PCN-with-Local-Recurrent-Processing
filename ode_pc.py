@@ -184,6 +184,10 @@ class ODEBlockXInit(ODEBlockPC):
             self.chan_pad_a = self.chan_diff // 2
             self.chan_pad_b = self.chan_diff - self.chan_pad_a
 
+        # SDE noise related members
+        self.offset_eps = 0.002
+        self.eps_scale = None
+
     def init_y(self, x):
         if self.chan_diff == 0:
             return x
@@ -1867,6 +1871,162 @@ class QATWrapper2State(ODEWrapper2State):
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta, self.v_dd), max_val=min(self.beta, self.v_dd))
 
 
+class ODEWrapper1State(ODEWrapper2State):
+    """
+    Works for dy/dt = W_F f(W_B y). ODEXInitFFFB.
+    May not work for other dynamics like f(W_F f(W_B y)) or W_F f(x - W_B y)
+    """
+    def __init__(self, k=1e3, **kwargs):
+        patch = kwargs.get("patch", True)
+        quantize = kwargs.get("quantize", True)
+        kwargs.update({"patch": False})
+        super().__init__(**kwargs)
+        self.alpha = self.s_fb * self.s_ff
+        self.beta = self.q * self.s_fb
+        self.k = k
+        self.beta_c = self.beta * self.k / self.R
+        logging.warning("6 * beta_c = {}, self.s_fb = {}".format(6 * self.beta_c, self.s_fb))
+        self.inp_scale = self.q if self.is_first else 1
+        self.out_scale = self.q if self.is_last else 1
+
+        if patch:
+            self._patch()
+
+    def get_time_scaler(self):
+        _R = self.s_R if self.s_R is not None else self.R
+        return _R * self.C
+
+    def _scale_time(self):
+        # T * R^2 * C / (k * alpha)
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * _R * self.C / (self.k * self.alpha)
+        self.ode_block.integration_time = self.ode_block.integration_time * end_time_scaler
+
+        if self._has_init_ode:
+            self.ode_block.option_init = self._scale_time_impl(self.ode_block.option_init, end_time_scaler)
+            logging.info("Scaled init end time: {} s".format(self.ode_block.option_init["t1"]))
+        if self._patch_conv:
+            self.ode_block.option_patch = self._scale_time_impl(self.ode_block.option_patch, end_time_scaler)
+            logging.info("Scaled patch end time: {} s".format(self.ode_block.option_patch["t1"]))
+        self.ode_block.option_aca = self._scale_time_impl(self.ode_block.option_aca, end_time_scaler)
+        logging.info("Scaled compute end time: {} s".format(self.ode_block.option_aca["t1"]))
+
+    def _scale_act_fn(self):
+        # ReLU6*beta_c
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = ReLUX(min(6 * self.beta_c, self.v_dd))
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),
+                                                max_val=min(self.beta_c, self.v_dd))
+
+    def transform(self, inner_fn):
+        @wraps(inner_fn)
+        def scaled(t, y, *f_args, **f_kwargs):
+            y_ = inner_fn(t, y * self.k / self.R, *f_args, **f_kwargs)
+            return y_ / self.C / self.R
+        return scaled
+
+
+class QATTester1State(ODEWrapper1State):
+    """
+    Same as the parent class except for:
+    1. Loading already quantized weights with s_ff/fb registered as buffers in ode_block.
+    """
+    def __init__(self, **kwargs):
+        kwargs.update({"patch": True, "quantize": False})
+        super().__init__(**kwargs)
+
+
+class QATWrapper1State(ODEWrapper1State):
+    """
+    Same as the parent class except for:
+    1. Dynamically update the scaling parameters before each forward pass based on the weights.
+    During test, use QATTester1State.
+    """
+    def __init__(self, qat_cls=SymQuantizeWeight, **kwargs):
+        kwargs.update({"patch": False, "quantize": False})
+        super().__init__(**kwargs)
+        self.w_bits = kwargs.get("w_bits", 8)
+        self.FF_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FFconv.weight).to(self.ode_block.FFconv.weight.device)
+        self.FB_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FBconv.weight).to(self.ode_block.FBconv.weight.device)
+        self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
+        self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
+        P.register_parametrization(self.ode_block.FFconv, "weight", self.FF_quantizer)
+        P.register_parametrization(self.ode_block.FBconv, "weight", self.FB_quantizer)
+        self.ode_block.register_buffer("s_ff", self.FF_quantizer.s_w)
+        self.ode_block.register_buffer("s_fb", self.FB_quantizer.s_w)
+        self.s_ff, self.s_fb = None, None
+
+        # Original copy of integration time
+        self.orig_integration_time = self.ode_block.integration_time.clone()
+        if self._has_init_ode:
+            self.orig_option_init = deepcopy(self.ode_block.option_init)
+        if self._patch_conv:
+            self.orig_option_patch = deepcopy(self.ode_block.option_patch)
+        self.orig_option_aca = deepcopy(self.ode_block.option_aca)
+
+        # Register hook
+        self.update_hook = self.ode_block.register_forward_pre_hook(self._update_vals)
+        self._patch()
+
+    def _set_quantize_s(self, module):
+        # Set the quantization step size before each patched forward call
+        # the quantization step size s is set in compute_s
+        self.FF_quantizer.compute_s(module.FFconv.parametrizations.weight.original)
+        self.FB_quantizer.compute_s(module.FBconv.parametrizations.weight.original)
+        # For saving and loading purpose
+        # module should be exactly self.ode_block
+        module.s_ff.copy_(self.FF_quantizer.s_w)
+        module.s_fb.copy_(self.FB_quantizer.s_w)
+        # For calculation in the wrapper
+        self.s_ff, self.s_fb = self.FF_quantizer.s_w, self.FB_quantizer.s_w
+
+    def _update_vals(self, module, inputs):
+        # Compute quantization step size first
+        self._set_quantize_s(module)
+
+        # Reset values based on new s_ff and s_fb before forward
+        self.alpha = self.s_fb * self.s_ff
+        self.beta = self.q * self.s_fb
+        self.beta_c = self.beta * self.k / self.R
+        self.inp_scale = self.q if self.is_first else 1
+
+        # The original patch
+        self.time_scaler = self.get_time_scaler()
+        self._scale_time_dynamically(module)
+        self._scale_act_fn_dynamically()
+
+        # Todo: During training, we have to scale back the last activation, but during test,
+        #  this seems to be removable.
+        self.out_scale = self.q if self.is_last else 1
+
+        return None
+
+    def _scale_time_dynamically(self, module):
+        # scale integration time based on s_fb
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * _R * self.C / (self.k * self.alpha)
+        module.integration_time = self.orig_integration_time * end_time_scaler
+
+        if self._has_init_ode:
+            module.option_init = self._scale_time_impl(deepcopy(self.orig_option_init), end_time_scaler)
+        if self._patch_conv:
+            module.option_patch = self._scale_time_impl(deepcopy(self.orig_option_patch), end_time_scaler)
+        module.option_aca = self._scale_time_impl(deepcopy(self.orig_option_aca), end_time_scaler)
+
+    def _scale_act_fn_dynamically(self):
+        # ReLU6*beta_c
+        act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
+        if "relu6" in act_fn_cls or "relux" in act_fn_cls:
+            self.ode_block.act_fn.set_scale(min(6 * self.beta_c, self.v_dd))
+        elif "hardtanh" in act_fn_cls:
+            # Ignore hardtanh branch for now
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),
+                                                max_val=min(self.beta_c, self.v_dd))
+
+
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
                    n_steps=None, **kwargs):
     for i in range(pc_net.num_layers):
@@ -1907,6 +2067,24 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
         wrappers.append(ode_wrapper_ins)
     return pc_net, wrappers
+
+
+def load_res_vs_vin(dir_path=os.path.dirname(os.path.abspath(__file__)), R=50e3, R_max=180e3,
+                    dtype=torch.float32, device="cpu"):
+    data_dir = os.path.join(dir_path, "hardware_data", "res_vs_vin_{}k_{}k.csv".format(
+        str(int(R/1e3)), str(int(R_max/1e3))))
+    if not os.path.exists(data_dir):
+        return None, None, None
+    df = pd.read_csv(data_dir)
+    v_grid = df[df.columns[0]].values
+    R_codes = [float(_) for _ in list(df.columns)[1:]]
+    R_table = df[list(df.columns)[1:]].values
+
+    return (
+        torch.tensor(v_grid, dtype=dtype, device=device),
+        torch.tensor(R_codes, dtype=dtype, device=device),
+        torch.tensor(R_table, dtype=dtype, device=device)
+    )
 
 
 ODEBLOCK_CLASSES = {
@@ -1976,6 +2154,9 @@ ODEWrapper_CLASSES = {
     "ODEWrapper2State": ODEWrapper2State,
     "QATTester2State": QATTester2State,
     "QATWrapper2State": QATWrapper2State,
+    "ODEWrapper1State": ODEWrapper1State,
+    "QATTester1State": QATTester1State,
+    "QATWrapper1State": QATWrapper1State,
 }
 
 QUANTIZER_CLASSES = {

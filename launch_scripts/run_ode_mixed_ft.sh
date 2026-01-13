@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 declare -A NOISE_LEVELS=(
-  [mul]="0.1"
+  [mul]="0.15"
   [add]="0.05 0.08 0.1 0.15 0.2"
 )
 NOISE_TYPES=(
@@ -10,17 +10,20 @@ NOISE_TYPES=(
 )
 NBITS=(5)
 R_MAX_LIST=("180e3")
-EXP="NODE_0107_QAT_with_noise_inject_training"
+EXP="NODE_0112_QAT_with_noise_inject_training"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_10Layers_2Pool_scanGFI_1REP"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
+#MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_7Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+#MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 #######################################################################################################################
 # For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
 #MODEL_NAME="QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_5REP"
-MODEL_NAME="QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_4REP"
+#MODEL_NAME="QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_4REP"
+MODEL_NAME="QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 #######################################################################################################################
 CKPT="best"
 if [[ "$MODEL_NAME" == *QAT* ]]; then
@@ -32,6 +35,14 @@ if [[ "$MODEL_NAME" == *C100* ]]; then
 else
   _task="cifar10"
 fi
+# Set Wrapper
+QAT_WRAPPER="QATWrapper1State"
+if [[ "$MODEL_NAME" == *S2* || "$MODEL_NAME" == *State2* ]]; then
+  QAT_WRAPPER="QATWrapper2State"
+fi
+# Get ODE Block
+IFS='_' read -r -a parts <<< "$MODEL_NAME"
+ODE_BLK="${parts[3]}"
 # No 2
 for nt in "${NOISE_TYPES[@]}"; do
   for nl in ${NOISE_LEVELS[$nt]}; do
@@ -70,9 +81,9 @@ for nt in "${NOISE_TYPES[@]}"; do
           --tie_cap       "false" \
           --one_over_q    "6" \
           --qat_cls       "SymQuantizeWeight" \
-          --ode_wrapper   "QATWrapper2State" \
+          --ode_wrapper   "$QAT_WRAPPER" \
           --pc_conv       "PCConvReLU6" \
-          --ode_block     "S2NoisyIYAsXZAs0" \
+          --ode_block     "$ODE_BLK" \
           --noise_level   "${nl}" \
           --noise_type    "${nt}" \
           2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
