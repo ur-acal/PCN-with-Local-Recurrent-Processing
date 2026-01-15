@@ -6,15 +6,15 @@ trap '' HUP   # ignore hangup so the children survive
 export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
 export R_VAL="50e3"
-export R_MAX="360e3"
+export R_MAX="180e3"
 #export CKPT="full_param_best"
 export CKPT="best"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
 N_BITS_VALS=()
-#N_BITS_VALS=(5)
-for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
+N_BITS_VALS=(5)
+#for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
 METHOD_VALS=("dopri5")
 CAP_VALS=("49e-15")
@@ -125,8 +125,8 @@ MODEL_NAMES=(
 #  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_7Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulQAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
+#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
+  "QAT5bNT0p15mulQAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -196,7 +196,7 @@ run_model(){
     --test_bs         "${test_bs}" \
     --method          "$method" \
     --tol             "$tol" \
-    --n_steps         15 \
+    --n_steps         100 \
     --ts_scale        1 \
     --d_start         0 \
     --d_end           1 \
@@ -221,7 +221,9 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
-    --test_only       "true" \
+    --test_expanded   "true" \
+    --nonlinear_R     "true" \
+    --test_only       "false" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model

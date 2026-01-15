@@ -179,12 +179,124 @@ class MVMConv(nn.Module):
         for _k, _v in meta.items():
             setattr(self, _k, _v)
 
+        self.csv_enabled = False
+        self.code_idx_mat = None
+        self.v_grid, self.R_codes, self.R_left, self.R_slope = None, None, None, None
+        self.proj_fn = None
+        self.R = None
+
+    def enable_csv(self, v_grid, R_codes, R_left, R_slope, proj_fn, R):
+        self.csv_enabled = True
+
+        self.v_grid = v_grid
+        self.R_codes = R_codes
+        self.R_left = R_left
+        self.R_slope = R_slope
+        self.proj_fn = proj_fn
+        self.R = R
+
+        self.code_idx_mat = self._build_code_idx_mat()
+
+    def _values_to_code_idx(self, values):
+        # The input values is the weight matrix values.
+        # This function converts that to the column index in self.R_table.
+        w_abs = values.abs()
+        zero_mask = w_abs <= 0
+        w_abs = w_abs.clamp(min=1e-12)
+
+        # R_ij = R / W_ij
+        # W must be quantized before such that R_ij can correspond to one column in the R_table
+        R_hat = self.R / w_abs
+        code_idx = (R_hat[:, None] - self.R_codes[None, :]).abs().argmin(dim=1)
+        code_idx[zero_mask] = -1
+        return code_idx
+
+    def _build_code_idx_mat(self):
+        # Returns a list of tuples
+        # The first element of the tuple is code idx
+        # The second element of the tuple is a sparse matrix storing
+        # the signs of values that corresponds to that code idx in the original matrix.
+        mat_coo = self.mat.to_sparse_coo().coalesce()
+        idx = mat_coo.indices()
+        vals = mat_coo.values()
+
+        code_idx_vals = self._values_to_code_idx(vals)  # (nnz,); Get the column index in the R_table.
+        sign_vals = vals.sign()
+
+        # Loop over all possible column indices.
+        # Todo: This only works for R_table with limited number of columns (e.g. 15 for 5-bit quantization).
+        mats = []
+        uniq = torch.unique(code_idx_vals)
+        for j in uniq.tolist():
+            if j < 0:
+                continue
+            sel = (code_idx_vals == j)
+            if sel.any():
+                idx_j = idx[:, sel]
+                val_j = sign_vals[sel].to(vals.dtype)
+                # Sign only
+                mat_j = torch.sparse_coo_tensor(
+                    idx_j, val_j,
+                    size=self.mat.shape,
+                    device=self.mat.device,
+                    dtype=self.mat.dtype
+                ).coalesce().to_sparse_csr()
+                mats.append((int(j), mat_j))
+        return mats
+
+    def _get_R_eff(self, v, code_idx):
+        # Performs interpolation based on current input value and weight value.
+        # v is the current spin state.
+        # i,j is to pick a correct interpolant.
+        if getattr(self, "proj_fn", None) is not None:
+            v = self.proj_fn(v)
+
+        _i = torch.bucketize(v, self.v_grid) - 1
+        _i = _i.clamp(min=0, max=self.v_grid.numel() - 2)
+
+        M = self.R_codes.numel()
+        v_flat, i_flat = v.reshape(-1), _i.reshape(-1)
+
+        if torch.is_tensor(code_idx):
+            if code_idx.numel() == 1:
+                j = int(code_idx.item())
+                j = min(max(j, 0), M - 1)
+                pos = i_flat * M + j
+            else:
+                j_flat = code_idx.to(torch.long).reshape(-1).clamp(0, M - 1)
+                pos = i_flat * M + j_flat
+        else:
+            j = int(code_idx)
+            j = min(max(j, 0), M - 1)
+            pos = i_flat * M + j
+
+        R_left_sel = self.R_left.reshape(-1)[pos]
+        R_slope_sel = self.R_slope.reshape(-1)[pos]
+        v_sel = self.v_grid[i_flat]
+
+        R_eff_flat = R_left_sel + R_slope_sel * (v_flat - v_sel)
+        return R_eff_flat.reshape_as(v)
+
     def forward(self, x):
         batch_size, input_channels, input_h, input_w = x.shape
         x = x.view(batch_size, -1).t()
         output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
         output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
-        return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
+
+        if not self.csv_enabled:
+            return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
+
+        out = None
+        for (j, mat_j) in self.code_idx_mat:
+            R_eff_j = self._get_R_eff(x, j)
+            x_j = x / R_eff_j
+            y_j = torch.sparse.mm(mat_j, x_j)
+            out = y_j if out is None else out + y_j
+
+        if out is None:
+            out = torch.sparse.mm(self.mat, x)
+        out = out * self.R
+        return out.t().view(batch_size, self.meta["out_chan"], output_h, output_w)
 
     @property
     def weight(self):
@@ -252,7 +364,10 @@ class Validator(nn.Module):
             def post_hook(mod, inputs, output):
                 # Replace plain conv with unrolled weights
                 unrolled, meta = stored[mod_name]["weight"], stored[mod_name]["meta"]
-                setattr(parent, mod_name, MVMConv(unrolled, meta))
+                mvm_conv = MVMConv(unrolled, meta)
+                if hasattr(parent, "_nonlinear_R_pkg"):
+                    mvm_conv.enable_csv(**parent._nonlinear_R_pkg)
+                setattr(parent, mod_name, mvm_conv)
                 hook_handlers["pre_hook"].remove()
                 hook_handlers["post_hook"].remove()
 

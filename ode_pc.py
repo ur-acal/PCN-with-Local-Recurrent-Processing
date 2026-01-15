@@ -17,7 +17,7 @@ from functools import wraps
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from pc_conv import ReLUX, HardTanhByX
-from utils import expand_weights_to_matrix
+from utils import expand_weights_to_matrix, load_res_vs_vin
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 # from TorchDiffEqPack.odesolver_mem import odesolve_adjoint as aca_ode_solve
@@ -1468,11 +1468,19 @@ class WrapQuantizeW(ODEWrapperRC):
     def __init__(self, w_bits=8, w_quant_mode="min_max", perc=None, quantize=True, **kwargs):
         patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
+
+        self.nonlinear_R = kwargs.pop("nonlinear_R", False)
+        self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
+
+        self.v_grid, self.R_codes, self.R_table = None, None, None
+        self.R_left, self.R_slope = None, None # Use piecewise-linear function as interpolant
+
         super().__init__(**kwargs)
         self.w_bits = w_bits
         self.q_hi = (1 << (w_bits - 1)) - 1
         self.w_quant_mode = w_quant_mode
         self.perc = perc
+        self.R_max = kwargs.get("R_max", self.R * self.q_hi)
 
         self.quantize = quantize
         if self.quantize:
@@ -1559,6 +1567,59 @@ class WrapQuantizeW(ODEWrapperRC):
         def patched_init_y(x, *args, **kwargs):
             return orig_init_y(x / self.s_ff) / self.s_fb
         self.ode_block.init_y = patched_init_y
+
+    def _round_R(self, x):
+        return torch.round(x / self.R_code_round_base) * self.R_code_round_base
+
+    def _csv_prepare_table(self):
+        # If R varies with the input voltage, load in pre-simulated R vs Vin data for interpolation
+        # v_grid: voltage range; (N,)
+        # R_codes: different ground truth programming resistance levels; (M,)
+        # R_table: Actual resistance value at different voltage; (N, M)
+        if not self.nonlinear_R:
+            return False
+
+        self.v_grid, self.R_codes, self.R_table = load_res_vs_vin(
+            R=self.R, R_max=self.R_max, device=self.ode_block.FFconv.weight.device)
+
+        v_sort_idx = torch.argsort(self.v_grid)
+        self.v_grid = self.v_grid[v_sort_idx]
+        self.R_table = self.R_table[v_sort_idx, :]
+
+        r_sort_idx = torch.argsort(self.R_codes)
+        self.R_codes = self.R_codes[r_sort_idx]
+        self.R_table = self.R_table[:, r_sort_idx]
+
+        return True
+
+    def _csv_build_interpolant(self):
+        # Build the piecewise-linear interpolant
+        # R_hat = R_left + R_slope * (v - v_left)
+        # When interpolating, find the correct R_left, R_slope and v_left value based on the gt resistance
+        # of the current quantized weight
+        dv = (self.v_grid[1:] - self.v_grid[:-1]).clamp(min=1e-12) # (N-1,)
+        self.R_left = self.R_table[:-1, :]  # (N-1, M)
+        self.R_slope = (self.R_table[1:, :] - self.R_left) / dv[:, None] # (N-1,M)
+
+    def _ship_nonlinear_R_pkg(self):
+        if not self.nonlinear_R:
+            return
+
+        self._csv_prepare_table()
+        self._csv_build_interpolant()
+
+        # Set the data needed for interpolating R based on current v values.
+        # Those will be set to MVMConv after every conv layer in the model is replaced in the Validator.
+        # Code written in this way because we call the validator after the model is wrapped by the wrapper.
+        self.ode_block._nonlinear_R_pkg = {
+            # This should match exactly the input args of enable_csv in MVMConv
+            "v_grid": self.v_grid,
+            "R_codes": self.R_codes,
+            "R": self.R,
+            "R_left": self.R_left,
+            "R_slope": self.R_slope,
+            "proj_fn": getattr(self, "proj_fn", None)
+        }
 
 
 class ODEWrapper2State(WrapQuantizeW):
@@ -1747,6 +1808,7 @@ class ODEWrapper2State(WrapQuantizeW):
         self._patch_init_y()
         if self._has_init_ode:
             self._patch_make_z_fn()
+        self._ship_nonlinear_R_pkg()
 
     @staticmethod
     def _round(x, n):
@@ -2067,24 +2129,6 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
         wrappers.append(ode_wrapper_ins)
     return pc_net, wrappers
-
-
-def load_res_vs_vin(dir_path=os.path.dirname(os.path.abspath(__file__)), R=50e3, R_max=180e3,
-                    dtype=torch.float32, device="cpu"):
-    data_dir = os.path.join(dir_path, "hardware_data", "res_vs_vin_{}k_{}k.csv".format(
-        str(int(R/1e3)), str(int(R_max/1e3))))
-    if not os.path.exists(data_dir):
-        return None, None, None
-    df = pd.read_csv(data_dir)
-    v_grid = df[df.columns[0]].values
-    R_codes = [float(_) for _ in list(df.columns)[1:]]
-    R_table = df[list(df.columns)[1:]].values
-
-    return (
-        torch.tensor(v_grid, dtype=dtype, device=device),
-        torch.tensor(R_codes, dtype=dtype, device=device),
-        torch.tensor(R_table, dtype=dtype, device=device)
-    )
 
 
 ODEBLOCK_CLASSES = {

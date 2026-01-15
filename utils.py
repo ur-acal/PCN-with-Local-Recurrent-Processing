@@ -8,9 +8,28 @@ import sys
 import time
 import math
 import torch
+import pandas as pd
 import numpy as np
 import torch.nn as nn
 import torch.nn.init as init
+
+
+def load_res_vs_vin(dir_path=os.path.dirname(os.path.abspath(__file__)), R=50e3, R_max=180e3,
+                    dtype=torch.float32, device="cpu"):
+    data_dir = os.path.join(dir_path, "hardware_data", "res_vs_vin_{}k_{}k.csv".format(
+        str(int(R/1e3)), str(int(R_max/1e3))))
+    if not os.path.exists(data_dir):
+        return None, None, None
+    df = pd.read_csv(data_dir)
+    v_grid = df[df.columns[0]].values
+    R_codes = [float(_) for _ in list(df.columns)[1:]]
+    R_table = df[list(df.columns)[1:]].values
+
+    return (
+        torch.tensor(v_grid, dtype=dtype, device=device),
+        torch.tensor(R_codes, dtype=dtype, device=device),
+        torch.tensor(R_table, dtype=dtype, device=device)
+    )
 
 
 def expand_weights_to_matrix(input_shape, weight_tensor, stride=1, padding=0, flip_weight=False):

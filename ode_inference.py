@@ -45,7 +45,10 @@ def parse_args():
     parser.add_argument("--state_calib", type=str, required=False,
                         help="The calibration result of ode intermediate states for each layer")
     parser.add_argument("--R", type=float, default=1e5, help="Resistance")
-    parser.add_argument("--R_max", type=float, default=None, help="Resistance")
+    parser.add_argument("--R_max", type=lambda s: None if s.lower() in {"none", ""} else float(s),
+                        default=None, help="Maximum meaningful Resistance")
+    parser.add_argument("--nonlinear_R", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="R change with v_in or not")
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -127,6 +130,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
+                      "nonlinear_R": args.nonlinear_R,  # Only valid when wrapped with Validator
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     saved_wrappers = {}
@@ -159,7 +163,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.15, "weight": None}
+    noisy_params = {"noise_level": 0.0, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
@@ -169,6 +173,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
                       "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
+                      "nonlinear_R": args.nonlinear_R, # Only valid when wrapped with Validator
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -252,6 +257,12 @@ def run_ode_inference():
         offset_eps_list = [None]
     noise_level_list_ = [0, 0.1, 0.15, 0.2, 0.3, 0.4]
     noisy_trials = 20
+    if args.test_expanded:
+        # Too time-consuming, only run one mismatch level.
+        noise_level_list_ = [0, 0.15]
+    if args.nonlinear_R:
+        logging.warning("To enable nonlinear R, support non-mismatch for now.")
+        noise_level_list_ = [0]
     gt_t_end = get_t_end(args)
 
     # Get t_end_list for experiments
@@ -277,6 +288,7 @@ def run_ode_inference():
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                          "nonlinear_R": args.nonlinear_R,  # Only valid when wrapped with Validator
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None
         noise_acc_spec_all = {}

@@ -79,7 +79,8 @@ def get_args():
     p.add_argument("--qat_cls", type=str, choices=list(QUANTIZER_CLASSES.keys()) + [None],
                    default=None)
     p.add_argument("--R", type=float, default=1e5, help="Resistance")
-    p.add_argument("--R_max", type=float, default=None, help="Maximum meaningful Resistance")
+    p.add_argument("--R_max", type=lambda s: None if s.lower() in {"none", ""} else float(s),
+                   default=None, help="Maximum meaningful Resistance")
     p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
