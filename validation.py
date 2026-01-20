@@ -312,7 +312,8 @@ class MVMConv(nn.Module):
         return inp_summed.sqrt().view(1, out_chan, output_h, output_w)
 
 class Validator(nn.Module):
-    def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, **kwargs):
+    def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, wrapper=None,
+                 record_full_traj=False, t_end_sf=1.0, **kwargs):
         super().__init__()
         # The model should contain conv layers only. All transposed conv layers should be converted to conv layers.
         # The model needs to be converted to ode blocks and wrapped with wrapper before.
@@ -322,6 +323,9 @@ class Validator(nn.Module):
         self.exp_w_path = os.path.join(expanded_weight_dir, "expanded_weights_{}.pth")
         os.makedirs(expanded_weight_dir, exist_ok=True)
         self.dataloader = test_dataloader
+        self.wrappers = wrapper
+        self.record_full_traj = record_full_traj
+        self.t_end_sf = t_end_sf
 
         self.unroll_or_load()
         self.result_path = result_path
@@ -378,6 +382,14 @@ class Validator(nn.Module):
             if isinstance(_mod, nn.Conv2d):
                 make_hook(parent=layer, mod_name=_name, m=_mod)
 
+    def _find_unscaled_point(self, steps):
+        if np.allclose(self.t_end_sf, 1.0):
+            return -1
+        t_end_scaled = steps[-1]
+        t_end_gt = t_end_scaled / self.t_end_sf
+        gt_pos = torch.argmin((steps - t_end_gt).abs()).item()
+        return gt_pos
+
     @torch.no_grad()
     def unroll_or_load(self):
         for _idx, _layer in enumerate(self.model.PcConvs):
@@ -385,6 +397,30 @@ class Validator(nn.Module):
 
         # One forward pass to trigger the hooks and unroll the weights
         _ = self.model(next(iter(self.dataloader))[0][:2].to(self.device))
+
+        # If record full trajectory, use forward_full_steps of odeblocks.
+        if self.record_full_traj:
+            assert self.wrappers is not None
+            for _idx, _layer in enumerate(self.model.PcConvs):
+                _w = self.wrappers[_idx]
+                orig_forward = _layer.forward
+
+                def forward_use_full(x, *args, _layer=_layer, w=_w, **kwargs):
+                    x_traj = w.wrap_input(x)
+                    traj, steps = _layer.forward_full_steps(x_traj)
+                    traj = w.unwrap_output(traj)
+
+                    # stash for hooks
+                    _layer._last_full_traj = traj
+                    _layer._last_full_steps = steps
+
+                    traj_main = traj[0] if isinstance(traj, (tuple, list)) else traj
+                    gt_pos = self._find_unscaled_point(steps)
+                    y_last = traj_main[gt_pos]
+                    return y_last
+
+                _layer.forward = forward_use_full
+                _layer._orig_forward = orig_forward
 
     @torch.no_grad()
     def test_unroll(self):
@@ -477,6 +513,21 @@ class Validator(nn.Module):
                 # Here the output captured has already been scaled by 1 / out_scale, thus to
                 # match the output of the ode solver, we need to multiple out_scale
                 res[key]["out"] = output.view(output.shape[0], -1).contiguous().detach().cpu().numpy() * out_scale
+
+                if self.record_full_traj:
+                    traj = getattr(mod, "_last_full_traj", None)
+                    steps = getattr(mod, "_last_full_steps", None)
+                    if traj is not None and steps is not None:
+                        if isinstance(traj, (tuple, list)):
+                            res[key]["traj"] = tuple(
+                                _t.contiguous().reshape(_t.shape[0], _t.shape[1], -1).detach().cpu().numpy()
+                                for _t in traj
+                            )
+                        else:
+                            res[key]["traj"] = traj.contiguous().reshape(traj.shape[0], traj.shape[1],
+                                                                         -1).detach().cpu().numpy()
+
+                        res[key]["steps"] = steps.detach().cpu().numpy() if torch.is_tensor(steps) else steps
 
             handlers.append(_layer.register_forward_pre_hook(pre_hook))
             handlers.append(_layer.register_forward_hook(post_hook))

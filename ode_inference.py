@@ -69,6 +69,8 @@ def parse_args():
     parser.add_argument("--w_perc", type=float, default=0.99999, help="percentile for quantization")
     parser.add_argument("--method", type=str, default="dopri5")
     parser.add_argument("--t_end", type=float, default=None, help="Stop time of the solver")
+    parser.add_argument("--t_end_sf", type=float, default=1.0,
+                        help="Scaling factor of the Stop time of the solver")
     parser.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     parser.add_argument("--ts_scale", type=int, default=10,
@@ -87,6 +89,8 @@ def parse_args():
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
                         default=False)
     parser.add_argument("--hw_validate", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
+    parser.add_argument("--rec_full_traj", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--test_expanded", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
@@ -120,7 +124,10 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
         # addinig non-ideality to the original weights and then expand (expanded values have the same non-ideality)
         # Todo: This needs unrolling at each forward pass, very inefficient. Thus is not used for now.
         noisy_params["noise_level"] = unrolled_noise_level
-    ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
+    ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block],
+                  "t_end": t_end * args.t_end_sf, # possibly scaling the t_end to plot the spin voltage
+                  "t_end_sf": args.t_end_sf,
+                  "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
@@ -147,7 +154,9 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     valid_ins = Validator(model=net_,
                           expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name, "{}b".format(args.w_bits)),
                           device=device, test_dataloader=test_dataloader,
-                          result_path=os.path.join(args.hw_val_path, args.model_name, "{}b".format(args.w_bits)))
+                          result_path=os.path.join(args.hw_val_path, args.model_name, "{}b".format(args.w_bits)),
+                          wrapper=saved_wrappers["wrappers"],
+                          record_full_traj=args.rec_full_traj, t_end_sf=args.t_end_sf)
     logging.warning("Unroll or load expanded weights finished")
     if not args.pvt_to_origin:
         # adding non-ideality to unrolled weights
@@ -305,21 +314,22 @@ def run_ode_inference():
                         # Add non-ideality to expanded weights
                         noisy_params["noise_level"] = 0.0
                     with torch.no_grad():
+                        saved_wrappers = {}
                         net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                                       pc_conv_layer=pc_conv, data_parallel=False,
                                                       noise_to_bn=True, noise_to_linear=True,
                                                       fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
-                                                      ode_wrapper_params=wrapper_params,
+                                                      ode_wrapper_params=wrapper_params, wrappers=saved_wrappers,
                                                       **noisy_params)
                         if args.test_expanded:
                             # Use validator to expand the weights of the model
-                            # Notice: Applicable to 2 state ode blocks only.
                             valid_ins = Validator(model=net_,
                                                   expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name,
                                                                                    "{}b".format(args.w_bits)),
                                                   device=device, test_dataloader=test_dataloader,
                                                   result_path=os.path.join(args.hw_val_path, args.model_name,
-                                                                           "{}b".format(args.w_bits)))
+                                                                           "{}b".format(args.w_bits)),
+                                                  wrapper=saved_wrappers)
                             logging.warning("Unroll or load expanded weights finished")
                             for _blk in net_.PcConvs:
                                 _blk.noise_level = noise_level

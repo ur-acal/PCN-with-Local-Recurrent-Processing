@@ -371,7 +371,7 @@ class ODESolver(nn.Module):
             # print("------------------------------------")
         return y_current
 
-    def integrate_predefined_grids(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None):
+    def integrate_predefined_grids(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None, full_traj=False):
 
         if torch.is_tensor(y0):
             y0 = (y0,)
@@ -396,6 +396,7 @@ class ODESolver(nn.Module):
         predefine_steps = predefine_steps.float().to(self.y0[0].device)
 
         all_evaluations = []
+        all_t_steps, all_traj = [], []
         # print(len(predefine_steps))
         # pydevd.settrace(suspend=True, trace_only_current_thread=True)
 
@@ -422,6 +423,9 @@ class ODESolver(nn.Module):
             else:
                 y_current = self.addi_noisy_update_and_proj(h=point-t_current, y_current=y_current)
 
+            if full_traj:
+                # Append non-interpolated points for fixed grid only.
+                all_traj.append(y_current)
             if not self.end_point_mode:
                 self.update_dense_state(t_current, point, y_old, y_current)
                 while (self.t_end is not None) and torch.abs(point - self.t0) >= torch.abs(self.t_end - self.t0) and \
@@ -458,6 +462,8 @@ class ODESolver(nn.Module):
         if self.end_point_mode:
             all_evaluations = y_current
 
+        if full_traj:
+            return self.concate_results(all_traj)
         out = self.concate_results(all_evaluations)
         if self.tensor_input:
             if not torch.is_tensor(out):

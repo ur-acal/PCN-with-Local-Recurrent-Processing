@@ -76,8 +76,12 @@ class ODEBlockPC(nn.Module):
         if self.noise_level is not None and self.noise_level > 0:
             self.add_noise()
 
+        self.t_end_sf = kwargs.get("t_end_sf", 1.0)
         if t_end is not None:
-            self.integration_time = torch.tensor([0, t_end]).float()
+            if np.allclose(self.t_end_sf, 1.0):
+                self.integration_time = torch.tensor([0, t_end]).float()
+            else:
+                self.integration_time = torch.tensor([0, t_end / self.t_end_sf, t_end]).float()
         elif t_end is not None and t_step is not None and return_mid:
             self.integration_time = torch.arange(0, t_end + t_step, t_step).float()
         else:
@@ -117,6 +121,18 @@ class ODEBlockPC(nn.Module):
         out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
         # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+    def forward_full_steps(self, x, layer_idx=None):
+        # Returning the full trajectory of the solver.
+        y0 = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca, full_traj=True)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
 
         if self.bypass is not None:
             out = self.bypass(out) + out
@@ -904,6 +920,17 @@ class ODEState2FFFB(ODEBlockXInit):
             out = self.bypass(out) + out
         return out
 
+    def forward_full_steps(self, x, layer_idx=None):
+        # Returning the full trajectory of the solver.
+        yz = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca, full_traj=True)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+        out = out
+
+        return out
+
 class State2InitYZ(ODEState2FFFB):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1437,6 +1464,14 @@ class ODEWrapperRC(nn.Module):
             return self.transform(inner)
         self.ode_block._make_ode_fn = patched_make_fn
 
+    def wrap_input(self, x):
+        return self.q * x
+
+    def unwrap_output(self, out):
+        if isinstance(out, (tuple, list)):
+            return type(out)(self.unwrap_output(o) for o in out)
+        return out / self.q
+
     def _patch_forward(self):
         # scale the forward method
         orig_call = self.original_forward
@@ -1552,6 +1587,14 @@ class WrapQuantizeW(ODEWrapperRC):
             self.ode_block.act_fn = ReLUX(6 * self.beta)
         elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
             self.ode_block.act_fn = nn.Hardtanh(min_val=-self.beta, max_val=self.beta)
+
+    def wrap_input(self, x):
+        return self.beta * x
+
+    def unwrap_output(self, out):
+        if isinstance(out, (tuple, list)):
+            return type(out)(self.unwrap_output(o) for o in out)
+        return out / self.q
 
     def _patch_forward(self):
         # scale the forward method
@@ -1758,6 +1801,15 @@ class ODEWrapper2State(WrapQuantizeW):
             y_, z_ = inner_fn(*f_args, **f_kwargs)
             return y_ / self.C_ff / self.R, z_ / self.C_fb / self.R
         return _FuncWrapper(scaled)
+
+    def wrap_input(self, x):
+        x = self.inp_scale * x
+        return self.proj_fn(x) if getattr(self, "proj_fn", None) is not None else x
+
+    def unwrap_output(self, out):
+        if isinstance(out, (tuple, list)):
+            return type(out)(self.unwrap_output(o) for o in out)
+        return out / self.out_scale
 
     def _patch_forward(self):
         # scale the forward method

@@ -31,7 +31,7 @@ class FixedGridSolver(ODESolver):
     def step(self, *args, **kwargs):
         pass
 
-    def integrate(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None):
+    def integrate(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None, full_traj=False):
         # determine integration steps
         if predefine_steps is None:  # use steps defined by h
             steps = [self.t0 + (n + 1) * torch.abs(self.h) * self.time_direction for n in range(self.Nt)]
@@ -41,9 +41,9 @@ class FixedGridSolver(ODESolver):
         else:
             steps = predefine_steps
 
-        out = self.integrate_predefined_grids(y0, t0, predefine_steps=steps, t_eval=t_eval)
+        out = self.integrate_predefined_grids(y0, t0, predefine_steps=steps, t_eval=t_eval, full_traj=full_traj)
 
-        if return_steps:
+        if return_steps or full_traj:
             return out, steps
         else:
             return out
