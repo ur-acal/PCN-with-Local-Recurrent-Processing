@@ -408,12 +408,20 @@ class Validator(nn.Module):
                 def forward_use_full(x, *args, _layer=_layer, w=_w, **kwargs):
                     x_traj = w.wrap_input(x)
                     traj, steps = _layer.forward_full_steps(x_traj)
-                    traj = w.unwrap_output(traj)
 
                     # stash for hooks
-                    _layer._last_full_traj = traj
-                    _layer._last_full_steps = steps
+                    # should record the exact ode traj; scale output is for accuracy purpose.
+                    if isinstance(traj, (tuple, list)):
+                        _layer._last_full_traj = tuple(
+                            _t.contiguous().reshape(_t.shape[0], _t.shape[1], -1).detach().cpu().numpy()
+                            for _t in traj
+                        )
+                    else:
+                        _layer._last_full_traj = traj.contiguous().reshape(traj.shape[0], traj.shape[1],
+                                                                     -1).detach().cpu().numpy()
+                    _layer._last_full_steps = steps.detach().cpu().numpy() if torch.is_tensor(steps) else steps
 
+                    traj = w.unwrap_output(traj)
                     traj_main = traj[0] if isinstance(traj, (tuple, list)) else traj
                     gt_pos = self._find_unscaled_point(steps)
                     y_last = traj_main[gt_pos]
@@ -518,31 +526,31 @@ class Validator(nn.Module):
                     traj = getattr(mod, "_last_full_traj", None)
                     steps = getattr(mod, "_last_full_steps", None)
                     if traj is not None and steps is not None:
-                        if isinstance(traj, (tuple, list)):
-                            res[key]["traj"] = tuple(
-                                _t.contiguous().reshape(_t.shape[0], _t.shape[1], -1).detach().cpu().numpy()
-                                for _t in traj
-                            )
-                        else:
-                            res[key]["traj"] = traj.contiguous().reshape(traj.shape[0], traj.shape[1],
-                                                                         -1).detach().cpu().numpy()
-
-                        res[key]["steps"] = steps.detach().cpu().numpy() if torch.is_tensor(steps) else steps
+                        res[key]["traj"] = traj
+                        res[key]["steps"] = steps
 
             handlers.append(_layer.register_forward_pre_hook(pre_hook))
             handlers.append(_layer.register_forward_hook(post_hook))
         return res, handlers
 
     @torch.no_grad()
-    def gen_validate_data(self, wrappers, n_samples=10):
+    def gen_validate_data(self, wrappers, solver, n_samples=10, sample_inp=None):
         res, handlers = self._register_hook_for_record(wrappers)
 
-        _inp = next(iter(self.dataloader))[0][:n_samples].to(self.device)
-        _ = self.model(_inp)
+        if sample_inp is None:
+            _inp = next(iter(self.dataloader))[0][:n_samples].to(self.device)
+            _ = self.model(_inp)
+            save_name = "{}samples_{}.pkl"
+        else:
+            sample_bs = sample_inp.shape[0]
+            shape_target = next(iter(self.dataloader))[0][:sample_bs].to(self.device)
+            sample_inp = sample_inp.to(self.device).reshape_as(shape_target) / wrappers[0].inp_scale
+            _ = self.model(sample_inp)
+            save_name = "{}samples_spec_inp_{}.pkl"
 
         # Save res and remove hooks via handlers
         os.makedirs(self.result_path, exist_ok=True)
-        sample_path = os.path.join(self.result_path, "{}samples.pkl".format(n_samples))
+        sample_path = os.path.join(self.result_path, save_name.format(n_samples, solver))
         with open(sample_path, "wb") as fp:
             pickle.dump(res, fp)
         for _h in handlers:

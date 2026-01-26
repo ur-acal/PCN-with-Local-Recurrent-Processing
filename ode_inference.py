@@ -98,6 +98,7 @@ def parse_args():
                         default=False,  help="Add weight non-ideality to the original or unrolled weights; works for test_expanded=True")
     parser.add_argument("--expanded_w_dir", type=str, default="./expanded_weights")
     parser.add_argument("--hw_val_path", type=str, default="./hw_validation_data")
+    parser.add_argument("--hw_val_inp", type=lambda s: None if s.lower() in {"none", ""} else s, default="")
     parser.add_argument("--valid_samples", type=int, default=10,
                         help="Number of samples used for validation")
     return parser.parse_args()
@@ -166,7 +167,16 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.warning("Test unrolled with noise level: {} (Mismatch added to unrolled weights)".format(unrolled_noise_level))
     if args.test_expanded:
         valid_ins.test_unroll()
-    valid_ins.gen_validate_data(wrappers=saved_wrappers["wrappers"], n_samples=args.valid_samples)
+    sample_inp = None
+    if args.hw_val_inp:
+        # saved as hw_validation_data/past_runs/args.model_name/xxx.pkl
+        # xxx.pkl is passed in as hw_val_inp
+        inp_file_name = os.path.join(args.hw_val_path, "past_runs", args.model_name, args.hw_val_inp)
+        with open(inp_file_name, "rb") as fp:
+            samples = pickle.load(fp)
+            sample_inp = torch.from_numpy(samples["layer_0"]["inp"])
+    valid_ins.gen_validate_data(wrappers=saved_wrappers["wrappers"], solver=args.method,
+                                n_samples=args.valid_samples, sample_inp=sample_inp)
 
 
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
