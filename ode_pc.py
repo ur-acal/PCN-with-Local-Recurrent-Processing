@@ -17,7 +17,7 @@ from functools import wraps
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from pc_conv import ReLUX, HardTanhByX
-from utils import expand_weights_to_matrix
+from utils import expand_weights_to_matrix, load_res_vs_vin
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 # from TorchDiffEqPack.odesolver_mem import odesolve_adjoint as aca_ode_solve
@@ -76,8 +76,12 @@ class ODEBlockPC(nn.Module):
         if self.noise_level is not None and self.noise_level > 0:
             self.add_noise()
 
+        self.t_end_sf = kwargs.get("t_end_sf", 1.0)
         if t_end is not None:
-            self.integration_time = torch.tensor([0, t_end]).float()
+            if np.allclose(self.t_end_sf, 1.0):
+                self.integration_time = torch.tensor([0, t_end]).float()
+            else:
+                self.integration_time = torch.tensor([0, t_end / self.t_end_sf, t_end]).float()
         elif t_end is not None and t_step is not None and return_mid:
             self.integration_time = torch.arange(0, t_end + t_step, t_step).float()
         else:
@@ -122,6 +126,18 @@ class ODEBlockPC(nn.Module):
             out = self.bypass(out) + out
         return out
 
+    def forward_full_steps(self, x, layer_idx=None):
+        # Returning the full trajectory of the solver.
+        y0 = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca, full_traj=True)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
     def _apply_noise(self, p):
         if getattr(p, "is_sparse_csr", False):
             v_ = p.values()
@@ -144,10 +160,11 @@ class ODEBlockPC(nn.Module):
             self._apply_noise(self.b0[0])
             logging.warning("Adding noise to self.b0[0] in ODEBlockPC")
 
+    @torch.no_grad()
     def recover_params(self):
-        self.FFconv.weight = self.clean_params["FFconv"]
-        self.FBconv.weight = self.clean_params["FBconv"]
-        self.b0[0] = self.clean_params["b0"]
+        self.FFconv.weight.copy_(self.clean_params["FFconv"])
+        self.FBconv.weight.copy_(self.clean_params["FBconv"])
+        self.b0[0].copy_(self.clean_params["b0"])
 
     @property
     def nfe(self):
@@ -183,9 +200,15 @@ class ODEBlockXInit(ODEBlockPC):
             self.chan_pad_a = self.chan_diff // 2
             self.chan_pad_b = self.chan_diff - self.chan_pad_a
 
+        # SDE noise related members
+        self.offset_eps = 0.002
+        self.eps_scale = None
+
     def init_y(self, x):
         if self.chan_diff == 0:
             return x
+        elif self.in_chan > self.out_chan:
+            return x[:, :self.out_chan, :, :]
         elif self.in_chan * 2 == self.out_chan:
             return torch.cat([x, x], dim=1)
         else:
@@ -897,6 +920,17 @@ class ODEState2FFFB(ODEBlockXInit):
             out = self.bypass(out) + out
         return out
 
+    def forward_full_steps(self, x, layer_idx=None):
+        # Returning the full trajectory of the solver.
+        yz = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca, full_traj=True)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+        out = out
+
+        return out
+
 class State2InitYZ(ODEState2FFFB):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1267,52 +1301,93 @@ class S2CircYAsXZas0(S2Circ):
 
 class QuantizationImpl(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, weight, s, q_min, q_max):
+    def forward(ctx, weight, s, q_min, q_max, w_scalar=1.0):
         q_weight = weight * s * q_max
         q_mask = (q_weight >= q_min) & (q_weight <= q_max)
-        ctx.save_for_backward(q_mask, s)
+
+        # Quantize to {0, 1, ..., q_max}
         q_weight = torch.clamp(q_weight.round(), min=q_min, max=q_max)
-        return q_weight / q_max
+
+        if w_scalar == 1.0:
+            ctx.save_for_backward(q_mask, s, q_weight.new_tensor(1.0))
+            return q_weight / q_max
+
+        else:
+            # Remap quantize the range (w_scalar / q_max, 1) into (q_max - 1) girds
+            _sign = q_weight.sign()
+            _k = q_weight.abs()  # integer levels in [0, q_max]
+
+            _first = float(w_scalar) / float(q_max)                # first nonzero level
+            _delta = (1.0 - _first) / float(q_max - 1)            # spacing for the remaining levels
+
+            # q_weight in [-1,1] after remap, with the first quantization step being w_scalar / q_max
+            # and steps after being _delta
+            q_weight = (_first + (_k.to(dtype=weight.dtype) - 1.0) * _delta) * _sign
+            q_weight.masked_fill_(_k == 0, 0.0)
+            q_weight = torch.clamp(q_weight, -1.0, 1.0)  # Guard
+
+            # Calculate d q_weight_remapped / d q_weight (q_weight here is {0, 1/q_max, 2/q_max, ..., 1}, not integer)
+            # Two options:
+            # 1. for k==0: gradient = 1
+            # 2. for k == 0: gradient = 0 (Seems to have higher acc and worse robustness)
+            masked_scale = q_weight.new_full(q_weight.shape, _delta * q_max)
+            masked_scale.masked_fill_(_k == 0, 0.0)
+            # masked_scale.masked_fill_(_k == 1, w_scalar)
+
+            ctx.save_for_backward(q_mask, s, masked_scale)
+            return q_weight
 
     @staticmethod
     def backward(ctx, grad_output):
-        q_mask, s = ctx.saved_tensors
-        return s * grad_output * q_mask, None, None, None
+        q_mask, s, masked_scale = ctx.saved_tensors
+        return s * grad_output * q_mask * masked_scale, None, None, None, None
 
 
 class SymQuantizeWeight(nn.Module):
-    def __init__(self, w_bits=8, **kwargs):
+    def __init__(self, w_bits=8, w_scalar=1.0, **kwargs):
         super().__init__()
         self.register_buffer("w_bits", torch.tensor(w_bits))
         self.register_buffer("upper", torch.tensor((1 << (w_bits - 1)) - 1))
         self.register_buffer("lower", -self.upper)
         self.register_buffer("s_w", torch.tensor(1.0))
+        self.register_buffer("w_scalar", torch.tensor(w_scalar))
 
     def forward(self, layer_weight: nn.Parameter):
-        return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper)
+        return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper, self.w_scalar)
 
     def compute_s(self, layer_weight: nn.Parameter):
         with torch.no_grad():
             s_w = 1 / layer_weight.data.abs().max()
             self.s_w.copy_(s_w)
 
+
 class LSQImpl(torch.autograd.Function):
     """
     Todo: Add noise inject training related code here.
     """
     @staticmethod
-    def forward(ctx, weight, s, q_min, q_max, s_g_scale):
+    def forward(ctx, weight, s, q_min, q_max, s_g_scale, w_scalar=1.0):
         q_weight = weight * s
         q_mask = (q_weight >= q_min) & (q_weight <= q_max)
         q_weight = q_weight.round()
         ctx.save_for_backward(q_mask, s, q_weight, q_max, s_g_scale)
         q_weight = torch.clamp(q_weight, min=q_min, max=q_max)
-        return q_weight / q_max
+        q_weight = q_weight / q_max
+
+        # scale_mask = q_weight.abs() < 1.0 # positions to scale
+        # masked_scale = torch.ones_like(q_weight)
+        # masked_scale[scale_mask] = w_scalar
+        # q_weight = q_weight * masked_scale
+        # q_weight = torch.clamp(q_weight, -1.0, 1.0)  # Guard
+        #
+        # ctx.save_for_backward(q_mask, s, masked_scale)
+
+        return q_weight
 
     @staticmethod
     def backward(ctx, grad_out):
         q_mask, s, q_weight, q_max, s_g_scale = ctx.saved_tensors
-        return s * grad_out * q_mask / q_max, s_g_scale * (q_weight * grad_out * q_mask).sum() / q_max, None, None, None
+        return s * grad_out * q_mask / q_max, s_g_scale * (q_weight * grad_out * q_mask).sum() / q_max, None, None, None, None
 
 
 class LSQWeight(SymQuantizeWeight):
@@ -1323,7 +1398,7 @@ class LSQWeight(SymQuantizeWeight):
             self.register_buffer("s_g_scale", 1 / torch.sqrt(layer_weight.numel() * self.upper))
 
     def forward(self, layer_weight: nn.Parameter):
-        return LSQImpl.apply(layer_weight, self.s_w_Param, self.lower, self.upper, self.s_g_scale)
+        return LSQImpl.apply(layer_weight, self.s_w_Param, self.lower, self.upper, self.s_g_scale, self.w_scalar)
 
     def compute_s(self, layer_weight: nn.Parameter):
         # Set the parameter to registered buffer for saving purpose
@@ -1389,6 +1464,14 @@ class ODEWrapperRC(nn.Module):
             return self.transform(inner)
         self.ode_block._make_ode_fn = patched_make_fn
 
+    def wrap_input(self, x):
+        return self.q * x
+
+    def unwrap_output(self, out):
+        if isinstance(out, (tuple, list)):
+            return type(out)(self.unwrap_output(o) for o in out)
+        return out / self.q
+
     def _patch_forward(self):
         # scale the forward method
         orig_call = self.original_forward
@@ -1420,11 +1503,19 @@ class WrapQuantizeW(ODEWrapperRC):
     def __init__(self, w_bits=8, w_quant_mode="min_max", perc=None, quantize=True, **kwargs):
         patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
+
+        self.nonlinear_R = kwargs.pop("nonlinear_R", False)
+        self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
+
+        self.v_grid, self.R_codes, self.R_table = None, None, None
+        self.R_left, self.R_slope = None, None # Use piecewise-linear function as interpolant
+
         super().__init__(**kwargs)
         self.w_bits = w_bits
         self.q_hi = (1 << (w_bits - 1)) - 1
         self.w_quant_mode = w_quant_mode
         self.perc = perc
+        self.R_max = kwargs.get("R_max", self.R * self.q_hi)
 
         self.quantize = quantize
         if self.quantize:
@@ -1497,6 +1588,14 @@ class WrapQuantizeW(ODEWrapperRC):
         elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
             self.ode_block.act_fn = nn.Hardtanh(min_val=-self.beta, max_val=self.beta)
 
+    def wrap_input(self, x):
+        return self.beta * x
+
+    def unwrap_output(self, out):
+        if isinstance(out, (tuple, list)):
+            return type(out)(self.unwrap_output(o) for o in out)
+        return out / self.q
+
     def _patch_forward(self):
         # scale the forward method
         orig_call = self.original_forward
@@ -1512,12 +1611,95 @@ class WrapQuantizeW(ODEWrapperRC):
             return orig_init_y(x / self.s_ff) / self.s_fb
         self.ode_block.init_y = patched_init_y
 
+    def _round_R(self, x):
+        return torch.round(x / self.R_code_round_base) * self.R_code_round_base
+
+    def _csv_prepare_table(self):
+        # If R varies with the input voltage, load in pre-simulated R vs Vin data for interpolation
+        # v_grid: voltage range; (N,)
+        # R_codes: different ground truth programming resistance levels; (M,)
+        # R_table: Actual resistance value at different voltage; (N, M)
+        if not self.nonlinear_R:
+            return False
+
+        self.v_grid, self.R_codes, self.R_table = load_res_vs_vin(
+            R=self.R, R_max=self.R_max, device=self.ode_block.FFconv.weight.device)
+
+        v_sort_idx = torch.argsort(self.v_grid)
+        self.v_grid = self.v_grid[v_sort_idx]
+        self.R_table = self.R_table[v_sort_idx, :]
+
+        r_sort_idx = torch.argsort(self.R_codes)
+        self.R_codes = self.R_codes[r_sort_idx]
+        self.R_table = self.R_table[:, r_sort_idx]
+
+        return True
+
+    def _csv_build_interpolant(self):
+        # Build the piecewise-linear interpolant
+        # R_hat = R_left + R_slope * (v - v_left)
+        # When interpolating, find the correct R_left, R_slope and v_left value based on the gt resistance
+        # of the current quantized weight
+        dv = (self.v_grid[1:] - self.v_grid[:-1]).clamp(min=1e-12) # (N-1,)
+        self.R_left = self.R_table[:-1, :]  # (N-1, M)
+        self.R_slope = (self.R_table[1:, :] - self.R_left) / dv[:, None] # (N-1,M)
+
+    def _ship_nonlinear_R_pkg(self):
+        if not self.nonlinear_R:
+            return
+
+        self._csv_prepare_table()
+        self._csv_build_interpolant()
+
+        # Set the data needed for interpolating R based on current v values.
+        # Those will be set to MVMConv after every conv layer in the model is replaced in the Validator.
+        # Code written in this way because we call the validator after the model is wrapped by the wrapper.
+        self.ode_block._nonlinear_R_pkg = {
+            # This should match exactly the input args of enable_csv in MVMConv
+            "v_grid": self.v_grid,
+            "R_codes": self.R_codes,
+            "R": self.R,
+            "R_left": self.R_left,
+            "R_slope": self.R_slope,
+            "proj_fn": getattr(self, "proj_fn", None)
+        }
+
 
 class ODEWrapper2State(WrapQuantizeW):
-    def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, tie_cap=False, **kwargs):
+    def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, tie_cap=False,
+                 R_max=180e3, **kwargs):
         patch = kwargs.get("patch", True)
+        quantize = kwargs.get("quantize", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
+        self.R_max = R_max
+        self.s_R, self.weight_scale = None, 1.0
+        R_max_ideal = self.R * self.q_hi
+        if R_max is not None and R_max_ideal > R_max:
+            assert R_max > self.R
+            self.weight_scale = R_max_ideal / R_max # Must be greater than 1 and smaller than q_hi
+            assert self.weight_scale <= self.q_hi
+            if quantize:
+                # Only do this after the weights are quantized
+                # logging.warning("Pre-scaling weight mean: {}, min: {}, max: {}".format(
+                #     self.ode_block.FFconv.weight.mean(), self.ode_block.FFconv.weight.min(),
+                #     self.ode_block.FFconv.weight.max()))
+                self.ode_block.recover_params()
+                self.scale_weight_below_one(self.ode_block.FFconv.weight, self.weight_scale, self.q_hi)
+                self.scale_weight_below_one(self.ode_block.FBconv.weight, self.weight_scale, self.q_hi)
+                if self.ode_block.noise_level is not None and self.ode_block.noise_level > 0:
+                    self.ode_block.add_noise()
+                # logging.warning("Post-scaling weight mean: {}, min: {}, max: {}".format(
+                #     self.ode_block.FFconv.weight.mean(), self.ode_block.FFconv.weight.min(),
+                #     self.ode_block.FFconv.weight.max()))
+            # Note: This applies only to dynamics like dy/dt = Wf(z) or Wf(y) or Wy, where W is applied to the
+            # output of non-linearity.
+            _delta = (1 - self.weight_scale / self.q_hi) / (self.q_hi - 1)
+            # self.s_R = self.R * (_delta * self.q_hi)
+            self.s_R = None
+            # self.s_R = (1 - 1 / self.q_hi) / (1 / self.R - 1 / self.R_max)
+            # logging.warning("Scaled weight with s_R: {}".format(self.s_R))
+
         # Todo: Right now using the same cap value seems to be fine. Need more experiment.
         self.tie_cap = tie_cap
         self.cap_scale = self._round(self.s_ff / self.s_fb, 1) if not self.tie_cap else 1
@@ -1557,8 +1739,30 @@ class ODEWrapper2State(WrapQuantizeW):
             self.ode_block.option_patch["proj_fn"] = self.proj_fn
         self.ode_block.option_aca["proj_fn"] = self.proj_fn
 
+    @staticmethod
+    def scale_weight_below_one(w, scalar, q_hi):
+        with torch.no_grad():
+            sign = w.sign()
+            a = w.abs().clamp(0.0, 1.0)
+
+            # Get quantization levels, {0, 1, ..., q_hi}
+            k = torch.round(a * q_hi).clamp_(0, q_hi)
+
+            first = float(scalar) / q_hi
+            delta = (1.0 - first) / (q_hi - 1)
+
+            # Map: k=0 -> 0; k>=1 -> first + (k-1)*delta
+            a_new = torch.where(
+                k <= 0.0,
+                torch.zeros_like(a),
+                a.new_tensor(first) + (k - 1.0) * a.new_tensor(delta)
+            )
+
+            w.copy_((sign * a_new).clamp(-1.0, 1.0))
+
     def get_time_scaler(self):
-        return self.R * self.C_ff, self.R * self.C_fb
+        _R = self.s_R if self.s_R is not None else self.R
+        return _R * self.C_ff, _R * self.C_fb
 
     @staticmethod
     def _scale_time_impl(integral_option, end_time_scaler):
@@ -1572,7 +1776,8 @@ class ODEWrapper2State(WrapQuantizeW):
 
     def _scale_time(self):
         # scale integration time based on s_fb
-        end_time_scaler = self.R * self.C / self.alpha
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * self.C / self.alpha
         self.ode_block.integration_time = self.ode_block.integration_time * end_time_scaler
 
         if self._has_init_ode:
@@ -1594,15 +1799,24 @@ class ODEWrapper2State(WrapQuantizeW):
         @wraps(inner_fn)
         def scaled(*f_args, **f_kwargs):
             y_, z_ = inner_fn(*f_args, **f_kwargs)
-            return y_ / self.time_scaler[0], z_ / self.time_scaler[1]
+            return y_ / self.C_ff / self.R, z_ / self.C_fb / self.R
         return _FuncWrapper(scaled)
+
+    def wrap_input(self, x):
+        x = self.inp_scale * x
+        return self.proj_fn(x) if getattr(self, "proj_fn", None) is not None else x
+
+    def unwrap_output(self, out):
+        if isinstance(out, (tuple, list)):
+            return type(out)(self.unwrap_output(o) for o in out)
+        return out / self.out_scale
 
     def _patch_forward(self):
         # scale the forward method
         orig_call = self.original_forward
         @wraps(orig_call)
         def patched_forward(x, *args, **kwargs):
-            return orig_call(self.inp_scale * x, *args, **kwargs) / self.out_scale
+            return orig_call(self.proj_fn(self.inp_scale * x), *args, **kwargs) / self.out_scale
         self.ode_block.forward = patched_forward
 
     def _patch_init_y(self):
@@ -1618,7 +1832,7 @@ class ODEWrapper2State(WrapQuantizeW):
     def transform_z(self, inner_fn):
         @wraps(inner_fn)
         def scaled(*f_args, **f_kwargs):
-            return inner_fn(*f_args, **f_kwargs) / self.time_scaler[1]
+            return inner_fn(*f_args, **f_kwargs) / self.C_fb / self.R
         return scaled
 
     def _patch_make_z_fn(self):
@@ -1646,6 +1860,7 @@ class ODEWrapper2State(WrapQuantizeW):
         self._patch_init_y()
         if self._has_init_ode:
             self._patch_make_z_fn()
+        self._ship_nonlinear_R_pkg()
 
     @staticmethod
     def _round(x, n):
@@ -1662,6 +1877,9 @@ class QATTester2State(ODEWrapper2State):
     Same as the parent class except for:
     1. Loading already quantized weights with s_ff/fb registered as buffers in ode_block.
     2. Change the activation functon to align with the QATWrapper2State.
+
+    For 2 state ODEBlocks without QAT and want to test without quantization, use this class.
+    Do NOT use ODEWrapperRC in this case, because it did not wrap the make_fn as a nn.Module.
     """
     def __init__(self, **kwargs):
         kwargs.update({"patch": True, "quantize": False})
@@ -1688,10 +1906,10 @@ class QATWrapper2State(ODEWrapper2State):
         kwargs.update({"patch": False, "quantize": False})
         super().__init__(**kwargs)
         self.w_bits = kwargs.get("w_bits", 8)
-        self.FF_quantizer = qat_cls(w_bits=self.w_bits, layer_weight=self.ode_block.FFconv.weight).to(
-            self.ode_block.FFconv.weight.device)
-        self.FB_quantizer = qat_cls(w_bits=self.w_bits, layer_weight=self.ode_block.FBconv.weight).to(
-            self.ode_block.FBconv.weight.device)
+        self.FF_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FFconv.weight).to(self.ode_block.FFconv.weight.device)
+        self.FB_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FBconv.weight).to(self.ode_block.FBconv.weight.device)
         self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
         self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
         P.register_parametrization(self.ode_block.FFconv, "weight", self.FF_quantizer)
@@ -1741,15 +1959,16 @@ class QATWrapper2State(ODEWrapper2State):
         self.time_scaler = self.get_time_scaler()
         self._scale_time_dynamically(module)
 
-        # Todo: During traning, we have to scaling back the last activation, but during test,
-        #  this seems can be removed.
+        # Todo: During training, we have to scaling back the last activation, but during test,
+        #  this seems to be removable.
         self.out_scale = self.beta if self.is_last else 1
 
         return None
 
     def _scale_time_dynamically(self, module):
         # scale integration time based on s_fb
-        end_time_scaler = self.R * self.C / self.alpha
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * self.C / self.alpha
         module.integration_time = self.orig_integration_time * end_time_scaler
 
         if self._has_init_ode:
@@ -1764,6 +1983,162 @@ class QATWrapper2State(ODEWrapper2State):
             self.ode_block.act_fn = ReLUX(min(6 * self.beta, self.v_dd))
         elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta, self.v_dd), max_val=min(self.beta, self.v_dd))
+
+
+class ODEWrapper1State(ODEWrapper2State):
+    """
+    Works for dy/dt = W_F f(W_B y). ODEXInitFFFB.
+    May not work for other dynamics like f(W_F f(W_B y)) or W_F f(x - W_B y)
+    """
+    def __init__(self, k=1e3, **kwargs):
+        patch = kwargs.get("patch", True)
+        quantize = kwargs.get("quantize", True)
+        kwargs.update({"patch": False})
+        super().__init__(**kwargs)
+        self.alpha = self.s_fb * self.s_ff
+        self.beta = self.q * self.s_fb
+        self.k = k
+        self.beta_c = self.beta * self.k / self.R
+        logging.warning("6 * beta_c = {}, self.s_fb = {}".format(6 * self.beta_c, self.s_fb))
+        self.inp_scale = self.q if self.is_first else 1
+        self.out_scale = self.q if self.is_last else 1
+
+        if patch:
+            self._patch()
+
+    def get_time_scaler(self):
+        _R = self.s_R if self.s_R is not None else self.R
+        return _R * self.C
+
+    def _scale_time(self):
+        # T * R^2 * C / (k * alpha)
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * _R * self.C / (self.k * self.alpha)
+        self.ode_block.integration_time = self.ode_block.integration_time * end_time_scaler
+
+        if self._has_init_ode:
+            self.ode_block.option_init = self._scale_time_impl(self.ode_block.option_init, end_time_scaler)
+            logging.info("Scaled init end time: {} s".format(self.ode_block.option_init["t1"]))
+        if self._patch_conv:
+            self.ode_block.option_patch = self._scale_time_impl(self.ode_block.option_patch, end_time_scaler)
+            logging.info("Scaled patch end time: {} s".format(self.ode_block.option_patch["t1"]))
+        self.ode_block.option_aca = self._scale_time_impl(self.ode_block.option_aca, end_time_scaler)
+        logging.info("Scaled compute end time: {} s".format(self.ode_block.option_aca["t1"]))
+
+    def _scale_act_fn(self):
+        # ReLU6*beta_c
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = ReLUX(min(6 * self.beta_c, self.v_dd))
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),
+                                                max_val=min(self.beta_c, self.v_dd))
+
+    def transform(self, inner_fn):
+        @wraps(inner_fn)
+        def scaled(t, y, *f_args, **f_kwargs):
+            y_ = inner_fn(t, y * self.k / self.R, *f_args, **f_kwargs)
+            return y_ / self.C / self.R
+        return scaled
+
+
+class QATTester1State(ODEWrapper1State):
+    """
+    Same as the parent class except for:
+    1. Loading already quantized weights with s_ff/fb registered as buffers in ode_block.
+    """
+    def __init__(self, **kwargs):
+        kwargs.update({"patch": True, "quantize": False})
+        super().__init__(**kwargs)
+
+
+class QATWrapper1State(ODEWrapper1State):
+    """
+    Same as the parent class except for:
+    1. Dynamically update the scaling parameters before each forward pass based on the weights.
+    During test, use QATTester1State.
+    """
+    def __init__(self, qat_cls=SymQuantizeWeight, **kwargs):
+        kwargs.update({"patch": False, "quantize": False})
+        super().__init__(**kwargs)
+        self.w_bits = kwargs.get("w_bits", 8)
+        self.FF_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FFconv.weight).to(self.ode_block.FFconv.weight.device)
+        self.FB_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    layer_weight=self.ode_block.FBconv.weight).to(self.ode_block.FBconv.weight.device)
+        self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
+        self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
+        P.register_parametrization(self.ode_block.FFconv, "weight", self.FF_quantizer)
+        P.register_parametrization(self.ode_block.FBconv, "weight", self.FB_quantizer)
+        self.ode_block.register_buffer("s_ff", self.FF_quantizer.s_w)
+        self.ode_block.register_buffer("s_fb", self.FB_quantizer.s_w)
+        self.s_ff, self.s_fb = None, None
+
+        # Original copy of integration time
+        self.orig_integration_time = self.ode_block.integration_time.clone()
+        if self._has_init_ode:
+            self.orig_option_init = deepcopy(self.ode_block.option_init)
+        if self._patch_conv:
+            self.orig_option_patch = deepcopy(self.ode_block.option_patch)
+        self.orig_option_aca = deepcopy(self.ode_block.option_aca)
+
+        # Register hook
+        self.update_hook = self.ode_block.register_forward_pre_hook(self._update_vals)
+        self._patch()
+
+    def _set_quantize_s(self, module):
+        # Set the quantization step size before each patched forward call
+        # the quantization step size s is set in compute_s
+        self.FF_quantizer.compute_s(module.FFconv.parametrizations.weight.original)
+        self.FB_quantizer.compute_s(module.FBconv.parametrizations.weight.original)
+        # For saving and loading purpose
+        # module should be exactly self.ode_block
+        module.s_ff.copy_(self.FF_quantizer.s_w)
+        module.s_fb.copy_(self.FB_quantizer.s_w)
+        # For calculation in the wrapper
+        self.s_ff, self.s_fb = self.FF_quantizer.s_w, self.FB_quantizer.s_w
+
+    def _update_vals(self, module, inputs):
+        # Compute quantization step size first
+        self._set_quantize_s(module)
+
+        # Reset values based on new s_ff and s_fb before forward
+        self.alpha = self.s_fb * self.s_ff
+        self.beta = self.q * self.s_fb
+        self.beta_c = self.beta * self.k / self.R
+        self.inp_scale = self.q if self.is_first else 1
+
+        # The original patch
+        self.time_scaler = self.get_time_scaler()
+        self._scale_time_dynamically(module)
+        self._scale_act_fn_dynamically()
+
+        # Todo: During training, we have to scale back the last activation, but during test,
+        #  this seems to be removable.
+        self.out_scale = self.q if self.is_last else 1
+
+        return None
+
+    def _scale_time_dynamically(self, module):
+        # scale integration time based on s_fb
+        _R = self.s_R if self.s_R is not None else self.R
+        end_time_scaler = _R * _R * self.C / (self.k * self.alpha)
+        module.integration_time = self.orig_integration_time * end_time_scaler
+
+        if self._has_init_ode:
+            module.option_init = self._scale_time_impl(deepcopy(self.orig_option_init), end_time_scaler)
+        if self._patch_conv:
+            module.option_patch = self._scale_time_impl(deepcopy(self.orig_option_patch), end_time_scaler)
+        module.option_aca = self._scale_time_impl(deepcopy(self.orig_option_aca), end_time_scaler)
+
+    def _scale_act_fn_dynamically(self):
+        # ReLU6*beta_c
+        act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
+        if "relu6" in act_fn_cls or "relux" in act_fn_cls:
+            self.ode_block.act_fn.set_scale(min(6 * self.beta_c, self.v_dd))
+        elif "hardtanh" in act_fn_cls:
+            # Ignore hardtanh branch for now
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),
+                                                max_val=min(self.beta_c, self.v_dd))
 
 
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
@@ -1875,6 +2250,9 @@ ODEWrapper_CLASSES = {
     "ODEWrapper2State": ODEWrapper2State,
     "QATTester2State": QATTester2State,
     "QATWrapper2State": QATWrapper2State,
+    "ODEWrapper1State": ODEWrapper1State,
+    "QATTester1State": QATTester1State,
+    "QATWrapper1State": QATWrapper1State,
 }
 
 QUANTIZER_CLASSES = {

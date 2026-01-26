@@ -235,7 +235,7 @@ class EntropyQuantHelper(QuantHelper):
 class QuantConv2d(nn.Module):
     def __init__(self, conv: nn.Conv2d, w_quant, act_quant,
                  w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
-                 agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+                 agg_bits=32, sigma_lsb=0.6, pvt_level=None, max_inp=None):
         super().__init__()
         self.conv = conv
         self.w_q_helper = w_quant_cls(**w_quant)
@@ -245,6 +245,7 @@ class QuantConv2d(nn.Module):
         self.adc = adc_quant_cls(quant_type="per_tensor", sym_quant=True, n_bits=self.agg_bits,
                                  static=True, channel_dim=1)
         self.pvt_level = pvt_level
+        self.max_inp = max_inp
 
     @torch.no_grad()
     def _apply_noise(self, p, p_type="weight"):
@@ -256,11 +257,7 @@ class QuantConv2d(nn.Module):
             return p + getattr(self, err_type)
         return p
 
-    def forward(self, x):
-        x_q = self.act_q_helper(x)
-        w_q = self.w_q_helper(self.conv.weight)
-        w_q = self._apply_noise(w_q, "weight")
-
+    def _fwd_impl(self, x_q, w_q):
         x_q = F.conv2d(x_q, w_q, bias=None, stride=self.conv.stride, padding=self.conv.padding,
                        groups=self.conv.groups, dilation=self.conv.dilation)
         if hasattr(self.adc, "s_q") and self.sigma_lsb is not None and self.sigma_lsb > 0.0:
@@ -272,16 +269,40 @@ class QuantConv2d(nn.Module):
         if q_scale.ndim > 0:
             q_scale = q_scale.view(1, -1, 1, 1)
         x_q = x_q / q_scale
-        if self.conv.bias is None:
-            return x_q
+        return x_q
+
+    def forward(self, x):
+        x_q = self.act_q_helper(x)
+        w_q = self.w_q_helper(self.conv.weight)
+        w_q = self._apply_noise(w_q, "weight")
+
+        inp_num = w_q.shape.numel() / w_q.shape[0]
+        if self.max_inp is None or self.max_inp > inp_num:
+            if self.conv.bias is None:
+                return self._fwd_impl(x_q, w_q)
+            return self._fwd_impl(x_q, w_q) + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
         else:
-            return x_q + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
+            C_out, C_in, k_h, k_w = w_q.shape
+            max_c_in = max(1, int(self.max_inp) // (k_h * k_w))
+            max_c_in = min(max_c_in, C_in)
+
+            out = None
+            for start in range(0, C_in, max_c_in):
+                end = min(start + max_c_in, C_in)
+                x_slice = x_q[:, start:end, :, :]
+                w_slice = w_q[:, start:end, :, :]
+
+                y_part = self._fwd_impl(x_slice, w_slice)
+                out = y_part if out is None else out + y_part
+            if self.conv.bias is None:
+                return out
+            return out + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
 
 
 class QuantConvTranspose2d(nn.Module):
     def __init__(self, conv_transpose: nn.ConvTranspose2d, w_quant, act_quant,
                  w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
-                 agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+                 agg_bits=32, sigma_lsb=0.6, pvt_level=None, max_inp=None):
         super().__init__()
         self.conv = conv_transpose
         self.w_q_helper = w_quant_cls(**w_quant)
@@ -291,6 +312,7 @@ class QuantConvTranspose2d(nn.Module):
         self.adc = adc_quant_cls(quant_type="per_tensor", sym_quant=True, n_bits=self.agg_bits,
                                  static=True, channel_dim=1)
         self.pvt_level = pvt_level
+        self.max_inp = max_inp
 
     @torch.no_grad()
     def _apply_noise(self, p, p_type="weight"):
@@ -302,11 +324,7 @@ class QuantConvTranspose2d(nn.Module):
             return p + getattr(self, err_type)
         return p
 
-    def forward(self, x):
-        x_q = self.act_q_helper(x)
-        w_q = self.w_q_helper(self.conv.weight)
-        w_q = self._apply_noise(w_q, "weight")
-
+    def _fwd_impl(self, x_q, w_q):
         x_q = F.conv_transpose2d(x_q, w_q, bias=None, stride=self.conv.stride,
                                  padding=self.conv.padding, output_padding=self.conv.output_padding,
                                  groups=self.conv.groups, dilation=self.conv.dilation)
@@ -319,15 +337,40 @@ class QuantConvTranspose2d(nn.Module):
         if q_scale.ndim > 0:
             q_scale = q_scale.view(1, -1, 1, 1)
         x_q = x_q / q_scale
-        if self.conv.bias is None:
-            return x_q
+        return x_q
+
+    def forward(self, x):
+        x_q = self.act_q_helper(x)
+        w_q = self.w_q_helper(self.conv.weight)
+        w_q = self._apply_noise(w_q, "weight")
+
+        inp_num = w_q.shape.numel() / w_q.shape[1]
+        if self.max_inp is None or self.max_inp > inp_num:
+            if self.conv.bias is None:
+                return self._fwd_impl(x_q, w_q)
+            return self._fwd_impl(x_q, w_q) + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
         else:
-            return x_q + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
+            C_in, C_out_per_g, k_h, k_w = w_q.shape
+            max_c_in = max(1, int(self.max_inp) // (k_h * k_w))
+            max_c_in = min(max_c_in, C_in)
+
+            out = None
+            for start in range(0, C_in, max_c_in):
+                end = min(start + max_c_in, C_in)
+                x_slice = x_q[:, start:end, :, :]
+                w_slice = w_q[start:end, :, :, :]
+
+                y_part = self._fwd_impl(x_slice, w_slice)
+                out = y_part if out is None else out + y_part
+            if self.conv.bias is None:
+                return out
+            return out + self._apply_noise(self.conv.bias.view(1, -1, 1, 1), "bias")
+
 
 class QuantLinear(nn.Module):
     def __init__(self, linear: nn.Linear, w_quant, act_quant,
                  w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
-                 agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+                 agg_bits=32, sigma_lsb=0.6, pvt_level=None, max_inp=None):
         super().__init__()
         self.linear = linear
         self.w_q_helper = w_quant_cls(**w_quant)
@@ -337,6 +380,7 @@ class QuantLinear(nn.Module):
         self.adc = adc_quant_cls(quant_type="per_tensor", sym_quant=True, n_bits=self.agg_bits,
                                  static=True, channel_dim=1)
         self.pvt_level = pvt_level
+        self.max_inp = max_inp
 
     @torch.no_grad()
     def _apply_noise(self, p, p_type="weight"):
@@ -348,11 +392,7 @@ class QuantLinear(nn.Module):
             return p + getattr(self, err_type)
         return p
 
-    def forward(self, x):
-        x_q = self.act_q_helper(x)
-        w_q = self.w_q_helper(self.linear.weight)
-        w_q = self._apply_noise(w_q, "weight")
-
+    def _fwd_impl(self, x_q, w_q):
         x_q = F.linear(x_q, w_q, bias=None)
         if hasattr(self.adc, "s_q") and self.sigma_lsb is not None and self.sigma_lsb > 0.0:
             x_q += torch.randn_like(x_q) * self.sigma_lsb / self.adc.s_q
@@ -362,14 +402,38 @@ class QuantLinear(nn.Module):
         q_scale = self.w_q_helper.s_q * self.act_q_helper.s_q
         if q_scale.ndim > 0:
             q_scale = q_scale.view(1, -1)
-        return x_q / q_scale + self._apply_noise(self.linear.bias, "bias")
+        return x_q / q_scale
+
+    def forward(self, x):
+        x_q = self.act_q_helper(x)
+        w_q = self.w_q_helper(self.linear.weight)
+        w_q = self._apply_noise(w_q, "weight")
+
+        inp_num = w_q.shape[-1]
+        if self.max_inp is None or self.max_inp > inp_num:
+            if self.linear.bias is None:
+                return self._fwd_impl(x_q, w_q)
+            return self._fwd_impl(x_q, w_q) + self._apply_noise(self.linear.bias, "bias")
+        else:
+            in_features = w_q.shape[1]
+            out = None
+            for start in range(0, in_features, int(self.max_inp)):
+                end = min(start + int(self.max_inp), in_features)
+                x_slice = x_q[..., start:end]
+                w_slice = w_q[:, start:end]
+
+                y_part = self._fwd_impl(x_slice, w_slice)
+                out = y_part if out is None else out + y_part
+            if self.linear.bias is None:
+                return out
+            return out + self._apply_noise(self.linear.bias, "bias")
 
 
 def replace_with_quant_layers(model: nn.Module, w_conv_quant, act_conv_quant,
                               w_conv_trans_quant, act_conv_trans_quant,
                               w_linear_quant, act_linear_quant,
                               w_quant_cls=QuantHelper, act_quant_cls=QuantHelper, adc_quant_cls=QuantHelper,
-                              agg_bits=32, sigma_lsb=0.6, pvt_level=None):
+                              agg_bits=32, sigma_lsb=0.6, pvt_level=None, max_inp=None):
     # Todo: How do we set this correctly for possibly first stem conv?
     for _name, _child in model.named_children():
         if isinstance(_child, (QuantConv2d, QuantConvTranspose2d, QuantLinear)):
@@ -379,25 +443,25 @@ def replace_with_quant_layers(model: nn.Module, w_conv_quant, act_conv_quant,
             setattr(model, _name, QuantConv2d(_child, w_quant=w_conv_quant, act_quant=act_conv_quant,
                                               w_quant_cls=w_quant_cls, act_quant_cls=act_quant_cls,
                                               adc_quant_cls=adc_quant_cls, agg_bits=agg_bits,
-                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level))
+                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level, max_inp=max_inp))
 
         elif isinstance(_child, nn.ConvTranspose2d):
             setattr(model, _name, QuantConvTranspose2d(_child, w_quant=w_conv_trans_quant, act_quant=act_conv_trans_quant,
                                               w_quant_cls=w_quant_cls, act_quant_cls=act_quant_cls,
                                               adc_quant_cls=adc_quant_cls, agg_bits=agg_bits,
-                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level))
+                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level, max_inp=max_inp))
 
         elif isinstance(_child, nn.Linear):
             setattr(model, _name, QuantLinear(_child, w_quant=w_linear_quant, act_quant=act_linear_quant,
                                               w_quant_cls=w_quant_cls, act_quant_cls=act_quant_cls,
                                               adc_quant_cls=adc_quant_cls, agg_bits=agg_bits,
-                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level))
+                                              sigma_lsb=sigma_lsb, pvt_level=pvt_level, max_inp=max_inp))
 
         replace_with_quant_layers(_child, w_conv_quant, act_conv_quant,
                                   w_conv_trans_quant, act_conv_trans_quant,
                                   w_linear_quant, act_linear_quant,
                                   w_quant_cls, act_quant_cls, adc_quant_cls,
-                                  agg_bits, sigma_lsb, pvt_level)
+                                  agg_bits, sigma_lsb, pvt_level, max_inp)
 
 
 QUANT_HELPER_CLS = {

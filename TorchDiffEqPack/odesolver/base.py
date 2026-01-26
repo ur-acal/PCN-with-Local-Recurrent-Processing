@@ -162,8 +162,11 @@ class ODESolver(nn.Module):
     def update_t_end(self):
         # update t_end
         if self.t_eval is None or self.t_eval_ind == (self.t_eval.numel()-1):
+            # print("Set t_end to None, previous t_end: {}".format(self.t_end))
             self.t_end = None
         else:
+            # print("Updating t_end to: {}, previous t_end: {}, t_eval.numel(): {}, t_eval_ind: {}".format(
+            #     self.t_eval[self.t_eval_ind + 1], self.t_end, self.t_eval.numel(), self.t_eval_ind))
             self.t_eval_ind = self.t_eval_ind + 1
             self.t_end = self.t_eval[self.t_eval_ind]
 
@@ -281,7 +284,7 @@ class ODESolver(nn.Module):
             print('Error, Length of evaluated results is 0, please check')
         return out
 
-    def evaluate_dense_mode(self, t_eval, scipy_mode = True, **kwargs):# evaluate at time points in t_eval, with dense mode.
+    def evaluate_dense_mode(self, t_eval, scipy_mode = True, print_content=True, **kwargs):# evaluate at time points in t_eval, with dense mode.
         all_evaluations = []
 
         t_eval = self.check_t(t_eval)
@@ -301,13 +304,13 @@ class ODESolver(nn.Module):
                     ind += 1
 
             if not ind_found:
-                print('Evaluation time: {} outside integration range.'.format(_t_eval))
+                print('Evaluation time: {} outside integration range.'.format(_t_eval)) if print_content else None
                 if torch.abs(self.dense_states['t_start'][0] - _t_eval) > torch.abs(self.dense_states['t_start'][-1] - _t_eval):
                     ind = -1
-                    print('Extrapolate using the last interval')
+                    print('Extrapolate using the last interval') if print_content else None
                 else:
                     ind = 0
-                    print('Extrapolate using the first interval')
+                    print('Extrapolate using the first interval') if print_content else None
 
             # evaluate by cubic spline interpolation
             t_start, t_end = self.dense_states['t_start'][ind], self.dense_states['t_end'][ind]
@@ -326,41 +329,49 @@ class ODESolver(nn.Module):
     def step(self, *args, **kwargs):
         pass
 
+    @staticmethod
+    def _all_zero(_sigma):
+        if torch.is_tensor(_sigma):
+            return torch.count_nonzero(_sigma) == 0
+        return _sigma == 0.0
+
     def addi_noisy_update_and_proj(self, h, y_current):
         if self.eps is not None:
             if isinstance(self.eps, tuple):
-                _std = ((h ** 0.5) * _eps for _eps in self.eps)
-                y_current = tuple(_y + _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                _std = tuple((h ** 0.5) * _eps for _eps in self.eps)
+                y_current = tuple(_y if self._all_zero(_sigma)
+                                  else _y + _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                   for _y, _sigma in zip(y_current, _std))
-            else:
+            elif not self._all_zero(self.eps):
                 _std = (h ** 0.5) * self.eps
                 y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                   for _y in y_current)
-            if hasattr(self, "proj_fn"):
-                y_current = tuple(self.proj_fn(_y) for _y in y_current)
+        if hasattr(self, "proj_fn"):
+            y_current = tuple(self.proj_fn(_y) for _y in y_current)
         return y_current
 
     def mult_noisy_update_and_proj(self, h, y_current):
         if self.eps is not None:
             if isinstance(self.eps, tuple):
-                _std = ((h ** 0.5) * _eps for _eps in self.eps)
-                y_current = tuple(_y + _y * _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                _std = tuple((h ** 0.5) * _eps for _eps in self.eps)
+                y_current = tuple(_y if self._all_zero(_sigma)
+                                  else _y + _y * _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                   for _y, _sigma in zip(y_current, _std))
-            else:
+            elif not self._all_zero(self.eps):
                 _std = (h ** 0.5) * self.eps
                 y_current = tuple(_y + _y * _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
                                   for _y in y_current)
-            if hasattr(self, "proj_fn"):
-                # print("------------------------------------")
-                # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(),
-                #                                                       y_current[0].min()))
-                y_current = tuple(self.proj_fn(_y) for _y in y_current)
-                # print("after proj_fn _y mean: {}, max: {}, min: {}".format(y_current[0].mean(), y_current[0].max(),
-                #                                              y_current[0].min()))
-                # print("------------------------------------")
+        if hasattr(self, "proj_fn"):
+            # print("------------------------------------")
+            # print("dt: {}, _y mean: {}, max: {}, min: {}".format( h_current, y_current[0].mean(), y_current[0].max(),
+            #                                                       y_current[0].min()))
+            y_current = tuple(self.proj_fn(_y) for _y in y_current)
+            # print("after proj_fn _y mean: {}, max: {}, min: {}".format(y_current[0].mean(), y_current[0].max(),
+            #                                              y_current[0].min()))
+            # print("------------------------------------")
         return y_current
 
-    def integrate_predefined_grids(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None):
+    def integrate_predefined_grids(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None, full_traj=False):
 
         if torch.is_tensor(y0):
             y0 = (y0,)
@@ -385,6 +396,7 @@ class ODESolver(nn.Module):
         predefine_steps = predefine_steps.float().to(self.y0[0].device)
 
         all_evaluations = []
+        all_t_steps, all_traj = [], []
         # print(len(predefine_steps))
         # pydevd.settrace(suspend=True, trace_only_current_thread=True)
 
@@ -396,6 +408,7 @@ class ODESolver(nn.Module):
         t_current = self.t0
         y_current = y0
         # print(steps)
+        point = 0.0
         for _iter in range(time_points.numel()):
             point = time_points[_iter]
             self.neval += 1
@@ -410,6 +423,9 @@ class ODESolver(nn.Module):
             else:
                 y_current = self.addi_noisy_update_and_proj(h=point-t_current, y_current=y_current)
 
+            if full_traj:
+                # Append non-interpolated points for fixed grid only.
+                all_traj.append(y_current)
             if not self.end_point_mode:
                 self.update_dense_state(t_current, point, y_old, y_current)
                 while (self.t_end is not None) and torch.abs(point - self.t0) >= torch.abs(self.t_end - self.t0) and \
@@ -427,12 +443,17 @@ class ODESolver(nn.Module):
 
         # if have points outside the integration range
         while self.t_end is not None and not self.end_point_mode:
-            print('Evaluation points outside integration range. Please re-specify t0 and t1 s.t. t0 < t_eval < t1 or t1 < t_eval < t0 STRICTLY, and use a FINER grid.')
+            # Note: integration range is specified by time_points above.
+            # Evaluation points is specified by t_eval. The two can disagree with each other due to numerical issues.
+            _big_diff = not torch.allclose(point, self.t_end, atol=1e-15)
+            if _big_diff:
+                print('Evaluation points outside integration range. Please re-specify t0 and t1 s.t. t0 < t_eval < t1 or t1 < t_eval < t0 STRICTLY, and use a FINER grid. point: {}, t_end: {}'.format(point, self.t_end))
             if not self.dense_output:
                 print('DenseOutput mode is not enabled. ')
             else:
-                print('Extrapolate in dense mode')
-                tmp = self.evaluate_dense_mode([self.t_end])
+                if _big_diff:
+                    print('Extrapolate in dense mode')
+                tmp = self.evaluate_dense_mode([self.t_end], print_content=_big_diff)
                 if self.tensor_input:
                     tmp = (tmp, )
                 all_evaluations.append(tmp)
@@ -441,6 +462,8 @@ class ODESolver(nn.Module):
         if self.end_point_mode:
             all_evaluations = y_current
 
+        if full_traj:
+            return self.concate_results(all_traj)
         out = self.concate_results(all_evaluations)
         if self.tensor_input:
             if not torch.is_tensor(out):

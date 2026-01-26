@@ -3,6 +3,7 @@ import glob
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,7 +27,28 @@ def get_parametrized_weight_mods(model):
     return out
 
 
-def load_and_register_buffer(model: nn.Module, sd, device, parametrized_map=None):
+def load_and_register_buffer(model: nn.Module, sd, device, parametrized_map=None, load_weight_only=False):
+    if load_weight_only:
+        # Load original un-parametrized weights only for the full_param checkpoints
+        # Works for:
+        # 1. Keep finetuning previously fine-tuned models;
+        # 2. Loading fine-tuned model and test with a different setting as used in finetuning.
+        _sd = {}
+        for k in model.state_dict().keys():
+            if not (k == "weight" or k.endswith(".weight")):
+                continue
+
+            if k in sd:
+                _sd[k] = sd[k]
+                continue
+
+            parent_name, sep, child = k.rpartition(".")  # child == "weight"
+            _k = f"{parent_name}.parametrizations.weight.original" if parent_name else "parametrizations.weight.original"
+            if _k in sd:
+                _sd[k] = sd[_k]
+
+        return model.load_state_dict(_sd, strict=False)
+
     inc = model.load_state_dict(sd, strict=False)
     unexpected = list(getattr(inc, "unexpected_keys", []))
     if len(unexpected) == 0:
@@ -53,7 +75,7 @@ def load_and_register_buffer(model: nn.Module, sd, device, parametrized_map=None
 
 
 def get_quant_model(net, quant_cls, act_quant_cls, sigma_lsb, calib_loader, pvt_level=None, agg_bits=8,
-                    w_quant_type="per_tensor", act_perc=0.9999, w_bits=4, act_bits=4, device="cpu"):
+                    w_quant_type="per_tensor", act_perc=0.9999, w_bits=4, act_bits=4, max_inp=None, device="cpu"):
     pc_conv_cls = net.PcConvs[0].__class__.__name__
     quant_scheme = QUANT_SCHEME_PC.get(pc_conv_cls, QUANT_SCHEME_PC["default"])
     for _k, _vd in quant_scheme.items():
@@ -69,12 +91,30 @@ def get_quant_model(net, quant_cls, act_quant_cls, sigma_lsb, calib_loader, pvt_
                               w_linear_quant=quant_scheme["w_linear"], act_linear_quant=quant_scheme["act_linear"],
                               w_quant_cls=QUANT_HELPER_CLS[quant_cls], act_quant_cls=QUANT_HELPER_CLS[act_quant_cls],
                               adc_quant_cls=QUANT_HELPER_CLS[act_quant_cls], agg_bits=agg_bits,
-                              sigma_lsb=sigma_lsb, pvt_level=pvt_level)
+                              sigma_lsb=sigma_lsb, pvt_level=pvt_level, max_inp=max_inp)
     # Run one forward batch for calibration
     if calib_loader is not None:
         calib_batch = next(iter(calib_loader))[0].to(device)
         _ = net(calib_batch)
     return quant_scheme
+
+
+def format_df_col_name(col, col_fmt, data_type="R_vs_SpinV"):
+    if data_type == "R_vs_SpinV":
+        var_name = "v_spin" if col.endswith("X") else "R"
+        v_ctrl = col.split("Vctrl=")[1].split(",")[0].replace(".", "p")
+        temp = col.split("temperature=")[1].split(")")[0].replace(".", "p")
+        return col_fmt.format(v_ctrl, temp, var_name)
+    return col
+
+
+def load_and_prepare_df(dir_path=os.path.dirname(os.path.abspath(__file__)), data_type="R_vs_SpinV", **kwargs):
+    data_dir = os.path.join(dir_path, "hardware_data")
+    if data_type == "R_vs_SpinV":
+        file_name = "CU_Resis_vs_Spin_V_Finer.csv"
+        col_fmt = "Vctrl{}Temp{}_{}"
+        df = pd.read_csv(os.path.join(data_dir, file_name))
+        df = df.rename(columns={_c: format_df_col_name(_c, col_fmt, data_type) for _c in df.columns})
 
 
 # color space

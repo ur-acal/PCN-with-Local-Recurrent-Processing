@@ -25,7 +25,7 @@ class TrainerCiFar(object):
                  loss_fn=nn.CrossEntropyLoss(), quant_params=None, q_calib_bs=256,
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
-                 eval_every=1, img_type="rgb", noise_level=None, noise_type=None,
+                 eval_every=1, img_type="rgb", noise_level=None, task="cifar10", noise_type=None,
                  distill_type=None, teacher=None, distill_T=1, distill_w="1|0|0"):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         logging.warning('----- Using {} device -----'.format(self.device))
@@ -59,7 +59,7 @@ class TrainerCiFar(object):
         if noise_level is not None:
             self.noisy_model = WrappedNoisyModel(model=self.model, noise_level=noise_level, noise_type=noise_type)
 
-        self._prepare_cifar(img_type)
+        self._prepare_cifar(img_type, task)
         if distill_type is not None and teacher is not None:
             self.loss_fn = self._get_distill_cls(distill_type, distill_T)
             self.teacher = teacher.to(self.device)
@@ -91,14 +91,26 @@ class TrainerCiFar(object):
             _ = self.model(calib_batch)
         logging.warning("Calibration done with calib batch: {}".format(calib_batch.shape))
 
+    @staticmethod
+    def max_param_change(before, after):
+        # before = {n: copy.deepcopy(p.detach().clone()) for n, p in m.named_parameters()}
+        # after = {n: p.detach() for n, p in m.named_parameters()}
+        mx = 0.0
+        arg = None
+        for n in before:
+            d = (before[n] - after[n]).abs().max().item()
+            if d > mx:
+                mx = d
+                arg = n
+        print("max |delta w| = {}".format(mx))
+
     def train(self):
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0
         best_model_path = None
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
-            with torch.autograd.set_detect_anomaly(True):
-                train_loss = self.train_one_epoch(epoch)
+            train_loss = self.train_one_epoch(epoch)
             if (epoch + 1) % self.eval_every == 0:
                 train_acc, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, _, _ = self.evaluate(self.val_dataloader)
@@ -269,7 +281,7 @@ class TrainerCiFar(object):
         else:
             raise ValueError("Unknown optimizer: {}".format(optim_type))
 
-    def _prepare_cifar(self, img_type):
+    def _prepare_cifar(self, img_type, task):
         """
         Todo: Actually the validation dataset should be split from the train_set.
         After the split, we can change the scheduler into other types depending on the validation result.
@@ -322,13 +334,13 @@ class TrainerCiFar(object):
         elif img_type == "scanGFI":
             with tempfile.TemporaryDirectory() as tmpdir:
                 conf_file = os.path.join(tmpdir, "config.json")
-                subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+                subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
                 with open("{}".format(conf_file)) as fp:
                     scangen_config = json.load(fp)
                 self.train_set = MyNoiseCIFARDataset(
                     root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                       "cifar-10-data", img_type),
-                    input_name="cifar10",
+                    input_name=task,
                     train=True,
                     noise_config=scangen_config["noise"],
                     device=self.device,
@@ -340,7 +352,7 @@ class TrainerCiFar(object):
                 self.val_set = MyNoiseCIFARDataset(
                     root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                       "cifar-10-data", img_type),
-                    input_name="cifar10",
+                    input_name=task,
                     train=False,
                     noise_config=scangen_config["noise"],
                     device=self.device,

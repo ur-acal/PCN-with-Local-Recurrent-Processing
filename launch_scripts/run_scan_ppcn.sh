@@ -4,12 +4,21 @@ EXP="no_bn_pcn_1122_FFFBReLU6_scanGFI"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 
+TASK="cifar100"
+if [[ "$TASK" == "cifar100" ]]; then
+  N_CLASSES=100
+else
+  N_CLASSES=10
+fi
+
 PCCONV="FFFBReLU6NoLastConvYasX"
 
 # No 2 - Small
 python train_cifar.py \
   --optim         "SGD" \
   --img_type      "scanGFI" \
+  --task          "$TASK" \
+  --num_classes   "$N_CLASSES" \
   --num_epochs    150 \
   --inp_channels  4  32 64 64 64 \
   --out_channels  32 64 64 64 64 \
@@ -30,6 +39,8 @@ python train_cifar.py \
 python train_cifar.py \
   --optim         "SGD" \
   --img_type      "scanGFI" \
+  --task          "$TASK" \
+  --num_classes   "$N_CLASSES" \
   --num_epochs    150 \
   --inp_channels  4  32 32 64 64  128 128 \
   --out_channels  32 32 64 64 128 128 128 \
@@ -50,6 +61,8 @@ python train_cifar.py \
 python train_cifar.py \
   --optim         "SGD" \
   --img_type      "scanGFI" \
+  --task          "$TASK" \
+  --num_classes  "$N_CLASSES" \
   --num_epochs    150 \
   --inp_channels  4  32 64 64  128 \
   --out_channels  32 64 64 128 128 \

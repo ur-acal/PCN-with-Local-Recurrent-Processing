@@ -179,12 +179,124 @@ class MVMConv(nn.Module):
         for _k, _v in meta.items():
             setattr(self, _k, _v)
 
+        self.csv_enabled = False
+        self.code_idx_mat = None
+        self.v_grid, self.R_codes, self.R_left, self.R_slope = None, None, None, None
+        self.proj_fn = None
+        self.R = None
+
+    def enable_csv(self, v_grid, R_codes, R_left, R_slope, proj_fn, R):
+        self.csv_enabled = True
+
+        self.v_grid = v_grid
+        self.R_codes = R_codes
+        self.R_left = R_left
+        self.R_slope = R_slope
+        self.proj_fn = proj_fn
+        self.R = R
+
+        self.code_idx_mat = self._build_code_idx_mat()
+
+    def _values_to_code_idx(self, values):
+        # The input values is the weight matrix values.
+        # This function converts that to the column index in self.R_table.
+        w_abs = values.abs()
+        zero_mask = w_abs <= 0
+        w_abs = w_abs.clamp(min=1e-12)
+
+        # R_ij = R / W_ij
+        # W must be quantized before such that R_ij can correspond to one column in the R_table
+        R_hat = self.R / w_abs
+        code_idx = (R_hat[:, None] - self.R_codes[None, :]).abs().argmin(dim=1)
+        code_idx[zero_mask] = -1
+        return code_idx
+
+    def _build_code_idx_mat(self):
+        # Returns a list of tuples
+        # The first element of the tuple is code idx
+        # The second element of the tuple is a sparse matrix storing
+        # the signs of values that corresponds to that code idx in the original matrix.
+        mat_coo = self.mat.to_sparse_coo().coalesce()
+        idx = mat_coo.indices()
+        vals = mat_coo.values()
+
+        code_idx_vals = self._values_to_code_idx(vals)  # (nnz,); Get the column index in the R_table.
+        sign_vals = vals.sign()
+
+        # Loop over all possible column indices.
+        # Todo: This only works for R_table with limited number of columns (e.g. 15 for 5-bit quantization).
+        mats = []
+        uniq = torch.unique(code_idx_vals)
+        for j in uniq.tolist():
+            if j < 0:
+                continue
+            sel = (code_idx_vals == j)
+            if sel.any():
+                idx_j = idx[:, sel]
+                val_j = sign_vals[sel].to(vals.dtype)
+                # Sign only
+                mat_j = torch.sparse_coo_tensor(
+                    idx_j, val_j,
+                    size=self.mat.shape,
+                    device=self.mat.device,
+                    dtype=self.mat.dtype
+                ).coalesce().to_sparse_csr()
+                mats.append((int(j), mat_j))
+        return mats
+
+    def _get_R_eff(self, v, code_idx):
+        # Performs interpolation based on current input value and weight value.
+        # v is the current spin state.
+        # i,j is to pick a correct interpolant.
+        if getattr(self, "proj_fn", None) is not None:
+            v = self.proj_fn(v)
+
+        _i = torch.bucketize(v, self.v_grid) - 1
+        _i = _i.clamp(min=0, max=self.v_grid.numel() - 2)
+
+        M = self.R_codes.numel()
+        v_flat, i_flat = v.reshape(-1), _i.reshape(-1)
+
+        if torch.is_tensor(code_idx):
+            if code_idx.numel() == 1:
+                j = int(code_idx.item())
+                j = min(max(j, 0), M - 1)
+                pos = i_flat * M + j
+            else:
+                j_flat = code_idx.to(torch.long).reshape(-1).clamp(0, M - 1)
+                pos = i_flat * M + j_flat
+        else:
+            j = int(code_idx)
+            j = min(max(j, 0), M - 1)
+            pos = i_flat * M + j
+
+        R_left_sel = self.R_left.reshape(-1)[pos]
+        R_slope_sel = self.R_slope.reshape(-1)[pos]
+        v_sel = self.v_grid[i_flat]
+
+        R_eff_flat = R_left_sel + R_slope_sel * (v_flat - v_sel)
+        return R_eff_flat.reshape_as(v)
+
     def forward(self, x):
         batch_size, input_channels, input_h, input_w = x.shape
         x = x.view(batch_size, -1).t()
         output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
         output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
-        return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
+
+        if not self.csv_enabled:
+            return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
+
+        out = None
+        for (j, mat_j) in self.code_idx_mat:
+            R_eff_j = self._get_R_eff(x, j)
+            x_j = x / R_eff_j
+            y_j = torch.sparse.mm(mat_j, x_j)
+            out = y_j if out is None else out + y_j
+
+        if out is None:
+            out = torch.sparse.mm(self.mat, x)
+        out = out * self.R
+        return out.t().view(batch_size, self.meta["out_chan"], output_h, output_w)
 
     @property
     def weight(self):
@@ -200,7 +312,8 @@ class MVMConv(nn.Module):
         return inp_summed.sqrt().view(1, out_chan, output_h, output_w)
 
 class Validator(nn.Module):
-    def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, **kwargs):
+    def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, wrapper=None,
+                 record_full_traj=False, t_end_sf=1.0, **kwargs):
         super().__init__()
         # The model should contain conv layers only. All transposed conv layers should be converted to conv layers.
         # The model needs to be converted to ode blocks and wrapped with wrapper before.
@@ -210,6 +323,9 @@ class Validator(nn.Module):
         self.exp_w_path = os.path.join(expanded_weight_dir, "expanded_weights_{}.pth")
         os.makedirs(expanded_weight_dir, exist_ok=True)
         self.dataloader = test_dataloader
+        self.wrappers = wrapper
+        self.record_full_traj = record_full_traj
+        self.t_end_sf = t_end_sf
 
         self.unroll_or_load()
         self.result_path = result_path
@@ -252,7 +368,10 @@ class Validator(nn.Module):
             def post_hook(mod, inputs, output):
                 # Replace plain conv with unrolled weights
                 unrolled, meta = stored[mod_name]["weight"], stored[mod_name]["meta"]
-                setattr(parent, mod_name, MVMConv(unrolled, meta))
+                mvm_conv = MVMConv(unrolled, meta)
+                if hasattr(parent, "_nonlinear_R_pkg"):
+                    mvm_conv.enable_csv(**parent._nonlinear_R_pkg)
+                setattr(parent, mod_name, mvm_conv)
                 hook_handlers["pre_hook"].remove()
                 hook_handlers["post_hook"].remove()
 
@@ -263,6 +382,14 @@ class Validator(nn.Module):
             if isinstance(_mod, nn.Conv2d):
                 make_hook(parent=layer, mod_name=_name, m=_mod)
 
+    def _find_unscaled_point(self, steps):
+        if np.allclose(self.t_end_sf, 1.0):
+            return -1
+        t_end_scaled = steps[-1]
+        t_end_gt = t_end_scaled / self.t_end_sf
+        gt_pos = torch.argmin((steps - t_end_gt).abs()).item()
+        return gt_pos
+
     @torch.no_grad()
     def unroll_or_load(self):
         for _idx, _layer in enumerate(self.model.PcConvs):
@@ -270,6 +397,38 @@ class Validator(nn.Module):
 
         # One forward pass to trigger the hooks and unroll the weights
         _ = self.model(next(iter(self.dataloader))[0][:2].to(self.device))
+
+        # If record full trajectory, use forward_full_steps of odeblocks.
+        if self.record_full_traj:
+            assert self.wrappers is not None
+            for _idx, _layer in enumerate(self.model.PcConvs):
+                _w = self.wrappers[_idx]
+                orig_forward = _layer.forward
+
+                def forward_use_full(x, *args, _layer=_layer, w=_w, **kwargs):
+                    x_traj = w.wrap_input(x)
+                    traj, steps = _layer.forward_full_steps(x_traj)
+
+                    # stash for hooks
+                    # should record the exact ode traj; scale output is for accuracy purpose.
+                    if isinstance(traj, (tuple, list)):
+                        _layer._last_full_traj = tuple(
+                            _t.contiguous().reshape(_t.shape[0], _t.shape[1], -1).detach().cpu().numpy()
+                            for _t in traj
+                        )
+                    else:
+                        _layer._last_full_traj = traj.contiguous().reshape(traj.shape[0], traj.shape[1],
+                                                                     -1).detach().cpu().numpy()
+                    _layer._last_full_steps = steps.detach().cpu().numpy() if torch.is_tensor(steps) else steps
+
+                    traj = w.unwrap_output(traj)
+                    traj_main = traj[0] if isinstance(traj, (tuple, list)) else traj
+                    gt_pos = self._find_unscaled_point(steps)
+                    y_last = traj_main[gt_pos]
+                    return y_last
+
+                _layer.forward = forward_use_full
+                _layer._orig_forward = orig_forward
 
     @torch.no_grad()
     def test_unroll(self):
@@ -323,14 +482,19 @@ class Validator(nn.Module):
             # dict_keys(['inp', 'init_res', 'out', 'init_time', 'compute_time', 'FF_mat', 'FB_mat', 'C_ff', 'C_fb'])
             cur_name = "layer_{}".format(_idx)
             res[cur_name] = {}
-            res[cur_name]["init_time"] = _layer.option_init["t1"].cpu().item()
+            res[cur_name]["init_time"] = getattr(_layer, "option_init", {}).get("t1", torch.tensor(0.0)).cpu().item()
             res[cur_name]["compute_time"] = _layer.option_aca["t1"].cpu().item()
             res[cur_name]["FF_mat"] = self._get_csr_data(_layer.FFconv.mat)
             res[cur_name]["FB_mat"] = self._get_csr_data(_layer.FBconv.mat)
-            res[cur_name]["R"] = wrappers[_idx].R
+            res[cur_name]["s_R"] = getattr(wrappers[_idx], "s_R", None)
+            res[cur_name]["R_max"] = getattr(wrappers[_idx], "R_max", None)
+            res[cur_name]["R"] = wrappers[_idx].R if res[cur_name]["s_R"] is None else None
             res[cur_name]["q"] = wrappers[_idx].beta.cpu().item() if isinstance(wrappers[_idx].beta, torch.Tensor) else wrappers[_idx].beta
-            res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item()
-            res[cur_name]["C_fb"] = wrappers[_idx].C_fb
+            res[cur_name]["k"] = getattr(wrappers[_idx], "k", None)
+            res[cur_name]["beta_c"] = wrappers[_idx].beta_c.cpu().item() if hasattr(wrappers[_idx], "beta_c") else None
+            res[cur_name]["C"] = wrappers[_idx].C
+            res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item() if hasattr(wrappers[_idx], "C_ff") else None
+            res[cur_name]["C_fb"] = wrappers[_idx].C_fb if hasattr(wrappers[_idx], "C_fb") else None
 
             _inp_scale = wrappers[_idx].inp_scale
             _out_scale = wrappers[_idx].out_scale
@@ -338,7 +502,10 @@ class Validator(nn.Module):
             def make_capture_init_res(key=cur_name):
                 def capture_init_res(orig_init_y, x, *args, **kwargs):
                     yz = orig_init_y(x, *args, **kwargs)
-                    res[key]["init_res"] = yz[-1].view(yz[-1].shape[0], -1).contiguous().detach().cpu().numpy()
+                    if isinstance(yz, tuple):
+                        res[key]["init_res"] = yz[-1].view(yz[-1].shape[0], -1).contiguous().detach().cpu().numpy()
+                    else:
+                        res[key]["init_res"] = yz.view(yz.shape[0], -1).contiguous().detach().cpu().numpy()
                     return yz
                 return capture_init_res
 
@@ -355,20 +522,35 @@ class Validator(nn.Module):
                 # match the output of the ode solver, we need to multiple out_scale
                 res[key]["out"] = output.view(output.shape[0], -1).contiguous().detach().cpu().numpy() * out_scale
 
+                if self.record_full_traj:
+                    traj = getattr(mod, "_last_full_traj", None)
+                    steps = getattr(mod, "_last_full_steps", None)
+                    if traj is not None and steps is not None:
+                        res[key]["traj"] = traj
+                        res[key]["steps"] = steps
+
             handlers.append(_layer.register_forward_pre_hook(pre_hook))
             handlers.append(_layer.register_forward_hook(post_hook))
         return res, handlers
 
     @torch.no_grad()
-    def gen_validate_data(self, wrappers, n_samples=10):
+    def gen_validate_data(self, wrappers, solver, n_samples=10, sample_inp=None):
         res, handlers = self._register_hook_for_record(wrappers)
 
-        _inp = next(iter(self.dataloader))[0][:n_samples].to(self.device)
-        _ = self.model(_inp)
+        if sample_inp is None:
+            _inp = next(iter(self.dataloader))[0][:n_samples].to(self.device)
+            _ = self.model(_inp)
+            save_name = "{}samples_{}.pkl"
+        else:
+            sample_bs = sample_inp.shape[0]
+            shape_target = next(iter(self.dataloader))[0][:sample_bs].to(self.device)
+            sample_inp = sample_inp.to(self.device).reshape_as(shape_target) / wrappers[0].inp_scale
+            _ = self.model(sample_inp)
+            save_name = "{}samples_spec_inp_{}.pkl"
 
         # Save res and remove hooks via handlers
         os.makedirs(self.result_path, exist_ok=True)
-        sample_path = os.path.join(self.result_path, "{}samples.pkl".format(n_samples))
+        sample_path = os.path.join(self.result_path, save_name.format(n_samples, solver))
         with open(sample_path, "wb") as fp:
             pickle.dump(res, fp)
         for _h in handlers:

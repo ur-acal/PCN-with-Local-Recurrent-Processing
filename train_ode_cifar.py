@@ -24,6 +24,7 @@ def get_args():
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--img_type", type=str, default="rgb")
+    p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
@@ -39,6 +40,7 @@ def get_args():
     p.add_argument("--eval_every", type=int, default=1)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
+    p.add_argument("--ckpt", type=str, default="best")
     # PCNet / PCConv args
     p.add_argument("--inp_channels",  type=int, nargs="+", default=[3,  64, 64, 128, 128, 256, 256, 512],
                    help="list of input-channel sizes, e.g. 3 16 32")
@@ -77,6 +79,8 @@ def get_args():
     p.add_argument("--qat_cls", type=str, choices=list(QUANTIZER_CLASSES.keys()) + [None],
                    default=None)
     p.add_argument("--R", type=float, default=1e5, help="Resistance")
+    p.add_argument("--R_max", type=lambda s: None if s.lower() in {"none", ""} else float(s),
+                   default=None, help="Maximum meaningful Resistance")
     p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
@@ -87,8 +91,8 @@ def get_args():
                         help='noise level in noise inject training. None means normal training without noise injection')
     p.add_argument('--noise_type', default='mul', type=str, choices=['mul', 'add'],
                         help='Multiplicative or additive noise')
-    p.add_argument("--sde_noise_type", type=str, default="mul", choices=["mul", "add"],
-                   help="Only useful when self.eps is set in the ODESolver class")
+    p.add_argument("--sde_noise_type", type=str, default="add", choices=["mul", "add"],
+                   help="Only useful when option['eps'] is set in the ODESolver class")
     # Knowledge distillation related args
     p.add_argument("--kd_type", type=str, choices=list(KD_CLASSES.keys()) + [None],
                    default=None)
@@ -146,6 +150,8 @@ def _constr_model_name(args, rep=1):
         model_name += "{}CosLR{}T0_".format(str(args.learning_rate), args.cosine_t0)
     else:
         model_name += str(args.learning_rate) + 'LR_'
+    if args.task == "cifar100":
+        model_name += "C100_"
     _ksz = args.kernel_size if not isinstance(args.kernel_size, List) else args.kernel_size[0]
     _stride = args.stride if not isinstance(args.stride, List) else args.stride[0]
     model_name += "{}K{}S{}C_".format(_ksz, _stride, max(args.inp_channels)) \
@@ -203,7 +209,7 @@ def load_teacher_model(args):
                   "method": args.t_method, "tol": args.t_tol, "ts_scale": 1, "n_steps": args.t_n_steps}
     # Use the same wrap parameters as the student model
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.t_wrapper], "calib_path": None,
-                      "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": True,
                       # offset_eps None means using Johnson noise
@@ -275,7 +281,7 @@ def main():
         model = pcn_model(**model_args)
         model = model.to("cuda" if torch.cuda.is_available() else "cpu")
     else:
-        ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_best_ckpt.pth")
+        ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
         noisy_params = {"noise_level": 0.0, "weight": None}
         model = load_and_prepare_model(model_path=ckpt_path, device="cuda" if torch.cuda.is_available() else "cpu",
                                        model_struct=pcn_model,
@@ -323,7 +329,7 @@ def main():
     # wrap blocks for QAT
     if args.ode_wrapper is not None:
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
-                          "R": args.R, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q}
         model, _ = wrap_ode_block(model, **wrapper_params)
@@ -339,6 +345,7 @@ def main():
                   img_type=args.img_type)
 
     # Get trainer
+    logging.warning("Training task: {}".format(args.task))
     logging.warning("lr reduce on: {}, max grad norm: {}, cosine annealing T0: {}".format(
         args.lr_reduce_on, args.max_g_norm, args.cosine_t0))
     trainer = TrainerCiFar(
@@ -359,6 +366,7 @@ def main():
         T0            = args.cosine_t0,
         eval_every    = args.eval_every,
         img_type      = args.img_type,
+        task          = args.task,
         noise_level   = args.noise_level,
         noise_type    = args.noise_type,
         distill_type  = args.kd_type,

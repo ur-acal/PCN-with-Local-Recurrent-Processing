@@ -9,7 +9,7 @@ from .base import check_arguments
 
 __all__ = ['odesolve']
 
-def odesolve(func, y0, options, return_solver=False, proj_fn=None, **kwargs):
+def odesolve(func, y0, options, return_solver=False, proj_fn=None, full_traj=False, **kwargs):
     r"""
     Implementation of ICML 2020 paper "Adaptive checkpoint adjoint method for accurate gradient esitmation in Neural ODEs"
 
@@ -77,9 +77,9 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, **kwargs):
         if options['method'].lower() not in  ['sym12async','fixedstep_sym12async']:
             if 't_eval' in options.keys():
                 #assert isinstance(options['t_eval'], list), "t_eval must be list type or None"
-                z1 = solver.integrate(y0=y0,t0=options['t0'], t_eval = options['t_eval'])
+                z1 = solver.integrate(y0=y0, t0=options['t0'], t_eval=options['t_eval'], full_traj=full_traj)
             else:
-                z1 = solver.integrate(y0=y0,t0=options['t0'], t_eval = [options['t1']])
+                z1 = solver.integrate(y0=y0, t0=options['t0'], t_eval=[options['t1']], full_traj=full_traj)
             return z1
 
         elif options['method'].lower() in  ['sym12async','fixedstep_sym12async']: # need to use tuple(y,v) as initial condition instead of y

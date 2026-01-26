@@ -23,6 +23,7 @@ def get_args():
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--img_type",      type=str, default="rgb")
+    p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--eval_every", type=int, default=1)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
@@ -84,6 +85,8 @@ def get_args():
                         default=4, help="Number of bits for the weight quantization")
     p.add_argument("--act_bits", type=int,
                         default=4, help="Number of bits for the weight quantization")
+    p.add_argument("--max_inp", type=int,
+                   default=None, help="Maximum number of inputs for each layer")
     p.add_argument("--test_only", type=str2bool, default=False)
     return p.parse_args()
 
@@ -102,8 +105,10 @@ def _constr_model_name(args, rep=1):
     if not args.use_pc:
         model_name += 'noPC_'
     model_name += str(args.batch_size) + 'BS_' \
-                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers" \
-                  + "_{}Chan_".format(max(args.inp_channels)) \
+                  + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers_"
+    if args.task == "cifar100":
+        model_name += "C100_"
+    model_name += "{}Chan_".format(max(args.inp_channels)) \
                   + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
     if args.tie_method is not None:
@@ -112,10 +117,12 @@ def _constr_model_name(args, rep=1):
         model_name += "_" + args.img_type
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None:
-        if args.qat_cls is None or args.qat_cls == "QATHelper":
+        if args.qat_cls == "QATHelper":
             ft_prefix = "QAT{}w{}a".format(args.w_bits, args.act_bits)
-        else:
+        elif args.qat_cls is not None:
             ft_prefix = "QAT{}w{}a{}".format(args.w_bits, args.act_bits, args.qat_cls)
+        else:
+            ft_prefix = ""
         orig_rep = args.model_name.split("_")[-1]
         model_name = ft_prefix + args.model_name.split(orig_rep)[0] + str(rep) + 'REP'
     return model_name
@@ -208,12 +215,13 @@ def main():
         # ignore noise-aware-training for now
         # Calibration done in the init method of the trainer
         quant_params = {"quant_cls": args.qat_cls, "act_quant_cls": args.act_qat_cls,
-                        "calib_loader": None, "sigma_lsb": None,
+                        "calib_loader": None, "sigma_lsb": None, "max_inp": args.max_inp,
                         "pvt_level": None, "agg_bits": args.agg_bits, "w_quant_type": args.w_quant_type,
                         "act_perc": args.act_perc, "w_bits": args.w_bits, "act_bits": args.act_bits}
         quant_scheme = get_quant_model(model, device=device_, **quant_params)
         logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
 
+    logging.warning("Training task: {}".format(args.task))
     trainer = TrainerCiFar(
         model         = model,
         model_name    = model_name,
@@ -223,6 +231,7 @@ def main():
         weight_decay  = args.weight_decay,
         loss_fn       = loss_fn,
         img_type      = args.img_type,
+        task          = args.task,
         learning_rate = args.learning_rate,
         T0            = args.cosine_t0,
         num_epochs    = args.num_epochs,

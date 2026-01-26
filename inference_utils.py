@@ -34,7 +34,7 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
-def get_test_data(test_bs=2048, img_type="rgb"):
+def get_test_data(test_bs=2048, img_type="rgb", task="cifar10"):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             transform_test = transforms.Compose([
@@ -48,13 +48,13 @@ def get_test_data(test_bs=2048, img_type="rgb"):
     elif img_type == "scanGFI":
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")
-            subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+            subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
             with open("{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             test_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                   "cifar-10-data", img_type),
-                input_name="cifar10",
+                input_name=task,
                 train=False,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
@@ -69,7 +69,7 @@ def get_test_data(test_bs=2048, img_type="rgb"):
     return test_loader
 
 
-def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
+def get_calib_loader(bs=128, n_samples=None, img_type="rgb", task="cifar10"):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             # Todo: Should we keep the random crop here?
@@ -89,13 +89,13 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
     elif img_type == "scanGFI":
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")
-            subprocess.run("uv run scangen create-config {}".format(conf_file), shell=True)
+            subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
             with open("{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             train_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                   "cifar-10-data", img_type),
-                input_name="cifar10",
+                input_name=task,
                 train=True,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
@@ -114,11 +114,11 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb"):
     return calib_dataloader
 
 
-def test_once(net, test_dataloader=None, device='cpu', model_name=None, img_type="rgb"):
+def test_once(net, test_dataloader=None, device='cpu', model_name=None, img_type="rgb", task="cifar10"):
     net = net.to(device)
     net.eval()
     if test_dataloader is None:
-        test_dataloader = get_test_data(128, img_type=img_type)
+        test_dataloader = get_test_data(128, img_type=img_type, task=task)
     _total, _correct = 0, 0
     for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=True):
         inputs, targets = inputs.to(device), targets.to(device)
@@ -233,10 +233,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
     if data_parallel:
         net_ = nn.DataParallel(net_)
-        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device)
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path)
         net_ = net_.module
     else:
-        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device)
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path)
 
     if conv_only:
         log.warning("Replacing all transposed conv with conv")
@@ -291,6 +291,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                     if _name.endswith(('running_mean', 'running_var')):
                         assert torch.allclose(_buf, torch.zeros_like(_buf)) or not torch.allclose(_buf, clean_buffs[_name])
             logging.warning("----- Noise added, sanity check passed -----")
+        else:
+            for _name, _p in net_.named_parameters():
+                logging.warning("name: {}, noisy params mean: {}, median: {}, min: {}, max: {}".format(
+                    _name, _p.mean(), _p.median(), _p.min(), _p.max()))
     logging.warning("----- Model loaded -----")
     return net_
 
@@ -491,7 +495,8 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
                          pc_conv_layer=PCConvNoisy, data_parallel=True, noisy_trials=10, model_name=None,
                          noise_to_bn=False, noise_to_linear=False, fuse_bn=True, cls_scale=1, val_scale=0.0,
                          conv_only=False, pvt_level=None, quant_cls=None, act_quant_cls=None, act_perc=0.9999,
-                         agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, qat_model=False, **kwargs):
+                         agg_bits=8, w_quant_type="per_tensor", w_bits=4, act_bits=4, qat_model=False, max_inp=None,
+                         **kwargs):
     noise_acc, noise_acc_spec = {}, {}
     # Note: noise_level here is the sigma in LSB for modeling activation noise
     for noise_level in sigma_lsb_list:
@@ -506,7 +511,7 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
                 # Convert to quant layers then load state dict
                 # Use loaded calibration result, pass calib_loader with None
                 quant_params = {"quant_cls": quant_cls, "act_quant_cls": act_quant_cls,
-                                "calib_loader": None, "sigma_lsb": noise_level,
+                                "calib_loader": None, "sigma_lsb": noise_level, "max_inp": max_inp,
                                 "pvt_level": pvt_level, "agg_bits": agg_bits, "w_quant_type": w_quant_type,
                                 "act_perc": act_perc, "w_bits": w_bits, "act_bits": act_bits}
             net_ = load_and_prepare_model(model_path, device, model_struct, pc_conv_layer, data_parallel,
@@ -516,7 +521,7 @@ def run_quant_experiment(model_path, test_loader, calib_loader, sigma_lsb_list, 
             if not qat_model:
                 # Load model first, then do quant layer replacement and calibration
                 quant_scheme = get_quant_model(net_, quant_cls=quant_cls, act_quant_cls=act_quant_cls,
-                                               calib_loader=calib_loader, sigma_lsb=noise_level,
+                                               calib_loader=calib_loader, sigma_lsb=noise_level, max_inp=max_inp,
                                                pvt_level=pvt_level, agg_bits=agg_bits, w_quant_type=w_quant_type,
                                                act_perc=act_perc, w_bits=w_bits, act_bits=act_bits, device=device)
                 logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))

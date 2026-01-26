@@ -22,7 +22,7 @@ declare -A BLOCKS_BY_ARCH
 # 6L3p
 BLOCKS_BY_ARCH["A"]="S2NoMinusZChgZMinusNoisyI S2NoMinusZChgZNoisyI"
 # 6L2p
-BLOCKS_BY_ARCH["A2p"]="S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH["A2p"]="S2NoisyIYAsXZAs0 ODEXInitFFFB"
 # 6L2p
 BLOCKS_BY_ARCH["A2"]="S2NoMinusZChgZNoisyI"
 # Tiny 5L1P
@@ -76,7 +76,7 @@ BLOCKS_BY_ARCH["Large9L1P"]="S2NoMinusZChgZNoisyI"
 # 10L1p
 BLOCKS_BY_ARCH["Large10L1P"]="S2NoMinusZChgZNoisyI"
 # 7L2p
-BLOCKS_BY_ARCH["C"]="S2NoMinusZChgZNoisyI"
+BLOCKS_BY_ARCH["C"]="S2NoisyIYAsXZAs0 ODEXInitFFFB"
 # 7L2p
 BLOCKS_BY_ARCH["C2"]="S2NoMinusZChgZNoisyI"
 # 4L2p
@@ -94,12 +94,13 @@ BLOCKS_BY_ARCH["Ker3_D"]="S2NoMinusZChgZNoisyI"
 
 
 # Which ARCH/PCN combos to run
-ARCHES=("DeepM11L56C" "DeepM11L" "DeepMPBE")
+ARCHES=("A2p" "C")
 PCNS=("PCNetNoBatchNorm")
 #IMG_TYPES=( "rgb" "rggb" "cycleisp" )
 IMG_TYPES=( "scanGFI" )
 # patch_node patch_stride patch_cycle patch_pad fold_scalar patch_bs
-CIRC_CONFS=( "8|8|1|0|1" "8|8|2|0|1" )
+#CIRC_CONFS=( "8|8|1|0|1" "8|8|2|0|1" )
+CIRC_CONFS=( "" )
 ###############################################################################################
 
 # Paths
@@ -137,7 +138,7 @@ split_and_submit() {
     ###############################################################################################
     # Change EXP name here
     ###############################################################################################
-    local EXP="no_bn_${pcn}_NODE_1117_2State_scanGFI_Circ_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
+    local EXP="no_bn_${pcn}_NODE_0121_2State_1State_ML_${arch}_${img_type}_${circ_conf:-NoCirc}_Exp"
     ###############################################################################################
 
     echo "Submitting ARCH=${arch} PCN=${pcn} blocks=[${csv}] img_type=[${img_type}] → EXP=${EXP}"
