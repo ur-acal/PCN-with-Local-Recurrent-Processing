@@ -5,6 +5,16 @@
 MAX_TASKS_PER_GPU="${MAX_TASKS_PER_GPU:-1}"
 GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
+###############################################################################################
+# running with
+# module swap slurm slurm/24.05.0.b1
+# ( source ./launch_scripts/slurm_search_config.sh ) \
+#  > ./logs/scheduler_slurm/search_scheduler.log 2>&1 < /dev/null &
+#
+# sched_pid=$!
+# disown -h "$sched_pid"
+###############################################################################################
+
 TASK="${TASK:-cifar100}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-6}"
@@ -29,6 +39,9 @@ SLURM_LOG_DIR="${REPO_ROOT}/logs/slurm_jobs"
 declare -A JOBS_BY_EXP
 MERGE_OUT_DIR="${REPO_ROOT}/shell_utils/parse_res/neural_ode_res"
 MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
+
+SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0128_28l30l32Chan.pkl"
 
 # ---------------------------
 # Generate top-K combinations for a given (chan0, num_layers).
@@ -278,6 +291,18 @@ for exp in "${!JOBS_BY_EXP[@]}"; do
 done
 
 echo "Merged CSVs:"
+CSV_PATHS=()
 for exp in "${!JOBS_BY_EXP[@]}"; do
-  echo "  ${MERGE_OUT_DIR}/${exp}_merged.csv"
+  csv_path="${MERGE_OUT_DIR}/${exp}_merged.csv"
+  echo "  ${csv_path}"
+  [[ -f "${csv_path}" ]] && CSV_PATHS+=( "${csv_path}" )
 done
+
+
+if ((${#CSV_PATHS[@]} > 0)); then
+  echo "[SUMMARY] Writing dict pickle -> ${SUMMARY_PKL_OUT}"
+  python -u "${SUMMARY_CSV_SCRIPT}" --out "${SUMMARY_PKL_OUT}" "${CSV_PATHS[@]}"
+else
+  echo "[SUMMARY] No merged CSVs found; skip pickle summary."
+fi
+
