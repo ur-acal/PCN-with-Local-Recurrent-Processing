@@ -115,10 +115,11 @@ submit_chunk() {
   local pcn="$1" img_type="$2" circ_conf="$3"
   local chan0="$4" num_layers="$5"
   # chunk_tag and chunk_id are used for creating unique EXP for log files
-  # If MAX_TASKS_PER_GPU > 1, chunk_tag is first_comb_tag__to__lat_comb_tag
+  # If MAX_TASKS_PER_GPU > 1, chunk_tag is first_comb_tag__to__last_comb_tag
   local chunk_id="$6" chunk_tag="$7"
   # comb_list contains multiple configs used for training and is separated by new-lines
-  # if MAX_TASKS_PER_GPU > 1. Each string in comb_list is separated by tab.
+  # if MAX_TASKS_PER_GPU > 1.
+  # Each string in comb_list is separated by tab.
   local comb_list="$8"
 
   # Human-readable + unique EXP:

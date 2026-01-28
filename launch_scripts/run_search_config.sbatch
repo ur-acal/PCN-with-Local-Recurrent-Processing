@@ -214,19 +214,18 @@ eval_one_combo_model() {
   mkdir -p "$dir"
 
   local ckpt="best"
-  if [[ "$tag" == "post_ft" ]]; then ckpt="last"; fi
 
   local test_bs=128
 
   local wrapper="ODEWrapper1State"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
-    if [[ "$name" == *QAT* && "$CKPT" != *full_param* ]]; then
+    if [[ "$name" == *QAT* && "$ckpt" != *full_param* ]]; then
       wrapper="QATTester2State"
     else
       wrapper="ODEWrapper2State"
     fi
   else
-    if [[ "$name" == *QAT* && "$CKPT" != *full_param* ]]; then
+    if [[ "$name" == *QAT* && "$ckpt" != *full_param* ]]; then
       wrapper="QATTester1State"
     fi
   fi
@@ -284,6 +283,7 @@ finetune_one_combo_model() {
 
   echo "[FINETUNE] comb=${comb_tag} ${name} (block=${train_block}) → $logfile"
 
+  local ckpt="best"
   local t_end="1.75"
   local qat_wrapper="QATWrapper1State"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
@@ -297,7 +297,7 @@ finetune_one_combo_model() {
   python -u train_ode_cifar.py \
     --task          "${TASK}" \
     --num_classes   "${N_CLASSES}" \
-    --ckpt          "${CKPT}" \
+    --ckpt          "${ckpt}" \
     --optim         "SGD" \
     --learning_rate 0.005 \
     --cosine_t0     20 \
@@ -315,7 +315,7 @@ finetune_one_combo_model() {
     --tol           "${TOL}" \
     --t_end         "${t_end}" \
     --R             "${R_val}" \
-    --R_max         "${R_max}" \
+    --R_max         "${R_MAX}" \
     --C             "${C_val}" \
     --v_dd          "0.2" \
     --w_bits        "${n_bits}" \
