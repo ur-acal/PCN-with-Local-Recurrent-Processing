@@ -350,6 +350,7 @@ class PCNetSepBNRes(PCNetSepBN):
 
 
 PCN_CLASSES = {
+    # Note: Must start with PCNet.
     "PCNet": PCNet,
     "PCNetWithMiddleConv": PCNetWithMiddleConv,
     "PCNetNoBatchNorm": PCNetNoBatchNorm,

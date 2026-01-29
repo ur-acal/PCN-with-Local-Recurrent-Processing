@@ -5,16 +5,16 @@ trap '' HUP   # ignore hangup so the children survive
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
-export R_VAL="50e3"
-export R_MAX="180e3"
+export R_VAL="20e3"
+export R_MAX="300e3"
 #export CKPT="full_param_best"
 export CKPT="best"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
 N_BITS_VALS=()
-N_BITS_VALS=(5)
-#for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
+#N_BITS_VALS=(5)
+for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
 METHOD_VALS=("dopri5")
 CAP_VALS=("49e-15")
@@ -128,7 +128,12 @@ MODEL_NAMES=(
 #  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 #  "QAT5bNT0p15mulQAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_2REP"
+#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_1REP"
+
+  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_10Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP" # 60% during training; does NOT work well with wrapper (57%)
 )
 
 # ─────────────── prepare logs ───────────────

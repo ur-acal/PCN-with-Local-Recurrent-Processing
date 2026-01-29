@@ -8,7 +8,7 @@ mkdir -p "${LOGDIR}"
 STRIDE=(1)
 KSZ=(3)
 PADDING=1 # For ksz=5, padding=2; o.w. padding=1
-TASK="cifar10"
+TASK="cifar100"
 if [[ "$TASK" == "cifar100" ]]; then
   N_CLASSES=100
 else
@@ -22,12 +22,12 @@ python train_ode_cifar.py \
   --task          "$TASK" \
   --num_classes   "$N_CLASSES" \
   --num_epochs    150 \
-  --eval_every    10 \
+  --eval_every    2 \
   --learning_rate 0.01 \
   --offset_eps    0.0 \
-  --inp_channels  4  32 32 64 64  128 128 \
-  --out_channels  32 32 64 64 128 128 128 \
-  --max_pool      0  0  1  0  1   0   0  \
+  --inp_channels  4  32 32 32 64 64 64  128 128 128 \
+  --out_channels  32 32 32 64 64 64 128 128 128 128 \
+  --max_pool      0  0  1  0  0  1  0   0   0  0  \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
@@ -47,36 +47,36 @@ python train_ode_cifar.py \
   --ode_block     "ODEXInitFFFB" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_L_ODEXInitFFFB.log"
 
-python train_ode_cifar.py \
-  --optim         "SGD" \
-  --img_type      "scanGFI" \
-  --task          "$TASK" \
-  --num_classes   "$N_CLASSES" \
-  --num_epochs    150 \
-  --eval_every    10 \
-  --learning_rate 0.01 \
-  --offset_eps    0.0 \
-  --inp_channels  4  32 32 64 64  128 128 \
-  --out_channels  32 32 64 64 128 128 128 \
-  --max_pool      0  0  1  0  1   0   0  \
-  --kernel_size   "${KSZ[@]}" \
-  --padding       "${PADDING}" \
-  --stride        "${STRIDE[@]}" \
-  --avg_pooling   "false" \
-  --dropout       0.25 \
-  --weight_decay  "1e-3" \
-  --lr_reduce_on  "80,122" \
-  --tie_weights   "false" \
-  --tie_bp        "false" \
-  --bypass        "false" \
-  --batch_size    128 \
-  --method        "dopri5" \
-  --tol           "1e-4" \
-  --t_end         "1.75" \
-  --pcn           "PCNetNoBatchNorm" \
-  --pc_conv       "PCConvReLU6" \
-  --ode_block     "S2NoisyIYAsXZAs0" \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_L_S2NoisyIYAsXZAs0.log"
+#python train_ode_cifar.py \
+#  --optim         "SGD" \
+#  --img_type      "scanGFI" \
+#  --task          "$TASK" \
+#  --num_classes   "$N_CLASSES" \
+#  --num_epochs    150 \
+#  --eval_every    10 \
+#  --learning_rate 0.01 \
+#  --offset_eps    0.0 \
+#  --inp_channels  4  32 32 64 64  128 128 \
+#  --out_channels  32 32 64 64 128 128 128 \
+#  --max_pool      0  0  1  0  1   0   0  \
+#  --kernel_size   "${KSZ[@]}" \
+#  --padding       "${PADDING}" \
+#  --stride        "${STRIDE[@]}" \
+#  --avg_pooling   "false" \
+#  --dropout       0.25 \
+#  --weight_decay  "1e-3" \
+#  --lr_reduce_on  "80,122" \
+#  --tie_weights   "false" \
+#  --tie_bp        "false" \
+#  --bypass        "false" \
+#  --batch_size    128 \
+#  --method        "dopri5" \
+#  --tol           "1e-4" \
+#  --t_end         "1.75" \
+#  --pcn           "PCNetNoBatchNorm" \
+#  --pc_conv       "PCConvReLU6" \
+#  --ode_block     "S2NoisyIYAsXZAs0" \
+#  2>&1 | tee "${LOGDIR}/train_${EXP}_L_S2NoisyIYAsXZAs0.log"
 
 #python train_ode_cifar.py \
 #  --optim         "SGD" \
