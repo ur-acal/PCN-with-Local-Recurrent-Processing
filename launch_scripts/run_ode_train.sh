@@ -25,9 +25,9 @@ python train_ode_cifar.py \
   --eval_every    2 \
   --learning_rate 0.01 \
   --offset_eps    0.0 \
-  --inp_channels  4  32 32 32 64 64 64  128 128 128 \
-  --out_channels  32 32 32 64 64 64 128 128 128 128 \
-  --max_pool      0  0  1  0  0  1  0   0   0  0  \
+  --inp_channels  4  32 32 32 64 64  128 128 128 128 \
+  --out_channels  32 32 32 64 64 128 128 128 128 128 \
+  --max_pool      0  0  1  0  1  0   0   0   0  0  \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
   --stride        "${STRIDE[@]}" \
