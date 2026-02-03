@@ -13,6 +13,8 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
+# run with SHOW_COMB_ONLY model
+# SHOW_COMB_ONLY=1 ./launch_scripts/slurm_search_config.sh
 ###############################################################################################
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
@@ -28,8 +30,8 @@ CHAN_0_LIST=( 28 30 32 )
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers..."
 declare -A NUM_LAYERS_BY_CHAN0
-NUM_LAYERS_BY_CHAN0[28]="9 10"
-NUM_LAYERS_BY_CHAN0[30]="8 9 10"
+NUM_LAYERS_BY_CHAN0[28]="13 14 15"
+NUM_LAYERS_BY_CHAN0[30]="11 12 13"
 NUM_LAYERS_BY_CHAN0[32]="7 8 9 10"
 
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
@@ -227,6 +229,11 @@ generate_ruleA_combs() {
 # Inputs:
 #   $1 pcn, $2 img_type, $3 circ_conf, $4 chan0, $5 num_layers, $6 chunk_id, $7 chunk_tag, $8 comb_list
 submit_chunk() {
+  if (( ${SHOW_COMB_ONLY:-0} == 1 )); then
+    # Do NOT submit in show comb only mode.
+    return 0
+  fi
+
   local pcn="$1" img_type="$2" circ_conf="$3"
   local chan0="$4" num_layers="$5"
   # chunk_tag and chunk_id are used for creating unique EXP for log files
@@ -381,11 +388,6 @@ for IMG_TYPE in "${IMG_TYPES[@]}"; do
             fi
           done < <(generate_combs "${CHAN_0}" "${NUM_LAYERS}" "${NUM_COMB_PER_NUM_LAYER}")
 
-          # In show-only mode: stop after printing this (CHAN_0, NUM_LAYERS)
-          if (( SHOW_COMB_ONLY == 1 )); then
-            exit 0
-          fi
-
           # flush remainder
           if (( chunk_count > 0 )); then
             if (( chunk_count == 1 )); then
@@ -400,6 +402,11 @@ for IMG_TYPE in "${IMG_TYPES[@]}"; do
     done
   done
 done
+
+# In show-only mode: stop after printing all combs (CHAN_0, NUM_LAYERS)
+if (( SHOW_COMB_ONLY == 1 )); then
+  exit 0
+fi
 
 # Wait and merge
 for exp in "${!JOBS_BY_EXP[@]}"; do
