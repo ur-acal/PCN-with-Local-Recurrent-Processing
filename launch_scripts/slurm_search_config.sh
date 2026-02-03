@@ -40,14 +40,33 @@ declare -A JOBS_BY_EXP
 MERGE_OUT_DIR="${REPO_ROOT}/shell_utils/parse_res/neural_ode_res"
 MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
 
+SHOW_COMB_ONLY="${SHOW_COMB_ONLY:-0}"   # 1 => print comb_tag only and exit
+COMB_MODE="${COMB_MODE:-balanced_A}"      # choose in (n_params | balanced_A)
+
 SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0128_28l30l32Chan.pkl"
+# Change the saved pickle file name here
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0204_balanced_A.pkl"
 
 # ---------------------------
 # Generate top-K combinations for a given (chan0, num_layers).
 # Output format per line (TAB-delimited, 7 fields):
 #   params \t comb_tag \t chan0 \t num_layers \t inp_str \t out_str \t pool_str
 # ---------------------------
+generate_combs() {
+  local chan0="$1"
+  local num_layers="$2"
+  local k="$3"
+
+  case "$COMB_MODE" in
+    n_params)    generate_top_combs   "$chan0" "$num_layers" "$k" ;;
+    balanced_A)  generate_ruleA_combs "$chan0" "$num_layers" "$k" ;;
+    *)
+      echo "ERROR: Unknown COMB_MODE='$COMB_MODE' (expected: n_params | balanced_A)" >&2
+      return 2
+      ;;
+  esac
+}
+
 generate_top_combs() {
   local chan0="$1"
   local num_layers="$2"
@@ -119,6 +138,89 @@ generate_top_combs() {
   done
 
   printf '%s\n' "${lines[@]}" | sort -nr -k1,1 | head -n "${topk}"
+}
+
+generate_ruleA_combs() {
+  local chan0="$1"
+  local num_layers="$2"
+  local k="$3"
+
+  if (( num_layers < 6 )); then
+    echo "ERROR: NUM_LAYERS must be >= 6 (got ${num_layers})" >&2
+    return 1
+  fi
+
+  local chan1=$((chan0 * 2))
+  local chan2=$((chan0 * 4))
+  local extra=$((num_layers - 6))
+  local q=$((extra / 3))
+  local K2=9  # 3x3
+
+  abs() { local x=$1; (( x < 0 )) && echo $(( -x )) || echo "$x"; }
+  max3() { local a=$1 b=$2 c=$3; local m=$a; (( b>m )) && m=$b; (( c>m )) && m=$c; echo "$m"; }
+  min3() { local a=$1 b=$2 c=$3; local m=$a; (( b<m )) && m=$b; (( c<m )) && m=$c; echo "$m"; }
+
+  local lines=()
+  local a0 a1 a2 n0 n1 n2 params
+  local spread l1 maxv minv
+  local -a INP OUT POOL
+  local i
+
+  for ((a0=0; a0<=extra; a0++)); do
+    for ((a1=0; a1<=extra-a0; a1++)); do
+      a2=$((extra - a0 - a1))
+
+      n0=$((1 + a0))
+      n1=$((1 + a1))
+      n2=$((1 + a2))
+
+      maxv="$(max3 "$a0" "$a1" "$a2")"
+      minv="$(min3 "$a0" "$a1" "$a2")"
+      spread=$((maxv - minv))
+      l1=$(( $(abs $((a0-q))) + $(abs $((a1-q))) + $(abs $((a2-q))) ))
+
+      INP=(); OUT=(); POOL=()
+
+      INP+=(3);         OUT+=("$chan0"); POOL+=(0)
+
+      for ((i=1; i<=n0; i++)); do
+        INP+=("$chan0"); OUT+=("$chan0")
+        (( i == n0 )) && POOL+=(1) || POOL+=(0)
+      done
+
+      INP+=("$chan0"); OUT+=("$chan1"); POOL+=(0)
+
+      for ((i=1; i<=n1; i++)); do
+        INP+=("$chan1"); OUT+=("$chan1")
+        (( i == n1 )) && POOL+=(1) || POOL+=(0)
+      done
+
+      INP+=("$chan1"); OUT+=("$chan2"); POOL+=(0)
+
+      for ((i=1; i<=n2; i++)); do
+        INP+=("$chan2"); OUT+=("$chan2"); POOL+=(0)
+      done
+
+      params=$(( K2 * (
+        3*chan0 +
+        n0*chan0*chan0 +
+        chan0*chan1 +
+        n1*chan1*chan1 +
+        chan1*chan2 +
+        n2*chan2*chan2
+      ) ))
+
+      local comb_tag="N${num_layers}_C${chan0}_n0${n0}_n1${n1}_n2${n2}"
+
+      # spread \t l1 \t params \t comb_tag \t chan0 \t num_layers \t inp \t out \t pool
+      lines+=( "${spread}"$'\t'"${l1}"$'\t'"${params}"$'\t'"${comb_tag}"$'\t'"${chan0}"$'\t'"${num_layers}"$'\t'"${INP[*]}"$'\t'"${OUT[*]}"$'\t'"${POOL[*]}" )
+    done
+  done
+
+  printf '%s\n' "${lines[@]}" \
+    | sort -n -k1,1 -k2,2 -k3,3r \
+    | head -n "${k}" \
+    | awk -F'\t' 'BEGIN{OFS="\t"} {print $3,$4,$5,$6,$7,$8,$9}'
 }
 
 # Submit ONE sbatch job for the current chunk.
@@ -238,7 +340,16 @@ for IMG_TYPE in "${IMG_TYPES[@]}"; do
           last_tag=""
           comb_list=""
 
+          if (( SHOW_COMB_ONLY == 1 )); then
+            echo "CHAN_0=${CHAN_0} NUM_LAYERS=${NUM_LAYERS}"
+          fi
+
           while IFS=$'\t' read -r params comb_tag chan0 num_layers inp_str out_str pool_str; do
+            if (( SHOW_COMB_ONLY == 1 )); then
+              echo "${comb_tag}"
+              continue
+            fi
+
             # record: comb_tag<TAB>params<TAB>inp_str<TAB>out_str<TAB>pool_str
             rec="${comb_tag}"$'\t'"${params}"$'\t'"${inp_str}"$'\t'"${out_str}"$'\t'"${pool_str}"
 
@@ -268,7 +379,12 @@ for IMG_TYPE in "${IMG_TYPES[@]}"; do
               last_tag=""
               comb_list=""
             fi
-          done < <(generate_top_combs "${CHAN_0}" "${NUM_LAYERS}" "${NUM_COMB_PER_NUM_LAYER}")
+          done < <(generate_combs "${CHAN_0}" "${NUM_LAYERS}" "${NUM_COMB_PER_NUM_LAYER}")
+
+          # In show-only mode: stop after printing this (CHAN_0, NUM_LAYERS)
+          if (( SHOW_COMB_ONLY == 1 )); then
+            exit 0
+          fi
 
           # flush remainder
           if (( chunk_count > 0 )); then
