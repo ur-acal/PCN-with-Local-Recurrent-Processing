@@ -13,8 +13,8 @@ export CKPT="best"
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
 N_BITS_VALS=()
-#N_BITS_VALS=(5)
-for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
+N_BITS_VALS=(5)
+#for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
 METHOD_VALS=("dopri5")
 CAP_VALS=("49e-15")
@@ -133,7 +133,13 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_2REP"
 #  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_1REP"
 
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_10Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP" # 60% during training; does NOT work well with wrapper (57%)
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_10Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP" # 60% during training; does NOT work well with wrapper (57%)
+#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_10Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+
+#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l1l4_2Pool_scanGFI_2REP"
+  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_20Layers6l5l6_2Pool_scanGFI_1REP"
+#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_20Layers6l5l6_2Pool_scanGFI_1REP"
+#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S88C_0.25Dropout_20Layers6l5l6_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -228,9 +234,10 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
-    --test_expanded   "false" \
+    --conv_only       "true" \
+    --test_expanded   "true" \
     --nonlinear_R     "false" \
-    --test_only       "true" \
+    --test_only       "false" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model

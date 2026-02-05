@@ -258,6 +258,7 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         #############################################################################
         # ODE related
         if isinstance(ode_params, dict):
+            # Mismatch added in the init method of ode_blocks
             net_ = make_ode_block(net_, noise_level=noise_level, **ode_params)
             logging.warning("PcConv converted to ODEBlock, ode_params={}".format(ode_params))
             if isinstance(ode_wrapper_params, dict):

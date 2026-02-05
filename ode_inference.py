@@ -18,7 +18,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLASSES, wrap_ode_block
 from cross_sim_inference import calibrate_input
-from validation import Validator
+from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised
 
 import logging
 log = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.0, "weight": None}
+    noisy_params = {"noise_level": 0.15, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
@@ -317,6 +317,7 @@ def run_ode_inference():
             noise_acc_spec = {}
             for noise_level in noise_level_list_:
                 trials = noisy_trials if noise_level > 0 or args.thermal_noise else 1
+                trials = 5 if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
                 for t in range(trials):
                     noisy_params = {"noise_level": noise_level, "weight": None}
@@ -341,10 +342,27 @@ def run_ode_inference():
                                                                            "{}b".format(args.w_bits)),
                                                   wrapper=saved_wrappers)
                             logging.warning("Unroll or load expanded weights finished")
+                            clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
+                            clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
+                            clean_vals = snapshot_clean_mvm_mat_values(net_) # not part of named_parameters
+                            net_ = valid_ins.model
+                            # Add noise after wrapped with Validator
+                            net_.noise_level = noise_level
                             for _blk in net_.PcConvs:
                                 _blk.noise_level = noise_level
-                                _blk.add_noise()
-                            net_ = valid_ins.model
+                                # _blk.add_noise()
+                            # All mismatch added in this method
+                            net_.add_noise(noise_to_bn=True, noise_to_linear=True) # Add noise to linear and bn also
+                            if noise_level > 0.0:
+                                for _name, _p in net_.named_parameters():
+                                    assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[
+                                        _name]), "{} noise not added".format(_name)
+                                for _name, _buf in net_.named_buffers():
+                                    if _name.endswith(('running_mean', 'running_var')):
+                                        assert torch.allclose(_buf, torch.zeros_like(_buf)) or not torch.allclose(_buf,
+                                                                                                                  clean_buffs[
+                                                                                                                  _name])
+                                assert_mvm_mats_all_values_noised(net_, clean_vals)
                     real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
                     max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
                     max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"

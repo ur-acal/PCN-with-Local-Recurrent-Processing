@@ -160,12 +160,14 @@ run_one_combo () {
     --task          "${TASK}" \
     --num_classes   "${N_CLASSES}" \
     --num_epochs    200 \
-    --eval_every    10 \
+    --eval_every    2 \
+    --learning_rate 0.01 \
     --offset_eps    0.0 \
     --inp_channels  "${INP[@]}" \
     --out_channels  "${OUT[@]}" \
     --max_pool      "${POOL[@]}" \
     --stride        "${STRIDE[@]}" \
+    --avg_pooling   "false" \
     --kernel_size   "${KERNEL[@]}" \
     --padding       "${padding}" \
     --patch_node    "${patch_node}" \
@@ -174,12 +176,13 @@ run_one_combo () {
     --patch_pad     "${patch_pad}" \
     --fold_scalar   "${fold_scalar}" \
     --dropout       0.25 \
+    --weight_decay  "1e-3" \
     --tie_weights   "false" \
     --tie_bp        "false" \
     --bypass        "false" \
     --batch_size    "${TRAIN_BATCH_SIZE}" \
     --method        "dopri5" \
-    --tol           "0.0001" \
+    --tol           "1e-4" \
     --t_end         "${t_end}" \
     --pcn           "${PCN}" \
     --pc_conv       "PCConvReLU6" \
@@ -265,7 +268,8 @@ eval_one_combo_model() {
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
     --img_type        "${IMG_TYPE}" \
-    --test_expanded   "false" \
+    --conv_only       "true" \
+    --test_expanded   "true" \
     --nonlinear_R     "false" \
     --mem_frac        "${MEM_FRAC}" \
     2>&1 | tee -a "$dir/job.log"
