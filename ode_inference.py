@@ -182,7 +182,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.0, "weight": None}
+    noisy_params = {"noise_level": 0.15, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
@@ -345,6 +345,7 @@ def run_ode_inference():
                                 _blk.noise_level = noise_level
                                 _blk.add_noise()
                             net_ = valid_ins.model
+                            net_.add_noise(noise_to_bn=True, noise_to_linear=True) # Add noise to linear and bn also
                     real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
                     max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
                     max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"

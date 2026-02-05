@@ -26,13 +26,16 @@ IMG_TYPES=( "scanGFI" )
 CIRC_CONFS=( "" )
 
 # CHAN_0 options (order matters)
-CHAN_0_LIST=( 28 30 32 )
+CHAN_0_LIST=( 22 24 26 28 30 32 )
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers..."
 declare -A NUM_LAYERS_BY_CHAN0
-NUM_LAYERS_BY_CHAN0[28]="13 14 15"
-NUM_LAYERS_BY_CHAN0[30]="11 12 13"
-NUM_LAYERS_BY_CHAN0[32]="7 8 9 10"
+NUM_LAYERS_BY_CHAN0[22]="14 16 18 20"
+NUM_LAYERS_BY_CHAN0[24]="14 16 18 20"
+NUM_LAYERS_BY_CHAN0[26]="14 16 18 20"
+NUM_LAYERS_BY_CHAN0[28]="14 16 18 20"
+NUM_LAYERS_BY_CHAN0[30]="12 14 16 18"
+NUM_LAYERS_BY_CHAN0[32]="12"
 
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
 SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_search_config.sbatch"

@@ -25,8 +25,8 @@ python train_ode_cifar.py \
   --eval_every    2 \
   --learning_rate 0.01 \
   --offset_eps    0.0 \
-  --inp_channels  4  20 20 20 20 20 20 20 40 40 40 40 40 40 80 80 80 80 80 80 \
-  --out_channels  20 20 20 20 20 20 20 40 40 40 40 40 40 80 80 80 80 80 80 80 \
+  --inp_channels  4  22 22 22 22 22 22 22 44 44 44 44 44 44 88 88 88 88 88 88 \
+  --out_channels  22 22 22 22 22 22 22 44 44 44 44 44 44 88 88 88 88 88 88 88 \
   --max_pool      0  0  0  0  0  0  1  0  0  0  0  0  1  0  0  0  0  0  0  0  \
   --kernel_size   "${KSZ[@]}" \
   --padding       "${PADDING}" \
