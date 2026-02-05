@@ -268,7 +268,8 @@ eval_one_combo_model() {
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
     --img_type        "${IMG_TYPE}" \
-    --test_expanded   "false" \
+    --conv_only       "true" \
+    --test_expanded   "true" \
     --nonlinear_R     "false" \
     --mem_frac        "${MEM_FRAC}" \
     2>&1 | tee -a "$dir/job.log"

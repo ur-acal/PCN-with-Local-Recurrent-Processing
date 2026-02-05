@@ -142,7 +142,7 @@ class ODEBlockPC(nn.Module):
         if getattr(p, "is_sparse_csr", False):
             v_ = p.values()
             noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * self.noise_level
-            v_.mul_(1 + noise_)
+            v_.mul_(1 + noise_) # This will change values of CSR matrix in-place
         else:
             noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
             p.mul_(1 + noise_)

@@ -2,6 +2,7 @@ import logging
 import pickle
 import types
 from functools import wraps
+from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -170,6 +171,61 @@ def conv2d_to_matrix_fixed_padding(input_shape, kernel, stride=1, padding=0, *,
 
     return kernel_matrix, base_matrix, B_labeled
 
+def snapshot_clean_mvm_mat_values(net):
+    clean_vals = OrderedDict()
+    for mod_name, m in net.named_modules():
+        if isinstance(m, MVMConv):
+            clean_vals[mod_name] = m.mat.values().detach().clone()
+    return clean_vals
+
+def assert_mvm_mats_all_values_noised(net, clean_vals, max_print=10, allow_unchanged_frac=1e-4):
+    """
+    allow_unchanged_frac:
+      - 0.0 => fail if ANY unchanged nonzero entry exists
+      - e.g. 1e-6 => allow up to 1e-6 fraction unchanged among nonzero entries
+    Notice:
+     with nnz ~= 0.6M each layer and 20 layers in total, it COULD happen that at least 1 random
+     noise is sampled as zero such that the most strict assertion will fail.
+    """
+    for mod_name, m in net.named_modules():
+        if not isinstance(m, MVMConv):
+            continue
+
+        cur = m.mat.values()
+        ref = clean_vals[mod_name]
+
+        assert cur.numel() == ref.numel(), f"{mod_name}.mat: nnz changed"
+
+        # Multiplicative noise leaves ref==0 unchanged; ignore those.
+        nz = (ref != 0)
+        total = int(nz.sum().item())
+        if total == 0:
+            continue
+
+        unchanged_mask = (cur == ref) & nz
+        n_unchanged = int(unchanged_mask.sum().item())
+        frac_unchanged = n_unchanged / total
+
+        if frac_unchanged > allow_unchanged_frac:
+            idx = unchanged_mask.nonzero(as_tuple=False).flatten()
+            k = min(max_print, idx.numel())
+            idx_s = idx[:k]
+
+            ref_s  = ref[idx_s]
+            cur_s  = cur[idx_s]
+            diff_s = cur_s - ref_s
+
+            msg = (
+                f"{mod_name}.mat: unchanged(nonzero)={n_unchanged}/{total} "
+                f"({frac_unchanged:.6g}), allowed_frac={allow_unchanged_frac:.6g}\n"
+                f"  dtype={cur.dtype}, device={cur.device}, nnz={cur.numel()}\n"
+                f"  Showing {k} unchanged indices (out of {n_unchanged}): {idx_s.tolist()}\n"
+                f"  ref:  {ref_s.tolist()}\n"
+                f"  cur:  {cur_s.tolist()}\n"
+                f"  diff: {diff_s.tolist()}\n"
+            )
+            raise AssertionError(msg)
+
 
 class MVMConv(nn.Module):
     def __init__(self, mat, meta):
@@ -335,8 +391,10 @@ class Validator(nn.Module):
         exp_w_path = self.exp_w_path.format(layer_idx)
         if os.path.exists(exp_w_path):
             stored = torch.load(exp_w_path, map_location=self.device)
+            # logging.warning("Found existing expanded weights. Load directly.")
         else:
             stored = {}
+            # logging.warning("Needs unrolling...")
 
         def make_hook(parent, mod_name, m):
             hook_handlers = {}

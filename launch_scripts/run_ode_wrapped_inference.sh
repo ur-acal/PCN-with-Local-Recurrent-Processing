@@ -234,6 +234,7 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
+    --conv_only       "true" \
     --test_expanded   "true" \
     --nonlinear_R     "false" \
     --test_only       "false" \
