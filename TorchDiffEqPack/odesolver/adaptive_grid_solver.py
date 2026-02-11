@@ -123,7 +123,11 @@ class AdaptiveGridSolver(ODESolver):
         if (d1.item() <= 1e-15 and d2.item() <= 1e-15) and dT > max(1e-6, h0 * 1e-3):
             h1 = max(1e-6, h0 * 1e-3)
         else:
-            h1 = (0.01 / max(d1.item(), d2.item())) ** (1 / (self.order + 1))
+            den = max(d1.item(), d2.item())
+            if den == 0.0:
+                h1 = max(1e-6, h0 * 1e-3)
+            else:
+                h1 = (0.01 / den) ** (1 / (self.order + 1))
 
         # print("Init step: {}".format(min(100 * h0, h1)))
         return min(100 * h0, h1, dT)
