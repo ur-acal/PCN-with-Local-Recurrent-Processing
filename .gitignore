@@ -41,3 +41,6 @@ cross_sim/calibrated_config/
 launch_scripts/run_2*
 launch_scripts/run_slurm*
 
+*.pth
+*.png
+*.pdf
