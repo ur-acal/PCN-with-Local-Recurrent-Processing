@@ -18,7 +18,7 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 ###############################################################################################
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
-ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now
+ODE_BLOCK="${ODE_BLOCK:-S2NoisyIYAsXZAs0}"   # fixed block for now ODEXInitFFFB
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-4}"
 
 PCNS=( "PCNetNoBatchNorm" )
@@ -30,13 +30,13 @@ CHAN_0_LIST=( 18 20 22 24 26 28 30 )
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers..."
 declare -A NUM_LAYERS_BY_CHAN0
-NUM_LAYERS_BY_CHAN0[18]="16 18 20"
+NUM_LAYERS_BY_CHAN0[18]="18 20"
 NUM_LAYERS_BY_CHAN0[20]="16 18 20"
 NUM_LAYERS_BY_CHAN0[22]="16 18 20"
 NUM_LAYERS_BY_CHAN0[24]="14 16 18"
 NUM_LAYERS_BY_CHAN0[26]="14 16 18"
-NUM_LAYERS_BY_CHAN0[28]="14 16 18"
-NUM_LAYERS_BY_CHAN0[30]="12 14 16"
+NUM_LAYERS_BY_CHAN0[28]="14 16"
+NUM_LAYERS_BY_CHAN0[30]="12 14"
 NUM_LAYERS_BY_CHAN0[32]="12"
 
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
@@ -51,8 +51,13 @@ SHOW_COMB_ONLY="${SHOW_COMB_ONLY:-0}"   # 1 => print comb_tag only and exit
 COMB_MODE="${COMB_MODE:-balanced_A}"      # choose in (n_params | balanced_A)
 
 SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
+####################################################
 # Change the saved pickle file name here
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0205_balanced_A_test_expanded.pkl"
+####################################################
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0211_balanced_A_test_expanded_2State.pkl"
+####################################################
+# Change EXP in submit_chunk
+####################################################
 
 # ---------------------------
 # Generate top-K combinations for a given (chan0, num_layers).
@@ -252,7 +257,7 @@ submit_chunk() {
   # Human-readable + unique EXP:
   # - if MAX_TASKS_PER_GPU==1, chunk_tag will be the exact comb_tag
   # - else it is first__to__last
-  local EXP="no_bn_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
+  local EXP="0211_no_bn_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
 
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"

@@ -54,7 +54,7 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10"):
             test_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                   "cifar-10-data", img_type),
-                input_name=task,
+                input_name=task + "_raw",
                 train=False,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
@@ -95,7 +95,7 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb", task="cifar10"):
             train_set = MyNoiseCIFARDataset(
                 root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                   "cifar-10-data", img_type),
-                input_name=task,
+                input_name=task + "_raw",
                 train=True,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
