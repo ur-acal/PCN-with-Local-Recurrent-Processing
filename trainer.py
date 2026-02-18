@@ -340,7 +340,7 @@ class TrainerCiFar(object):
                 self.train_set = MyNoiseCIFARDataset(
                     root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                       "cifar-10-data", img_type),
-                    input_name=task,
+                    input_name=task + "_raw",
                     train=True,
                     noise_config=scangen_config["noise"],
                     device=self.device,
@@ -352,7 +352,7 @@ class TrainerCiFar(object):
                 self.val_set = MyNoiseCIFARDataset(
                     root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
                                       "cifar-10-data", img_type),
-                    input_name=task,
+                    input_name=task + "_raw",
                     train=False,
                     noise_config=scangen_config["noise"],
                     device=self.device,
