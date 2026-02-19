@@ -34,6 +34,7 @@ def get_args():
     p.add_argument("--learning_rate", type=float, default=0.01)
     p.add_argument("--num_epochs",    type=int,   default=300)
     p.add_argument("--warmup_epoch",  type=int,   default=0)
+    p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
     p.add_argument("--cosine_t0", type=int, default=None,
                    help="T0 of cosine annealing schedule; if None, using default reduce on epoch scheduler")
     # PCNet / PCConv args
@@ -106,7 +107,7 @@ def _constr_model_name(args, rep=1):
         model_name += 'noPC_'
     model_name += str(args.batch_size) + 'BS_' \
                   + str(args.dropout) + 'Dropout_' + str(len(args.inp_channels)) + "Layers_"
-    if args.task == "cifar100":
+    if args.dataset == "cifar100":
         model_name += "C100_"
     model_name += "{}Chan_".format(max(args.inp_channels)) \
                   + str(len([_ for _ in args.max_pool if _])) + "Pool"
@@ -141,6 +142,9 @@ def main():
     args = get_args()
     if args.test_only:
         logging.basicConfig(level=logging.INFO)
+    if args.dataset == "cifar100" and args.num_classes == 10:
+        logging.warning("Overriding num_classes to 100 for CIFAR-100.")
+        args.num_classes = 100
 
     # map optimizer name -> class
     # optim_type = getattr(optim, args.optim)
@@ -236,6 +240,7 @@ def main():
         T0            = args.cosine_t0,
         num_epochs    = args.num_epochs,
         warmup_epoch  = args.warmup_epoch,
+        dataset_name  = args.dataset,
         eval_every    = args.eval_every,
         quant_params  = quant_params,
         q_calib_bs    = args.q_calib_bs,

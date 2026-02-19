@@ -1,7 +1,9 @@
 import logging
 import os
 import tempfile
+import sys
 import copy
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,21 +16,89 @@ import argparse
 import tqdm
 import subprocess
 import json
+from pathlib import Path
 
 from pc_model import PCNet
-from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, get_quant_model
+from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
+from distillation import CRDLoss, CRDOptions
+
+
+class DatasetWithIndex(torch.utils.data.Dataset):
+    """Wrap a dataset to also return sample indices."""
+
+    def __init__(self, dataset: torch.utils.data.Dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        data = self.dataset[idx]
+        if isinstance(data, tuple):
+            return (*data, idx)
+        return data, idx
+
+
+_CIFAR_STATS = {
+    "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+    "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+}
+
+
+def _normalize_dataset_name(dataset_name=None) -> str:
+    name = (dataset_name or "cifar10").lower().replace("-", "").replace("_", "")
+    if name in _CIFAR_STATS:
+        return name
+    raise ValueError(f"Unsupported dataset: {dataset_name}. Use cifar10 or cifar100.")
+
+
+def _default_cifar_dir(dataset_name: str) -> str:
+    name = _normalize_dataset_name(dataset_name)
+    return "cifar-10-data"
+    # return "cifar-10-data" if name == "cifar10" else "cifar-100-data"
+
+
+def _resolve_cifar_data_root(img_type: str, input_name: str) -> Path:
+    dataset_name = _normalize_dataset_name(input_name)
+    hdf5_name = f"{dataset_name}_raw.h5"
+    env_root = os.getenv("SCANGEN_DATA_ROOT")
+    if env_root:
+        env_root_path = Path(env_root).expanduser()
+        if env_root_path.is_file():
+            if env_root_path.name == hdf5_name:
+                return env_root_path.parent
+            env_root_path = env_root_path.parent
+        candidates = [
+            env_root_path,
+            env_root_path / img_type,
+            env_root_path / _default_cifar_dir(dataset_name) / img_type,
+        ]
+        for candidate in candidates:
+            if (candidate / hdf5_name).exists():
+                return candidate
+        logging.warning(
+            "SCANGEN_DATA_ROOT=%s does not contain %s; falling back to project-relative path.",
+            env_root,
+            hdf5_name,
+        )
+    return Path(__file__).resolve().parent.parent / _default_cifar_dir(dataset_name) / img_type
+
 
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
-                 loss_fn=nn.CrossEntropyLoss(), quant_params=None, q_calib_bs=256,
+                 loss_fn=nn.CrossEntropyLoss(),
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
-                 eval_every=1, img_type="rgb", noise_level=None, task="cifar10", noise_type=None,
-                 distill_type=None, teacher=None, distill_T=1, distill_w="1|0|0"):
+                 eval_every=1, img_type="rgb", dataset_name="cifar10", noise_level=None, noise_type=None,
+                 mismatch_levels=None,
+                 distill_alpha=0.0, distill_temperature=1.0, teacher_model=None,
+                 distill_method="kd", crd_feat_dim=128, crd_k=16384,
+                 crd_temperature=0.07, crd_momentum=0.5, crd_beta=0.8,
+                 teacher_input_size=224, teacher_center_crop=True):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        logging.warning('----- Using {} device -----'.format(self.device))
+        print('----- Using {} device -----'.format(self.device))
 
         model = model.to(self.device)
         self.model = model
@@ -53,83 +123,221 @@ class TrainerCiFar(object):
         self.max_norm = max_norm
         self.aug = aug # use the augmentation in convMixer or not
         self.eval_every = eval_every
+        self.img_type = img_type
+        self.dataset_name = _normalize_dataset_name(dataset_name)
+        self.distill_alpha = distill_alpha
+        self.distill_temperature = distill_temperature
+        self.distill_method = (distill_method or "none").lower()
+        if self.distill_method not in {"none", "kd", "crd", "kd_crd", "kd+crd"}:
+            raise ValueError(f"Unsupported distillation method: {self.distill_method}")
+        if self.distill_method == "kd+crd":
+            self.distill_method = "kd_crd"
+        self.scangen_noise_config = None
+        self.scangen_noise_root = None
+        self.teacher_eval_loader = None
+        self.teacher_model = None
+        self.teacher_input_size = teacher_input_size
+        self.teacher_center_crop = teacher_center_crop
+        if teacher_model is not None:
+            self.teacher_model = teacher_model.to(self.device)
+            self.teacher_model.eval()
+            for param in self.teacher_model.parameters():
+                param.requires_grad_(False)
+        self._kd_enabled = (
+            self.teacher_model is not None and self.distill_alpha > 0.0 and "kd" in self.distill_method
+        )
+        self._crd_enabled = self.teacher_model is not None and "crd" in self.distill_method
+        if "crd" in self.distill_method and self.teacher_model is None:
+            raise ValueError("CRD distillation requires a teacher model.")
+        self.crd_beta = crd_beta
+        self._crd_loss = None
+        self._crd_options = CRDOptions(
+            feat_dim=crd_feat_dim,
+            nce_k=crd_k,
+            nce_t=crd_temperature,
+            nce_m=crd_momentum,
+        )
+        self._student_feature_module = self._find_last_linear(self.model)
+        self._teacher_feature_module = self._find_last_linear(self.teacher_model) if self.teacher_model else None
+        if self._crd_enabled:
+            if self._student_feature_module is None:
+                raise ValueError("CRD requires the student to have a final linear layer.")
+            if self._teacher_feature_module is None:
+                raise ValueError("CRD requires the teacher to have a final linear layer.")
+        self._train_sample_count = 0
+        self._crd_initialized = False
 
         # noise inject training
         self.noisy_model = None
-        if noise_level is not None:
-            self.noisy_model = WrappedNoisyModel(model=self.model, noise_level=noise_level, noise_type=noise_type)
+        self.noise_schedule = None
+        effective_noise_type = (noise_type or "mul")
+        if mismatch_levels is not None or noise_level is not None:
+            levels = []
+            if mismatch_levels:
+                levels.extend(float(lvl) for lvl in mismatch_levels)
+            if noise_level is not None:
+                levels.append(float(noise_level))
+            levels = [lvl for lvl in levels if lvl >= 0.0]
+            if levels:
+                # Preserve order while removing duplicates
+                unique_levels = list(dict.fromkeys(levels))
+                self.noise_schedule = unique_levels
+                self.noisy_model = WrappedNoisyModel(
+                    model=self.model,
+                    noise_levels=self.noise_schedule,
+                    noise_type=effective_noise_type,
+                )
+                logging.warning(
+                    "Mismatch-aware training enabled with noise levels %s (%s noise).",
+                    self.noise_schedule,
+                    effective_noise_type,
+                )
+        if self.noisy_model is None:
+            logging.warning("Mismatch-aware training disabled; proceeding without injected mismatch noise.")
 
-        self._prepare_cifar(img_type, task)
-        if distill_type is not None and teacher is not None:
-            self.loss_fn = self._get_distill_cls(distill_type, distill_T)
-            self.teacher = teacher.to(self.device)
-            self.teacher.eval()
-            self.distill_weights = list(map(lambda _x: float(_x), distill_w.split("|")))
+        self._prepare_cifar(img_type, self.dataset_name)
 
-        # QAT for PPCN
-        self.qat_params = quant_params
-        if self.qat_params is not None:
-            self._calib_model(q_calib_bs)
+    def _find_last_linear(self, model):
+        if model is None:
+            return None
+        last_linear = None
+        for module in model.modules():
+            if isinstance(module, nn.Linear):
+                last_linear = module
+        return last_linear
 
-    def _calib_model(self, q_calib_bs):
-        if q_calib_bs <= self.batch_size:
-            calib_batch = next(iter(self.train_dataloader))[0][:q_calib_bs].to(self.device)
-            _ = self.model(calib_batch)
-        else:
-            n_batches = q_calib_bs // self.batch_size
-            rem_samples = q_calib_bs % self.batch_size
-            calib_batch = []
-            for _i, _batch in enumerate(self.train_dataloader):
-                _inp, _ = _batch
-                _inp = _inp.to(self.device)
-                if _i == n_batches:
-                    if rem_samples > 0:
-                        calib_batch.append(_inp[:rem_samples])
-                    break
-                calib_batch.append(_inp)
-            calib_batch = torch.cat(calib_batch, dim=0)
-            _ = self.model(calib_batch)
-        logging.warning("Calibration done with calib batch: {}".format(calib_batch.shape))
+    def _student_forward(self, inputs):
+        if self._student_feature_module is None:
+            outputs = self.noisy_model(inputs) if self.noisy_model else self.model(inputs)
+            return outputs, None
 
-    @staticmethod
-    def max_param_change(before, after):
-        # before = {n: copy.deepcopy(p.detach().clone()) for n, p in m.named_parameters()}
-        # after = {n: p.detach() for n, p in m.named_parameters()}
-        mx = 0.0
-        arg = None
-        for n in before:
-            d = (before[n] - after[n]).abs().max().item()
-            if d > mx:
-                mx = d
-                arg = n
-        print("max |delta w| = {}".format(mx))
+        features = {}
+
+        def hook(_, hook_inputs, __):
+            features["feat"] = hook_inputs[0]
+
+        handle = self._student_feature_module.register_forward_hook(hook)
+        try:
+            outputs = self.noisy_model(inputs) if self.noisy_model else self.model(inputs)
+        finally:
+            handle.remove()
+        student_feat = features.get("feat")
+        if student_feat is None and self._crd_enabled:
+            raise RuntimeError("Failed to capture student features for CRD.")
+        return outputs, student_feat
+
+    def _teacher_forward(self, inputs):
+        if self.teacher_model is None:
+            return None, None
+        if self._teacher_feature_module is None:
+            with torch.no_grad():
+                outputs = self.teacher_model(inputs)
+            return outputs, None
+
+        features = {}
+
+        def hook(_, hook_inputs, __):
+            features["feat"] = hook_inputs[0]
+
+        handle = self._teacher_feature_module.register_forward_hook(hook)
+        try:
+            with torch.no_grad():
+                normalized_inputs = inputs
+                if self.img_type == "scanGFI":
+                    normalized_inputs = self._prepare_teacher_inputs(normalized_inputs)
+                outputs = self.teacher_model(normalized_inputs)
+        finally:
+            handle.remove()
+        teacher_feat = features.get("feat")
+        if teacher_feat is None and self._crd_enabled:
+            raise RuntimeError("Failed to capture teacher features for CRD.")
+        if teacher_feat is not None:
+            teacher_feat = teacher_feat.detach()
+        return outputs, teacher_feat
+
+    def _prepare_teacher_inputs(self, inputs):
+        target_size = self.teacher_input_size
+        if target_size and inputs.size(-1) != target_size:
+            inputs = F.interpolate(inputs, size=(target_size, target_size), mode="bilinear", align_corners=False)
+        if self.teacher_center_crop and target_size:
+            h, w = inputs.shape[-2:]
+            if h >= target_size and w >= target_size:
+                top = (h - target_size) // 2
+                left = (w - target_size) // 2
+                inputs = inputs[..., top:top + target_size, left:left + target_size]
+        channels = inputs.size(1)
+        mean = torch.full((1, channels, 1, 1), 0.5, device=inputs.device)
+        std = torch.full((1, channels, 1, 1), 0.5, device=inputs.device)
+        return (inputs - mean) / std
+
+    def _ensure_crd_initialized(self, student_feat, teacher_feat):
+        if not self._crd_enabled or self._crd_initialized:
+            return
+        if student_feat is None or teacher_feat is None:
+            raise RuntimeError("Student and teacher features are required to initialize CRD.")
+        s_dim = student_feat.size(1)
+        t_dim = teacher_feat.size(1)
+        options = CRDOptions(
+            feat_dim=self._crd_options.feat_dim,
+            nce_k=self._crd_options.nce_k,
+            nce_t=self._crd_options.nce_t,
+            nce_m=self._crd_options.nce_m,
+            n_data=self._train_sample_count,
+            s_dim=s_dim,
+            t_dim=t_dim,
+        )
+        self._crd_loss = CRDLoss(options).to(self.device)
+        self._crd_loss.train()
+        self.optimizer.add_param_group({"params": self._crd_loss.parameters()})
+        new_lr = self.optimizer.param_groups[-1]["lr"]
+        self.optimizer.param_groups[-1]["initial_lr"] = new_lr
+        if getattr(self, "scheduler", None) is not None:
+            self.scheduler.base_lrs.append(new_lr)
+            if hasattr(self.scheduler, "_last_lr"):
+                last_lr = self.scheduler._last_lr[-1] if self.scheduler._last_lr else new_lr
+                self.scheduler._last_lr.append(last_lr)
+        if getattr(self, "warmup_scheduler", None) is not None:
+            self.warmup_scheduler.base_lrs.append(new_lr)
+            if hasattr(self.warmup_scheduler, "_last_lr"):
+                last_lr = self.warmup_scheduler._last_lr[-1] if self.warmup_scheduler._last_lr else new_lr
+                self.warmup_scheduler._last_lr.append(last_lr)
+        self._crd_initialized = True
 
     def train(self):
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0
+        best_top5 = None
+        val_top5 = None
         best_model_path = None
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch(epoch)
             if (epoch + 1) % self.eval_every == 0:
-                train_acc, _, _ = self.evaluate(self.train_dataloader)
-                val_acc, _, _ = self.evaluate(self.val_dataloader)
+                train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
+                val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
                 train_loss_list.append(train_loss)
                 val_acc_list.append(val_acc)
-                print("Validation acc: {}, Train acc: {}".format(val_acc, train_acc))
+                if self.dataset_name == "cifar100":
+                    print(
+                        "Validation top1: {}, top5: {}; Train top1: {}, top5: {}".format(
+                            val_acc, val_top5, train_acc, train_top5
+                        )
+                    )
+                else:
+                    print("Validation acc: {}, Train acc: {}".format(val_acc, train_acc))
                 if val_acc > best_acc:
                     best_acc = val_acc
                     best_epoch = epoch + 1
+                    best_top5 = val_top5
                     best_model_path = self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
-
-                if val_acc <= 0.15 and epoch + 1 >= 20:
-                    print("Train failed, stopped at epoch: {}".format(epoch + 1))
-                    break
             self.scheduler.step()
         _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
         print("----- Total number of parameters: {} M -----".format(sum(p.numel() for p in self.model.parameters()) / 1e6))
-        print("----- Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
+        if self.dataset_name == "cifar100":
+            print("----- Best top1: {}, Best top5: {}, Best epoch: {} -----".format(best_acc, best_top5, best_epoch))
+        else:
+            print("----- Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
         print("----- Model path: {} -----".format(best_model_path))
         print("--------------------------------------------------------------------------")
         return train_loss_list, val_acc_list
@@ -140,7 +348,11 @@ class TrainerCiFar(object):
         progress_bar = tqdm.tqdm(enumerate(self.train_dataloader),
                             total=len(self.train_dataloader), desc="Training")
         for _i, _data in progress_bar:
-            inputs, labels = _data
+            if isinstance(_data, (list, tuple)) and len(_data) == 3:
+                inputs, labels, indices = _data
+            else:
+                inputs, labels = _data
+                indices = None
             n_samples += inputs.size(0)
             inputs, labels = inputs.to(self.device), labels.to(self.device)
 
@@ -148,21 +360,56 @@ class TrainerCiFar(object):
             self.optimizer.zero_grad()
 
             # Forward + backward + optimize
-            if self.noisy_model and isinstance(self.noisy_model, nn.Module):
-                outputs = self.noisy_model(inputs)
-            else:
-                outputs = self.model(inputs)
+            outputs, student_feat = self._student_forward(inputs)
+            teacher_logits, teacher_feat = None, None
+            if self.teacher_model is not None and (self._kd_enabled or self._crd_enabled):
+                teacher_logits, teacher_feat = self._teacher_forward(inputs)
 
-            # Loss calculation
-            if not isinstance(self.loss_fn, nn.ModuleList):
-                # Normal training process
-                loss = self.loss_fn(outputs, labels)
+            ce_loss = self.loss_fn(outputs, labels)
+            kd_loss = None
+            crd_loss = None
+
+            if self._kd_enabled:
+                if teacher_logits is None:
+                    raise RuntimeError("Teacher logits not available for KD.")
+                kd_loss = F.kl_div(
+                    F.log_softmax(outputs / self.distill_temperature, dim=1),
+                    F.softmax(teacher_logits / self.distill_temperature, dim=1),
+                    reduction='batchmean',
+                ) * (self.distill_temperature ** 2)
+
+            if self._crd_enabled:
+                if indices is None:
+                    raise RuntimeError("Dataset indices are required for CRD.")
+                indices_tensor = indices.to(self.device, dtype=torch.long)
+                if teacher_feat is None or student_feat is None:
+                    raise RuntimeError("Student and teacher features are required for CRD.")
+                self._ensure_crd_initialized(student_feat, teacher_feat)
+                crd_loss = self._crd_loss(student_feat, teacher_feat, indices_tensor)
+
+            if self._kd_enabled and kd_loss is None:
+                raise RuntimeError("KD loss was not computed despite KD being enabled.")
+            if self._crd_enabled and crd_loss is None:
+                raise RuntimeError("CRD loss was not computed despite CRD being enabled.")
+
+            if self._kd_enabled and not self._crd_enabled:
+                loss = (1.0 - self.distill_alpha) * ce_loss + self.distill_alpha * kd_loss
+            elif self._kd_enabled and self._crd_enabled:
+                loss = (
+                    (1.0 - self.distill_alpha) * ce_loss
+                    + self.distill_alpha * kd_loss
+                    + self.crd_beta * crd_loss
+                )
+            elif self._crd_enabled:
+                loss = ce_loss + self.crd_beta * crd_loss
             else:
-                # Distillation
-                loss = self._calc_distill_loss(inputs, outputs, labels)
+                loss = ce_loss
             loss.backward()
             if self.max_norm is not None:
-                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.max_norm)
+                grad_params = list(self.model.parameters())
+                if self._crd_enabled and self._crd_loss is not None:
+                    grad_params += list(self._crd_loss.parameters())
+                nn.utils.clip_grad_norm_(grad_params, max_norm=self.max_norm)
             self.optimizer.step()
 
             # Update running loss and compute average loss
@@ -170,11 +417,14 @@ class TrainerCiFar(object):
             avg_loss = running_loss / n_samples
 
             # Update the tqdm progress bar with current iteration and loss
-            progress_bar.set_postfix({
+            postfix = {
                 "Iter": f"{_i + 1}/{len(self.train_dataloader)}",
                 "Loss": f"{avg_loss:.4f}",
                 "LR": self.optimizer.param_groups[0]["lr"]
-            })
+            }
+            if self.noisy_model is not None:
+                postfix["Noise"] = f"{self.noisy_model.current_noise_level:.3f}"
+            progress_bar.set_postfix(postfix)
 
             if epoch < self.warmup_epoch:
                 self.warmup_scheduler.step()
@@ -187,13 +437,21 @@ class TrainerCiFar(object):
 
     def evaluate(self, dataloader):
         correct = 0
+        correct_top5 = 0
         total = 0
         running_loss = 0.0
         pred_list, label_list = [], []
+        compute_top5 = self.dataset_name == "cifar100"
         with torch.no_grad():
             self.model.eval()
             for data in dataloader:
-                inputs, labels = data
+                if isinstance(data, (list, tuple)):
+                    if len(data) == 3:
+                        inputs, labels, _ = data
+                    else:
+                        inputs, labels = data
+                else:
+                    inputs, labels = data
 
                 # move the data to GPU
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
@@ -201,24 +459,24 @@ class TrainerCiFar(object):
                 # calculate outputs by running inputs through the network
                 outputs = self.model(inputs)
 
-                if not isinstance(self.loss_fn, nn.ModuleList):
-                    loss = self.loss_fn(outputs, labels)
-                else:
-                    # Distillation
-                    loss_fn_cls = self.loss_fn[0]
-                    loss = loss_fn_cls(outputs, labels)
+                loss = self.loss_fn(outputs, labels)
                 running_loss += loss.item()
 
                 # the class with the highest energy is what we choose as prediction
                 _, predicted = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+                if compute_top5:
+                    max_k = min(5, outputs.size(1))
+                    topk = outputs.topk(max_k, dim=1).indices
+                    correct_top5 += topk.eq(labels.view(-1, 1)).any(dim=1).sum().item()
 
                 pred_list.append(predicted)
                 label_list.append(labels)
 
         accuracy = correct / total
-        return accuracy, torch.cat(label_list), torch.cat(pred_list)
+        top5_acc = (correct_top5 / total) if compute_top5 and total > 0 else None
+        return accuracy, top5_acc, torch.cat(label_list), torch.cat(pred_list)
 
     def _save_then_load(self, save_to):
         model_class = self.model.__class__
@@ -231,8 +489,6 @@ class TrainerCiFar(object):
         tmp_sd = torch.load(tmp_sp, weights_only=False)
         decoupled_model = model_class(
             **{**tmp_sd['init_args']['model_args'], **tmp_sd['init_args']['kwargs']}).to(self.device)
-        if self.qat_params is not None:
-            _ = get_quant_model(decoupled_model, device=self.device, **self.qat_params)
         p_dict = get_parametrized_weight_mods(self.model)
         _ = load_and_register_buffer(decoupled_model, tmp_sd['net'], self.device, p_dict)
         return decoupled_model
@@ -258,6 +514,8 @@ class TrainerCiFar(object):
                 'acc': acc,
                 'epoch': epoch,
             }
+            if self._crd_enabled and self._crd_loss is not None:
+                flat_state['crd'] = self._crd_loss.state_dict()
             # save the flat model with the same name as before
             torch.save(flat_state, save_pth_path)
             # modify the model name with "full_param" to save the model with full parametrization
@@ -270,6 +528,8 @@ class TrainerCiFar(object):
             'acc': acc,
             'epoch': epoch,
         }
+        if self._crd_enabled and self._crd_loss is not None:
+            state['crd'] = self._crd_loss.state_dict()
         torch.save(state, save_pth_path)
         return save_pth_path
 
@@ -281,12 +541,15 @@ class TrainerCiFar(object):
         else:
             raise ValueError("Unknown optimizer: {}".format(optim_type))
 
-    def _prepare_cifar(self, img_type, task):
+    def _prepare_cifar(self, img_type, dataset_name):
         """
         Todo: Actually the validation dataset should be split from the train_set.
         After the split, we can change the scheduler into other types depending on the validation result.
         """
+        dataset_name = _normalize_dataset_name(dataset_name)
         if img_type in {"rgb", "rggb"}:
+            mean, std = _CIFAR_STATS[dataset_name]
+            dataset_cls = torchvision.datasets.CIFAR100 if dataset_name == "cifar100" else torchvision.datasets.CIFAR10
             if self.aug:
                 if img_type == "rgb":
                     transform_train = transforms.Compose([
@@ -295,7 +558,7 @@ class TrainerCiFar(object):
                         transforms.RandAugment(num_ops=1, magnitude=8),
                         transforms.ColorJitter(0.1, 0.1, 0.1),
                         transforms.ToTensor(),
-                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+                        transforms.Normalize(mean, std),
                         transforms.RandomErasing(p=0.25),
                     ])
                 else:
@@ -312,7 +575,7 @@ class TrainerCiFar(object):
                         transforms.RandomCrop(32, padding=4),
                         transforms.RandomHorizontalFlip(),
                         transforms.ToTensor(),
-                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+                        transforms.Normalize(mean, std), ])
                 else:
                     # Todo: Normalize rggb data?
                     transform_train = transforms.Compose([
@@ -324,39 +587,70 @@ class TrainerCiFar(object):
             if img_type == "rgb":
                 transform_test = transforms.Compose([
                     transforms.ToTensor(),
-                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+                    transforms.Normalize(mean, std), ])
             else:
                 transform_test = transforms.Compose([
                     transforms.ToTensor(),
                     ToPackedRGGB(return_orig=False), ])
-            self.train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
-            self.val_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+            self.train_set = dataset_cls(root='../data', train=True, download=True, transform=transform_train)
+            self.val_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
         elif img_type == "scanGFI":
             with tempfile.TemporaryDirectory() as tmpdir:
-                conf_file = os.path.join(tmpdir, "config.json")
-                subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
-                with open("{}".format(conf_file)) as fp:
+                conf_path = Path(os.path.join(tmpdir, "config.json"))
+                subprocess.run("uv run scangen create-config --dataset {} {}".format(dataset_name, str(conf_path)), shell=True)
+                config_to_use = conf_path
+                created_temp_config = True
+
+                with open(config_to_use) as fp:
                     scangen_config = json.load(fp)
-                self.train_set = MyNoiseCIFARDataset(
-                    root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                      "cifar-10-data", img_type),
-                    input_name=task + "_raw",
-                    train=True,
-                    noise_config=scangen_config["noise"],
-                    device=self.device,
-                    transform=transforms.Compose([
-                        transforms.RandomCrop(16, padding=2),
-                        transforms.RandomHorizontalFlip(),
-                    ])
-                )
-                self.val_set = MyNoiseCIFARDataset(
-                    root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                      "cifar-10-data", img_type),
-                    input_name=task + "_raw",
-                    train=False,
-                    noise_config=scangen_config["noise"],
-                    device=self.device,
-                )
+            self.scangen_noise_config = scangen_config["noise"]
+
+            noise_data_root = _resolve_cifar_data_root(img_type, dataset_name)
+            self.scangen_noise_root = noise_data_root
+            self.train_set = MyNoiseCIFARDataset(
+                root=noise_data_root,
+                input_name=dataset_name + "_raw",
+                train=True,
+                noise_config=self.scangen_noise_config,
+                device=self.device,
+                transform=transforms.Compose([
+                    transforms.RandomCrop(16, padding=2),
+                    transforms.RandomHorizontalFlip(),
+                ])
+            )
+            self.val_set = MyNoiseCIFARDataset(
+                root=noise_data_root,
+                input_name=dataset_name + "_raw",
+                train=False,
+                noise_config=self.scangen_noise_config,
+                device=self.device,
+                seed=0,
+            )
+            if created_temp_config and config_to_use.exists():
+                config_to_use.unlink()
+
+            teacher_transform_steps = [transforms.ToPILImage()]
+            if self.teacher_input_size and self.teacher_input_size > 0:
+                teacher_transform_steps.append(transforms.Resize(self.teacher_input_size))
+                if self.teacher_center_crop:
+                    teacher_transform_steps.append(transforms.CenterCrop(self.teacher_input_size))
+            teacher_transform_steps.append(transforms.ToTensor())
+            teacher_transform = transforms.Compose(teacher_transform_steps)
+            teacher_dataset = MyNoiseCIFARDataset(
+                root=noise_data_root,
+                input_name=dataset_name + "_raw",
+                train=False,
+                noise_config=self.scangen_noise_config,
+                device=self.device,
+                transform=teacher_transform,
+                seed=0,
+            )
+            self.teacher_eval_loader = torch.utils.data.DataLoader(
+                teacher_dataset,
+                batch_size=self.test_batch_size,
+                shuffle=False,
+                num_workers=2,
+            )
         else:
             transform_train = transforms.Compose([
                 transforms.ToTensor(),
@@ -366,81 +660,81 @@ class TrainerCiFar(object):
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
             ])
-            self.train_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=True, transform=transform_train)
-            self.val_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=False, transform=transform_test)
+            raw_root = Path(__file__).resolve().parent.parent / _default_cifar_dir(dataset_name) / img_type
+            self.train_set = RawImgDataset(root=str(raw_root), train=True, transform=transform_train)
+            self.val_set = RawImgDataset(root=str(raw_root), train=False, transform=transform_test)
+
+        if self._crd_enabled:
+            self.train_set = DatasetWithIndex(self.train_set)
+        self._train_sample_count = len(self.train_set)
 
         # Get dataloader
-        self.train_dataloader = torch.utils.data.DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True,
-                                                            num_workers=2)
+        self.train_dataloader = torch.utils.data.DataLoader(
+            self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=2
+        )
         self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False,
                                                           num_workers=2)
-
-    def _get_distill_cls(self, distill_type, distill_T):
-        self.distill_type = distill_type
-        if distill_type == "VanillaKD":
-            return nn.ModuleList([self.loss_fn, VanillaKD(distill_T)])
-        elif distill_type == "CRD":
-            return nn.ModuleList([self.loss_fn, VanillaKD(distill_T), CRD()])
-
-    def _calc_distill_loss(self, inputs, outputs, labels):
-        gamma, alpha, beta = self.distill_weights
-        criterion_cls = self.loss_fn[0]
-        loss_cls = criterion_cls(outputs, labels)
-
-        criterion_kl = self.loss_fn[1]
-        with torch.no_grad():
-            out_teacher = self.teacher(inputs)
-        loss_kl = criterion_kl(y_t=out_teacher.detach(), y_s=outputs)
-
-        # Loss from different kinds of distillation methods
-        if self.distill_type == "VanillaKD":
-            return gamma * loss_cls + alpha * loss_kl
-        elif self.distill_type == "CRD":
-            # Todo: Implement CRD
-            criterion_crd = self.loss_fn[2]
-            return gamma * loss_cls
-        else:
-            return loss_cls
+        if self.teacher_eval_loader is None:
+            self.teacher_eval_loader = self.val_dataloader
 
 
 class WrappedNoisyModel(nn.Module):
     """
-    Todo: Used this module only when doing noise-inject training independent not with QAT.
+    Injects multiplicative or additive parameter noise during training to emulate weight mismatch.
     """
-    def __init__(self, model: nn.Module, noise_level, noise_type="mul"):
+    def __init__(self, model: nn.Module, noise_levels, noise_type: str = "mul"):
         super().__init__()
         self.model = model
-        self.noise_level = noise_level
-        assert noise_type.lower() in {"mul", "add"}
-        self.noise_type = noise_type.lower()
-        self._gen_noisy_p = self._apply_noise_mul if self.noise_type == "mul" else self._apply_noise_add
+        if isinstance(noise_levels, (int, float)):
+            levels = [float(noise_levels)]
+        else:
+            levels = [float(lvl) for lvl in noise_levels]
+        if not levels:
+            raise ValueError("noise_levels must contain at least one value.")
+        if any(lvl < 0.0 for lvl in levels):
+            raise ValueError("noise_levels must be non-negative.")
+        # Preserve ordering while removing duplicates
+        self.noise_levels = list(dict.fromkeys(levels))
+        noise_type_lower = (noise_type or "mul").lower()
+        if noise_type_lower not in {"mul", "add"}:
+            raise ValueError(f"Unsupported noise_type={noise_type}. Expected 'mul' or 'add'.")
+        self.noise_type = noise_type_lower
         # Keeps a list of params free from noise
         self.noise_free_params = {"s_w_Param"}
+        self.current_noise_level = 0.0
 
-    def _check_noise_free(self, p_name):
-        for _nf_p in self.noise_free_params:
-            if _nf_p in p_name:
-                return True
-        return False
+    def _check_noise_free(self, p_name: str) -> bool:
+        return any(_nf_p in p_name for _nf_p in self.noise_free_params)
+
+    def _sample_noise_level(self) -> float:
+        level = random.choice(self.noise_levels)
+        self.current_noise_level = level
+        return level
 
     def gen_noisy_params(self):
+        noise_std = self._sample_noise_level()
         noisy_params = {}
         for _name, _param in self.model.named_parameters():
-            if self._check_noise_free(_name):
+            if self._check_noise_free(_name) or noise_std == 0.0:
                 noisy_params[_name] = _param
+                continue
+            if self.noise_type == "mul":
+                noisy_params[_name] = self._apply_noise_mul(_param, noise_std)
             else:
-                noisy_params[_name] = self._gen_noisy_p(_param) # type: ignore[misc]
+                noisy_params[_name] = self._apply_noise_add(_param, noise_std)
         return noisy_params
 
-    def _apply_noise_mul(self, p: nn.Parameter):
-        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
-        # Todo: In this case, the noise is also applied to the gradient. Should we use
-        #   return p + p.detach() * noise_ ?
+    def _apply_noise_mul(self, p: nn.Parameter, std: float):
+        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * std
+        # The noise is multiplicative to emulate parameter mismatch.
         return p.mul(1 + noise_)
 
-    def _apply_noise_add(self, p: nn.Parameter):
+    def _apply_noise_add(self, p: nn.Parameter, std: float):
         p_max = p.detach().abs().max()
-        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level * p_max
+        scale_val = p_max.item() if p_max is not None else 0.0
+        if scale_val == 0.0:
+            return p
+        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * std * scale_val
         return p.add(noise_)
 
     def forward(self, x):
@@ -448,24 +742,3 @@ class WrappedNoisyModel(nn.Module):
             return self.model(x)
         noisy_params = self.gen_noisy_params()
         return torch.func.functional_call(self.model, noisy_params, (x,))
-
-
-class VanillaKD(nn.Module):
-    def __init__(self, T):
-        super().__init__()
-        self.T = T
-
-    def forward(self, y_t, y_s):
-        log_p_s = F.log_softmax(y_s / self.T, dim=1)
-        p_t = F.softmax(y_t / self.T, dim=1)
-        return F.kl_div(log_p_s, p_t, reduction="batchmean") * (self.T ** 2)
-
-
-class CRD(nn.Module):
-    pass
-
-
-KD_CLASSES = {
-    "VanillaKD": VanillaKD,
-    "CRD": CRD,
-}

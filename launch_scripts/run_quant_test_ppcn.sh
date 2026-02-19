@@ -1,59 +1,58 @@
-#!/usr/bin/env bash
-set -eu
-trap '' HUP   # ignore hangup so the children survive
+#!/bin/bash
+#SBATCH -p ds4ai
+#SBATCH -c 16
+#SBATCH -t 24:00:00
+#SBATCH --mem=32gb
+#SBATCH --gres=gpu:1
+#SBATCH --output=logs/test_%j.out
+#SBATCH --error=logs/test_%j.err
+#SBATCH --job-name=PCN_EVAL
 
 # ─────────────── fixed params ───────────────
+export SCANGEN_DATA_ROOT=/scratch/tgeng_lab/sun/projs/ODE_CIFAR10/data
 export MODEL_DIR="./saved_ckpt"
 export WEIGHT_PATH="./expanded_weights"
 export PLOT_PATH="./loss_plot"
 export W_TYPE="fb_flip"
 export NOISE_TO_FF=true
 export NOISE_TO_BP=true
+DATASET_NAME="${DATASET_NAME:-cifar10}"
 
-# ─────────────── noise toggles ───────────────
-MAX_INPS=(144)
-N_BITS_VALS=(4)
-export AGG_BITS=8
+#######################################################
+# change the log names here to identify each run
+#######################################################
 export BASE_LOGDIR="./logs/noisy_test"
-# MASTER_LOG and JOB_LOG will be set per noise combination
+EXP_NAME="1126_ppcn_scanGFI_quant"
+MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}.log"
+JOB_LOG="$BASE_LOGDIR/parallel_job_master_${EXP_NAME}.log"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"  # S
-#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_1REP" # M
+ "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"  # S
+# "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_2REP"
+"PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_kd_crdDistill_a0p3_t1p5_scanGFI_2REP"
+#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_kd_crdDistill_a0p3_t1p5_scanGFI_2REP" # M
 #  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"  # L
 
-  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_4REP"
-  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_128Chan_2Pool_scanGFI_3REP"
-  "QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_7Layers_128Chan_2Pool_scanGFI_1REP"
+"QAT4w4aPCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_kd_crdDistill_a0p3_t1p5_scanGFI_3REP"
+# "FTNT1p0add8b_PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_64Chan_2Pool_scanGFI_1REP"
 
-#  "PCNetNoBatchNorm_FFFBReLU6NoLastConvYasX_5CLS_0.15LRPC_0.001WD_noBPtied_noBP_128BS_0.25Dropout_5Layers_C100_64Chan_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
 mkdir -p "$BASE_LOGDIR"
-for n_bits in "${N_BITS_VALS[@]}"; do
-  for max_inp in "${MAX_INPS[@]}"; do
-    for name in "${MODEL_NAMES[@]}"; do
-      mkdir -p "$BASE_LOGDIR/${name}_maxInp_${max_inp}_nbits_${n_bits}"
-      > "$BASE_LOGDIR/${name}_maxInp_${max_inp}_nbits_${n_bits}/job.log"
-    done
-  done
+> "$MASTER_LOG"
+> "$JOB_LOG"
+for name in "${MODEL_NAMES[@]}"; do
+  mkdir -p "$BASE_LOGDIR/$name"
+  > "$BASE_LOGDIR/$name/job.log"
 done
 
 # ─────────────── helper function ───────────────
 run_model(){
   local name="$1"
-  local max_inp="$2"
-  local n_bits="$3"
   local __rest="${name#*_}"
   local _pc_conv="${__rest%%_*}"
-
-  if [[ "$name" == *C100* ]]; then
-    local _task="cifar100"
-  else
-    local _task="cifar10"
-  fi
 
   IFS='_' read -r -a parts <<< "$name"
   local _ode_block="${parts[3]}"
@@ -69,7 +68,7 @@ run_model(){
     --model_name      "$name" \
     --model_dir       "$MODEL_DIR" \
     --img_type        "$_img_type" \
-    --task            "${_task}" \
+    --dataset         "${DATASET_NAME}" \
     --weight          "$WEIGHT_PATH" \
     --plot_path       "$PLOT_PATH" \
     --w_type          "$W_TYPE" \
@@ -85,52 +84,65 @@ run_model(){
     --quant_cls       "QuantHelper" \
     --act_quant_cls   "PercQuantHelper" \
     --act_perc        "0.999" \
-    --agg_bits        "$AGG_BITS" \
+    --agg_bits        "8" \
     --w_quant_type    "per_channel" \
-    --w_bits          "${n_bits}" \
-    --act_bits        "${n_bits}" \
-    --max_inp         "${max_inp}" \
+    --w_bits          "4" \
+    --act_bits        "4" \
     --pc_conv         "${_pc_conv}" \
-    --test_only       "true" \
-    2>&1 | tee -a "$BASE_LOGDIR/${name}_maxInp_${max_inp}_nbits_${n_bits}/job.log"
+    --test_only       "false" \
+    2>&1 | tee -a "$BASE_LOGDIR/$name/job.log"
 }
 export -f run_model
 
-# ─────────────── loop over methods ───────────────
-for n_bits in "${N_BITS_VALS[@]}"; do
-  ##########################################################################################
-  # Modify log name here before each run
-  ##########################################################################################
-  EXP_NAME="1228_scanGFI_PPCN_split_${n_bits}NBit.log"
-  MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
-  JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
-  > "$MASTER_LOG"
-  > "$JOB_LOG"
-  echo "Tail master with: tail -f $MASTER_LOG"
-  # ─────────────── run in parallel ───────────────
-  parallel \
-    --jobs 3 \
-    --joblog "$JOB_LOG" \
-    --keep-order \
-    run_model {1} {2} "${n_bits}" \
-    ::: "${MODEL_NAMES[@]}" \
-    ::: "${MAX_INPS[@]}"
-  echo "All jobs finished — merging logs into $MASTER_LOG"
-  # ─────────────── merge logs sequentially ───────────────
-  : >"$MASTER_LOG"
-  for max_inp in "${MAX_INPS[@]}"; do
-    for name in "${MODEL_NAMES[@]}"; do
-      printf '========== %s | max_inp=%s | n_bits=%s ==========\n' \
-             "$name" "$max_inp" "$n_bits" >>"$MASTER_LOG"
-      logfile="$BASE_LOGDIR/${name}_maxInp_${max_inp}_nbits_${n_bits}/job.log"
-      if ! grep -A 100 "Model name: ${name} " "$logfile" >>"$MASTER_LOG"; then
-        echo "[Final Result not found] $logfile" >>"$MASTER_LOG"
+echo "Tail master with: tail -f $MASTER_LOG"
+# ─────────────── run in parallel ───────────────
+MAX_JOBS=3
+pids=()
+
+for name in "${MODEL_NAMES[@]}"; do
+  # Wait if we've reached max jobs
+  while [ ${#pids[@]} -ge $MAX_JOBS ]; do
+    # Check which jobs are still running
+    new_pids=()
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        new_pids+=("$pid")
       fi
-      printf '\n\n' >>"$MASTER_LOG"
     done
+    pids=("${new_pids[@]}")
+    sleep 0.1
   done
-  echo "All summaries written to $MASTER_LOG"
+  
+  # Start job in background
+  (
+    start_time=$(date +%s)
+    run_model "$name"
+    exit_code=$?
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+    echo "$(date +%Y-%m-%d\ %H:%M:%S)	$duration	$exit_code	run_model	$name" >> "$JOB_LOG"
+  ) &
+  pids+=("$!")
 done
+
+# Wait for all remaining jobs to finish
+for pid in "${pids[@]}"; do
+  wait "$pid" 2>/dev/null || true
+done
+echo "All jobs finished — merging logs into $MASTER_LOG"
+
+# ─────────────── merge logs sequentially ───────────────
+: >"$MASTER_LOG"
+for name in "${MODEL_NAMES[@]}"; do
+  printf '========== %s ==========\n' "$name" >>"$MASTER_LOG"
+  if ! grep -A 20 "Final Result " \
+             "$BASE_LOGDIR/$name/job.log" >>"$MASTER_LOG"; then
+     echo "[Final Result not found]" >>"$MASTER_LOG"
+  fi
+  printf '\n\n' >>"$MASTER_LOG"
+done
+
+echo "All summaries written to $MASTER_LOG"
 
 #######################################################
 # running

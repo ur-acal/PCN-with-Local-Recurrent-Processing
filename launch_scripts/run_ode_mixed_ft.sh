@@ -61,8 +61,9 @@ for nt in "${NOISE_TYPES[@]}"; do
       for R_max in "${R_MAX_LIST[@]}"; do
         echo "log dir: ${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
         python train_ode_cifar.py \
-          --task          "${_task}" \
+          --dataset       "${_task}" \
           --ckpt          "${CKPT}" \
+          --rggb_to_rgb   "false" \
           --optim         "SGD" \
           --learning_rate 0.005 \
           --cosine_t0     20 \
@@ -97,6 +98,11 @@ for nt in "${NOISE_TYPES[@]}"; do
           --ode_block     "$ODE_BLK" \
           --noise_level   "${nl}" \
           --noise_type    "${nt}" \
+          --teacher_ckpt checkpoint/b4.pth \
+          --teacher_arch efficientnet-b4 \
+          --distill_method none \
+          --distill_alpha 0.3 \
+          --distill_temperature 2.0 \
           2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
       done
     done

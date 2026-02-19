@@ -8,6 +8,9 @@ import argparse
 import logging
 import json
 import subprocess
+import sys
+import time
+from pathlib import Path
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -18,7 +21,7 @@ from typing import List
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES
-from inference_utils import load_and_prepare_model, replace_transpose_conv, get_calib_loader
+from inference_utils import load_and_prepare_model, replace_transpose_conv
 from data_utils import ToPackedRGGB, RawImgDataset
 
 from simulator import CrossSimParameters
@@ -29,6 +32,64 @@ from cross_sim.test_analog_model import test_analog_model, get_exp_name
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 
 
+_CIFAR_STATS = {
+    "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+    "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+}
+
+
+def _normalize_dataset_name(dataset_name=None) -> str:
+    name = (dataset_name or "cifar10").lower().replace("-", "").replace("_", "")
+    if name in _CIFAR_STATS:
+        return name
+    raise ValueError(f"Unsupported dataset: {dataset_name}. Use cifar10 or cifar100.")
+
+
+def _default_cifar_dir(dataset_name: str) -> str:
+    name = _normalize_dataset_name(dataset_name)
+    return "cifar-10-data" if name == "cifar10" else "cifar-100-data"
+
+
+def _resolve_scan_noise_root(img_type: str, input_name: str) -> Path:
+    dataset_name = _normalize_dataset_name(input_name)
+    hdf5_name = f"{dataset_name}_raw.h5"
+    env_root = os.getenv("SCANGEN_DATA_ROOT")
+    if env_root:
+        env_path = Path(env_root).expanduser()
+        if env_path.is_file():
+            if env_path.name == hdf5_name:
+                return env_path.parent.resolve()
+            env_path = env_path.parent
+        candidates = [
+            env_path,
+            env_path / img_type,
+            env_path / _default_cifar_dir(dataset_name) / img_type,
+        ]
+        for candidate in candidates:
+            if (candidate / hdf5_name).exists():
+                return candidate.resolve()
+    return (Path(__file__).resolve().parents[1] / _default_cifar_dir(dataset_name) / img_type).resolve()
+
+
+def _load_scangen_config():
+    template_cfg = Path("scangen/config.json")
+    if template_cfg.exists():
+        with template_cfg.open() as fp:
+            return json.load(fp)
+    conf_file = Path(f"./{int(time.time() * 1000)}config.json")
+    try:
+        subprocess.run([sys.executable, "-m", "scangen", "create-config", str(conf_file)], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError(
+            "scangen CLI is unavailable. Provide scangen/config.json or install the CLI dependencies."
+        ) from exc
+    try:
+        with conf_file.open() as fp:
+            return json.load(fp)
+    finally:
+        conf_file.unlink(missing_ok=True)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Run PCConvNoisy tests with custom noise parameters"
@@ -37,6 +98,7 @@ def parse_args():
                         help="Directory containing the saved model checkpoint")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
+    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
     parser.add_argument("--fuse_bn", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True, help="Fuse batch norm into conv")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
@@ -63,6 +125,49 @@ def parse_args():
                         default=False)
     return parser.parse_args()
 
+def get_calib_loader(bs=128, n_samples=None, img_type="rgb", dataset_name="cifar10"):
+    dataset_name = _normalize_dataset_name(dataset_name)
+    if img_type in {"rgb", "rggb"}:
+        mean, std = _CIFAR_STATS[dataset_name]
+        dataset_cls = torchvision.datasets.CIFAR100 if dataset_name == "cifar100" else torchvision.datasets.CIFAR10
+        if img_type == "rgb":
+            # Todo: Should we keep the random crop here?
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std), ])
+        else:
+            transform_train = transforms.Compose([
+                transforms.ToTensor(),
+                ToPackedRGGB(return_orig=False),
+                transforms.RandomCrop(16, padding=2),
+                transforms.RandomHorizontalFlip(),
+            ])
+        train_set = dataset_cls(root='../data', train=True, download=True, transform=transform_train)
+    elif img_type == "scanGFI":
+        scangen_config = _load_scangen_config()
+        noise_root = _resolve_scan_noise_root(img_type, dataset_name)
+        train_set = MyNoiseCIFARDataset(
+            root=noise_root,
+            input_name=dataset_name,
+            train=True,
+            noise_config=scangen_config["noise"],
+            device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
+        )
+    else:
+        transform_train = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomCrop(16, padding=2),
+            transforms.RandomHorizontalFlip(),
+        ])
+        raw_root = (Path(__file__).resolve().parents[1] / _default_cifar_dir(dataset_name) / img_type).resolve()
+        train_set = RawImgDataset(root=str(raw_root), train=True, transform=transform_train)
+    if n_samples is not None:
+        perm = torch.randperm(len(train_set))
+        train_set = Subset(train_set, perm[:n_samples])
+    calib_dataloader = torch.utils.data.DataLoader(train_set, batch_size=bs, shuffle=False, num_workers=2)
+    return calib_dataloader
 
 def get_leaf_mods(model: nn.Module) -> List[nn.Module]:
     leaf_mod = []
@@ -74,7 +179,8 @@ def get_leaf_mods(model: nn.Module) -> List[nn.Module]:
 
 def calibrate_input(model: nn.Module, device, model_name,
                     calib_bs=128, calib_samples=None,
-                    percentile=0.99999, symmetric=False, save_to=None, img_type="rgb"):
+                    percentile=0.99999, symmetric=False, save_to=None, img_type="rgb",
+                    dataset_name="cifar10"):
     # if saved, just loading the result directly
     if save_to is not None:
         save_to = os.path.join(save_to, "{}_{}_{}.pkl".format(
@@ -116,7 +222,8 @@ def calibrate_input(model: nn.Module, device, model_name,
     for _mod in leaf_mod:
         hooks.append(_mod.register_forward_pre_hook(_make_hook(_mod)))
 
-    calib_loader = get_calib_loader(bs=calib_bs, n_samples=calib_samples, img_type=img_type)
+    calib_loader = get_calib_loader(bs=calib_bs, n_samples=calib_samples,
+                                    img_type=img_type, dataset_name=dataset_name)
     for _batch in calib_loader:
         _inp, _ = _batch
         _inp = _inp.to(device)
@@ -209,7 +316,8 @@ def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True
         input_ranges = calibrate_input(model=net_, device=device, model_name=args.model_name,
                                        calib_bs=args.calib_samples,
                                        calib_samples=args.calib_samples, percentile=args.calib_perc,
-                                       symmetric=args.sym_quant, save_to=args.calib_path)[args.calib_type]
+                                       symmetric=args.sym_quant, save_to=args.calib_path,
+                                       dataset_name=args.dataset)[args.calib_type]
         if args.calib_only:
             logging.warning("Calibrating inputs only, exit now.")
             exit(0)
@@ -231,12 +339,13 @@ def cross_sim_inference(args, Nruns=10, noise_level=0.0, proportional_error=True
     analog_net = from_torch(net_, params_list, fuse_batchnorm=True, bias_rows=bias_rows)
     print("----- Successfully converted from torch -----")
 
-    #### Load and transform CIFAR-10 dataset
+    #### Load and transform CIFAR dataset
     batch_size = 64
     normalize = transforms.Normalize(
         mean=[0.485, 0.456, 0.406],
         std=[0.2470, 0.2435, 0.2616])
-    test_dataset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True,
+    dataset_cls = torchvision.datasets.CIFAR100 if args.dataset == "cifar100" else torchvision.datasets.CIFAR10
+    test_dataset = dataset_cls(root='../data', train=False, download=True,
                                transform=transforms.Compose([transforms.ToTensor(), normalize]))
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size)
     mean_acc, std_acc, acc_list = test_analog_model(analog_model=analog_net, Nruns=Nruns, N=len(test_dataset),
