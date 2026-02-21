@@ -18,7 +18,7 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 ###############################################################################################
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
-ODE_BLOCK="${ODE_BLOCK:-S2NoisyIYAsXZAs0}"   # fixed block for now ODEXInitFFFB
+ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
 
 PCNS=( "PCNetNoBatchNorm" )
@@ -30,14 +30,14 @@ CHAN_0_LIST=( 18 20 22 24 26 28 30 )
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers..."
 declare -A NUM_LAYERS_BY_CHAN0
-NUM_LAYERS_BY_CHAN0[18]="18 20"
-NUM_LAYERS_BY_CHAN0[20]="16 18 20"
-NUM_LAYERS_BY_CHAN0[22]="16 18 20"
-NUM_LAYERS_BY_CHAN0[24]="14 16 18"
-NUM_LAYERS_BY_CHAN0[26]="14 16 18"
+NUM_LAYERS_BY_CHAN0[18]="20 22"
+NUM_LAYERS_BY_CHAN0[20]="18 20"
+NUM_LAYERS_BY_CHAN0[22]="18 20"
+NUM_LAYERS_BY_CHAN0[24]="16 18"
+NUM_LAYERS_BY_CHAN0[26]="16 18"
 NUM_LAYERS_BY_CHAN0[28]="14 16"
 NUM_LAYERS_BY_CHAN0[30]="12 14"
-NUM_LAYERS_BY_CHAN0[32]="12"
+NUM_LAYERS_BY_CHAN0[32]="10 12"
 
 TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
@@ -61,7 +61,7 @@ SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 # Change the saved pickle file name here
 ####################################################
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0211_balanced_A_test_expanded_2State.pkl"
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0220_kdcrd_then_ft.pkl"
 ####################################################
 # Change EXP in submit_chunk
 ####################################################

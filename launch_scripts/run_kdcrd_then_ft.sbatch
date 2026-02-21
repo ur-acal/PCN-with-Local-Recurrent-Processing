@@ -313,7 +313,7 @@ finetune_one_combo_model() {
     qat_wrapper="QATWrapper2State"
   fi
 
-  local nl="0.15"
+  local nl="0.25"
   local nt="mul"
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
@@ -325,7 +325,7 @@ finetune_one_combo_model() {
     --learning_rate 0.005 \
     --cosine_t0     20 \
     --eval_every    2 \
-    --num_epochs    80 \
+    --num_epochs    62 \
     --img_type      "${IMG_TYPE}" \
     --model_name    "${name}" \
     --offset_eps    0.0 \
