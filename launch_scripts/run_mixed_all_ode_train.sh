@@ -18,6 +18,7 @@
 
 #conda activate one
 
+export SCANGEN_DATA_ROOT=/pscratch/sd/r/rsong10/data
 DATASET_NAME="${DATASET_NAME:-cifar100}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
@@ -28,19 +29,27 @@ TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
 
-#INP=(4  32 32 32 64 64 64  128 128 128)
-#OUT=(32 32 32 64 64 64 128 128 128 128)
-#POOL=(0  0  1  0  0  1  0   0   0  0)
-#INP=(4  28 28 28 28 28 56 56 56 56 56 56  112 112 112 112)
-#OUT=(28 28 28 28 28 56 56 56 56 56 56 112 112 112 112 112)
-#POOL=(0  0  0  0  1  0  0  0  0  0  1  0  0  0  0  0  0  0)
-INP=(4  20 20 20 20 20 20 40 40 40 40 40 80 80 80 80)
-OUT=(20 20 20 20 20 20 40 40 40 40 40 80 80 80 80 80)
-POOL=(0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0 )
+#INP=(4  20 20 20 20 20 20 40 40 40 40 40 80 80 80 80)
+#OUT=(20 20 20 20 20 20 40 40 40 40 40 80 80 80 80 80)
+#POOL=(0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0 )
+INP=(4  28 28 28 28 28 56 56 56 56 56 56  112 112 112 112)
+OUT=(28 28 28 28 28 56 56 56 56 56 56 112 112 112 112 112)
+POOL=(0  0  0  0  1  0  0  0  0  0  1  0  0  0  0  0  0  0)
 STRIDE=(1)
 KSZ=(3)
 PADDING=1
-NOISE_LEVEL=0.
+nl=0.15
+nt="mul"
+n_bits=5
+R_val="20e3"
+R_max="300e3"
+
+ODE_BLK="ODEXInitFFFB"
+QAT_WRAPPER="QATWrapper1State"
+if [[ "$ODE_BLK" == *S2* || "$ODE_BLK" == *State2* ]]; then
+  QAT_WRAPPER="QATWrapper2State"
+fi
+
 python train_ode_cifar.py \
   --optim         "SGD" \
   --img_type      "scanGFI" \
@@ -61,13 +70,22 @@ python train_ode_cifar.py \
   --bypass        "false" \
   --batch_size    128 \
   --method        "dopri5" \
-  --tol           "0.0001" \
   --t_end         "1.75" \
-  --noise_level   "${NOISE_LEVEL}" \
-  --noise_type    "mul" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
-  --ode_block     "ODEXInitFFFB" \
+  --ode_block     "${ODE_BLK}" \
+  --tol           "1e-6" \
+  --R             "${R_val}" \
+  --R_max         "${R_max}" \
+  --C             "49e-15" \
+  --v_dd          "0.2" \
+  --w_bits        "${n_bits}" \
+  --tie_cap       "false" \
+  --one_over_q    "6" \
+  --qat_cls       "SymQuantizeWeight" \
+  --ode_wrapper   "${QAT_WRAPPER}" \
+  --noise_level   "${nl}" \
+  --noise_type    "${nt}" \
   --teacher_ckpt "${TEACHER_CKPT}" \
   --teacher_arch "${TEACHER_ARCH}" \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
@@ -76,7 +94,7 @@ python train_ode_cifar.py \
   --distill_method kd_crd \
   --distill_alpha 0.3 \
   --distill_temperature 2.0 \
-  2>&1 | tee "${LOGDIR}/train_${EXP}_0220_16L80C_kdcrd_ODEXInitFFFB.log"
+  2>&1 | tee "${LOGDIR}/train_${EXP}_ODEXInitFFFB.log"
 
 # # M model (0.57 M)
 # python train_ode_cifar.py \

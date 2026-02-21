@@ -110,8 +110,9 @@ class TrainerCiFar(object):
         if warmup_epoch > 0:
             self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.01, total_iters=100)
         if T0 is not None:
-            self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer=self.optimizer,
-                                                                            T_0=T0, T_mult=2)
+            # self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer=self.optimizer,
+            #                                                                 T_0=T0, T_mult=2)
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=num_epochs)
         else:
             self.scheduler = optim.lr_scheduler.MultiStepLR(optimizer=self.optimizer,
                                                             milestones=list(map(int, lr_reduce_on.split(","))))

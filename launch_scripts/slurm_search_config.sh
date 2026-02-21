@@ -19,7 +19,7 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-S2NoisyIYAsXZAs0}"   # fixed block for now ODEXInitFFFB
-NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-4}"
+NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
 
 PCNS=( "PCNetNoBatchNorm" )
 IMG_TYPES=( "scanGFI" )
@@ -39,8 +39,15 @@ NUM_LAYERS_BY_CHAN0[28]="14 16"
 NUM_LAYERS_BY_CHAN0[30]="12 14"
 NUM_LAYERS_BY_CHAN0[32]="12"
 
+TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
-SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_search_config.sbatch"
+if [[ "${TRAIN_MODE}" == "mix_all" ]]; then
+  SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_all_mixed.sbatch"
+elif [[ "${TRAIN_MODE}" == "kd_crd_ft" ]]; then
+  SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_kdcrd_then_ft.sbatch"
+else
+  SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_search_config.sbatch"
+fi
 SLURM_LOG_DIR="${REPO_ROOT}/logs/slurm_jobs"
 
 declare -A JOBS_BY_EXP
@@ -257,7 +264,7 @@ submit_chunk() {
   # Human-readable + unique EXP:
   # - if MAX_TASKS_PER_GPU==1, chunk_tag will be the exact comb_tag
   # - else it is first__to__last
-  local EXP="0211_no_bn_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
+  local EXP="0220_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
 
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"

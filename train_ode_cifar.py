@@ -457,7 +457,7 @@ def _constr_model_name(args, rep=1):
     if getattr(args, "rggb_to_rgb", False):
         model_name += "_rggb2rgb"
     model_name = model_name + "_" + str(rep) + 'REP'
-    if args.model_name is not None:
+    if args.model_name is not None or args.ode_wrapper is not None or args.noise_level is not None:
         if args.ode_wrapper is None:
             ft_prefix = "ft"
         elif args.qat_cls is None or args.qat_cls == "SymQuantizeWeight":
@@ -466,12 +466,16 @@ def _constr_model_name(args, rep=1):
             ft_prefix = "QAT{}b{}".format(args.w_bits, args.qat_cls)
         if args.noise_level is not None:
             ft_prefix += "NT{}{}".format(str(args.noise_level).replace('.', 'p'), args.noise_type)
-        eps_val = args.model_name.split("_")[2]
-        ode_blk = args.model_name.split("_")[3]
-        orig_rep = args.model_name.split("_")[-1]
-        model_name = ft_prefix + args.model_name.split(orig_rep)[0].replace(
-            eps_val, "{}eps".format(args.offset_eps)).replace(
-            ode_blk, "{}".format(args.ode_block)) + str(rep) + 'REP'
+        if args.model_name is not None:
+            eps_val = args.model_name.split("_")[2]
+            ode_blk = args.model_name.split("_")[3]
+            orig_rep = args.model_name.split("_")[-1]
+            model_name = ft_prefix + args.model_name.split(orig_rep)[0].replace(
+                eps_val, "{}eps".format(args.offset_eps)).replace(
+                ode_blk, "{}".format(args.ode_block)) + str(rep) + 'REP'
+        else:
+            # Add DT short for direct training to distinguish from finetuning.
+            model_name = "DT" + ft_prefix + model_name
     return model_name
 
 def get_model_name(args):

@@ -54,6 +54,16 @@ else
   IFS='|' read -r patch_node patch_stride patch_cycle patch_pad fold_scalar patch_bs <<< "${CIRC_CONF}"
 fi
 TRAIN_BATCH_SIZE="${patch_bs:-128}"
+
+TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
+TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
+TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
+TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
+if [[ "${TASK}" == "cifar10" ]]; then
+  TEACHER_CKPT="checkpoint/b4.pth"
+  TEACHER_ARCH="efficientnet-b4"
+fi
 ##########################################################################
 
 trap 'echo "Signal caught; killing children..."; kill -- -$$ 2>/dev/null || true' TERM INT
@@ -160,8 +170,8 @@ run_one_combo () {
     --img_type      "${IMG_TYPE}" \
     --dataset       "${TASK}" \
     --num_classes   "${N_CLASSES}" \
-    --num_epochs    200 \
-    --eval_every    2 \
+    --num_epochs    300 \
+    --eval_every    5 \
     --learning_rate 0.01 \
     --offset_eps    0.0 \
     --inp_channels  "${INP[@]}" \
@@ -188,6 +198,14 @@ run_one_combo () {
     --pcn           "${PCN}" \
     --pc_conv       "PCConvReLU6" \
     --ode_block     "${block}" \
+    --teacher_ckpt  "${TEACHER_CKPT}" \
+    --teacher_arch  "${TEACHER_ARCH}" \
+    --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
+    --teacher_input_size "${TEACHER_INPUT_SIZE}" \
+    --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+    --distill_method kd_crd \
+    --distill_alpha 0.3 \
+    --distill_temperature 2.0 \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }
@@ -338,6 +356,7 @@ finetune_one_combo_model() {
     --ode_block     "${train_block}" \
     --noise_level   "${nl}" \
     --noise_type    "${nt}" \
+    --distill_method none \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }
@@ -376,19 +395,9 @@ done
 
 ###############################################################################
 # PHASE 2: EVAL pre_ft all combos in parallel
+# Skipped
 ###############################################################################
-echo "==== PHASE 2: EVAL pre_ft (parallel over combos) ===="
-pids=()
-for i in "${!COMB_TAGS[@]}"; do
-  comb_tag="${COMB_TAGS[$i]}"
-  mn="${MODEL_NAMES_PRE[$i]}"
-  if [[ -z "$mn" ]]; then
-    echo "[WARN] Skip pre_ft eval for comb=${comb_tag} (empty model name)"
-    continue
-  fi
-  eval_one_combo_model "${comb_tag}" "${mn}" "pre_ft" "${ODE_BLOCK}" & pids+=($!)
-done
-for p in "${pids[@]}"; do wait "$p" || ok=1; done
+
 
 ###############################################################################
 # PHASE 3: FINETUNE all combos in parallel
@@ -443,21 +452,10 @@ echo "Merging summaries into ${MASTER_LOG}"
 : > "${MASTER_LOG}"
 for i in "${!COMB_TAGS[@]}"; do
   comb_tag="${COMB_TAGS[$i]}"
-  pre="${MODEL_NAMES_PRE[$i]}"
+  # pre="${MODEL_NAMES_PRE[$i]}" # pre ft evaluation skipped
   post="${MODEL_NAMES_FT[$i]}"
 
   echo "==================== COMB ${comb_tag} ====================" >> "${MASTER_LOG}"
-
-  if [[ -n "$pre" ]]; then
-    pre_log="${EVAL_BASE}/${comb_tag}/pre_ft/${pre}_method_${METHOD}_tol_${TOL}/job.log"
-    printf '========== %s (pre-finetune) ==========\n' "$pre" >>"${MASTER_LOG}"
-    if [[ -f "$pre_log" ]]; then
-      cat "$pre_log" >> "${MASTER_LOG}"
-    else
-      echo "[Missing log: $pre_log]" >> "${MASTER_LOG}"
-    fi
-    printf '\n\n' >> "${MASTER_LOG}"
-  fi
 
   if [[ -n "$post" ]]; then
     post_log="${EVAL_BASE}/${comb_tag}/post_ft/${post}_method_${METHOD}_tol_${TOL}/job.log"

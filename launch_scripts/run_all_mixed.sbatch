@@ -54,6 +54,22 @@ else
   IFS='|' read -r patch_node patch_stride patch_cycle patch_pad fold_scalar patch_bs <<< "${CIRC_CONF}"
 fi
 TRAIN_BATCH_SIZE="${patch_bs:-128}"
+
+TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
+TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
+TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
+TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
+if [[ "${TASK}" == "cifar10" ]]; then
+  TEACHER_CKPT="checkpoint/b4.pth"
+  TEACHER_ARCH="efficientnet-b4"
+fi
+
+TOL="1e-6"
+n_bits=5
+R_val="20e3"
+R_MAX="300e3"
+C_val="49e-15"
 ##########################################################################
 
 trap 'echo "Signal caught; killing children..."; kill -- -$$ 2>/dev/null || true' TERM INT
@@ -154,15 +170,24 @@ run_one_combo () {
 
   local t_end="1.75"
 
+  local qat_wrapper="QATWrapper1State"
+  if [[ "$name" == *S2* || "$name" == *State2* ]]; then
+    qat_wrapper="QATWrapper2State"
+  fi
+
+  local nl="0.15"
+  local nt="mul"
+
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --optim         "SGD" \
     --img_type      "${IMG_TYPE}" \
     --dataset       "${TASK}" \
     --num_classes   "${N_CLASSES}" \
-    --num_epochs    200 \
+    --num_epochs    300 \
     --eval_every    2 \
     --learning_rate 0.01 \
+    --lr_reduce_on  "80,140,200" \
     --offset_eps    0.0 \
     --inp_channels  "${INP[@]}" \
     --out_channels  "${OUT[@]}" \
@@ -183,11 +208,30 @@ run_one_combo () {
     --bypass        "false" \
     --batch_size    "${TRAIN_BATCH_SIZE}" \
     --method        "dopri5" \
-    --tol           "1e-4" \
     --t_end         "${t_end}" \
     --pcn           "${PCN}" \
     --pc_conv       "PCConvReLU6" \
     --ode_block     "${block}" \
+    --tol           "${TOL}" \
+    --R             "${R_val}" \
+    --R_max         "${R_MAX}" \
+    --C             "${C_val}" \
+    --v_dd          "0.2" \
+    --w_bits        "${n_bits}" \
+    --tie_cap       "false" \
+    --one_over_q    "6" \
+    --qat_cls       "SymQuantizeWeight" \
+    --ode_wrapper   "${qat_wrapper}" \
+    --noise_level   "${nl}" \
+    --noise_type    "${nt}" \
+    --teacher_ckpt  "${TEACHER_CKPT}" \
+    --teacher_arch  "${TEACHER_ARCH}" \
+    --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
+    --teacher_input_size "${TEACHER_INPUT_SIZE}" \
+    --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+    --distill_method kd_crd \
+    --distill_alpha 0.3 \
+    --distill_temperature 2.0 \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }
@@ -195,11 +239,6 @@ run_one_combo () {
 # ------------------------ EVAL ONE MODEL ------------------------
 MODEL_DIR="./saved_ckpt"
 METHOD="dopri5"
-TOL="1e-6"
-n_bits=5
-R_val="20e3"
-R_MAX="300e3"
-C_val="49e-15"
 EVAL_BASE="${LOGDIR}/evals"
 MASTER_LOG="${LOGDIR}/eval_master_merged.log"
 mkdir -p "${EVAL_BASE}"
@@ -275,73 +314,6 @@ eval_one_combo_model() {
     --mem_frac        "${MEM_FRAC}" \
     2>&1 | tee -a "$dir/job.log"
 }
-
-# ------------------------ FINETUNE ONE MODEL ------------------------
-finetune_one_combo_model() {
-  local comb_tag="$1"
-  local name="$2"
-  local train_block="$3"
-
-  local comb_logdir="${LOGDIR}/${comb_tag}"
-  mkdir -p "${comb_logdir}"
-  local logfile="${comb_logdir}/finetune_${train_block}.log"
-
-  echo "[FINETUNE] comb=${comb_tag} ${name} (block=${train_block}) → $logfile"
-
-  local ckpt="best"
-  local t_end="1.75"
-  local qat_wrapper="QATWrapper1State"
-  if [[ "$name" == *S2* || "$name" == *State2* ]]; then
-    qat_wrapper="QATWrapper2State"
-  fi
-
-  local nl="0.15"
-  local nt="mul"
-
-  OMP_NUM_THREADS=${THREADS_PER_PROC} \
-  python -u train_ode_cifar.py \
-    --dataset       "${TASK}" \
-    --num_classes   "${N_CLASSES}" \
-    --ckpt          "${ckpt}" \
-    --optim         "SGD" \
-    --learning_rate 0.005 \
-    --cosine_t0     20 \
-    --eval_every    2 \
-    --num_epochs    80 \
-    --img_type      "${IMG_TYPE}" \
-    --model_name    "${name}" \
-    --offset_eps    0.0 \
-    --dropout       0.25 \
-    --tie_weights   "false" \
-    --tie_bp        "false" \
-    --bypass        "false" \
-    --batch_size    128 \
-    --method        "${METHOD}" \
-    --tol           "${TOL}" \
-    --t_end         "${t_end}" \
-    --R             "${R_val}" \
-    --R_max         "${R_MAX}" \
-    --C             "${C_val}" \
-    --v_dd          "0.2" \
-    --w_bits        "${n_bits}" \
-    --patch_node    "${patch_node}" \
-    --patch_stride  "${patch_stride}" \
-    --patch_cycle   "${patch_cycle}" \
-    --patch_pad     "${patch_pad}" \
-    --fold_scalar   "${fold_scalar}" \
-    --tie_cap       "false" \
-    --one_over_q    "6" \
-    --qat_cls       "SymQuantizeWeight" \
-    --pcn           "${PCN}" \
-    --ode_wrapper   "${qat_wrapper}" \
-    --pc_conv       "PCConvReLU6" \
-    --ode_block     "${train_block}" \
-    --noise_level   "${nl}" \
-    --noise_type    "${nt}" \
-    --mem_frac      "${MEM_FRAC}" \
-    2>&1 | tee "${logfile}"
-}
-
 ###############################################################################
 # PHASE 1: TRAIN all combos in parallel
 ###############################################################################
@@ -392,49 +364,18 @@ for p in "${pids[@]}"; do wait "$p" || ok=1; done
 
 ###############################################################################
 # PHASE 3: FINETUNE all combos in parallel
+# Skipped. KD CRD + QAT MT in one run.
 ###############################################################################
-echo "==== PHASE 3: FINETUNE (parallel over combos) ===="
-pids=()
-for i in "${!COMB_TAGS[@]}"; do
-  comb_tag="${COMB_TAGS[$i]}"
-  mn="${MODEL_NAMES_PRE[$i]}"
-  if [[ -z "$mn" ]]; then
-    echo "[WARN] Skip finetune for comb=${comb_tag} (empty model name)"
-    continue
-  fi
-  finetune_one_combo_model "${comb_tag}" "${mn}" "${ODE_BLOCK}" & pids+=($!)
-done
-for p in "${pids[@]}"; do wait "$p" || ok=1; done
 
 ###############################################################################
 # Collect finetuned model names (one per combo)
+# Skipped.
 ###############################################################################
-declare -a MODEL_NAMES_FT=()
-for i in "${!COMB_TAGS[@]}"; do
-  comb_tag="${COMB_TAGS[$i]}"
-  ft_log="${LOGDIR}/${comb_tag}/finetune_${ODE_BLOCK}.log"
-  mn_ft="$(extract_model_name "${ft_log}")"
-  if [[ -z "$mn_ft" ]]; then
-    echo "[WARN] Could not extract finetuned model name from ${ft_log} (comb=${comb_tag})"
-  fi
-  MODEL_NAMES_FT+=( "${mn_ft}" )
-done
 
 ###############################################################################
 # PHASE 4: EVAL post_ft all combos in parallel
+# Skipped.
 ###############################################################################
-echo "==== PHASE 4: EVAL post_ft (parallel over combos) ===="
-pids=()
-for i in "${!COMB_TAGS[@]}"; do
-  comb_tag="${COMB_TAGS[$i]}"
-  mn_ft="${MODEL_NAMES_FT[$i]}"
-  if [[ -z "$mn_ft" ]]; then
-    echo "[WARN] Skip post_ft eval for comb=${comb_tag} (empty finetuned model name)"
-    continue
-  fi
-  eval_one_combo_model "${comb_tag}" "${mn_ft}" "post_ft" "${ODE_BLOCK}" & pids+=($!)
-done
-for p in "${pids[@]}"; do wait "$p" || ok=1; done
 
 ###############################################################################
 # Merge summaries into MASTER_LOG (simple: append per-combo job logs)
@@ -444,7 +385,7 @@ echo "Merging summaries into ${MASTER_LOG}"
 for i in "${!COMB_TAGS[@]}"; do
   comb_tag="${COMB_TAGS[$i]}"
   pre="${MODEL_NAMES_PRE[$i]}"
-  post="${MODEL_NAMES_FT[$i]}"
+  # post="${MODEL_NAMES_FT[$i]}"
 
   echo "==================== COMB ${comb_tag} ====================" >> "${MASTER_LOG}"
 
@@ -455,17 +396,6 @@ for i in "${!COMB_TAGS[@]}"; do
       cat "$pre_log" >> "${MASTER_LOG}"
     else
       echo "[Missing log: $pre_log]" >> "${MASTER_LOG}"
-    fi
-    printf '\n\n' >> "${MASTER_LOG}"
-  fi
-
-  if [[ -n "$post" ]]; then
-    post_log="${EVAL_BASE}/${comb_tag}/post_ft/${post}_method_${METHOD}_tol_${TOL}/job.log"
-    printf '---------- %s (post-finetune) ----------\n' "$post" >>"${MASTER_LOG}"
-    if [[ -f "$post_log" ]]; then
-      cat "$post_log" >> "${MASTER_LOG}"
-    else
-      echo "[Missing log: $post_log]" >> "${MASTER_LOG}"
     fi
     printf '\n\n' >> "${MASTER_LOG}"
   fi

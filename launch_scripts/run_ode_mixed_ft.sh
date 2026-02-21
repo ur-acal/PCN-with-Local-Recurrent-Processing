@@ -68,7 +68,7 @@ for nt in "${NOISE_TYPES[@]}"; do
           --learning_rate 0.005 \
           --cosine_t0     20 \
           --eval_every    2 \
-          --num_epochs    130 \
+          --num_epochs    80 \
           --img_type      "scanGFI" \
           --model_name    "${MODEL_NAME}" \
           --offset_eps    0.0 \
