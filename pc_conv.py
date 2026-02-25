@@ -61,7 +61,7 @@ class PCConv(nn.Module):
         self.use_pc = use_pc
 
         if use_pc and not separable:
-            log.info("Use PC, initialize FBconv")
+            # log.info("Use PC, initialize FBconv")
             output_padding = 1 if stride == 2 else 0
             self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding,
                                              output_padding=output_padding, bias=bias)
@@ -132,8 +132,8 @@ class PCConvNoisy(nn.Module):
                  noise_to_ff=True, noise_to_bp=True, tie_noise=False, tie_noise_bp=False, diff_noise=False,
                  call_pc=True, **kwargs):
         super().__init__()
-        log.warning("Initializing PC layer {} with noise level: {}, cycles: {}, LR PC: {}".format(
-            layer_idx, noise_level, cls, lr))
+        # log.warning("Initializing PC layer {} with noise level: {}, cycles: {}, LR PC: {}".format(
+        #     layer_idx, noise_level, cls, lr))
         self.noise_level = noise_level
         self.padding = padding
         self.stride = stride
@@ -151,7 +151,7 @@ class PCConvNoisy(nn.Module):
         self.call_pc = call_pc
 
         if use_pc and not separable:
-            log.info("Use PC, initialize FBconv")
+            # log.info("Use PC, initialize FBconv")
             output_padding = 1 if stride == 2 else 0
             self.FBconv = nn.ConvTranspose2d(out_chan, inp_chan, kernel_size, stride, padding,
                                              output_padding=output_padding, bias=bias)
@@ -301,17 +301,17 @@ class PCConvNoisy(nn.Module):
         :return: None
         """
         self._init_noise(self.noise_level)
-        log.info("Add noise to FF/FB")
+        # log.info("Add noise to FF/FB")
         self.noise_ff_matrix = self.noise_ff_matrix.to(device=self.FFconv.weight.device)
         self.noisy_ff = (self.noise_ff_matrix + 1) * self.FFconv.weight
 
         if self.use_pc:
-            log.info("Add noise to FB")
+            # log.info("Add noise to FB")
             self.noise_fb_matrix = self.noise_fb_matrix.to(device=self.FBconv.weight.device)
             self.noisy_fb = (self.noise_fb_matrix + 1) * self.FBconv.weight
 
         if self.bypass is not None:
-            log.info("Add noise to Bypass")
+            # log.info("Add noise to Bypass")
             self.noise_bp_matrix = self.noise_bp_matrix.to(device=self.bypass.weight.device)
             self.noisy_bp = (self.noise_bp_matrix + 1) * self.bypass.weight
 

@@ -46,7 +46,7 @@ class _TAddedModule(nn.Module):
 class ODEBlockPC(nn.Module):
 
     def __init__(self, pc_conv: Union[PCConvNoisy, PCConv], noise_level=0.0, method="dopri5", t_end=None, t_step=None,
-                 tol=1e-3, return_mid=False, init_b=False, sde_noise_type="mul", **kwargs):
+                 tol=1e-3, return_mid=False, init_b=False, sde_noise_type="mul", mismatch_type="mul", **kwargs):
         super(ODEBlockPC, self).__init__()
         self.noise_level = noise_level
         self.tie_weights = pc_conv.tie_weights
@@ -73,6 +73,8 @@ class ODEBlockPC(nn.Module):
             "b0": nn.Parameter(self.b0[0].clone()),
         }
 
+        self.mismatch_type = mismatch_type
+        assert self.mismatch_type in {"mul", "add"}
         if self.noise_level is not None and self.noise_level > 0:
             self.add_noise()
 
@@ -141,11 +143,21 @@ class ODEBlockPC(nn.Module):
     def _apply_noise(self, p):
         if getattr(p, "is_sparse_csr", False):
             v_ = p.values()
-            noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * self.noise_level
-            v_.mul_(1 + noise_) # This will change values of CSR matrix in-place
+            if self.mismatch_type == "mul":
+                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * self.noise_level
+                v_.mul_(1 + noise_) # This will change values of CSR matrix in-place
+            else:
+                max_abs = v_.abs().max()
+                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * (self.noise_level * max_abs)
+                v_.add_(noise_)
         else:
-            noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
-            p.mul_(1 + noise_)
+            if self.mismatch_type == "mul":
+                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
+                p.mul_(1 + noise_)
+            else:
+                max_abs = p.abs().max()
+                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * (self.noise_level * max_abs)
+                p.add_(noise_)
 
     def add_noise(self):
         logging.warning("Adding noise to FFconv in ODEBlockPC")
@@ -2028,7 +2040,8 @@ class ODEWrapper1State(ODEWrapper2State):
     def _scale_act_fn(self):
         # ReLU6*beta_c
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            self.ode_block.act_fn = ReLUX(min(6 * self.beta_c, self.v_dd))
+            # self.ode_block.act_fn = ReLUX(min(6 * self.beta_c, self.v_dd))
+            self.ode_block.act_fn = ReLUX(self.v_dd)
         elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),
                                                 max_val=min(self.beta_c, self.v_dd))
@@ -2134,7 +2147,8 @@ class QATWrapper1State(ODEWrapper1State):
         # ReLU6*beta_c
         act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
         if "relu6" in act_fn_cls or "relux" in act_fn_cls:
-            self.ode_block.act_fn.set_scale(min(6 * self.beta_c, self.v_dd))
+            # self.ode_block.act_fn.set_scale(min(6 * self.beta_c, self.v_dd))
+            self.ode_block.act_fn.set_scale(self.v_dd)
         elif "hardtanh" in act_fn_cls:
             # Ignore hardtanh branch for now
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),

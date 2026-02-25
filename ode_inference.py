@@ -54,7 +54,9 @@ def parse_args():
     parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
     parser.add_argument("--sde_noise_type", type=str, default="mul", choices=["mul", "add"],
-                        help="Only useful when self.eps is set in the ODESolver class")
+                        help="Only useful when self.eps is set in the ODESolver class.")
+    parser.add_argument("--mismatch_type", type=str, default="mul", choices=["mul", "add"],
+                        help="Additive or multiplicative mismatch.")
     parser.add_argument("--sweep_eps", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--patch_node", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
@@ -185,7 +187,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     noisy_params = {"noise_level": 0.15, "weight": None}
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
-                  "sde_noise_type": args.sde_noise_type,
+                  "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
@@ -275,10 +277,14 @@ def run_ode_inference():
     else:
         offset_eps_list = [None]
     noise_level_list_ = [0, 0.15, 0.2]
+    if args.mismatch_type == "add":
+        noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
     noisy_trials = 20
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
         noise_level_list_ = [0.15, 0.25]
+        if args.mismatch_type == "add":
+            noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
     if args.nonlinear_R:
         logging.warning("To enable nonlinear R, support non-mismatch for now.")
         noise_level_list_ = [0]
@@ -301,7 +307,7 @@ def run_ode_inference():
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
-                      "sde_noise_type": args.sde_noise_type,
+                      "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
