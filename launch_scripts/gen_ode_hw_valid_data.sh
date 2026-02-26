@@ -65,8 +65,10 @@ MODEL_NAMES=(
 #  "QAT5bNT0p15mulQAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
 
-  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
+
+  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -130,8 +132,8 @@ run_model(){
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --C               "$cap_val" \
-    --R               "50e3" \
-    --R_max           "" \
+    --R               "80e3" \
+    --R_max           "180e3" \
     --tie_cap         "false" \
     --one_over_q      "6" \
     --v_dd            "0.2" \
@@ -143,9 +145,9 @@ run_model(){
     --thermal_noise   "false" \
     --conv_only       "true" \
     --hw_validate     "true" \
-    --test_expanded   "false" \
+    --test_expanded   "true" \
     --rec_full_traj   "true" \
-    --t_end_sf        "500" \
+    --t_end_sf        "1" \
     --pvt_to_origin   "false" \
     --hw_val_path     "./hw_validation_data" \
     --hw_val_inp      "" \
