@@ -2040,8 +2040,8 @@ class ODEWrapper1State(ODEWrapper2State):
     def _scale_act_fn(self):
         # ReLU6*beta_c
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            # self.ode_block.act_fn = ReLUX(min(6 * self.beta_c, self.v_dd))
-            self.ode_block.act_fn = ReLUX(self.v_dd)
+            self.ode_block.act_fn = ReLUX(min(6 * self.beta_c, self.v_dd))
+            # self.ode_block.act_fn = ReLUX(self.v_dd)
         elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),
                                                 max_val=min(self.beta_c, self.v_dd))
@@ -2147,8 +2147,8 @@ class QATWrapper1State(ODEWrapper1State):
         # ReLU6*beta_c
         act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
         if "relu6" in act_fn_cls or "relux" in act_fn_cls:
-            # self.ode_block.act_fn.set_scale(min(6 * self.beta_c, self.v_dd))
-            self.ode_block.act_fn.set_scale(self.v_dd)
+            self.ode_block.act_fn.set_scale(min(6 * self.beta_c, self.v_dd))
+            # self.ode_block.act_fn.set_scale(self.v_dd)
         elif "hardtanh" in act_fn_cls:
             # Ignore hardtanh branch for now
             self.ode_block.act_fn = nn.Hardtanh(min_val=-min(self.beta_c, self.v_dd),
