@@ -2,6 +2,8 @@
 set -eu
 trap '' HUP   # ignore hangup so the children survive
 
+export NOISY_TRIALS="${NOISY_TRIALS:-2}"
+
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
@@ -26,150 +28,6 @@ export BASE_LOGDIR="./logs/test_ode_noisy"
 
 # ─────────────── model list ───────────────
 MODEL_NAMES=(
-#  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # NODE baseline
-#  "PCNetNoBatchNorm_PCConvHardTanh_dopri5Solver_1.0TEnd_0.0001Tol_0.001WD_noBPtied_noBP_withPC_128BS_0.01LR_0.25Dropout_7Layers_1REP" # NODE baseline
-
-#  "PCNetNoBatchNorm_PCConvReLU6_ODEActInpNoMinus_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP" # zero init
-#  "PCNetNoBatchNorm_PCConvHardTanh2_ODEActInpNoMinus_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP" # zero init
-
-#  "PCNetNoBatchNorm_PCConvHardTanh_ODEBlockPCMinusY_dopri5Solver_0.75TEnd_0.001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_2REP" # no max_g_norm
-#  "PCNetNoBatchNorm_PCConvReLU6_ODEBlockPCMinusY_dopri5Solver_0.75TEnd_0.001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_2REP" # no max_g_norm
-
-#  "PCNetNoBatchNorm_PCConvHardTanh_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-#  "ftPCNetNoBatchNorm_PCConvHardTanh_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_7Layers_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_7Layers_1REP"
-#  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_7Layers_1REP" # passive baseline
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.01LR_0.25Dropout_5Layers_2Pool_1REP" # 2 max pooling
-
-#  "ftPCNetNoBatchNorm_PCConvReLU6_0.4eps_ODEFixNoiseOffset_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_noBPtied_noBP_128BS_0.0001LR_0.25Dropout_6Layers_1REP" # 3 max pooling
-#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP" # S2NoMinusZChgZNoisyI baseline
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZMinusNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_cycleisp_2REP"
-
-#  "QAT4bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_3REP"
-#  "QAT4bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_5REP" # Use relu6 scaled
-#  "QAT6bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
-
-#  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_3REP" # QAT that uses W^Q in [-1,1]
-#  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_4REP" # Trained with R=C=1
-#  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_5REP" # R=C=1 and tol=1e-6
-#  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_6REP" # R=C=1 and v_dd=10
-#  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_7REP" # R=C=1, lr=1e-3
-#  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_8REP" # R=1e5, C=49e-15 lr=1e-3
-#  "QAT5bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_10REP" # LR=1e-2 Cosine Annealing, R=1e5, C=49e-15
-#  "QAT4bPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_7REP" # Same as above, but 4-bit
-#  "QAT4bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_1REP"
-
-#  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_3REP" # LSQ
-#  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_7REP" # R=C=1, lr=1e-3
-#  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_5REP" # R=1e5, C=49e-15
-#  "QAT5bLSQWeightPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_6REP" # R=1e5, C=49e-15 lr=1e-3
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_rggb_2REP" # RGGB
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_6Layers_2Pool_rggb_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.2eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_4Layers_2Pool_rggb_1REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_3REP"
-#  "ftNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_5Layers_2Pool_scanGFI_2REP"
-
-#  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_6Layers_2Pool_scanGFI_1REP" # model on bluehive
-#  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S_0.25Dropout_6Layers_2Pool_scanGFI_2REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_5Layers_1Pool_scanGFI_2REP"
-#  "KD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
-#  "QAT5bNT0p2mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
-#  "QAT5bNT0p2mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_2REP"
-#  "QAT5bNT0p25mulKD4p0T0p8w0p2w0PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S32C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAs0ZAsX_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-#
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_1Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAs0ZAsX_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_1Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_1Pool_scanGFI_1REP"
-#
-#  # YAs0ZAsX Failed to train for the 18 Layer model
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
-#
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAsX_dopri5Solver_0.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_18Layers_1Pool_scanGFI_1REP"
-
-#  "8P4PS5PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.25TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_1REP"
-#  "8P8PS1PCPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2CircYAsXZas0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_11Layers_2Pool_scanGFI_2REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_2REP"
-#  ""  # R_max=30e3
-#  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_5REP"  # R=50e3, R_max=180e3
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_10Layers_2Pool_scanGFI_1REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_4REP"
-#  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP" # grad at _k==1 is w_scalar
-#  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_2REP" # grad is _delta * q_max for _k > 0
-#  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_3REP" # grad = 0 when _k == 0, _delta * q_max o.w.
-#  "QAT5bNT0p2mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_7Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP" # need one_over_q to be high (40)
-#  "QAT5bNT0p4mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_2REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_7Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulQAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_2REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_2REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_10Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP" # 60% during training; does NOT work well with wrapper (57%)
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.0001WD_128BS_0.01LR_C100_3K1S128C_0.0Dropout_10Layers_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
-
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers2l1l4_2Pool_scanGFI_2REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_20Layers6l5l6_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_20Layers6l5l6_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S88C_0.25Dropout_20Layers6l5l6_2Pool_scanGFI_1REP"
-
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_9Layers3l1l2_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S120C_0.25Dropout_10Layers2l2l3_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S120C_0.25Dropout_8Layers1l2l2_2Pool_scanGFI_2REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S120C_0.25Dropout_9Layers2l2l2_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_10Layers1l3l3_2Pool_scanGFI_2REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_7Layers2l1l1_2Pool_scanGFI_2REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_8Layers2l2l1_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_9Layers2l2l2_2Pool_scanGFI_1REP"
-
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S80C_0.25Dropout_20Layers5l5l7_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_20Layers5l5l7_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_20Layers5l5l7_2Pool_scanGFI_2REP" # FT with clamp(0, v_dd)
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_20Layers5l5l7_2Pool_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_scanGFI_1REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S88C_0.25Dropout_20Layers5l6l6_2Pool_scanGFI_1REP" # Division by zero model
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S88C_0.25Dropout_20Layers5l6l6_2Pool_scanGFI_1REP" # Division by zero model
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
-#  "QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP"
-
-#  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_1e-06Tol_0.001WD_128BS_0.01LR_C100_3K1S80C_0.25Dropout_16Layers5l4l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
-#  "DTQAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_1e-06Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
-#  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
-#  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP" # clamp 0-0.2
-
   "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
 )
 
@@ -255,6 +113,7 @@ run_model(){
     --C               "$cap_val" \
     --v_dd            "0.2" \
     --w_bits          "$n_bits" \
+    --noisy_trials    "$NOISY_TRIALS" \
     --patch_node      "8" \
     --patch_stride    "8" \
     --patch_cycle     "1" \
@@ -267,9 +126,9 @@ run_model(){
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
     --conv_only       "true" \
-    --test_expanded   "false" \
+    --test_expanded   "true" \
     --nonlinear_R     "false" \
-    --test_only       "true" \
+    --test_only       "false" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model

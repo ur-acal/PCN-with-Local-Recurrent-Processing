@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     parser.add_argument("--img_type", type=str, default="rgb")
     parser.add_argument("--test_bs", type=int, default=128)
+    parser.add_argument("--noisy_trials", type=int, default=2)
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
     parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
@@ -279,10 +280,10 @@ def run_ode_inference():
     noise_level_list_ = [0, 0.15, 0.2]
     if args.mismatch_type == "add":
         noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
-    noisy_trials = 20
+    noisy_trials = args.noisy_trials
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
-        noise_level_list_ = [0.15, 0.25]
+        noise_level_list_ = [0, 0.1, 0.2, 0.3, 0.4]
         if args.mismatch_type == "add":
             noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
     if args.nonlinear_R:
@@ -323,7 +324,7 @@ def run_ode_inference():
             noise_acc_spec = {}
             for noise_level in noise_level_list_:
                 trials = noisy_trials if noise_level > 0 or args.thermal_noise else 1
-                trials = 5 if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
+                trials = 2 if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
                 for t in range(trials):
                     noisy_params = {"noise_level": noise_level, "weight": None}
