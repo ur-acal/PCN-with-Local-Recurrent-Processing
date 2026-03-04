@@ -68,7 +68,8 @@ MODEL_NAMES=(
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers_2Pool_scanGFI_1REP"
 
-  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
+#  "QAT5bNT0p1mulQAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S4C_0.25Dropout_8Layers_2Pool_scanGFI_1REP"
+  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -103,6 +104,12 @@ run_model(){
     local _img_type="$prev"
   fi
 
+  if [[ "$name" == *C100* ]]; then
+    local _task="cifar100"
+  else
+    local _task="cifar10"
+  fi
+
   local _ode_wrapper="ODEWrapper1State"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
     if [[ "$name" == *QAT* && "$CKPT" != *full_param* ]]; then
@@ -122,6 +129,7 @@ run_model(){
   python -u ode_inference.py \
     --model_name      "$name" \
     --ckpt            "best" \
+    --task            "${_task}" \
     --model_dir       "$MODEL_DIR" \
     --method          "$method" \
     --tol             "$tol" \
@@ -132,10 +140,10 @@ run_model(){
     --n_sweep_left    0 \
     --n_sweep_right   1 \
     --C               "$cap_val" \
-    --R               "80e3" \
-    --R_max           "180e3" \
+    --R               "20e3" \
+    --R_max           "300e3" \
     --tie_cap         "false" \
-    --one_over_q      "6" \
+    --one_over_q      "1" \
     --v_dd            "0.2" \
     --w_bits          "$n_bits" \
     --pc_conv         "${_pc_conv}Noisy" \

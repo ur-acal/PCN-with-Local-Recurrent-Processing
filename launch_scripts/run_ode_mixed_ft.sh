@@ -10,7 +10,8 @@ NOISE_TYPES=(
 )
 NBITS=(5)
 R_MAX_LIST=("300e3")
-EXP="NODE_0225_QAT_with_noise_inject_training"
+ONE_OVER_Q_LIST=("1" "3" "6")
+EXP="NODE_0304_QAT_with_noise_inject_training_C100"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
@@ -30,12 +31,16 @@ mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S80C_0.25Dropout_20Layers5l5l7_2Pool_scanGFI_1REP"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_scanGFI_1REP"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_scanGFI_2REP"
-MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+#MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+#MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+
+MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
 #######################################################################################################################
 # For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
 #MODEL_NAME="QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S48C_0.25Dropout_18Layers_2Pool_scanGFI_5REP"
 #MODEL_NAME="QAT5bNT0p1mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_4REP"
 #MODEL_NAME="QAT5bNT0p15mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S72C_0.25Dropout_13Layers_2Pool_scanGFI_1REP"
+#MODEL_NAME="QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP"
 #######################################################################################################################
 CKPT="best"
 if [[ "$MODEL_NAME" == *QAT* ]]; then
@@ -56,55 +61,58 @@ fi
 IFS='_' read -r -a parts <<< "$MODEL_NAME"
 ODE_BLK="${parts[3]}"
 # No 2
-for nt in "${NOISE_TYPES[@]}"; do
-  for nl in ${NOISE_LEVELS[$nt]}; do
-    for n_bits in "${NBITS[@]}"; do
-      for R_max in "${R_MAX_LIST[@]}"; do
-        echo "log dir: ${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
-        python train_ode_cifar.py \
-          --dataset       "${_task}" \
-          --ckpt          "${CKPT}" \
-          --rggb_to_rgb   "false" \
-          --optim         "SGD" \
-          --learning_rate 0.005 \
-          --cosine_t0     20 \
-          --eval_every    2 \
-          --num_epochs    80 \
-          --img_type      "scanGFI" \
-          --model_name    "${MODEL_NAME}" \
-          --offset_eps    0.0 \
-          --dropout       0.25 \
-          --tie_weights   "false" \
-          --tie_bp        "false" \
-          --bypass        "false" \
-          --batch_size    128 \
-          --method        "dopri5" \
-          --tol           "1e-6" \
-          --t_end         "1.75" \
-          --R             "20e3" \
-          --R_max         "${R_max}" \
-          --C             "49e-15" \
-          --v_dd          "0.2" \
-          --w_bits        "${n_bits}" \
-          --patch_node    "8" \
-          --patch_stride  "8" \
-          --patch_cycle   "1" \
-          --patch_pad     "0" \
-          --fold_scalar   "1" \
-          --tie_cap       "false" \
-          --one_over_q    "6" \
-          --qat_cls       "SymQuantizeWeight" \
-          --ode_wrapper   "$QAT_WRAPPER" \
-          --pc_conv       "PCConvReLU6" \
-          --ode_block     "$ODE_BLK" \
-          --noise_level   "${nl}" \
-          --noise_type    "${nt}" \
-          --teacher_ckpt checkpoint/b4.pth \
-          --teacher_arch efficientnet-b4 \
-          --distill_method none \
-          --distill_alpha 0.3 \
-          --distill_temperature 2.0 \
-          2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
+for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
+  for nt in "${NOISE_TYPES[@]}"; do
+    for nl in ${NOISE_LEVELS[$nt]}; do
+      for n_bits in "${NBITS[@]}"; do
+        for R_max in "${R_MAX_LIST[@]}"; do
+          echo "log dir: ${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
+          python train_ode_cifar.py \
+            --dataset       "${_task}" \
+            --ckpt          "${CKPT}" \
+            --rggb_to_rgb   "false" \
+            --optim         "SGD" \
+            --learning_rate 0.005 \
+            --cosine_t0     20 \
+            --eval_every    2 \
+            --num_epochs    80 \
+            --img_type      "scanGFI" \
+            --model_name    "${MODEL_NAME}" \
+            --offset_eps    0.0 \
+            --dropout       0.25 \
+            --tie_weights   "false" \
+            --tie_bp        "false" \
+            --bypass        "false" \
+            --batch_size    128 \
+            --method        "dopri5" \
+            --tol           "1e-6" \
+            --t_end         "1.75" \
+            --R             "20e3" \
+            --R_max         "${R_max}" \
+            --C             "49e-15" \
+            --v_dd          "0.2" \
+            --enob          "8" \
+            --w_bits        "${n_bits}" \
+            --patch_node    "8" \
+            --patch_stride  "8" \
+            --patch_cycle   "1" \
+            --patch_pad     "0" \
+            --fold_scalar   "1" \
+            --tie_cap       "false" \
+            --one_over_q    "${one_over_q}" \
+            --qat_cls       "SymQuantizeWeight" \
+            --ode_wrapper   "$QAT_WRAPPER" \
+            --pc_conv       "PCConvReLU6" \
+            --ode_block     "$ODE_BLK" \
+            --noise_level   "${nl}" \
+            --noise_type    "${nt}" \
+            --teacher_ckpt checkpoint/b4.pth \
+            --teacher_arch efficientnet-b4 \
+            --distill_method none \
+            --distill_alpha 0.3 \
+            --distill_temperature 2.0 \
+            2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}_${one_over_q}.log"
+        done
       done
     done
   done

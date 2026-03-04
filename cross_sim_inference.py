@@ -150,7 +150,7 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb", dataset_name="cifar
         noise_root = _resolve_scan_noise_root(img_type, dataset_name)
         train_set = MyNoiseCIFARDataset(
             root=noise_root,
-            input_name=dataset_name,
+            input_name=dataset_name + "_raw",
             train=True,
             noise_config=scangen_config["noise"],
             device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),

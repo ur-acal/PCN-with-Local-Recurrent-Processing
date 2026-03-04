@@ -296,6 +296,8 @@ def get_args():
                    default=None, help="Maximum meaningful Resistance")
     p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
+    p.add_argument("--enob", type=lambda s: None if s.lower() in {"none", ""} else int(s),
+                   default=None, help="The effective number of bits applied to the output spins.")
     p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     p.add_argument("--tie_cap", type=str2bool, default=False)
     p.add_argument("--one_over_q", type=float, default=10, help="1/q")
@@ -792,7 +794,7 @@ def main():
     if args.ode_wrapper is not None:
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
                           "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
-                          "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
+                          "enob": args.enob, "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q}
         model, _ = wrap_ode_block(model, **wrapper_params)
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))

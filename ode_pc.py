@@ -1679,12 +1679,13 @@ class WrapQuantizeW(ODEWrapperRC):
 
 class ODEWrapper2State(WrapQuantizeW):
     def __init__(self, is_first=False, is_last=False, thermal_noise=True, offset_eps=None, tie_cap=False,
-                 R_max=180e3, **kwargs):
+                 R_max=180e3, enob=None, **kwargs):
         patch = kwargs.get("patch", True)
         quantize = kwargs.get("quantize", True)
         kwargs.update({"patch": False})
         super().__init__(**kwargs)
         self.R_max = R_max
+        self.enob = enob
         self.s_R, self.weight_scale = None, 1.0
         R_max_ideal = self.R * self.q_hi
         if R_max is not None and R_max_ideal > R_max:
@@ -1750,6 +1751,31 @@ class ODEWrapper2State(WrapQuantizeW):
         if self._patch_conv:
             self.ode_block.option_patch["proj_fn"] = self.proj_fn
         self.ode_block.option_aca["proj_fn"] = self.proj_fn
+
+    def _quantize_output(self, x):
+        if self.enob is None:
+            return x
+
+        _is_qat = ("QATWrapper" in self.__class__.__name__)
+
+        if _is_qat:
+            x_in = x
+
+        x = self.proj_fn(x)
+        n_interval = 2 ** self.enob - 1
+        if n_interval <= 0:
+            return x
+
+        _delta = 2 * self.v_dd / n_interval
+        x_q = torch.round((x + self.v_dd) / _delta) * _delta - self.v_dd
+        x_q = self.proj_fn(x_q)
+
+        if _is_qat:
+            mask = (x_in >= -self.v_dd) & (x_in <= self.v_dd)
+            x_pass = x_in * mask.to(x_in.dtype) + x_in.detach() * (~mask).to(x_in.dtype)
+            return x_pass + (x_q - x_pass).detach()
+
+        return x_q
 
     @staticmethod
     def scale_weight_below_one(w, scalar, q_hi):
@@ -1828,7 +1854,7 @@ class ODEWrapper2State(WrapQuantizeW):
         orig_call = self.original_forward
         @wraps(orig_call)
         def patched_forward(x, *args, **kwargs):
-            return orig_call(self.proj_fn(self.inp_scale * x), *args, **kwargs) / self.out_scale
+            return self._quantize_output(orig_call(self.proj_fn(self.inp_scale * x), *args, **kwargs)) / self.out_scale
         self.ode_block.forward = patched_forward
 
     def _patch_init_y(self):

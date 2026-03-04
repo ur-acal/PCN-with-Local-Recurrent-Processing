@@ -5,6 +5,7 @@ import torchvision
 import os
 import pickle
 import argparse
+import torchinfo
 import logging
 
 from torch.utils.data import DataLoader, Subset
@@ -64,6 +65,8 @@ def parse_args():
     parser.add_argument("--patch_cycle", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
     parser.add_argument("--patch_pad", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
     parser.add_argument("--fold_scalar", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    parser.add_argument("--enob", type=lambda s: None if s.lower() in {"none", ""} else int(s),
+                        default=None, help="The effective number of bits applied to the output spins.")
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     parser.add_argument("--tie_cap", type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
     parser.add_argument("--one_over_q", type=float, default=10, help="1/q")
@@ -137,7 +140,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
-                      "w_quant_mode": args.w_quant_mode,
+                      "enob": args.enob, "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
                       "nonlinear_R": args.nonlinear_R,  # Only valid when wrapped with Validator
@@ -192,7 +195,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
-                      "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                      "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       "nonlinear_R": args.nonlinear_R, # Only valid when wrapped with Validator
                       # offset_eps None means using Johnson noise
@@ -208,6 +211,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.warning("Model output channels: {}".format(net_.ocs))
     logging.warning("Model pooling layers: {}".format(net_.max_pool))
     net_.eval()
+    # logging.warning("Model info: {}".format(torchinfo.summary(net_, input_size=(16,4,16,16))))
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
     # _, predicted_raw = torch.max(_, 1)
@@ -282,7 +286,7 @@ def run_ode_inference():
     noisy_trials = 20
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
-        noise_level_list_ = [0.15, 0.25]
+        noise_level_list_ = [0, 0.15, 0.25]
         if args.mismatch_type == "add":
             noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
     if args.nonlinear_R:
@@ -312,7 +316,7 @@ def run_ode_inference():
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
-                          "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                          "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "nonlinear_R": args.nonlinear_R,  # Only valid when wrapped with Validator
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None

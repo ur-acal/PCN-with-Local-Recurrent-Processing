@@ -18,7 +18,7 @@
 
 #conda activate one
 
-DATASET_NAME="${DATASET_NAME:-cifar100}"
+DATASET_NAME="${DATASET_NAME:-cifar10}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
@@ -27,6 +27,10 @@ TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
+if [[ "${DATASET_NAME}" == "cifar10" ]]; then
+  TEACHER_CKPT="checkpoint/b4.pth"
+  TEACHER_ARCH="efficientnet-b4"
+fi
 
 #INP=(4  32 32 32 64 64 64  128 128 128)
 #OUT=(32 32 32 64 64 64 128 128 128 128)
@@ -34,9 +38,12 @@ TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
 #INP=(4  28 28 28 28 28 56 56 56 56 56 56  112 112 112 112)
 #OUT=(28 28 28 28 28 56 56 56 56 56 56 112 112 112 112 112)
 #POOL=(0  0  0  0  1  0  0  0  0  0  1  0  0  0  0  0  0  0)
-INP=(4  20 20 20 20 20 20 40 40 40 40 40 80 80 80 80)
-OUT=(20 20 20 20 20 20 40 40 40 40 40 80 80 80 80 80)
-POOL=(0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0 )
+#INP=(4  20 20 20 20 20 20 40 40 40 40 40 80 80 80 80)
+#OUT=(20 20 20 20 20 20 40 40 40 40 40 80 80 80 80 80)
+#POOL=(0  0  0  0  0  1  0  0  0  0  1  0  0  0  0  0 )
+INP=(4  24 24 24 24 24 48 48 48 48 48 48 96 96 96 96)
+OUT=(24 24 24 24 24 48 48 48 48 48 48 96 96 96 96 96)
+POOL=(0  0  0  0  1  0  0  0  0  0  1  0  0  0  0  0 )
 STRIDE=(1)
 KSZ=(3)
 PADDING=1
@@ -63,7 +70,6 @@ python train_ode_cifar.py \
   --method        "dopri5" \
   --tol           "0.0001" \
   --t_end         "1.75" \
-  --noise_level   "${NOISE_LEVEL}" \
   --noise_type    "mul" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
