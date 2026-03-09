@@ -1310,6 +1310,34 @@ class S2CircYAsXZas0(S2Circ):
         # logging.warning("Fold scaler: {}".format(self.fold_scalar))
 ####################################################################################
 ####################################################################################
+class OutputQuantImpl(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, v_dd, enob):
+        n_interval = 2 ** enob - 1
+        v_dd = torch.tensor(v_dd, device=x.device, dtype=x.dtype)
+        if n_interval <= 0:
+            x_clipped = x.clamp(min=-v_dd, max=v_dd)
+            ctx.save_for_backward(x, v_dd)
+            return x_clipped
+
+        ctx.save_for_backward(x, v_dd)
+
+        x = x.clamp(min=-v_dd, max=v_dd)
+
+        delta = (2.0 * v_dd) / n_interval
+        x_q = torch.round((x + v_dd) / delta) * delta - v_dd
+
+        x_q = x_q.clamp(min=-v_dd, max=v_dd)
+        return x_q
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x_in, v = ctx.saved_tensors
+
+        mask = (x_in >= -v) & (x_in <= v)
+        grad_x = grad_output * mask.to(dtype=grad_output.dtype)
+
+        return grad_x, None, None
 
 class QuantizationImpl(torch.autograd.Function):
     @staticmethod
@@ -1759,7 +1787,7 @@ class ODEWrapper2State(WrapQuantizeW):
         _is_qat = ("QATWrapper" in self.__class__.__name__)
 
         if _is_qat:
-            x_in = x
+            return OutputQuantImpl.apply(x, self.v_dd, self.enob)
 
         x = self.proj_fn(x)
         n_interval = 2 ** self.enob - 1
@@ -1769,11 +1797,6 @@ class ODEWrapper2State(WrapQuantizeW):
         _delta = 2 * self.v_dd / n_interval
         x_q = torch.round((x + self.v_dd) / _delta) * _delta - self.v_dd
         x_q = self.proj_fn(x_q)
-
-        if _is_qat:
-            mask = (x_in >= -self.v_dd) & (x_in <= self.v_dd)
-            x_pass = x_in * mask.to(x_in.dtype) + x_in.detach() * (~mask).to(x_in.dtype)
-            return x_pass + (x_q - x_pass).detach()
 
         return x_q
 

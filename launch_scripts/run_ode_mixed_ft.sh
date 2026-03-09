@@ -10,7 +10,7 @@ NOISE_TYPES=(
 )
 NBITS=(5)
 R_MAX_LIST=("300e3")
-ONE_OVER_Q_LIST=("1" "3" "6")
+ONE_OVER_Q_LIST=("1")
 EXP="NODE_0304_QAT_with_noise_inject_training_C100"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
