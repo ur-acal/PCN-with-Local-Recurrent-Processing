@@ -21,19 +21,26 @@ if [[ "${IS_SLURM}" == 1 ]]; then
   conda activate scanbase
 fi
 
-DATASET_NAME="${DATASET_NAME:-cifar100}"
+ORIG_T_INP="${ORIG_T_INP:-true}"
+DATASET_NAME="${DATASET_NAME:-cifar10}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
-TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
-TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+
+if [[ "${ORIG_T_INP}" == "true" ]]; then
+  TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/efficientnet_v2_l_${DATASET_NAME}.pth}"
+  TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+else
+  TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
+  TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+  if [[ "${DATASET_NAME}" == "cifar10" ]]; then
+    TEACHER_CKPT="checkpoint/b4.pth"
+    TEACHER_ARCH="efficientnet-b4"
+  fi
+fi
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
-if [[ "${DATASET_NAME}" == "cifar10" ]]; then
-  TEACHER_CKPT="checkpoint/b4.pth"
-  TEACHER_ARCH="efficientnet-b4"
-fi
 
 NEG_SAMPLE="${NEG_SAMPLE:-label}"
 CONTRAST_METHOD="${CONTRAST_METHOD:-memory}"
@@ -57,7 +64,7 @@ python train_ode_cifar.py \
   --rggb_to_rgb   "false" \
   --dataset       "${DATASET_NAME}" \
   --num_epochs    300 \
-  --eval_every    5 \
+  --eval_every    1 \
   --offset_eps    0.0 \
   --inp_channels  "${INP[@]}" \
   --out_channels  "${OUT[@]}" \
@@ -85,6 +92,7 @@ python train_ode_cifar.py \
   --distill_method kd_crd \
   --contrast_method "${CONTRAST_METHOD}" \
   --neg_sample      "${NEG_SAMPLE}" \
+  --orig_t_inp      "${ORIG_T_INP}" \
   --distill_alpha "${DISTILL_ALPHA}" \
   --distill_temperature "${DISTILL_TEMPERATURE}" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_${EXP_SUFFIX}.log"

@@ -131,6 +131,132 @@ class DatasetWithIndexAndContrast(torch.utils.data.Dataset):
         return inp, target, idx, sample_idx
 
 
+class StudentTeacherPairDataset(torch.utils.data.Dataset):
+    """
+    Pair low-res student input with original high-res CIFAR teacher input.
+    Assumes the sample orders of the two datasets are aligned.
+    """
+
+    def __init__(self, student_dataset: torch.utils.data.Dataset, teacher_dataset: torch.utils.data.Dataset):
+        self.student_dataset = student_dataset
+        self.teacher_dataset = teacher_dataset
+
+        if len(self.student_dataset) != len(self.teacher_dataset):
+            raise ValueError(
+                f"Dataset length mismatch: student={len(self.student_dataset)}, teacher={len(self.teacher_dataset)}"
+            )
+
+        self.labels = self._extract_labels(self.teacher_dataset)
+
+    def _extract_labels(self, ds):
+        if hasattr(ds, "targets"):
+            return torch.as_tensor(ds.targets, dtype=torch.long)
+        if hasattr(ds, "train_labels"):
+            return torch.as_tensor(ds.train_labels, dtype=torch.long)
+        if hasattr(ds, "labels"):
+            return torch.as_tensor(ds.labels, dtype=torch.long)
+        raise AttributeError("Could not extract labels from teacher dataset.")
+
+    def __len__(self):
+        return len(self.student_dataset)
+
+    def __getitem__(self, idx):
+        student_data = self.student_dataset[idx]
+        teacher_data = self.teacher_dataset[idx]
+
+        if not isinstance(student_data, tuple) or len(student_data) < 2:
+            raise ValueError("student_dataset must return at least (input, label)")
+        if not isinstance(teacher_data, tuple) or len(teacher_data) < 2:
+            raise ValueError("teacher_dataset must return at least (input, label)")
+
+        student_input, student_label = student_data[:2]
+        teacher_input, teacher_label = teacher_data[:2]
+
+        if int(student_label) != int(teacher_label):
+            raise RuntimeError(
+                f"Label mismatch at idx={idx}: student={int(student_label)}, teacher={int(teacher_label)}"
+            )
+
+        return student_input, teacher_input, student_label
+
+
+class PairDatasetWithIndex(torch.utils.data.Dataset):
+    """Wrap paired dataset to also return index."""
+
+    def __init__(self, dataset: torch.utils.data.Dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        inputs, teacher_inputs, labels = self.dataset[idx]
+        return inputs, teacher_inputs, labels, idx
+
+
+class PairDatasetWithIndexAndContrast(torch.utils.data.Dataset):
+    """Wrap paired dataset to also return index and contrast_idx."""
+
+    def __init__(
+        self,
+        dataset: torch.utils.data.Dataset,
+        k: int = 4096,
+        mode: str = "exact",
+        percent: float = 1.0,
+    ):
+        self.dataset = dataset
+        self.k = k
+        self.mode = mode
+
+        self.labels = torch.as_tensor(dataset.labels, dtype=torch.long)
+
+        num_classes = int(self.labels.max().item()) + 1
+
+        self.cls_positive = []
+        for c in range(num_classes):
+            pos_idx = torch.nonzero(self.labels == c, as_tuple=False).squeeze(1)
+            self.cls_positive.append(pos_idx)
+
+        self.cls_negative = []
+        for c in range(num_classes):
+            neg_idx = torch.nonzero(self.labels != c, as_tuple=False).squeeze(1)
+            if 0 < percent < 1:
+                n = int(neg_idx.numel() * percent)
+                perm = torch.randperm(neg_idx.numel())[:n]
+                neg_idx = neg_idx[perm]
+            self.cls_negative.append(neg_idx)
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        inputs, teacher_inputs, labels = self.dataset[idx]
+        target_int = int(labels)
+
+        if self.mode == "exact":
+            pos_idx = torch.tensor([idx], dtype=torch.long)
+        elif self.mode == "relax":
+            pos_pool = self.cls_positive[target_int]
+            rand_i = torch.randint(0, pos_pool.numel(), (1,))
+            pos_idx = pos_pool.index_select(0, rand_i)
+        else:
+            raise NotImplementedError(self.mode)
+
+        neg_pool = self.cls_negative[target_int]
+        replace = self.k > neg_pool.numel()
+
+        if replace:
+            rand_i = torch.randint(0, neg_pool.numel(), (self.k,))
+            neg_idx = neg_pool.index_select(0, rand_i)
+        else:
+            perm = torch.randperm(neg_pool.numel())[:self.k]
+            neg_idx = neg_pool.index_select(0, perm)
+
+        sample_idx = torch.cat((pos_idx, neg_idx), dim=0)
+
+        return inputs, teacher_inputs, labels, idx, sample_idx
+
+
 _CIFAR_STATS = {
     "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
     "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
@@ -184,7 +310,7 @@ class TrainerCiFar(object):
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
                  eval_every=1, img_type="rgb", dataset_name="cifar10", noise_level=None, noise_type=None,
                  mismatch_levels=None,
-                 contrast_method="memory", neg_sample="label",
+                 contrast_method="memory", neg_sample="label", orig_t_inp=False,
                  distill_alpha=0.0, distill_temperature=1.0, teacher_model=None,
                  distill_method="kd", crd_feat_dim=128, crd_k=16384,
                  crd_temperature=0.07, crd_momentum=0.5, crd_beta=0.8,
@@ -245,6 +371,7 @@ class TrainerCiFar(object):
             raise ValueError("CRD distillation requires a teacher model.")
         self.crd_beta = crd_beta
         self.neg_sample = neg_sample
+        self.orig_t_inp = orig_t_inp
         self._crd_loss = None
         self._crd_options = CRDOptions(
             contrast_method=contrast_method,
@@ -445,16 +572,33 @@ class TrainerCiFar(object):
         progress_bar = tqdm.tqdm(enumerate(self.train_dataloader),
                             total=len(self.train_dataloader), desc="Training")
         for _i, _data in progress_bar:
+            teacher_inputs = None
             contrast_idx = None
-            if isinstance(_data, (list, tuple)) and len(_data) == 4:
+            if self.orig_t_inp and isinstance(_data, (list, tuple)):
+                if len(_data) == 5:
+                    # self.neg_sample = label, y_i != y_j
+                    inputs, teacher_inputs, labels, indices, contrast_idx = _data
+                elif len(_data) == 4:
+                    # self.neg_sample = index, i != j
+                    inputs, teacher_inputs, labels, indices = _data
+                elif len(_data) == 3:
+                    inputs, teacher_inputs, labels = _data
+                    indices = None
+                else:
+                    raise RuntimeError(f"Unexpected batch format with orig_t_inp=True: len={len(_data)}")
+            elif isinstance(_data, (list, tuple)) and len(_data) == 4:
+                # self.neg_sample = label, y_i != y_j
                 inputs, labels, indices, contrast_idx = _data
             elif isinstance(_data, (list, tuple)) and len(_data) == 3:
+                # self.neg_sample = index, i != j
                 inputs, labels, indices = _data
             else:
                 inputs, labels = _data
                 indices = None
             n_samples += inputs.size(0)
             inputs, labels = inputs.to(self.device), labels.to(self.device)
+            if teacher_inputs is not None:
+                teacher_inputs = teacher_inputs.to(self.device)
 
             # Zero the parameter gradients
             self.optimizer.zero_grad()
@@ -463,8 +607,9 @@ class TrainerCiFar(object):
             outputs, student_feat = self._student_forward(inputs)
             teacher_logits, teacher_feat = None, None
             if self.teacher_model is not None and (self._kd_enabled or self._crd_enabled):
-                teacher_logits, teacher_feat = self._teacher_forward(inputs)
-
+                teacher_logits, teacher_feat = self._teacher_forward(
+                    teacher_inputs if teacher_inputs is not None else inputs
+                )
             ce_loss = self.loss_fn(outputs, labels)
             kd_loss = None
             crd_loss = None
@@ -550,12 +695,22 @@ class TrainerCiFar(object):
             self.model.eval()
             for data in dataloader:
                 if isinstance(data, (list, tuple)):
-                    if len(data) == 4:
-                        inputs, labels, _, _ = data
-                    elif len(data) == 3:
-                        inputs, labels, _ = data
+                    if self.orig_t_inp:
+                        if len(data) == 5:
+                            inputs, _, labels, _, _ = data
+                        elif len(data) == 4:
+                            inputs, _, labels, _ = data
+                        elif len(data) == 3:
+                            inputs, _, labels = data
+                        else:
+                            inputs, labels = data
                     else:
-                        inputs, labels = data
+                        if len(data) == 4:
+                            inputs, labels, _, _ = data
+                        elif len(data) == 3:
+                            inputs, labels, _ = data
+                        else:
+                            inputs, labels = data
                 else:
                     inputs, labels = data
 
@@ -724,6 +879,25 @@ class TrainerCiFar(object):
                     transforms.RandomHorizontalFlip(),
                 ])
             )
+            if self.orig_t_inp:
+                # Use the original cifar data for the teacher model.
+                teacher_train_transform_steps = []
+                if self.teacher_input_size and self.teacher_input_size > 0:
+                    teacher_train_transform_steps.append(transforms.Resize(self.teacher_input_size))
+                    if self.teacher_center_crop:
+                        teacher_train_transform_steps.append(transforms.CenterCrop(self.teacher_input_size))
+                teacher_train_transform_steps.append(transforms.ToTensor())
+                teacher_train_transform = transforms.Compose(teacher_train_transform_steps)
+
+                teacher_dataset_cls = torchvision.datasets.CIFAR100 if dataset_name == "cifar100" else torchvision.datasets.CIFAR10
+                teacher_train_set = teacher_dataset_cls(
+                    root='../data',
+                    train=True,
+                    download=True,
+                    transform=teacher_train_transform,
+                )
+                self.train_set = StudentTeacherPairDataset(self.train_set, teacher_train_set)
+
             self.val_set = MyNoiseCIFARDataset(
                 root=noise_data_root,
                 input_name=dataset_name + "_raw",
@@ -735,22 +909,43 @@ class TrainerCiFar(object):
             if created_temp_config and config_to_use.exists():
                 config_to_use.unlink()
 
-            teacher_transform_steps = [transforms.ToPILImage()]
-            if self.teacher_input_size and self.teacher_input_size > 0:
-                teacher_transform_steps.append(transforms.Resize(self.teacher_input_size))
-                if self.teacher_center_crop:
-                    teacher_transform_steps.append(transforms.CenterCrop(self.teacher_input_size))
-            teacher_transform_steps.append(transforms.ToTensor())
-            teacher_transform = transforms.Compose(teacher_transform_steps)
-            teacher_dataset = MyNoiseCIFARDataset(
-                root=noise_data_root,
-                input_name=dataset_name + "_raw",
-                train=False,
-                noise_config=self.scangen_noise_config,
-                device=self.device,
-                transform=teacher_transform,
-                seed=0,
-            )
+            teacher_transform_steps = []
+            if self.orig_t_inp:
+                # Evaluate the teacher model with the original cifar dataset.
+                if self.teacher_input_size and self.teacher_input_size > 0:
+                    teacher_transform_steps.append(transforms.Resize(self.teacher_input_size))
+                    if self.teacher_center_crop:
+                        teacher_transform_steps.append(transforms.CenterCrop(self.teacher_input_size))
+                teacher_transform_steps.append(transforms.ToTensor())
+                teacher_transform = transforms.Compose(teacher_transform_steps)
+
+                teacher_dataset_cls = torchvision.datasets.CIFAR100 if dataset_name == "cifar100" else torchvision.datasets.CIFAR10
+                teacher_dataset = teacher_dataset_cls(
+                    root='../data',
+                    train=False,
+                    download=True,
+                    transform=teacher_transform,
+                )
+            else:
+                # Evaluate the teacher model with the scanGFI dataset.
+                teacher_transform_steps = [transforms.ToPILImage()]
+                if self.teacher_input_size and self.teacher_input_size > 0:
+                    teacher_transform_steps.append(transforms.Resize(self.teacher_input_size))
+                    if self.teacher_center_crop:
+                        teacher_transform_steps.append(transforms.CenterCrop(self.teacher_input_size))
+                teacher_transform_steps.append(transforms.ToTensor())
+                teacher_transform = transforms.Compose(teacher_transform_steps)
+
+                teacher_dataset = MyNoiseCIFARDataset(
+                    root=noise_data_root,
+                    input_name=dataset_name + "_raw",
+                    train=False,
+                    noise_config=self.scangen_noise_config,
+                    device=self.device,
+                    transform=teacher_transform,
+                    seed=0,
+                )
+
             self.teacher_eval_loader = torch.utils.data.DataLoader(
                 teacher_dataset,
                 batch_size=self.test_batch_size,
@@ -772,19 +967,34 @@ class TrainerCiFar(object):
 
         if self._crd_enabled:
             assert self.neg_sample in {"label", "index"}
-            if self.neg_sample == "index":
-                # negative samples based on i != j
-                self.train_set = DatasetWithIndex(self.train_set)
-            elif self.neg_sample == "label":
-                # sampling negative samples with y_i != y_j
-                self.train_set = DatasetWithIndexAndContrast(
-                    self.train_set,
-                    k=self._crd_options.nce_k,
-                    mode='exact',
-                    percent=1.0,
-                )
+            if self.orig_t_inp and img_type == "scanGFI":
+                if self.neg_sample == "index":
+                    # negative samples based on i != j
+                    self.train_set = PairDatasetWithIndex(self.train_set)
+                elif self.neg_sample == "label":
+                    # sampling negative samples with y_i != y_j
+                    self.train_set = PairDatasetWithIndexAndContrast(
+                        self.train_set,
+                        k=self._crd_options.nce_k,
+                        mode='exact',
+                        percent=1.0,
+                    )
+                else:
+                    raise NotImplementedError
             else:
-                raise NotImplementedError
+                if self.neg_sample == "index":
+                    # negative samples based on i != j
+                    self.train_set = DatasetWithIndex(self.train_set)
+                elif self.neg_sample == "label":
+                    # sampling negative samples with y_i != y_j
+                    self.train_set = DatasetWithIndexAndContrast(
+                        self.train_set,
+                        k=self._crd_options.nce_k,
+                        mode='exact',
+                        percent=1.0,
+                    )
+                else:
+                    raise NotImplementedError
         self._train_sample_count = len(self.train_set)
 
         # Get dataloader

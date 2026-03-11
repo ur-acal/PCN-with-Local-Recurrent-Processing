@@ -340,6 +340,8 @@ def get_args():
         choices=["index", "label"],
         help="Ways of sampling negative samples in CRD.",
     )
+    p.add_argument("--orig_t_inp", type=str2bool, default=False,
+                   help="Use the original cifar input for the teacher model.")
     p.add_argument("--distill_alpha", type=float, default=0.0,
                    help="Weight assigned to the teacher KL loss term.")
     p.add_argument("--distill_temperature", type=float, default=1.0,
@@ -581,7 +583,7 @@ def _infer_teacher_source(state_dict):
     return "unknown"
 
 
-def build_teacher_model(args, student_in_channels=None):
+def build_teacher_model(args, student_in_channels=None, orig_t_inp=False):
     method = getattr(args, "distill_method", "none")
     method_lower = method.lower()
     needs_kd = "kd" in method_lower and args.distill_alpha > 0.0
@@ -593,12 +595,14 @@ def build_teacher_model(args, student_in_channels=None):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     state_dict = _load_teacher_state_dict(args.teacher_ckpt, device)
     inferred_in_channels = None
-    if student_in_channels is not None:
-        inferred_in_channels = int(student_in_channels)
-    elif isinstance(args.inp_channels, list) and args.inp_channels:
-        inferred_in_channels = int(args.inp_channels[0])
-    elif isinstance(args.inp_channels, int):
-        inferred_in_channels = int(args.inp_channels)
+    if not orig_t_inp:
+        # Use the scanGFI version of teacher model.
+        if student_in_channels is not None:
+            inferred_in_channels = int(student_in_channels)
+        elif isinstance(args.inp_channels, list) and args.inp_channels:
+            inferred_in_channels = int(args.inp_channels[0])
+        elif isinstance(args.inp_channels, int):
+            inferred_in_channels = int(args.inp_channels)
 
     if args.teacher_arch.startswith("efficientnet_v2"):
         arch_source = getattr(args, "teacher_arch_source", "auto")
@@ -815,7 +819,7 @@ def main():
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
 
     # Get trainer
-    logging.warning("Training task: {}".format(args.task))
+    logging.warning("Training task: {}".format(args.dataset))
     logging.warning("lr reduce on: {}, max grad norm: {}, cosine annealing T0: {}".format(
         args.lr_reduce_on, args.max_g_norm, args.cosine_t0))
     teacher_model = None
@@ -824,7 +828,7 @@ def main():
     if needs_teacher:
         if not args.teacher_ckpt:
             raise ValueError(f"distill_method={args.distill_method} requires --teacher_ckpt.")
-        teacher_model = build_teacher_model(args, student_in_channels=student_in_channels)
+        teacher_model = build_teacher_model(args, student_in_channels=student_in_channels, orig_t_inp=args.orig_t_inp)
         logging.warning("Training with {}, contrast method: {}, negative sampling method: {}".format(
             args.distill_method, args.contrast_method, args.neg_sample))
     elif args.teacher_ckpt:
@@ -852,6 +856,7 @@ def main():
         noise_type    = args.noise_type,
         contrast_method = args.contrast_method,
         neg_sample    = args.neg_sample,
+        orig_t_inp    = args.orig_t_inp,
         distill_alpha = args.distill_alpha,
         distill_temperature = args.distill_temperature,
         distill_method = args.distill_method,
