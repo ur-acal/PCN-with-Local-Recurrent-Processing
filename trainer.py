@@ -550,7 +550,9 @@ class TrainerCiFar(object):
             self.model.eval()
             for data in dataloader:
                 if isinstance(data, (list, tuple)):
-                    if len(data) == 3:
+                    if len(data) == 4:
+                        inputs, labels, _, _ = data
+                    elif len(data) == 3:
                         inputs, labels, _ = data
                     else:
                         inputs, labels = data

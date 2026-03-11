@@ -636,6 +636,7 @@ def build_teacher_model(args, student_in_channels=None):
         if inferred_in_channels is not None:
             _replace_first_conv(teacher_model, inferred_in_channels)
     elif args.teacher_arch.startswith("efficientnet"):
+        logging.warning("Teacher arch source: {}".format("efficientnet_pytorch"))
         try:
             from efficientnet_pytorch import EfficientNet
         except ImportError as exc:
