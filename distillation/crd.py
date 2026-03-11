@@ -9,6 +9,7 @@ import torch
 from torch import nn
 
 from .memory import ContrastMemory
+from .moco import MoCoContrast, MoCoInfoNCELoss
 
 EPS = 1e-7
 
@@ -17,6 +18,7 @@ EPS = 1e-7
 class CRDOptions:
     """Hyper-parameters for CRD loss."""
 
+    contrast_method: str = "memory"
     feat_dim: int = 128
     nce_k: int = 16384
     nce_t: float = 0.07
@@ -38,15 +40,38 @@ class CRDLoss(nn.Module):
 
         self.embed_s = Embed(options.s_dim, options.feat_dim)
         self.embed_t = Embed(options.t_dim, options.feat_dim)
-        self.contrast = ContrastMemory(
-            options.feat_dim,
-            options.n_data,
-            options.nce_k,
-            options.nce_t,
-            options.nce_m,
-        )
-        self.criterion_s = ContrastLoss(options.n_data)
-        self.criterion_t = ContrastLoss(options.n_data)
+
+        self.contrast_method = getattr(options, "contrast_method", "memory")
+
+        if self.contrast_method == "memory":
+            self.contrast = ContrastMemory(
+                options.feat_dim,
+                options.n_data,
+                options.nce_k,
+                options.nce_t,
+                options.nce_m,
+            )
+            self.criterion_s = ContrastLoss(options.n_data)
+            self.criterion_t = ContrastLoss(options.n_data)
+
+        elif self.contrast_method == "moco":
+            queue_size = getattr(options, "moco_queue_size", None)
+            if queue_size is None:
+                queue_size = options.nce_k
+
+            self.contrast = MoCoContrast(
+                feature_dim=options.feat_dim,
+                queue_size=queue_size,
+                temperature=options.nce_t,
+            )
+            self.criterion_s = MoCoInfoNCELoss()
+            self.criterion_t = MoCoInfoNCELoss()
+
+        else:
+            raise ValueError(
+                f"Unsupported contrast_method: {self.contrast_method}. "
+                "Expected 'memory' or 'moco'."
+            )
 
     def forward(
         self,
@@ -57,7 +82,12 @@ class CRDLoss(nn.Module):
     ) -> torch.Tensor:
         embed_s = self.embed_s(feat_student)
         embed_t = self.embed_t(feat_teacher)
-        out_s, out_t = self.contrast(embed_s, embed_t, indices, contrast_idx)
+
+        if self.contrast_method == "memory":
+            out_s, out_t = self.contrast(embed_s, embed_t, indices, contrast_idx)
+        else:  # moco
+            out_s, out_t = self.contrast(embed_s, embed_t)
+
         loss_s = self.criterion_s(out_s)
         loss_t = self.criterion_t(out_t)
         return loss_s + loss_t

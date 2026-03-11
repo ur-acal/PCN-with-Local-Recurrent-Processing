@@ -40,6 +40,97 @@ class DatasetWithIndex(torch.utils.data.Dataset):
         return data, idx
 
 
+class DatasetWithIndexAndContrast(torch.utils.data.Dataset):
+    """Wrap a dataset to also return sample indices and contrast indices."""
+
+    def __init__(
+        self,
+        dataset: torch.utils.data.Dataset,
+        k: int = 4096,
+        mode: str = "exact",
+        percent: float = 1.0,
+    ):
+        self.dataset = dataset
+        self.k = k
+        self.mode = mode
+
+        labels = self._extract_labels(dataset)
+        self.labels = torch.as_tensor(labels, dtype=torch.long)
+
+        num_samples = self.labels.numel()
+        num_classes = int(self.labels.max().item()) + 1
+
+        self.cls_positive = []
+        for c in range(num_classes):
+            pos_idx = torch.nonzero(self.labels == c, as_tuple=False).squeeze(1)
+            self.cls_positive.append(pos_idx)
+
+        self.cls_negative = []
+        for c in range(num_classes):
+            neg_idx = torch.nonzero(self.labels != c, as_tuple=False).squeeze(1)
+            if 0 < percent < 1:
+                n = int(neg_idx.numel() * percent)
+                perm = torch.randperm(neg_idx.numel())[:n]
+                neg_idx = neg_idx[perm]
+            self.cls_negative.append(neg_idx)
+
+    def _extract_labels(self, ds):
+        if hasattr(ds, "targets"):
+            return ds.targets
+        if hasattr(ds, "train_labels"):
+            return ds.train_labels
+        if hasattr(ds, "labels"):
+            return ds.labels
+
+        if hasattr(ds, "dataset"):
+            return self._extract_labels(ds.dataset)
+
+        if hasattr(ds, "_clean_file") and hasattr(ds, "indices"):
+            labels = torch.as_tensor(ds._clean_file["labels"][:], dtype=torch.long)
+            indices = torch.as_tensor(ds.indices, dtype=torch.long)
+            return labels.index_select(0, indices)
+
+        raise AttributeError("Could not extract labels from dataset for contrast sampling.")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        data = self.dataset[idx]
+        if not isinstance(data, tuple) or len(data) < 2:
+            raise ValueError("Base dataset must return at least (input, label).")
+
+        if len(data) == 2:
+            inp, target = data
+        else:
+            inp, target = data[:2]
+
+        target_int = int(target)
+
+        if self.mode == "exact":
+            pos_idx = torch.tensor([idx], dtype=torch.long)
+        elif self.mode == "relax":
+            pos_pool = self.cls_positive[target_int]
+            rand_i = torch.randint(0, pos_pool.numel(), (1,))
+            pos_idx = pos_pool.index_select(0, rand_i)
+        else:
+            raise NotImplementedError(self.mode)
+
+        neg_pool = self.cls_negative[target_int]
+        replace = self.k > neg_pool.numel()
+
+        if replace:
+            rand_i = torch.randint(0, neg_pool.numel(), (self.k,))
+            neg_idx = neg_pool.index_select(0, rand_i)
+        else:
+            perm = torch.randperm(neg_pool.numel())[:self.k]
+            neg_idx = neg_pool.index_select(0, perm)
+
+        sample_idx = torch.cat((pos_idx, neg_idx), dim=0)
+
+        return inp, target, idx, sample_idx
+
+
 _CIFAR_STATS = {
     "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
     "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
@@ -93,6 +184,7 @@ class TrainerCiFar(object):
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
                  eval_every=1, img_type="rgb", dataset_name="cifar10", noise_level=None, noise_type=None,
                  mismatch_levels=None,
+                 contrast_method="memory", neg_sample="label",
                  distill_alpha=0.0, distill_temperature=1.0, teacher_model=None,
                  distill_method="kd", crd_feat_dim=128, crd_k=16384,
                  crd_temperature=0.07, crd_momentum=0.5, crd_beta=0.8,
@@ -152,8 +244,10 @@ class TrainerCiFar(object):
         if "crd" in self.distill_method and self.teacher_model is None:
             raise ValueError("CRD distillation requires a teacher model.")
         self.crd_beta = crd_beta
+        self.neg_sample = neg_sample
         self._crd_loss = None
         self._crd_options = CRDOptions(
+            contrast_method=contrast_method,
             feat_dim=crd_feat_dim,
             nce_k=crd_k,
             nce_t=crd_temperature,
@@ -280,6 +374,7 @@ class TrainerCiFar(object):
         s_dim = student_feat.size(1)
         t_dim = teacher_feat.size(1)
         options = CRDOptions(
+            contrast_method=self._crd_options.contrast_method,
             feat_dim=self._crd_options.feat_dim,
             nce_k=self._crd_options.nce_k,
             nce_t=self._crd_options.nce_t,
@@ -350,7 +445,10 @@ class TrainerCiFar(object):
         progress_bar = tqdm.tqdm(enumerate(self.train_dataloader),
                             total=len(self.train_dataloader), desc="Training")
         for _i, _data in progress_bar:
-            if isinstance(_data, (list, tuple)) and len(_data) == 3:
+            contrast_idx = None
+            if isinstance(_data, (list, tuple)) and len(_data) == 4:
+                inputs, labels, indices, contrast_idx = _data
+            elif isinstance(_data, (list, tuple)) and len(_data) == 3:
                 inputs, labels, indices = _data
             else:
                 inputs, labels = _data
@@ -387,8 +485,12 @@ class TrainerCiFar(object):
                 if teacher_feat is None or student_feat is None:
                     raise RuntimeError("Student and teacher features are required for CRD.")
                 self._ensure_crd_initialized(student_feat, teacher_feat)
-                crd_loss = self._crd_loss(student_feat, teacher_feat, indices_tensor)
-
+                crd_loss = self._crd_loss(
+                    student_feat,
+                    teacher_feat,
+                    indices_tensor,
+                    None if contrast_idx is None else contrast_idx.to(self.device, dtype=torch.long),
+                )
             if self._kd_enabled and kd_loss is None:
                 raise RuntimeError("KD loss was not computed despite KD being enabled.")
             if self._crd_enabled and crd_loss is None:
@@ -667,7 +769,20 @@ class TrainerCiFar(object):
             self.val_set = RawImgDataset(root=str(raw_root), train=False, transform=transform_test)
 
         if self._crd_enabled:
-            self.train_set = DatasetWithIndex(self.train_set)
+            assert self.neg_sample in {"label", "index"}
+            if self.neg_sample == "index":
+                # negative samples based on i != j
+                self.train_set = DatasetWithIndex(self.train_set)
+            elif self.neg_sample == "label":
+                # sampling negative samples with y_i != y_j
+                self.train_set = DatasetWithIndexAndContrast(
+                    self.train_set,
+                    k=self._crd_options.nce_k,
+                    mode='exact',
+                    percent=1.0,
+                )
+            else:
+                raise NotImplementedError
         self._train_sample_count = len(self.train_set)
 
         # Get dataloader

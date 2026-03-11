@@ -11,7 +11,7 @@ NOISE_TYPES=(
 NBITS=(5)
 R_MAX_LIST=("300e3")
 ONE_OVER_Q_LIST=("1")
-EXP="NODE_0304_QAT_with_noise_inject_training_C100"
+EXP="NODE_0309_QAT_with_noise_inject_kd_crd_training_C100"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
@@ -60,6 +60,16 @@ fi
 # Get ODE Block
 IFS='_' read -r -a parts <<< "$MODEL_NAME"
 ODE_BLK="${parts[3]}"
+# Teacher model setting
+TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
+TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
+TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
+TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
+if [[ "${DATASET_NAME}" == "cifar10" ]]; then
+  TEACHER_CKPT="checkpoint/b4.pth"
+  TEACHER_ARCH="efficientnet-b4"
+fi
 # No 2
 for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
   for nt in "${NOISE_TYPES[@]}"; do
@@ -75,7 +85,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --learning_rate 0.005 \
             --cosine_t0     20 \
             --eval_every    2 \
-            --num_epochs    80 \
+            --num_epochs    140 \
             --img_type      "scanGFI" \
             --model_name    "${MODEL_NAME}" \
             --offset_eps    0.0 \
@@ -106,10 +116,14 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --ode_block     "$ODE_BLK" \
             --noise_level   "${nl}" \
             --noise_type    "${nt}" \
-            --teacher_ckpt checkpoint/b4.pth \
-            --teacher_arch efficientnet-b4 \
-            --distill_method none \
-            --distill_alpha 0.3 \
+            --teacher_ckpt  "${TEACHER_CKPT}" \
+            --teacher_arch  "${TEACHER_ARCH}" \
+            --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
+            --teacher_input_size  "${TEACHER_INPUT_SIZE}" \
+            --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+            --distill_method kd_crd \
+            --contrast_method "memory" \
+            --distill_alpha  0.3 \
             --distill_temperature 2.0 \
             2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}_${one_over_q}.log"
         done

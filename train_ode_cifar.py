@@ -326,6 +326,20 @@ def get_args():
         choices=["none", "kd", "crd", "kd_crd", "kd+crd"],
         help="Distillation strategy to apply.",
     )
+    p.add_argument(
+        "--contrast_method",
+        type=str,
+        default="memory",
+        choices=["memory", "moco"],
+        help="Contrast method in CRDLoss.",
+    )
+    p.add_argument(
+        "--neg_sample",
+        type=str,
+        default="index",
+        choices=["index", "label"],
+        help="Ways of sampling negative samples in CRD.",
+    )
     p.add_argument("--distill_alpha", type=float, default=0.0,
                    help="Weight assigned to the teacher KL loss term.")
     p.add_argument("--distill_temperature", type=float, default=1.0,
@@ -810,6 +824,8 @@ def main():
         if not args.teacher_ckpt:
             raise ValueError(f"distill_method={args.distill_method} requires --teacher_ckpt.")
         teacher_model = build_teacher_model(args, student_in_channels=student_in_channels)
+        logging.warning("Training with {}, contrast method: {}, negative sampling method: {}".format(
+            args.distill_method, args.contrast_method, args.neg_sample))
     elif args.teacher_ckpt:
         logging.warning("teacher_ckpt provided but distillation disabled by configuration; ignoring teacher.")
     trainer = TrainerCiFar(
@@ -833,6 +849,8 @@ def main():
         dataset_name  = args.dataset,
         noise_level   = args.noise_level,
         noise_type    = args.noise_type,
+        contrast_method = args.contrast_method,
+        neg_sample    = args.neg_sample,
         distill_alpha = args.distill_alpha,
         distill_temperature = args.distill_temperature,
         distill_method = args.distill_method,
