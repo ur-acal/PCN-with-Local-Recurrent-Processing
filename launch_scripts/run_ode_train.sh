@@ -14,6 +14,13 @@
 #export OMP_PLACES=threads
 #export OMP_PROC_BIND=spread
 
+IS_SLURM="${IS_SLURM:-0}"
+
+if [[ "${IS_SLURM}" == 1 ]]; then
+  source activate base
+  conda activate scanbase
+fi
+
 DATASET_NAME="${DATASET_NAME:-cifar100}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
