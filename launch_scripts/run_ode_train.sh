@@ -22,7 +22,7 @@ if [[ "${IS_SLURM}" == 1 ]]; then
 fi
 
 ORIG_T_INP="${ORIG_T_INP:-true}"
-DATASET_NAME="${DATASET_NAME:-cifar10}"
+DATASET_NAME="${DATASET_NAME:-cifar100}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
@@ -64,7 +64,7 @@ python train_ode_cifar.py \
   --rggb_to_rgb   "false" \
   --dataset       "${DATASET_NAME}" \
   --num_epochs    300 \
-  --eval_every    1 \
+  --eval_every    5 \
   --offset_eps    0.0 \
   --inp_channels  "${INP[@]}" \
   --out_channels  "${OUT[@]}" \
