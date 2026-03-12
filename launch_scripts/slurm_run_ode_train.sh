@@ -14,10 +14,10 @@ SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_ode_train.sh"
 MAX_TASKS_PER_GPU="${MAX_TASKS_PER_GPU:-1}"
 GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
-ORIG_T_INP_SEL=(true)
+ORIG_T_INP_SEL=(true false)
 CONTRAST_METHODS=(memory)
 NEG_SAMPLES=(index label)
-DISTILL_ALPHAS=(0.3)
+DISTILL_ALPHAS=(0.3 0.5 0.8)
 DISTILL_TEMPERATURES=(2.0)
 
 for orig_t_inp in "${ORIG_T_INP_SEL[@]}"; do
@@ -36,6 +36,7 @@ for orig_t_inp in "${ORIG_T_INP_SEL[@]}"; do
               "${SBATCH_SCRIPT}"
           )
           echo "submitted job ${jid}: orig_t_inp=${orig_t_inp}, contrast_method=${contrast_method}, neg_sample=${neg_sample}, alpha=${distill_alpha}, temp=${distill_temperature}"
+          sleep "10"
         done
       done
     done
