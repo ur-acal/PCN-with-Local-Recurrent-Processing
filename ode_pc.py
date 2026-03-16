@@ -75,7 +75,7 @@ class ODEBlockPC(nn.Module):
 
         self.mismatch_type = mismatch_type
         assert self.mismatch_type in {"mul", "add"}
-        if self.noise_level is not None and self.noise_level > 0:
+        if isinstance(self.noise_level, dict) or (self.noise_level is not None and self.noise_level > 0):
             self.add_noise()
 
         self.t_end_sf = kwargs.get("t_end_sf", 1.0)
@@ -140,37 +140,96 @@ class ODEBlockPC(nn.Module):
             out = self.bypass(out) + out
         return out
 
+    def _get_quant_magnitude_levels(self, ref_vals):
+        k = torch.arange(self.q_hi + 1, device=ref_vals.device, dtype=ref_vals.dtype)
+
+        if self.weight_scale == 1.0:
+            # Uniform levels: {0, 1/q_hi, 2/q_hi, ..., 1}
+            levels = k / self.q_hi
+        else:
+            # Non-uniform remap:
+            # k = 0 -> 0
+            # k >= 1 -> first + (k-1)*delta
+            first = self.weight_scale / self.q_hi
+            delta = (1.0 - first) / (self.q_hi - 1)
+
+            levels = torch.zeros_like(k)
+            mask = k > 0
+            levels[mask] = first + (k[mask] - 1.0) * delta
+
+        return levels
+
+    def _values_to_level_idx(self, values):
+        # For self.q_hi, there are self.q_hi + 1 levels in total.
+        # Map values to one of these levels [0, 1, ..., self.q_hi].
+        levels = self._get_quant_magnitude_levels(values) # [q_hi + 1]
+        v_abs = values.abs().reshape(-1, 1) # [nnz, 1]
+        dist = (v_abs - levels.reshape(1, -1)).abs() # [nnz, q_hi + 1]
+        level_idx = dist.argmin(dim=1).to(torch.long) # [nnz]
+        return level_idx.reshape_as(values)
+
+    def _get_sparse_sigma_tensor(self, values):
+        if not isinstance(self.noise_level, dict):
+            return self.noise_level
+
+        level_idx = self._values_to_level_idx(values)
+
+        # Missing keys default to the maximum sigma
+        sigma_lut = torch.full((self.q_hi + 1,), max(self.noise_level.values()),
+                               device=values.device, dtype=values.dtype)
+        for _k, _sigma in self.noise_level.items():
+            sigma_lut[_k] = _sigma
+
+        sigma = sigma_lut[level_idx]
+        return sigma
+
+    def _get_dense_sigma_tensor(self, p):
+        if not isinstance(self.noise_level, dict):
+            return self.noise_level
+
+        level_idx = self._values_to_level_idx(p)
+
+        # Missing keys default to 0.0 sigma
+        sigma_lut = torch.full((self.q_hi + 1,), max(self.noise_level.values()), device=p.device, dtype=p.dtype)
+        for _k, _sigma in self.noise_level.items():
+            sigma_lut[_k] = _sigma
+
+        sigma = sigma_lut[level_idx]
+        return sigma
+
     def _apply_noise(self, p):
         if getattr(p, "is_sparse_csr", False):
             v_ = p.values()
+            sigma_ = self._get_sparse_sigma_tensor(v_)
             if self.mismatch_type == "mul":
-                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * self.noise_level
-                v_.mul_(1 + noise_) # This will change values of CSR matrix in-place
+                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * sigma_
+                v_.mul_(1 + noise_)  # This will change values of CSR matrix in-place
             else:
                 max_abs = v_.abs().max()
-                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * (self.noise_level * max_abs)
+                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * (sigma_ * max_abs)
                 v_.add_(noise_)
         else:
+            sigma_ = self._get_dense_sigma_tensor(p)
             if self.mismatch_type == "mul":
-                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * self.noise_level
+                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * sigma_
                 p.mul_(1 + noise_)
             else:
                 max_abs = p.abs().max()
-                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * (self.noise_level * max_abs)
+                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * (sigma_ * max_abs)
                 p.add_(noise_)
 
     def add_noise(self):
-        logging.warning("Adding noise to FFconv in ODEBlockPC")
+        # logging.warning("Adding noise to FFconv in ODEBlockPC")
         self._apply_noise(self.FFconv.weight)
         if not self.tie_weights:
-            logging.warning("Adding noise to FBconv in ODEBlockPC")
+            # logging.warning("Adding noise to FBconv in ODEBlockPC")
             self._apply_noise(self.FBconv.weight)
         if not self.tie_bp and self.bypass is not None:
-            logging.warning("Adding noise to BPconv in ODEBlockPC")
+            # logging.warning("Adding noise to BPconv in ODEBlockPC")
             self._apply_noise(self.bypass.weight)
         if not torch.allclose(self.b0[0], torch.zeros_like(self.b0[0])):
             self._apply_noise(self.b0[0])
-            logging.warning("Adding noise to self.b0[0] in ODEBlockPC")
+            # logging.warning("Adding noise to self.b0[0] in ODEBlockPC")
 
     @torch.no_grad()
     def recover_params(self):
@@ -1740,6 +1799,9 @@ class ODEWrapper2State(WrapQuantizeW):
             self.s_R = None
             # self.s_R = (1 - 1 / self.q_hi) / (1 / self.R - 1 / self.R_max)
             # logging.warning("Scaled weight with s_R: {}".format(self.s_R))
+
+        self.ode_block.q_hi = self.q_hi
+        self.ode_block.weight_scale = self.weight_scale
 
         # Todo: Right now using the same cap value seems to be fine. Need more experiment.
         self.tie_cap = tie_cap

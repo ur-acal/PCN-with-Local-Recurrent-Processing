@@ -5,6 +5,7 @@ import torchvision
 import os
 import pickle
 import argparse
+import json
 import torchinfo
 import logging
 
@@ -14,6 +15,7 @@ from tqdm import tqdm
 from copy import deepcopy
 from thop import profile, clever_format
 
+from data_utils import MISMATCH_LEVELS_5b
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
@@ -98,6 +100,8 @@ def parse_args():
     parser.add_argument("--rec_full_traj", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--test_expanded", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
+    parser.add_argument("--diff_mismatch", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--pvt_to_origin", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False,  help="Add weight non-ideality to the original or unrolled weights; works for test_expanded=True")
@@ -188,6 +192,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
     noisy_params = {"noise_level": 0.15, "weight": None}
+    if args.diff_mismatch:
+        noisy_params["noise_level"] = MISMATCH_LEVELS_5b
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
@@ -286,7 +292,10 @@ def run_ode_inference():
     noisy_trials = 20
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
-        noise_level_list_ = [0, 0.15, 0.25]
+        if args.diff_mismatch:
+            noise_level_list_ = [MISMATCH_LEVELS_5b]
+        else:
+            noise_level_list_ = [0, 0.15, 0.25]
         if args.mismatch_type == "add":
             noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
     if args.nonlinear_R:
@@ -326,8 +335,10 @@ def run_ode_inference():
             wrapper_params.update({"offset_eps": offset_eps_})
             noise_acc_spec = {}
             for noise_level in noise_level_list_:
-                trials = noisy_trials if noise_level > 0 or args.thermal_noise else 1
-                trials = 5 if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
+                trials = noisy_trials
+                if not isinstance(noise_level, dict):
+                    trials = noisy_trials if noise_level > 0 or args.thermal_noise else 1
+                    trials = 5 if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
                 for t in range(trials):
                     noisy_params = {"noise_level": noise_level, "weight": None}
@@ -363,7 +374,7 @@ def run_ode_inference():
                                 # _blk.add_noise()
                             # All mismatch added in this method
                             net_.add_noise(noise_to_bn=True, noise_to_linear=True) # Add noise to linear and bn also
-                            if noise_level > 0.0:
+                            if isinstance(noise_level, dict) or noise_level > 0.0:
                                 for _name, _p in net_.named_parameters():
                                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[
                                         _name]), "{} noise not added".format(_name)
@@ -398,7 +409,8 @@ def run_ode_inference():
                     acc_list.append(accuracy)
                     log.warning(f'Test Accuracy at noise level {noise_level} thermal noise eps {offset_eps_}: {accuracy:.2f}%')
                 avg_acc = sum(acc_list) / len(acc_list)
-                noise_acc_spec[noise_level] = acc_list
+                _nl_key = json.dumps(noise_level) if isinstance(noise_level, dict) else noise_level
+                noise_acc_spec[_nl_key] = acc_list
                 log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
             noise_acc_spec_all[offset_eps_ if offset_eps_ is not None else "Johnson"] = noise_acc_spec
         ###################################################################################################

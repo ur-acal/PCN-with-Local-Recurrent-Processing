@@ -271,6 +271,8 @@ class PCConvNoisy(nn.Module):
 
     def _init_noise(self, noise_level):
         # tie weights processed in self.add_noise()
+        if isinstance(noise_level, dict):
+            noise_level = torch.tensor(list(noise_level.values()), requires_grad=False).mean().item()
         self.noise_ff_matrix = torch.randn_like(self.FFconv.weight) * (0.0 if noise_level is None else noise_level)
         if self.use_pc:
             self.noise_fb_matrix = torch.randn_like(self.FBconv.weight) * (0.0 if noise_level is None else noise_level)

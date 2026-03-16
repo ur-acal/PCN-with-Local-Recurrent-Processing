@@ -117,7 +117,11 @@ class PCNet(nn.Module):
             x_ = y_
 
     def _apply_noise(self, p):
-        noise_ = torch.randn_like(p, device=self.device, requires_grad=False) * self.noise_level
+        # Todo: How to handle the final linear layer?
+        noise_level = self.noise_level
+        if isinstance(self.noise_level, dict):
+            noise_level = torch.tensor(list(self.noise_level.values()), device=self.device, requires_grad=False).max()
+        noise_ = torch.randn_like(p, device=self.device, requires_grad=False) * noise_level
         p.mul_(1 + noise_)
 
     def add_noise(self, noise_to_bn=False, noise_to_linear=False):
