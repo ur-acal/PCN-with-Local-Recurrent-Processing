@@ -26,13 +26,13 @@ IMG_TYPES=( "scanGFI" )
 CIRC_CONFS=( "" )
 
 # CHAN_0 options (order matters)
-CHAN_0_LIST=( 18 20 22 24 26 28 30 )
+CHAN_0_LIST=( 22 24 26 28 )
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers..."
 declare -A NUM_LAYERS_BY_CHAN0
 NUM_LAYERS_BY_CHAN0[18]="20 22"
 NUM_LAYERS_BY_CHAN0[20]="18 20"
-NUM_LAYERS_BY_CHAN0[22]="18 20"
+NUM_LAYERS_BY_CHAN0[22]="20 22"
 NUM_LAYERS_BY_CHAN0[24]="16 18"
 NUM_LAYERS_BY_CHAN0[26]="16 18"
 NUM_LAYERS_BY_CHAN0[28]="14 16"
@@ -61,7 +61,7 @@ SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 # Change the saved pickle file name here
 ####################################################
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0220_kdcrd_then_ft.pkl"
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0316_kdcrd_then_ft.pkl"
 ####################################################
 # Change EXP in submit_chunk
 ####################################################
@@ -264,7 +264,7 @@ submit_chunk() {
   # Human-readable + unique EXP:
   # - if MAX_TASKS_PER_GPU==1, chunk_tag will be the exact comb_tag
   # - else it is first__to__last
-  local EXP="0220_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
+  local EXP="0316_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
 
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"

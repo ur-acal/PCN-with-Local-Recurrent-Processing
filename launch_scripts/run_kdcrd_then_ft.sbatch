@@ -215,6 +215,9 @@ MODEL_DIR="./saved_ckpt"
 METHOD="dopri5"
 TOL="1e-6"
 n_bits=5
+ENOB=8
+V_DD="0.1"
+ONE_OVER_Q="1"
 R_val="20e3"
 R_MAX="300e3"
 C_val="49e-15"
@@ -274,7 +277,8 @@ eval_one_combo_model() {
     --R               "${R_val}" \
     --R_max           "${R_MAX}" \
     --C               "${C_val}" \
-    --v_dd            "0.2" \
+    --v_dd            "${V_DD}" \
+    --enob            "${ENOB}" \
     --w_bits          "${n_bits}" \
     --patch_node      "${patch_node}" \
     --patch_stride    "${patch_stride}" \
@@ -282,13 +286,14 @@ eval_one_combo_model() {
     --patch_pad       "${patch_pad}" \
     --fold_scalar     "${fold_scalar}" \
     --tie_cap         "false" \
-    --one_over_q      "6" \
+    --one_over_q      "${ONE_OVER_Q}" \
     --pc_conv         "${pc_conv}Noisy" \
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
     --img_type        "${IMG_TYPE}" \
     --conv_only       "true" \
     --test_expanded   "true" \
+    --diff_mismatch   "true" \
     --nonlinear_R     "false" \
     --mem_frac        "${MEM_FRAC}" \
     2>&1 | tee -a "$dir/job.log"
@@ -325,7 +330,7 @@ finetune_one_combo_model() {
     --learning_rate 0.005 \
     --cosine_t0     20 \
     --eval_every    2 \
-    --num_epochs    62 \
+    --num_epochs    140 \
     --img_type      "${IMG_TYPE}" \
     --model_name    "${name}" \
     --offset_eps    0.0 \
@@ -340,7 +345,8 @@ finetune_one_combo_model() {
     --R             "${R_val}" \
     --R_max         "${R_MAX}" \
     --C             "${C_val}" \
-    --v_dd          "0.2" \
+    --v_dd          "${V_DD}" \
+    --enob          "${ENOB}" \
     --w_bits        "${n_bits}" \
     --patch_node    "${patch_node}" \
     --patch_stride  "${patch_stride}" \
@@ -348,7 +354,7 @@ finetune_one_combo_model() {
     --patch_pad     "${patch_pad}" \
     --fold_scalar   "${fold_scalar}" \
     --tie_cap       "false" \
-    --one_over_q    "6" \
+    --one_over_q    "${ONE_OVER_Q}" \
     --qat_cls       "SymQuantizeWeight" \
     --pcn           "${PCN}" \
     --ode_wrapper   "${qat_wrapper}" \
@@ -356,7 +362,16 @@ finetune_one_combo_model() {
     --ode_block     "${train_block}" \
     --noise_level   "${nl}" \
     --noise_type    "${nt}" \
-    --distill_method none \
+    --teacher_ckpt  "${TEACHER_CKPT}" \
+    --teacher_arch  "${TEACHER_ARCH}" \
+    --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
+    --teacher_input_size "${TEACHER_INPUT_SIZE}" \
+    --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+    --distill_method kd_crd \
+    --distill_alpha 0.3 \
+    --distill_temperature 2.0 \
+    --contrast_method "memory" \
+    --mem_frac      "${MEM_FRAC}" \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }

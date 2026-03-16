@@ -273,10 +273,10 @@ run_model(){
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
     --conv_only       "true" \
-    --test_expanded   "false" \
+    --test_expanded   "true" \
     --diff_mismatch   "true" \
     --nonlinear_R     "false" \
-    --test_only       "true" \
+    --test_only       "false" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model

@@ -293,7 +293,7 @@ def run_ode_inference():
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
         if args.diff_mismatch:
-            noise_level_list_ = [MISMATCH_LEVELS_5b]
+            noise_level_list_ = [0, MISMATCH_LEVELS_5b]
         else:
             noise_level_list_ = [0, 0.15, 0.25]
         if args.mismatch_type == "add":
