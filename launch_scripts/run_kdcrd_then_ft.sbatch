@@ -178,7 +178,7 @@ run_one_combo () {
     --out_channels  "${OUT[@]}" \
     --max_pool      "${POOL[@]}" \
     --stride        "${STRIDE[@]}" \
-    --avg_pooling   "false" \
+    --avg_pooling   "true" \
     --kernel_size   "${KERNEL[@]}" \
     --padding       "${padding}" \
     --patch_node    "${patch_node}" \
@@ -335,6 +335,7 @@ finetune_one_combo_model() {
     --model_name    "${name}" \
     --offset_eps    0.0 \
     --dropout       0.25 \
+    --avg_pooling   "true" \
     --tie_weights   "false" \
     --tie_bp        "false" \
     --bypass        "false" \
@@ -371,7 +372,6 @@ finetune_one_combo_model() {
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \
     --contrast_method "memory" \
-    --mem_frac      "${MEM_FRAC}" \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }

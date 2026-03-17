@@ -409,7 +409,7 @@ def run_ode_inference():
                     acc_list.append(accuracy)
                     log.warning(f'Test Accuracy at noise level {noise_level} thermal noise eps {offset_eps_}: {accuracy:.2f}%')
                 avg_acc = sum(acc_list) / len(acc_list)
-                _nl_key = json.dumps(noise_level) if isinstance(noise_level, dict) else noise_level
+                _nl_key = np.mean(list(noise_level.values())).round(3) if isinstance(noise_level, dict) else noise_level
                 noise_acc_spec[_nl_key] = acc_list
                 log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
             noise_acc_spec_all[offset_eps_ if offset_eps_ is not None else "Johnson"] = noise_acc_spec
