@@ -22,6 +22,9 @@ from inference_utils import load_and_prepare_model, replace_transpose_conv, get_
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLASSES, wrap_ode_block
 from cross_sim_inference import calibrate_input
 from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised
+from switch import SWITCH_CLASSES
+
+ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
 import logging
 log = logging.getLogger(__name__)
@@ -78,6 +81,8 @@ def parse_args():
     parser.add_argument("--t_end", type=float, default=None, help="Stop time of the solver")
     parser.add_argument("--t_end_sf", type=float, default=1.0,
                         help="Scaling factor of the Stop time of the solver")
+    parser.add_argument("--switch_period", type=float, default=7e-8,
+                        help="Period of the switch validator")
     parser.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     parser.add_argument("--ts_scale", type=int, default=10,
@@ -91,6 +96,7 @@ def parse_args():
     parser.add_argument("--conv_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--mem_frac", type=float, default=1.0)
+    parser.add_argument("--noisy_trials", type=int, default=20)
     parser.add_argument("--count_mac", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
@@ -138,6 +144,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "t_end": t_end * args.t_end_sf, # possibly scaling the t_end to plot the spin voltage
                   "t_end_sf": args.t_end_sf,
                   "method": args.method,
+                  "switch_period": args.switch_period,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
@@ -167,6 +174,17 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                           result_path=os.path.join(args.hw_val_path, args.model_name, "{}b".format(args.w_bits)),
                           wrapper=saved_wrappers["wrappers"],
                           record_full_traj=args.rec_full_traj, t_end_sf=args.t_end_sf)
+    # valid_kwargs = dict(
+    #     model=net_,
+    #     expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name, "{}b".format(args.w_bits)),
+    #     device=device, test_dataloader=test_dataloader,
+    #     result_path=os.path.join(args.hw_val_path, args.model_name, "{}b".format(args.w_bits)),
+    #     wrapper=saved_wrappers["wrappers"],
+    #     record_full_traj=args.rec_full_traj, t_end_sf=args.t_end_sf,
+    #     # PixelBlockSwitchValidator-specific
+    #     switch_period=args.switch_period,
+    # )
+    # valid_ins = VALIDATOR_CLASSES[args.validator](**valid_kwargs)
     logging.warning("Unroll or load expanded weights finished")
     if not args.pvt_to_origin:
         # adding non-ideality to unrolled weights
@@ -196,6 +214,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
         noisy_params["noise_level"] = MISMATCH_LEVELS_5b
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
+                  "switch_period": args.switch_period,
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
@@ -289,7 +308,7 @@ def run_ode_inference():
     noise_level_list_ = [0, 0.15, 0.2]
     if args.mismatch_type == "add":
         noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
-    noisy_trials = 20
+    noisy_trials = args.noisy_trials
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
         if args.diff_mismatch:
@@ -320,6 +339,7 @@ def run_ode_inference():
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
+                      "switch_period": args.switch_period,
                       "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
@@ -338,7 +358,7 @@ def run_ode_inference():
                 trials = noisy_trials
                 if not isinstance(noise_level, dict):
                     trials = noisy_trials if noise_level > 0 or args.thermal_noise else 1
-                    trials = 5 if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
+                    trials = min(5, trials) if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
                 for t in range(trials):
                     noisy_params = {"noise_level": noise_level, "weight": None}
@@ -361,7 +381,7 @@ def run_ode_inference():
                                                   device=device, test_dataloader=test_dataloader,
                                                   result_path=os.path.join(args.hw_val_path, args.model_name,
                                                                            "{}b".format(args.w_bits)),
-                                                  wrapper=saved_wrappers)
+                                                  wrapper=saved_wrappers["wrappers"])
                             logging.warning("Unroll or load expanded weights finished")
                             clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
                             clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
@@ -392,7 +412,8 @@ def run_ode_inference():
                     total = 0
                     correct = 0
 
-                    for batch_idx, (inputs, targets) in tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False):
+                    pbar = tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False)
+                    for batch_idx, (inputs, targets) in pbar:
                         inputs, targets = inputs.to(device), targets.to(device)
                         with torch.no_grad():
                             output_tensor = net_(inputs)
@@ -403,6 +424,9 @@ def run_ode_inference():
                         _, predicted = torch.max(output_tensor, 1)
                         total += targets.size(0)
                         correct += (predicted == targets).sum().item()
+
+                        running_acc = 100.0 * correct / total
+                        pbar.set_postfix(acc=f"{running_acc:.2f}%")
 
                     # Calculate the accuracy
                     accuracy = 100 * correct / total

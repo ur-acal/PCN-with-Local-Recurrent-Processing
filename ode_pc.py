@@ -219,17 +219,13 @@ class ODEBlockPC(nn.Module):
                 p.add_(noise_)
 
     def add_noise(self):
-        # logging.warning("Adding noise to FFconv in ODEBlockPC")
         self._apply_noise(self.FFconv.weight)
         if not self.tie_weights:
-            # logging.warning("Adding noise to FBconv in ODEBlockPC")
             self._apply_noise(self.FBconv.weight)
         if not self.tie_bp and self.bypass is not None:
-            # logging.warning("Adding noise to BPconv in ODEBlockPC")
             self._apply_noise(self.bypass.weight)
         if not torch.allclose(self.b0[0], torch.zeros_like(self.b0[0])):
             self._apply_noise(self.b0[0])
-            # logging.warning("Adding noise to self.b0[0] in ODEBlockPC")
 
     @torch.no_grad()
     def recover_params(self):
@@ -2122,7 +2118,7 @@ class ODEWrapper1State(ODEWrapper2State):
         self.beta = self.q * self.s_fb
         self.k = k
         self.beta_c = self.beta * self.k / self.R
-        logging.warning("6 * beta_c = {}, self.s_fb = {}".format(6 * self.beta_c, self.s_fb))
+        # logging.warning("6 * beta_c = {}, self.s_fb = {}".format(6 * self.beta_c, self.s_fb))
         self.inp_scale = self.q if self.is_first else 1
         self.out_scale = self.q if self.is_last else 1
 

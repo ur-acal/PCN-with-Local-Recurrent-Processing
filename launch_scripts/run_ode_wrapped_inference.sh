@@ -272,6 +272,7 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
+    --noisy_trials    "2" \
     --conv_only       "true" \
     --test_expanded   "true" \
     --diff_mismatch   "true" \
@@ -288,7 +289,7 @@ for method in "${METHOD_VALS[@]}"; do
   # Modify log name here before each run
   ##########################################################################################
 #  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
-  EXP_NAME="0224_scanGFI_additive_mismatch_${method}Method_${tol}Tol.log"
+  EXP_NAME="0317_scanGFI_multiplicative_mismatch_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
   > "$MASTER_LOG"

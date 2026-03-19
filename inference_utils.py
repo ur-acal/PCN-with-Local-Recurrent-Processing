@@ -250,30 +250,32 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
     # Add noise
     if hasattr(net_, "add_noise"):
-        clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
-        clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
-        net_.add_noise(noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear)
-
         noise_level = net_.noise_level
         #############################################################################
         # ODE related
         if isinstance(ode_params, dict):
-            # Mismatch added in the init method of ode_blocks unless we wrap the ode_blocks with wrappers later.
-            net_ = make_ode_block(net_,
-                                  noise_level=noise_level if not isinstance(ode_wrapper_params, dict) else 0.0,
-                                  **ode_params)
+            # Mismatch added later.
+            net_ = make_ode_block(net_, noise_level=0.0, **ode_params)
             logging.warning("PcConv converted to ODEBlock, ode_params={}".format(ode_params))
             if isinstance(ode_wrapper_params, dict):
                 net_, wrapper_lists = wrap_ode_block(net_, **ode_wrapper_params)
-                net_.noise_level = noise_level
-                for _blk in net_.PcConvs:
-                    _blk.noise_level = noise_level
-                # All mismatch added in this method
-                net_.add_noise(noise_to_bn=True, noise_to_linear=True)  # Add noise to linear and bn also
                 logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(ode_wrapper_params))
                 if isinstance(wrappers, dict):
                     wrappers["wrappers"] = wrapper_lists
+            clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
+            clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
+            net_.noise_level = noise_level
+            for _blk in net_.PcConvs:
+                _blk.noise_level = noise_level
+            # All mismatch added in this method
+            net_.add_noise(noise_to_bn=True, noise_to_linear=True)  # Add noise to linear and bn also
         #############################################################################
+        else:
+            clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
+            clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
+            # When each PcConv is not ode_block, calling this will not add mismatch in-place to conv weights.
+            # But will add mismatch to linear layers.
+            net_.add_noise(noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear)
         if isinstance(noise_level, dict) or noise_level > 0.0:
             mean_abs = []
             for _name, _p in net_.named_parameters():
