@@ -547,15 +547,19 @@ class Validator(nn.Module):
             res[cur_name]["s_R"] = getattr(wrappers[_idx], "s_R", None)
             res[cur_name]["R_max"] = getattr(wrappers[_idx], "R_max", None)
             res[cur_name]["R"] = wrappers[_idx].R if res[cur_name]["s_R"] is None else None
-            res[cur_name]["q"] = wrappers[_idx].beta.cpu().item() if isinstance(wrappers[_idx].beta, torch.Tensor) else wrappers[_idx].beta
             res[cur_name]["k"] = getattr(wrappers[_idx], "k", None)
             res[cur_name]["beta_c"] = wrappers[_idx].beta_c.cpu().item() if hasattr(wrappers[_idx], "beta_c") else None
             res[cur_name]["C"] = wrappers[_idx].C
             res[cur_name]["C_ff"] = wrappers[_idx].C_ff.cpu().item() if hasattr(wrappers[_idx], "C_ff") else None
             res[cur_name]["C_fb"] = wrappers[_idx].C_fb if hasattr(wrappers[_idx], "C_fb") else None
+            res[cur_name]["q"] = wrappers[_idx].q
+            if hasattr(wrappers[_idx], "beta"):
+                res[cur_name]["beta"] = wrappers[_idx].beta.cpu().item() if isinstance(wrappers[_idx].beta, torch.Tensor) else wrappers[_idx].beta
+            else:
+                res[cur_name]["beta"] = None
 
-            _inp_scale = wrappers[_idx].inp_scale
-            _out_scale = wrappers[_idx].out_scale
+            _inp_scale = getattr(wrappers[_idx], "inp_scale", wrappers[_idx].q)
+            _out_scale = getattr(wrappers[_idx], "out_scale", wrappers[_idx].q)
 
             def make_capture_init_res(key=cur_name):
                 def capture_init_res(orig_init_y, x, *args, **kwargs):

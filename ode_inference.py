@@ -42,6 +42,8 @@ def parse_args():
     parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     parser.add_argument("--img_type", type=str, default="rgb")
     parser.add_argument("--test_bs", type=int, default=128)
+    parser.add_argument("--shuffle_test", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="Shuffle test data.")
     parser.add_argument("--pc_conv", type=str, choices=list(PC_CONV_CLASS.keys())+[None],
                    default=None)
     parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
@@ -295,7 +297,10 @@ def run_ode_inference():
             run_test_only(args, test_dataloader, ckpt_path, pc_conv, device)
             exit(0)
         elif args.hw_validate:
-            run_validation_data_gen(args, get_test_data(test_bs=args.test_bs, img_type=args.img_type, task=args.task),
+            run_validation_data_gen(args,
+                                    get_test_data(
+                                        test_bs=args.test_bs, img_type=args.img_type,
+                                        task=args.task, shuffle=args.shuffle_test),
                                     ckpt_path, pc_conv, device)
             exit(0)
 

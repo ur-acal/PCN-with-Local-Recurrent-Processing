@@ -34,7 +34,7 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
-def get_test_data(test_bs=2048, img_type="rgb", task="cifar10"):
+def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             transform_test = transforms.Compose([
@@ -65,7 +65,7 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10"):
         ])
         test_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=False, transform=transform_test)
     # Create a DataLoader
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=False, num_workers=2)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=shuffle, num_workers=2)
     return test_loader
 
 
