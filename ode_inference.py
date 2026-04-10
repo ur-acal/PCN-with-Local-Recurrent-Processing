@@ -83,8 +83,11 @@ def parse_args():
     parser.add_argument("--t_end", type=float, default=None, help="Stop time of the solver")
     parser.add_argument("--t_end_sf", type=float, default=1.0,
                         help="Scaling factor of the Stop time of the solver")
-    parser.add_argument("--switch_period", type=float, default=7e-8,
-                        help="Period of the switch validator")
+    parser.add_argument("--switch_period",
+                        type=lambda s: None if s.lower() in {"none", ""} else float(s), default=7e-8,
+                        help="Period of the switch validator. (Use switch_iter instead).")
+    parser.add_argument("--switch_iter", type=int, default=2,
+                        help="Number of iterations for the time interleaving method.")
     parser.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     parser.add_argument("--ts_scale", type=int, default=10,
@@ -146,7 +149,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "t_end": t_end * args.t_end_sf, # possibly scaling the t_end to plot the spin voltage
                   "t_end_sf": args.t_end_sf,
                   "method": args.method,
-                  "switch_period": args.switch_period,
+                  "switch_period": args.switch_period, "n_iters": args.switch_iter,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
@@ -216,7 +219,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
         noisy_params["noise_level"] = MISMATCH_LEVELS_5b
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
-                  "switch_period": args.switch_period,
+                  "switch_period": args.switch_period, "n_iters": args.switch_iter,
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
@@ -344,7 +347,7 @@ def run_ode_inference():
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
-                      "switch_period": args.switch_period,
+                      "switch_period": args.switch_period, "n_iters": args.switch_iter,
                       "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}

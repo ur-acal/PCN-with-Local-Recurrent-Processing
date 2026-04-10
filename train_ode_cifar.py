@@ -10,6 +10,9 @@ import torch.nn.functional as F
 import numpy as np
 
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
+from switch import SWITCH_CLASSES
+
+ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
 
 class RGGBToRGBTransform(nn.Module):
@@ -286,6 +289,8 @@ def get_args():
     p.add_argument("--patch_cycle", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
     p.add_argument("--patch_pad", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
     p.add_argument("--fold_scalar", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    p.add_argument("--n_iters", type=int, default=2,
+                        help="Number of iterations for the time interleaving method.")
     # Quantization-aware training related args
     p.add_argument("--ode_wrapper", type=str, choices=list(ODEWrapper_CLASSES.keys()) + [None],
                         default=None)
@@ -769,7 +774,8 @@ def main():
 
     # convert block to Neural ode
     # Todo: The offset eps in ode_block is currently useless. Need to pass that to the wrapper.
-    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "patch_node", "patch_stride", "patch_cycle", "patch_pad", "fold_scalar"], {}
+    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "patch_node", "patch_stride",
+                          "patch_cycle", "patch_pad", "fold_scalar", "n_iters"], {}
     for _name, _val in vars(args).items():
         if _name in ode_kw and _val is not None:
             ode_kwargs[_name] = _val

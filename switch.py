@@ -10,20 +10,39 @@ from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 from ode_pc import ODEXInitFFFB
 
 
-def _clone_conv2d_like(conv: nn.Conv2d) -> nn.Conv2d:
-    new_conv = nn.Conv2d(
-        in_channels=conv.in_channels,
-        out_channels=conv.out_channels,
-        kernel_size=conv.kernel_size,
-        stride=conv.stride,
-        padding=conv.padding,
-        dilation=conv.dilation,
-        groups=conv.groups,
-        bias=(conv.bias is not None),
-        padding_mode=conv.padding_mode,
-        device=conv.weight.device,
-        dtype=conv.weight.dtype,
-    )
+def _clone_conv_like(conv):
+    if isinstance(conv, nn.Conv2d):
+        new_conv = nn.Conv2d(
+            in_channels=conv.in_channels,
+            out_channels=conv.out_channels,
+            kernel_size=conv.kernel_size,
+            stride=conv.stride,
+            padding=conv.padding,
+            dilation=conv.dilation,
+            groups=conv.groups,
+            bias=(conv.bias is not None),
+            padding_mode=conv.padding_mode,
+            device=conv.weight.device,
+            dtype=conv.weight.dtype,
+        )
+    elif isinstance(conv, nn.ConvTranspose2d):
+        new_conv = nn.ConvTranspose2d(
+            in_channels=conv.in_channels,
+            out_channels=conv.out_channels,
+            kernel_size=conv.kernel_size,
+            stride=conv.stride,
+            padding=conv.padding,
+            output_padding=conv.output_padding,
+            groups=conv.groups,
+            bias=(conv.bias is not None),
+            dilation=conv.dilation,
+            padding_mode=conv.padding_mode,
+            device=conv.weight.device,
+            dtype=conv.weight.dtype,
+        )
+    else:
+        raise TypeError(f"Unsupported conv type: {type(conv)}")
+
     new_conv.load_state_dict(deepcopy(conv.state_dict()))
     return new_conv
 
@@ -55,13 +74,28 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
 
         assert isinstance(self.FFconv, nn.Conv2d), \
             "ODEXInitFFFBPixelSwitch currently expects FFconv to be nn.Conv2d."
-        assert isinstance(self.FBconv, nn.Conv2d), \
-            "ODEXInitFFFBPixelSwitch currently expects FBconv to be nn.Conv2d."
+        assert isinstance(self.FBconv, (nn.Conv2d, nn.ConvTranspose2d)), \
+            "ODEXInitFFFBPixelSwitch currently expects FBconv to be nn.Conv2d or nn.ConvTranspose2d."
 
         ff_stride = self.FFconv.stride[0] if isinstance(self.FFconv.stride, tuple) else self.FFconv.stride
         fb_stride = self.FBconv.stride[0] if isinstance(self.FBconv.stride, tuple) else self.FBconv.stride
         assert ff_stride == 1 and fb_stride == 1, \
             "ODEXInitFFFBPixelSwitch currently assumes stride=1."
+
+        if isinstance(self.FBconv, nn.ConvTranspose2d):
+            fb_dilation = self.FBconv.dilation[0] if isinstance(self.FBconv.dilation, tuple) else self.FBconv.dilation
+            fb_groups = self.FBconv.groups
+            fb_outpad = self.FBconv.output_padding[0] if isinstance(self.FBconv.output_padding,
+                                                                    tuple) else self.FBconv.output_padding
+
+            assert fb_stride == 1, \
+                "ODEXInitFFFBPixelSwitch with ConvTranspose2d currently assumes stride=1."
+            assert fb_dilation == 1, \
+                "ODEXInitFFFBPixelSwitch with ConvTranspose2d currently assumes dilation=1."
+            assert fb_groups == 1, \
+                "ODEXInitFFFBPixelSwitch with ConvTranspose2d currently assumes groups=1."
+            assert fb_outpad == 0, \
+                "ODEXInitFFFBPixelSwitch with ConvTranspose2d currently assumes output_padding=0."
 
         ff_kh, ff_kw = self.FFconv.kernel_size if isinstance(self.FFconv.kernel_size, tuple) else (
             self.FFconv.kernel_size, self.FFconv.kernel_size
@@ -83,9 +117,33 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
 
         # Nine physical compact W_FB copies, each gets its own fixed mismatch later.
         self.FBconv_copies = nn.ModuleList(
-            [_clone_conv2d_like(self.FBconv) for _ in range(self.ff_kh * self.ff_kw)]
+            [_clone_conv_like(self.FBconv) for _ in range(self.ff_kh * self.ff_kw)]
         )
         self._sync_fb_copies_from_base()
+
+    def _fb_weight_to_site_matrix(self, conv):
+        """
+        Return a flattened weight matrix of shape [Cout, Cin * kh * kw]
+        so that one local site can be evaluated as:
+
+            out[b, o] = sum_i patch_flat[b, i] * weight_flat[o, i] + bias[o]
+
+        For Conv2d:
+            weight is already [Cout, Cin, kh, kw]
+
+        For ConvTranspose2d with stride=1, dilation=1, groups=1, output_padding=0:
+            local site evaluation uses the spatially flipped kernel and
+            channel order [Cout, Cin, kh, kw], obtained from the stored
+            weight [Cin, Cout, kh, kw].
+        """
+        if isinstance(conv, nn.Conv2d):
+            weight_site = conv.weight
+        elif isinstance(conv, nn.ConvTranspose2d):
+            weight_site = torch.flip(conv.weight, dims=[2, 3]).permute(1, 0, 2, 3).contiguous()
+        else:
+            raise TypeError(f"Unsupported FB conv type: {type(conv)}")
+
+        return weight_site.reshape(weight_site.shape[0], -1)
 
     def _sync_fb_copies_from_base(self):
         for conv in self.FBconv_copies:
@@ -141,13 +199,13 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
 
     def _eval_fb_site(self, conv, patch):
         """
-        conv: one FB conv copy
+        conv: one FB conv copy (Conv2d or ConvTranspose2d)
         patch: [B, Cin, fb_kh, fb_kw]
         return: [B, Cout]
         """
         bsz = patch.shape[0]
         patch_flat = patch.reshape(bsz, -1)
-        weight_flat = conv.weight.reshape(conv.out_channels, -1)
+        weight_flat = self._fb_weight_to_site_matrix(conv)  # [Cout, I]
         out = torch.einsum("bi,oi->bo", patch_flat, weight_flat)
         if conv.bias is not None:
             out = out + conv.bias.view(1, -1)
@@ -213,7 +271,7 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
         patches_flat = patches.reshape(bsz, n_sites, -1)  # [B, S, I]
 
         weight_flat = torch.stack(
-            [conv.weight.reshape(conv.out_channels, -1) for conv in self.FBconv_copies],
+            [self._fb_weight_to_site_matrix(conv) for conv in self.FBconv_copies],
             dim=0
         )  # [S, O, I]
 
@@ -297,6 +355,11 @@ class ODEXInitFFFBPixelSwitchExplicit(ODEXInitFFFBPixelSwitch):
     this class explicitly scans over pixel intervals and runs aca_ode_solve
     once per mini-interval.
     """
+    def __init__(self, n_iters=1, **kwargs):
+        super().__init__(**kwargs)
+        assert n_iters is not None and int(n_iters) >= 1, \
+            "n_iters must be an integer >= 1."
+        self.n_iters = int(n_iters)
 
     @staticmethod
     def _pixel_idx_to_active_hw(pix_idx, w):
@@ -313,38 +376,56 @@ class ODEXInitFFFBPixelSwitchExplicit(ODEXInitFFFBPixelSwitch):
             option_aca["h"] = min(float(option_aca["h"]), float(t1 - t0))
         return option_aca
 
-    def _run_explicit_pixel_switch(self, x, full_traj=False):
-        y = self.init_y(x)
-        self.integration_time = self.integration_time.type_as(x)
+    def _time_to_active_pixel(self, t, h, w):
+        n_pix = h * w
+        t0, t1, T_total = self._get_total_horizon()
 
+        if T_total <= 0:
+            return 0, 0
+
+        t_val = float(t.item()) if torch.is_tensor(t) else float(t)
+
+        delta = T_total / (self.n_iters * n_pix)
+        idx_global = int((t_val - t0) / delta)
+
+        # Clamp for safety at the right endpoint
+        idx_global = min(max(idx_global, 0), self.n_iters * n_pix - 1)
+
+        pix_idx = idx_global % n_pix
+        active_h = pix_idx // w
+        active_w = pix_idx % w
+        return active_h, active_w
+
+    def _get_total_horizon(self):
         t0 = self.option_aca["t0"]
         t1 = self.option_aca["t1"]
         t0 = float(t0.item()) if torch.is_tensor(t0) else float(t0)
         t1 = float(t1.item()) if torch.is_tensor(t1) else float(t1)
+        return t0, t1, (t1 - t0)
+
+    def _run_explicit_pixel_switch(self, x, full_traj=False):
+        y = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        t0, t1, T_total = self._get_total_horizon()
 
         _, _, h, w = y.shape
         n_pix = h * w
-        T_s = self._get_switch_period(None)
-        delta = T_s / n_pix
+        n_total_intervals = self.n_iters * n_pix
+        delta = T_total / n_total_intervals
 
         t_cur = t0
-        pix_idx = 0
         step_states = [y]
         step_times = [torch.as_tensor(t_cur, device=y.device, dtype=y.dtype)]
 
-        while t_cur < t1 - 1e-15:
-            t_next = min(t_cur + delta, t1)
-
-            active_h, active_w = self._pixel_idx_to_active_hw(pix_idx % n_pix, w)
-            self._pixel_switch_active_h = active_h
-            self._pixel_switch_active_w = active_w
+        for interval_idx in range(n_total_intervals):
+            t_next = t1 if interval_idx == n_total_intervals - 1 else (t_cur + delta)
 
             option_aca = self._build_interval_option_aca(t_cur, t_next, y)
             out = aca_ode_solve(self._make_ode_fn(x), y, option_aca)
             y = out[-1]
 
             t_cur = t_next
-            pix_idx += 1
 
             if full_traj:
                 step_states.append(y)
@@ -372,7 +453,385 @@ class ODEXInitFFFBPixelSwitchExplicit(ODEXInitFFFBPixelSwitch):
         return traj, steps
 
 
+class ODEXInitFFFBPixelSwitchExplicitStatic(ODEXInitFFFBPixelSwitchExplicit):
+    """
+    Explicit pixel-switch with Jacobi-style per-iteration update.
+
+    One iteration = visit all pixels once.
+    During one iteration, all pixel-local updates are computed from the same
+    frozen state y_base. Newly computed pixel values are written into y_next,
+    but are NOT visible to later pixel updates within that same iteration.
+
+    After all pixels are visited once, commit:
+        y <- y_next
+    """
+
+    def _make_ode_fn(self, x, noisy_cu=None, active_h=None, active_w=None):
+        assert active_h is not None and active_w is not None, \
+            "Jacobi explicit pixel switch requires fixed active_h and active_w."
+
+        def ode_func(t, y):
+            bsz, _, h, w = y.shape
+            n_pix = h * w
+
+            y_pad = F.pad(y, (self.fb_pad_w, self.fb_pad_w, self.fb_pad_h, self.fb_pad_h))
+
+            patches, valid_mask = self._extract_all_site_patches(
+                y_pad, active_h, active_w, h, w
+            )
+            z_local = self._eval_fb_sites_batched(patches, valid_mask)
+
+            z_local = self.act_fn(z_local)
+            out_site = self._eval_ff_center(z_local)
+
+            out = torch.zeros(
+                (bsz, self.FFconv.out_channels, h, w),
+                device=y.device,
+                dtype=y.dtype,
+            )
+            out[:, :, active_h, active_w] = out_site
+            return n_pix * out
+
+        return ode_func
+
+    def _run_explicit_pixel_switch(self, x, full_traj=False):
+        y = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        t0, t1, T_total = self._get_total_horizon()
+
+        _, _, h, w = y.shape
+        n_pix = h * w
+        n_total_intervals = self.n_iters * n_pix
+        delta = T_total / n_total_intervals
+
+        t_cur = t0
+        step_states = [y]
+        step_times = [torch.as_tensor(t_cur, device=y.device, dtype=y.dtype)]
+
+        for iter_idx in range(self.n_iters):
+            # Freeze the source state for this whole iteration.
+            y_base = y
+            y_next = y.clone()
+
+            for pix_idx in range(n_pix):
+                active_h = pix_idx // w
+                active_w = pix_idx % w
+
+                t_next = t1 if (iter_idx == self.n_iters - 1 and pix_idx == n_pix - 1) else (t_cur + delta)
+
+                option_aca = self._build_interval_option_aca(t_cur, t_next, y_base)
+                # option_aca = self._build_interval_option_aca(0, delta, y_base)
+
+                out = aca_ode_solve(
+                    self._make_ode_fn(x, active_h=active_h, active_w=active_w),
+                    y_base,
+                    option_aca,
+                )
+                y_pix = out[-1]
+
+                # Only write the active pixel into the buffer.
+                y_next[:, :, active_h, active_w] = y_pix[:, :, active_h, active_w]
+
+                t_cur = t_next
+
+                if full_traj:
+                    step_states.append(y_next.clone())
+                    step_times.append(torch.as_tensor(t_cur, device=y.device, dtype=y.dtype))
+
+            # Commit once after a full scan over all pixels.
+            y = y_next
+
+        if full_traj:
+            traj = torch.stack(step_states, dim=0)
+            steps = torch.stack(step_times, dim=0)
+            return traj, steps
+
+        return y
+
+
+class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
+    """
+    Jacobi-style explicit pixel-switch with efficient chunked parallel updates.
+
+    Key behavior:
+    - One iteration = visit all pixels once.
+    - Within one iteration, every pixel update is computed from the same frozen
+      source state y_base.
+    - Later pixels/chunks do NOT see earlier updated values from the same iteration.
+    - Pixels are processed in chunks of size <= max_pixels.
+    - Chunking is only a memory/performance device; it does NOT change the dynamics.
+
+    Hard requirements preserved:
+    - still uses _make_ode_fn
+    - still uses aca_ode_solve (or whatever solver is in your path)
+    """
+    def __init__(self, n_iters=1, max_pixels=None, use_cached_patches=True, **kwargs):
+        super().__init__(n_iters=n_iters, **kwargs)
+
+        self.use_cached_patches = use_cached_patches
+        if max_pixels is not None:
+            assert int(max_pixels) >= 1, "max_pixels must be >= 1."
+            self.max_pixels = int(max_pixels)
+        else:
+            self.max_pixels = None
+
+    def _get_valid_indices(self, active_h, active_w, h, w, device):
+        # Build the fixed local site offsets for the FF input. [(-1,-1),(-1,0),(-1,1),...]
+        dh_list = []
+        dw_list = []
+        for dh in range(-(self.ff_kh // 2), self.ff_kh // 2 + 1):
+            for dw in range(-(self.ff_kw // 2), self.ff_kw // 2 + 1):
+                dh_list.append(dh)
+                dw_list.append(dw)
+
+        dh = torch.tensor(dh_list, device=device, dtype=torch.long)  # [S], S = 9 for 3x3 kernel
+        dw = torch.tensor(dw_list, device=device, dtype=torch.long)  # [S]
+
+        # For every active pixel, compute the FB output positions needed as inputs to FF.
+        # They are used to determine which patches are needed in y_ref.
+        inter_h = active_h[:, None] + dh[None, :]  # [P, S]
+        inter_w = active_w[:, None] + dw[None, :]  # [P, S]
+
+        # On boundaries, some FF input positions needed are in the padding area.
+        # For those positions, we don't need to calculate them in the FB conv.
+        valid = (inter_h >= 0) & (inter_h < h) & (inter_w >= 0) & (inter_w < w)  # [P, S]
+
+        inter_h_clamped = inter_h.clamp(0, h - 1)
+        inter_w_clamped = inter_w.clamp(0, w - 1)
+        flat_idx = (inter_h_clamped * w + inter_w_clamped).reshape(-1)  # [P*S]
+        return valid, flat_idx, dh, dw
+
+    def _extract_all_patches_for_parallel(self, y_ref, active_h, active_w, flat_idx, valid):
+        assert y_ref is not None, "Jacobi chunked efficient mode requires frozen y_ref."
+        assert active_h is not None and active_w is not None, \
+            "Jacobi chunked efficient mode requires active_h and active_w."
+
+        device = y_ref.device
+        dtype = y_ref.dtype
+
+        active_h = torch.as_tensor(active_h, device=device, dtype=torch.long).flatten()
+        active_w = torch.as_tensor(active_w, device=device, dtype=torch.long).flatten()
+        assert active_h.numel() == active_w.numel(), \
+            "active_h and active_w must have the same length."
+
+        bsz, _, h, w = y_ref.shape
+        n_active = active_h.numel()
+        n_sites = self.ff_kh * self.ff_kw
+
+        # ------------------------------------------------------------
+        # Precompute everything that does NOT depend on the solver state y.
+        # Since y_ref is frozen for the whole chunk solve, these can be
+        # captured in the closure once.
+        # ------------------------------------------------------------
+
+        # Extract all patches needed as inputs to FB once.
+        y_pad = F.pad(y_ref, (self.fb_pad_w, self.fb_pad_w, self.fb_pad_h, self.fb_pad_h))
+        fb_cols = F.unfold(
+            y_pad,
+            kernel_size=(self.fb_kh, self.fb_kw),
+            dilation=1,
+            padding=0,
+            stride=1,
+        )  # [B, I, H*W], where I = Cin * fb_kh * fb_kw
+        fb_cols = fb_cols.transpose(1, 2).contiguous()  # [B, H*W, I]
+
+        # Gather all needed FB input patches from the ONE shared y_ref.
+        # fb_cols shape: [B, H*W, I]
+        # Result: [B, P*S, I] -> [B, P, S, I]
+        # P = n_active, S = n_sites
+        patches_flat = fb_cols[:, flat_idx, :]
+        patches_flat = patches_flat.view(bsz, n_active, n_sites, -1)
+
+        # Zero out invalid intermediate sites corresponding to padding in FB results.
+        patches_flat = patches_flat * valid.view(1, n_active, n_sites, 1).to(dtype)
+
+        return patches_flat
+
+    def _make_ode_fn(self, x, noisy_cu=None, y_ref=None, active_h=None, active_w=None):
+        """
+        Build an RHS that updates a chunk of active pixels in parallel, but
+        computes all local quantities from one shared frozen y_ref.
+
+        Args:
+            y_ref:    frozen source state for the whole current Jacobi iteration
+                      shape [B, C, H, W]
+            active_h: 1D tensor/list of active pixel row indices, length P
+            active_w: 1D tensor/list of active pixel col indices, length P
+
+        Returns:
+            ode_func(t, y): full-state RHS with nonzero entries only at the
+                            selected chunk pixels.
+        """
+        # Get parameter needed
+        device = y_ref.device
+        dtype = y_ref.dtype
+
+        bsz, _, h, w = y_ref.shape
+        n_pix = h * w
+        n_active = active_h.numel()
+        n_sites = self.ff_kh * self.ff_kw
+        cin = y_ref.shape[1]
+
+        valid, flat_idx, dh, dw = self._get_valid_indices(active_h, active_w, h, w, device)
+
+        loc_h = (self.fb_pad_h - dh).to(torch.long)  # [S]
+        loc_w = (self.fb_pad_w - dw).to(torch.long)  # [S]
+
+        # Stack copied FB bank weights once.
+        weight_flat = torch.stack(
+            [self._fb_weight_to_site_matrix(conv) for conv in self.FBconv_copies],
+            dim=0
+        )  # [S, Cmid, I]
+
+        if self.FBconv_copies[0].bias is not None:
+            bias = torch.stack([conv.bias for conv in self.FBconv_copies], dim=0)  # [S, Cmid]
+        else:
+            bias = None
+
+        patches_flat_cached = None
+        def ode_func(t, y):
+            # Evaluate all FB copied banks in parallel over both:
+            #    - active-pixel dimension P
+            #    - local-site dimension S
+            #
+            # patches_flat: [B, P, S, I]
+            # weight_flat:  [S, O, I]
+            # z_sites:      [B, P, S, O]
+            # O = C_out of W_FB, I = C_in * 9 (C_in and C_out are relative to FB not layer)
+            if self.use_cached_patches:
+                # Note: If encountered some abnormal acc drop, set do NOT use this branch.
+                nonlocal patches_flat_cached
+                if patches_flat_cached is None:
+                    patches_flat_cached = self._extract_all_patches_for_parallel(
+                        y, active_h, active_w, flat_idx, valid
+                    )
+                patches_flat = patches_flat_cached
+            else:
+                patches_flat = self._extract_all_patches_for_parallel(
+                    y, active_h, active_w, flat_idx, valid
+                )
+
+            # The clone is removed here. Since we are changing the same place among all calls.
+            # Note: If encountered some abnormal acc drop, consider adding clone back here.
+            patches_dyn = patches_flat.view(
+                bsz, n_active, n_sites, cin, self.fb_kh, self.fb_kw
+            )
+            # site_idx = 0 -> (-1,-1) relative to active_h/w in FB result
+            # -> active_h/w is overlapped with position (2,2) of FB kernel in calculating that site.
+            for s in range(n_sites):
+                patches_dyn[:, :, s, :, loc_h[s], loc_w[s]] = y[:, :, active_h, active_w].permute(0, 2, 1)
+            patches_dyn = patches_dyn * valid.view(1, n_active, n_sites, 1, 1, 1).to(dtype)
+
+            z_sites = torch.einsum(
+                "bpsi,soi->bpso",
+                patches_dyn.view(bsz, n_active, n_sites, -1),
+                weight_flat
+            )
+
+            if bias is not None:
+                z_sites = z_sites + bias.view(1, 1, n_sites, -1)
+
+            z_sites = z_sites * valid.view(1, n_active, n_sites, 1).to(dtype)
+
+            # Reshape into local FF input tensors,
+            # need to permute to place the channel dimension to the second place
+            #    [B, P, S, O] -> [B, P, O, S] -> [B*P, (O*ff_kh*ff_kw)]
+            z_sites = z_sites.permute(0, 1, 3, 2).contiguous().view(bsz * n_active, -1)
+
+            z_sites = self.act_fn(z_sites)
+
+            # Evaluate FF local center output for all active pixels in batch.
+            out_site = self._eval_ff_center(z_sites)  # [B*P, C_out_FF]
+            out_site = out_site.view(bsz, n_active, -1).permute(0, 2, 1)  # [B, C_out_FF, P]
+
+            # Scatter chunk outputs back into a full-state RHS.
+            out = torch.zeros(
+                (bsz, self.FFconv.out_channels, h, w),
+                device=device,
+                dtype=dtype,
+            )
+
+            out[:, :, active_h, active_w] = out_site
+
+            # Keep the same N scaling as the original pixel-switch math/code.
+            return n_pix * out
+
+        return ode_func
+
+    def _run_explicit_pixel_switch(self, x, full_traj=False):
+        y = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        t0, t1, T_total = self._get_total_horizon()
+
+        _, _, h, w = y.shape
+        n_pix = h * w
+
+        # One full iteration corresponds to one full scan over all pixels.
+        T_iter = T_total / self.n_iters
+
+        # Same mini-interval as the single-pixel explicit version.
+        delta = T_iter / n_pix
+
+        max_pixels = n_pix if self.max_pixels is None else min(self.max_pixels, n_pix)
+
+        t_cur = t0
+        step_states = [y]
+        step_times = [torch.as_tensor(t_cur, device=y.device, dtype=y.dtype)]
+
+        for iter_idx in range(self.n_iters):
+            # Freeze the source state for each iteration.
+            y_base = y
+            y_next = y.clone()
+
+            # Chunking is ONLY an implementation trick.
+            # All chunks are still computed from the same y_base and use the same
+            # per-pixel mini-interval delta.
+            for pix_start in range(0, n_pix, max_pixels):
+                pix_end = min(pix_start + max_pixels, n_pix)
+
+                pix_idx = torch.arange(pix_start, pix_end, device=y.device)
+                active_h = pix_idx // w
+                active_w = pix_idx % w
+
+                # Each chunk solve represents the SAME per-pixel local solve duration delta.
+                # Chunk size should NOT stretch time; chunking must not change dynamics.
+                option_aca = self._build_interval_option_aca(0, delta, y_base)
+
+                ode_fn = self._make_ode_fn(
+                    x,
+                    y_ref=y_base,
+                    active_h=active_h,
+                    active_w=active_w,
+                )
+
+                # solve using the frozen base state, not from y_next
+                out = aca_ode_solve(ode_fn, y_base, option_aca)
+                y_chunk = out[-1]
+
+                # Commit only the selected chunk pixels into the write buffer.
+                y_next[:, :, active_h, active_w] = y_chunk[:, :, active_h, active_w]
+
+            # Commit once after the full iteration.
+            y = y_next
+            t_cur = t_cur + T_iter
+
+            if full_traj:
+                step_states.append(y.clone())
+                step_times.append(torch.as_tensor(t_cur, device=y.device, dtype=y.dtype))
+
+        if full_traj:
+            traj = torch.stack(step_states, dim=0)
+            steps = torch.stack(step_times, dim=0)
+            return traj, steps
+
+        return y
+
+
 SWITCH_CLASSES = {
     "ODEXInitFFFBPixelSwitch": ODEXInitFFFBPixelSwitch,
     "ODEXInitFFFBPixelSwitchExplicit": ODEXInitFFFBPixelSwitchExplicit,
+    "ODEXInitFFFBPixelSwitchExplicitStatic": ODEXInitFFFBPixelSwitchExplicitStatic,
+    "ODEXInitFFFBPixelSwitchParallel": ODEXInitFFFBPixelSwitchParallel,
 }

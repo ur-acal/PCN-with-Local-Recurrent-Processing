@@ -14,11 +14,8 @@ from ode_pc import QUANTIZER_CLASSES
 from quant_helper import QUANT_HELPER_CLS, QUANT_SCHEME_PC, replace_with_quant_layers
 
 
-MISMATCH_LEVELS_5b = {
-    0: 0.0, 15: 0.158, 14: 0.165, 13: 0.171, 12: 0.172, 11: 0.166, 10: 0.166, 9: 0.178, 8: 0.182,
-    7: 0.207, 6: 0.261, 5: 0.278, 4: 0.237, 3: 0.352, 2: 0.361, 1: 0.290,
-}
-
+MISMATCH_LEVELS_5b = {0: 0.0, 15: 0.181, 14: 0.179, 13: 0.177, 12: 0.175, 11: 0.172, 10: 0.169, 9: 0.165, 8: 0.16,
+                      7: 0.153, 6: 0.142, 5: 0.125, 4: 0.1, 3: 0.072, 2: 0.105, 1: 0.342}
 
 def get_parametrized_weight_mods(model):
     """

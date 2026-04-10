@@ -113,6 +113,8 @@ class AdaptiveGridSolver(ODESolver):
             h0 = 1e-6
         elif torch.allclose(d0, torch.zeros_like(d0)):
             h0 = 1e-15
+        elif d1.item() <= 1e-15:
+            h0 = 1e-6
         else:
             h0 = 0.01 * d0 / d1
 

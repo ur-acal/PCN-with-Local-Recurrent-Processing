@@ -16,9 +16,9 @@ N_BITS_VALS=()
 N_BITS_VALS=(5)
 #for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
-#METHOD_VALS=("dopri5")
+METHOD_VALS=("dopri5")
 CAP_VALS=("49e-12")
-METHOD_VALS=("euler")
+#METHOD_VALS=("euler")
 #METHOD_VALS=("rk4")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
@@ -89,7 +89,7 @@ run_model(){
 
   local test_bs=128
   if [[ "${_ode_block}" == *Circ* ]]; then test_bs=128; fi
-  _ode_block="ODEXInitFFFBPixelSwitchExplicit"
+  _ode_block="ODEXInitFFFBPixelSwitchParallel"
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -130,7 +130,8 @@ run_model(){
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
     --noisy_trials    "2" \
-    --switch_period   "5e-9" \
+    --switch_period   "" \
+    --switch_iter     "5" \
     --conv_only       "true" \
     --test_expanded   "false" \
     --diff_mismatch   "true" \
