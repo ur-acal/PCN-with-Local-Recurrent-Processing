@@ -116,9 +116,7 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
         self.switch_period = switch_period
 
         # Nine physical compact W_FB copies, each gets its own fixed mismatch later.
-        self.FBconv_copies = nn.ModuleList(
-            [_clone_conv_like(self.FBconv) for _ in range(self.ff_kh * self.ff_kw)]
-        )
+        self.FBconv_copies = [_clone_conv_like(self.FBconv) for _ in range(self.ff_kh * self.ff_kw)]
         self._sync_fb_copies_from_base()
 
     def _fb_weight_to_site_matrix(self, conv):
@@ -599,7 +597,7 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
         inter_h_clamped = inter_h.clamp(0, h - 1)
         inter_w_clamped = inter_w.clamp(0, w - 1)
-        flat_idx = (inter_h_clamped * w + inter_w_clamped).reshape(-1)  # [P*S]
+        flat_idx = inter_h_clamped * w + inter_w_clamped  # [P, S]
         return valid, flat_idx, dh, dw
 
     def _extract_all_patches_for_parallel(self, y_ref, active_h, active_w, flat_idx, valid):
@@ -704,12 +702,12 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
                 nonlocal patches_flat_cached
                 if patches_flat_cached is None:
                     patches_flat_cached = self._extract_all_patches_for_parallel(
-                        y, active_h, active_w, flat_idx, valid
+                        y, active_h, active_w, flat_idx.reshape(-1), valid
                     )
                 patches_flat = patches_flat_cached
             else:
                 patches_flat = self._extract_all_patches_for_parallel(
-                    y, active_h, active_w, flat_idx, valid
+                    y, active_h, active_w, flat_idx.reshape(-1), valid
                 )
 
             # The clone is removed here. Since we are changing the same place among all calls.
@@ -742,8 +740,8 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
             z_sites = self.act_fn(z_sites)
 
             # Evaluate FF local center output for all active pixels in batch.
-            out_site = self._eval_ff_center(z_sites)  # [B*P, C_out_FF]
-            out_site = out_site.view(bsz, n_active, -1).permute(0, 2, 1)  # [B, C_out_FF, P]
+            z_sites = self._eval_ff_center(z_sites)  # [B*P, C_out_FF]
+            z_sites = z_sites.view(bsz, n_active, -1).permute(0, 2, 1)  # [B, C_out_FF, P]
 
             # Scatter chunk outputs back into a full-state RHS.
             out = torch.zeros(
@@ -752,7 +750,7 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
                 dtype=dtype,
             )
 
-            out[:, :, active_h, active_w] = out_site
+            out[:, :, active_h, active_w] = z_sites
 
             # Keep the same N scaling as the original pixel-switch math/code.
             return n_pix * out
@@ -797,7 +795,10 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
                 # Each chunk solve represents the SAME per-pixel local solve duration delta.
                 # Chunk size should NOT stretch time; chunking must not change dynamics.
-                option_aca = self._build_interval_option_aca(0, delta, y_base)
+                if getattr(self, "scale_RHS", True):
+                    option_aca = self._build_interval_option_aca(0, delta, y_base)
+                else:
+                    option_aca = self._build_interval_option_aca(0, delta * n_pix, y_base)
 
                 ode_fn = self._make_ode_fn(
                     x,
@@ -829,9 +830,153 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
         return y
 
 
+class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
+    def _make_ode_fn(self, x, noisy_cu=None, y_ref=None, active_h=None, active_w=None):
+        """
+        Build an RHS that updates a chunk of active pixels in parallel, but
+        computes all local quantities from one shared frozen y_ref.
+
+        Args:
+            y_ref:    frozen source state for the whole current Jacobi iteration
+                      shape [B, C, H, W]
+            active_h: 1D tensor/list of active pixel row indices, length P
+            active_w: 1D tensor/list of active pixel col indices, length P
+
+        Returns:
+            ode_func(t, y): full-state RHS with nonzero entries only at the
+                            selected chunk pixels.
+        """
+        # Get parameter needed
+        device = y_ref.device
+        dtype = y_ref.dtype
+
+        bsz, _, h, w = y_ref.shape
+        n_pix = h * w
+        n_active = active_h.numel()
+        n_sites = self.ff_kh * self.ff_kw
+        cin = y_ref.shape[1]
+
+        valid, flat_idx, dh, dw = self._get_valid_indices(active_h, active_w, h, w, device)
+
+        loc_h = (self.fb_pad_h - dh).to(torch.long)  # [S]
+        loc_w = (self.fb_pad_w - dw).to(torch.long)  # [S]
+
+        # Stack copied FB bank weights once.
+        # Precompute training-only exact quantities without materializing FB input patches.
+        valid_mask = valid.view(1, n_active, n_sites, 1).to(dtype)
+        if self.training:
+            self.in_training_proc = True
+            # Use the exact same local weight layout as _fb_weight_to_site_matrix.
+            if isinstance(self.FBconv, nn.Conv2d):
+                weight_site = self.FBconv.weight
+            elif isinstance(self.FBconv, nn.ConvTranspose2d):
+                weight_site = torch.flip(self.FBconv.weight, dims=[2, 3]).permute(1, 0, 2, 3).contiguous()
+            else:
+                raise TypeError(f"Unsupported FB conv type: {type(self.FBconv)}")
+            # Exact local FB correction weights for replacing only the active-pixel entry.
+            # weight_site is [O, Cin, fb_kh, fb_kw], so:
+            # w_loc[s, o, c] = weight_site[o, c, loc_h[s], loc_w[s]]
+            # Result: [S, O, Cin]
+            w_loc = weight_site[:, :, loc_h, loc_w].permute(2, 0, 1).contiguous()
+        else:
+            w_loc = []
+            if getattr(self, "in_training_proc", False):
+                self._sync_fb_copies_from_base()
+            for _s, _conv in enumerate(self.FBconv_copies):
+                if isinstance(_conv, nn.Conv2d):
+                    weight_site = _conv.weight
+                elif isinstance(_conv, nn.ConvTranspose2d):
+                    weight_site = torch.flip(_conv.weight, dims=[2, 3]).permute(1, 0, 2, 3).contiguous()
+                else:
+                    raise TypeError(f"Unsupported FB conv type: {type(_conv)}")
+                w_loc.append(weight_site[:, :, loc_h[_s], loc_w[_s]])
+            w_loc = torch.stack(w_loc, dim=0).contiguous()  # [S, O, Cin]
+
+        z_sites_ref_cached = None
+        y_ref_active_cached = None
+        def ode_func(t, y):
+            # Evaluate all FB copied banks in parallel over both:
+            #    - active-pixel dimension P
+            #    - local-site dimension S
+            #
+            # patches_flat: [B, P, S, I]
+            # weight_flat:  [S, O, I]
+            # z_sites:      [B, P, S, O]
+            # O = C_out of W_FB, I = C_in * 9 (C_in and C_out are relative to FB not layer)
+            nonlocal z_sites_ref_cached, y_ref_active_cached
+            if z_sites_ref_cached is None:
+                if self.training:
+                    fb_out_ref = self.FBconv(y)
+                    fb_out_ref_flat = fb_out_ref.view(bsz, fb_out_ref.shape[1], -1)
+                    z_sites_ref_cached = fb_out_ref_flat[:, :, flat_idx.reshape(-1)]
+                    z_sites_ref_cached = z_sites_ref_cached.view(
+                        bsz, fb_out_ref.shape[1], n_active, n_sites
+                    ).permute(0, 2, 3, 1).contiguous()
+                    z_sites_ref_cached = z_sites_ref_cached * valid_mask
+                else:
+                    z_sites_ref_cached = []
+                    for s, conv in enumerate(self.FBconv_copies):
+                        fb_out_ref = conv(y)
+                        fb_out_ref_flat = fb_out_ref.view(bsz, fb_out_ref.shape[1], -1)
+                        z_s_ref = fb_out_ref_flat[:, :, flat_idx[:, s]]
+                        z_s_ref = z_s_ref.permute(0, 2, 1).contiguous()
+                        z_s_ref = z_s_ref * valid[:, s].view(1, n_active, 1).to(dtype)
+                        z_sites_ref_cached.append(z_s_ref)
+                    z_sites_ref_cached = torch.stack(z_sites_ref_cached, dim=2)  # [B, P, S, O]
+
+            if y_ref_active_cached is None:
+                # Imagine flattening the H and W dimension to be a vector for each b, c_in.
+                # Previously it is a 2D matrix of shape (H, W).
+                y_ref_active_cached = y[:, :, active_h, active_w].permute(0, 2, 1).contiguous()
+            # Current active-pixel values: [B, P, Cin]
+            y_active = y[:, :, active_h, active_w].permute(0, 2, 1).contiguous()
+            # Exact delta from the frozen source state.
+            delta_active = y_active - y_ref_active_cached  # [B, P, Cin]
+            # Exact FB correction for replacing only the active-pixel entry:
+            # [B, P, S, O]
+            corr = torch.einsum("bpc,soc->bpso", delta_active, w_loc)
+            z_sites = (z_sites_ref_cached + corr * valid_mask) * valid_mask
+
+            # Reshape into local FF input tensors,
+            # need to permute to place the channel dimension to the second place
+            #    [B, P, S, O] -> [B, P, O, S] -> [B*P, (O*ff_kh*ff_kw)]
+            z_sites = z_sites.permute(0, 1, 3, 2).contiguous().view(bsz * n_active, -1)
+
+            z_sites = self.act_fn(z_sites)
+
+            # Evaluate FF local center output for all active pixels in batch.
+            z_sites = self._eval_ff_center(z_sites)  # [B*P, C_out_FF]
+            z_sites = z_sites.view(bsz, n_active, -1).permute(0, 2, 1)  # [B, C_out_FF, P]
+
+            # Scatter chunk outputs back into a full-state RHS.
+            out = torch.zeros(
+                (bsz, self.FFconv.out_channels, h, w),
+                device=device,
+                dtype=dtype,
+            )
+
+            out[:, :, active_h, active_w] = z_sites
+
+            if getattr(self, "scale_RHS", True):
+                # Keep the same N scaling as the original pixel-switch math/code.
+                return n_pix * out
+            else:
+                return out
+
+        return ode_func
+
+
+class ODEXInitFFFBPixelSwitchStretchT(ODEXInitFFFBPixelSwitchEfficient):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.scale_RHS = False
+
+
 SWITCH_CLASSES = {
     "ODEXInitFFFBPixelSwitch": ODEXInitFFFBPixelSwitch,
     "ODEXInitFFFBPixelSwitchExplicit": ODEXInitFFFBPixelSwitchExplicit,
     "ODEXInitFFFBPixelSwitchExplicitStatic": ODEXInitFFFBPixelSwitchExplicitStatic,
     "ODEXInitFFFBPixelSwitchParallel": ODEXInitFFFBPixelSwitchParallel,
+    "ODEXInitFFFBPixelSwitchEfficient": ODEXInitFFFBPixelSwitchEfficient,
+    "ODEXInitFFFBPixelSwitchStretchT": ODEXInitFFFBPixelSwitchStretchT,
 }

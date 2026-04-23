@@ -83,14 +83,14 @@ python train_ode_cifar.py \
   --noise_type    "mul" \
   --pcn           "PCNetNoBatchNorm" \
   --pc_conv       "PCConvReLU6" \
-  --ode_block     "ODEXInitFFFBPixelSwitchParallel" \
+  --ode_block     "ODEXInitFFFBPixelSwitchEfficient" \
   --n_iters       "5" \
   --teacher_ckpt "${TEACHER_CKPT}" \
   --teacher_arch "${TEACHER_ARCH}" \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
   --teacher_input_size "${TEACHER_INPUT_SIZE}" \
   --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-  --distill_method kd_crd \
+  --distill_method none \
   --contrast_method "${CONTRAST_METHOD}" \
   --neg_sample      "${NEG_SAMPLE}" \
   --orig_t_inp      "${ORIG_T_INP}" \

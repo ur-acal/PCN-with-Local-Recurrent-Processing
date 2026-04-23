@@ -41,6 +41,7 @@ cross_sim/calibrated_config/
 launch_scripts/run_2*
 launch_scripts/run_slurm*
 check_cifar_h5_order.py
+debug*
 
 *.pth
 *.png
