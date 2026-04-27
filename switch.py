@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.func import jvp, vmap
 import numpy as np
 
 from copy import deepcopy
@@ -8,6 +9,7 @@ from types import MethodType
 
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 from ode_pc import ODEXInitFFFB
+from pc_conv import ReLUX
 
 
 def _clone_conv_like(conv):
@@ -972,6 +974,183 @@ class ODEXInitFFFBPixelSwitchStretchT(ODEXInitFFFBPixelSwitchEfficient):
         self.scale_RHS = False
 
 
+class PerturbODEXInitFFFB(ODEXInitFFFBPixelSwitchEfficient):
+    def __init__(
+        self,
+        detach_tangent=False,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.detach_tangent = bool(detach_tangent)
+
+    def _compute_correction_efficient(self, y):
+        """
+        Exact and efficient for RHS = FFconv(act_fn(FBconv(y))).
+
+        Uses the closed-form local Jacobian action:
+            z = FBconv(y)
+            R = FFconv(act_fn(z))
+            u_p = F_p(y) or stopgrad(F_p(y))
+            delta z_loc,p = M_p u_p
+            delta a_loc,p = act'(z_loc,p) ⊙ delta z_loc,p
+            C_p = FF_center(delta a_loc,p)
+
+        Returns
+        -------
+        R : [B, C, H, W]
+        C : [B, C, H, W]
+        """
+        assert isinstance(self.FFconv, nn.Conv2d), \
+            "Efficient method currently expects FFconv to be nn.Conv2d."
+        assert isinstance(self.FBconv, (nn.Conv2d, nn.ConvTranspose2d)), \
+            "Efficient method currently expects FBconv to be nn.Conv2d or nn.ConvTranspose2d."
+
+        z = self.FBconv(y)                  # [B, Cmid, H, W]
+        a = self.act_fn(z)
+        R = self.FFconv(a)                  # [B, Cy, H, W]
+
+        assert R.shape[1] == y.shape[1], \
+            "Need RHS output channels == state channels to use F_p(y) as tangent."
+
+        U = R.detach() if self.detach_tangent else R
+
+        B, Cin, H, W = y.shape
+        _, Cmid, _, _ = z.shape
+        _, Cy, _, _ = R.shape
+        P = H * W
+
+        ff_kh, ff_kw = self.FFconv.kernel_size if isinstance(self.FFconv.kernel_size, tuple) else (
+            self.FFconv.kernel_size, self.FFconv.kernel_size
+        )
+        fb_kh, fb_kw = self.FBconv.kernel_size if isinstance(self.FBconv.kernel_size, tuple) else (
+            self.FBconv.kernel_size, self.FBconv.kernel_size
+        )
+
+        ff_pad_h = self.FFconv.padding[0] if isinstance(self.FFconv.padding, tuple) else self.FFconv.padding
+        ff_pad_w = self.FFconv.padding[1] if isinstance(self.FFconv.padding, tuple) else self.FFconv.padding
+        fb_pad_h = self.FBconv.padding[0] if isinstance(self.FBconv.padding, tuple) else self.FBconv.padding
+        fb_pad_w = self.FBconv.padding[1] if isinstance(self.FBconv.padding, tuple) else self.FBconv.padding
+
+        S = ff_kh * ff_kw
+        device = y.device
+        dtype = y.dtype
+
+        # ------------------------------------------------------------
+        # 1) Gather all local z-patches used by FF center outputs
+        #    z_loc[b, p, s, o] = FB output channel o at local FF site s for pixel p
+        # ------------------------------------------------------------
+        z_cols = F.unfold(
+            z,
+            kernel_size=(ff_kh, ff_kw),
+            dilation=1,
+            padding=(ff_pad_h, ff_pad_w),
+            stride=1,
+        )   # [B, Cmid*S, P]
+
+        z_loc = z_cols.transpose(1, 2).contiguous().view(B, P, Cmid, S).permute(0, 1, 3, 2).contiguous()
+        # z_loc: [B, P, S, Cmid]
+
+        # ------------------------------------------------------------
+        # 2) Build local linear map M_p from delta y_p to delta z_loc,p
+        # ------------------------------------------------------------
+        dh_list = []
+        dw_list = []
+        for dh in range(-(ff_kh // 2), ff_kh // 2 + 1):
+            for dw in range(-(ff_kw // 2), ff_kw // 2 + 1):
+                dh_list.append(dh)
+                dw_list.append(dw)
+
+        dh = torch.tensor(dh_list, device=device, dtype=torch.long)   # [S]
+        dw = torch.tensor(dw_list, device=device, dtype=torch.long)   # [S]
+
+        if isinstance(self.FBconv, nn.Conv2d):
+            weight_site = self.FBconv.weight
+        else:
+            # convert ConvTranspose2d weight to local site matrix layout [Cmid, Cin, kh, kw]
+            weight_site = torch.flip(self.FBconv.weight, dims=[2, 3]).permute(1, 0, 2, 3).contiguous()
+
+        # For local FF site offset (dh, dw), y_p contributes to z_{p+(dh,dw)}
+        # through FB kernel entry (fb_pad_h - dh, fb_pad_w - dw).
+        loc_h = (fb_pad_h - dh).to(torch.long)   # [S]
+        loc_w = (fb_pad_w - dw).to(torch.long)   # [S]
+
+        # w_loc[s, o, c] maps delta y_p[c] -> delta z_loc,p[s, o]
+        w_loc = weight_site[:, :, loc_h, loc_w].permute(2, 0, 1).contiguous()   # [S, Cmid, Cin]
+
+        # ------------------------------------------------------------
+        # 3) Valid mask for boundary pixels
+        # ------------------------------------------------------------
+        pix = torch.arange(P, device=device)
+        ph = pix // W
+        pw = pix % W
+
+        site_h = ph[:, None] + dh[None, :]   # [P, S]
+        site_w = pw[:, None] + dw[None, :]   # [P, S]
+        valid = (site_h >= 0) & (site_h < H) & (site_w >= 0) & (site_w < W)
+        valid_mask = valid.view(1, P, S, 1).to(dtype)   # [1, P, S, 1]
+
+        # ------------------------------------------------------------
+        # 4) delta z_loc,p = M_p u_p
+        # ------------------------------------------------------------
+        U_flat = U.permute(0, 2, 3, 1).reshape(B, P, Cin)   # [B, P, Cin]
+        delta_z_loc = torch.einsum("bpc,soc->bpso", U_flat, w_loc)   # [B, P, S, Cmid]
+        delta_z_loc = delta_z_loc * valid_mask
+
+        # ------------------------------------------------------------
+        # 5) delta a_loc,p = act'(z_loc,p) ⊙ delta z_loc,p
+        # ------------------------------------------------------------
+        if isinstance(self.act_fn, nn.ReLU):
+            act_prime = (z_loc > 0).to(dtype)
+        elif isinstance(self.act_fn, nn.ReLU6):
+            act_prime = ((z_loc > 0) & (z_loc < 6)).to(dtype)
+        elif isinstance(self.act_fn, nn.Hardtanh):
+            act_prime = ((z_loc > self.act_fn.min_val) & (z_loc < self.act_fn.max_val)).to(dtype)
+        elif isinstance(self.act_fn, nn.Identity):
+            act_prime = torch.ones_like(z_loc)
+        elif isinstance(self.act_fn, ReLUX):
+            ub = 6.0 / float(self.act_fn.scale)
+            act_prime = ((z_loc > 0) & (z_loc < ub)).to(dtype)
+        else:
+            raise NotImplementedError(
+                f"Need explicit derivative for act_fn type: {type(self.act_fn)}"
+            )
+
+        delta_a_loc = act_prime * delta_z_loc   # [B, P, S, Cmid]
+
+        # ------------------------------------------------------------
+        # 6) C_p = FF center linear map applied to delta_a_loc,p
+        #    No FF bias here, because this is a Jacobian action.
+        # ------------------------------------------------------------
+        ff_weight_flat = self.FFconv.weight.reshape(self.FFconv.out_channels, -1)   # [Cy, Cmid*S]
+        delta_a_flat = delta_a_loc.permute(0, 1, 3, 2).contiguous().view(B * P, Cmid * S)
+
+        C_flat = torch.einsum("bi,oi->bo", delta_a_flat, ff_weight_flat)   # [B*P, Cy]
+        C = C_flat.view(B, P, Cy).permute(0, 2, 1).contiguous().view(B, Cy, H, W)
+
+        return R, C
+
+    def _make_ode_fn(self, x, noisy_cu=None):
+        def ode_func(t, y):
+            R, C = self._compute_correction_efficient(y)
+            t0, t1, T_total = self._get_total_horizon()
+            t_iter = T_total / self.n_iters
+            return R + 0.5 * t_iter * C
+
+        return ode_func
+
+    def forward(self, x, layer_idx=None):
+        y0 = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
+        # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
+        out = out[-1]
+
+        if self.bypass is not None:
+            out = self.bypass(out) + out
+        return out
+
+
 SWITCH_CLASSES = {
     "ODEXInitFFFBPixelSwitch": ODEXInitFFFBPixelSwitch,
     "ODEXInitFFFBPixelSwitchExplicit": ODEXInitFFFBPixelSwitchExplicit,
@@ -979,4 +1158,5 @@ SWITCH_CLASSES = {
     "ODEXInitFFFBPixelSwitchParallel": ODEXInitFFFBPixelSwitchParallel,
     "ODEXInitFFFBPixelSwitchEfficient": ODEXInitFFFBPixelSwitchEfficient,
     "ODEXInitFFFBPixelSwitchStretchT": ODEXInitFFFBPixelSwitchStretchT,
+    "PerturbODEXInitFFFB": PerturbODEXInitFFFB,
 }

@@ -97,7 +97,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --tie_bp        "false" \
             --bypass        "false" \
             --batch_size    128 \
-            --method        "euler" \
+            --method        "dopri5" \
             --n_steps       5 \
             --tol           "1e-6" \
             --t_end         "1.75" \

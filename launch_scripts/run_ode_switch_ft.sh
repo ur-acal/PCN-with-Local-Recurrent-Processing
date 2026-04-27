@@ -77,12 +77,13 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --tie_bp        "false" \
             --bypass        "false" \
             --batch_size    128 \
-            --method        "dopri5" \
-            --tol           "1e-4" \
+            --method        "euler" \
+            --n_steps       5 \
+            --tol           "1e-6" \
             --t_end         "1.75" \
             --R             "20e3" \
             --R_max         "${R_max}" \
-            --C             "49e-12" \
+            --C             "49e-15" \
             --v_dd          "0.2" \
             --enob          "8" \
             --w_bits        "${n_bits}" \
@@ -96,8 +97,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --qat_cls       "SymQuantizeWeight" \
             --ode_wrapper   "$QAT_WRAPPER" \
             --pc_conv       "PCConvReLU6" \
-            --ode_block     "ODEXInitFFFBPixelSwitchEfficient" \
-            --n_iters       "5" \
+            --ode_block     "PerturbODEXInitFFFB" \
             --noise_level   "${nl}" \
             --noise_type    "${nt}" \
             --teacher_ckpt  "${TEACHER_CKPT}" \
@@ -105,7 +105,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
             --teacher_input_size  "${TEACHER_INPUT_SIZE}" \
             --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-            --distill_method none \
+            --distill_method kd_crd \
             --contrast_method "memory" \
             --distill_alpha  0.3 \
             --distill_temperature 2.0 \
