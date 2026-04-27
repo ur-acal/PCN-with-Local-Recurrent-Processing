@@ -8,18 +8,19 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 ###############################################################################################
 # running with
 # module swap slurm slurm/24.05.0.b1
-# ( source ./launch_scripts/slurm_search_config.sh ) \
-#  > ./logs/scheduler_slurm/search_scheduler.log 2>&1 < /dev/null &
+# ( source ./launch_scripts/slurm_rgb_search_config.sh ) \
+#  > ./logs/scheduler_slurm/search_rgb_scheduler.log 2>&1 < /dev/null &
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
 # run with SHOW_COMB_ONLY model
-# SHOW_COMB_ONLY=1 ./launch_scripts/slurm_search_config.sh
+# SHOW_COMB_ONLY=1 ./launch_scripts/slurm_rgb_search_config.sh
 ###############################################################################################
 
 TASK="${TASK:-cifar10}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
+FT_MODEL=0
 
 PCNS=( "PCNetNoBatchNorm" "PCNetWith1stConv" )
 IMG_TYPES=( "rgb" )
@@ -340,7 +341,7 @@ submit_chunk() {
     BLOCKS_LIST="${BLOCKS_LIST}" \
     sbatch --parsable \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
+      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}",FT_MODEL="${FT_MODEL}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
       "${SBATCH_SCRIPT}"
   )
   echo "  -> job ${jid}"

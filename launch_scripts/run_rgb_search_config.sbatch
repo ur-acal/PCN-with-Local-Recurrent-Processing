@@ -19,6 +19,7 @@ conda activate scanbase
 ##########################################################################
 IMG_TYPE=${IMG_TYPE:-rgb}
 PCN=${PCN:-PCNetNoBatchNorm}
+FT_MODEL="${FT_MODEL:-0}"
 
 TASK="${TASK:-cifar10}"
 if [[ "$TASK" == "cifar100" ]]; then
@@ -197,6 +198,9 @@ MODEL_DIR="./saved_ckpt"
 METHOD="dopri5"
 TOL="1e-6"
 n_bits=5
+ENOB=8
+V_DD="0.1"
+ONE_OVER_Q="1"
 R_val="20e3"
 R_MAX="300e3"
 C_val="49e-15"
@@ -234,6 +238,14 @@ eval_one_combo_model() {
     fi
   fi
 
+  if [[ "$tag" == "pre_ft" ]]; then
+    _tol="1e-4"
+    wrapper="ODEWrapperRC"
+  else
+    _tol=TOL
+  fi
+
+
   echo "[EVAL ${tag}] comb=${comb_tag} ${name} (block=${test_block}, ckpt=${ckpt}) → $dir/job.log"
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u ode_inference.py \
@@ -243,20 +255,21 @@ eval_one_combo_model() {
     --model_dir       "$MODEL_DIR" \
     --test_bs         "${test_bs}" \
     --method          "$METHOD" \
-    --tol             "$TOL" \
+    --tol             "${_tol}" \
     --n_steps         100 \
     --ts_scale        1 \
     --d_start         0 \
     --d_end           1 \
     --n_sweep_left    0 \
     --n_sweep_right   1 \
-    --thermal_noise   "true" \
+    --thermal_noise   "false" \
     --sde_noise_type  "mul" \
     --sweep_eps       "false" \
     --R               "${R_val}" \
     --R_max           "${R_MAX}" \
     --C               "${C_val}" \
-    --v_dd            "0.2" \
+    --v_dd            "${V_DD}" \
+    --enob            "${ENOB}" \
     --w_bits          "${n_bits}" \
     --patch_node      "${patch_node}" \
     --patch_stride    "${patch_stride}" \
@@ -264,14 +277,16 @@ eval_one_combo_model() {
     --patch_pad       "${patch_pad}" \
     --fold_scalar     "${fold_scalar}" \
     --tie_cap         "false" \
-    --one_over_q      "6" \
+    --one_over_q      "${ONE_OVER_Q}" \
     --pc_conv         "${pc_conv}Noisy" \
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
     --img_type        "${IMG_TYPE}" \
     --conv_only       "true" \
-    --test_expanded   "true" \
+    --test_expanded   "false" \
+    --diff_mismatch   "false" \
     --nonlinear_R     "false" \
+    --noisy_trials    10 \
     --mem_frac        "${MEM_FRAC}" \
     2>&1 | tee -a "$dir/job.log"
 }
@@ -295,7 +310,7 @@ finetune_one_combo_model() {
     qat_wrapper="QATWrapper2State"
   fi
 
-  local nl="0.15"
+  local nl="0.35"
   local nt="mul"
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
@@ -390,51 +405,56 @@ for i in "${!COMB_TAGS[@]}"; do
 done
 for p in "${pids[@]}"; do wait "$p" || ok=1; done
 
-###############################################################################
-# PHASE 3: FINETUNE all combos in parallel
-###############################################################################
-echo "==== PHASE 3: FINETUNE (parallel over combos) ===="
-pids=()
-for i in "${!COMB_TAGS[@]}"; do
-  comb_tag="${COMB_TAGS[$i]}"
-  mn="${MODEL_NAMES_PRE[$i]}"
-  if [[ -z "$mn" ]]; then
-    echo "[WARN] Skip finetune for comb=${comb_tag} (empty model name)"
-    continue
-  fi
-  finetune_one_combo_model "${comb_tag}" "${mn}" "${ODE_BLOCK}" & pids+=($!)
-done
-for p in "${pids[@]}"; do wait "$p" || ok=1; done
+if [[ "${FT_MODEL}" == 1 ]]; then
+  ###############################################################################
+  # PHASE 3: FINETUNE all combos in parallel
+  ###############################################################################
+  echo "==== PHASE 3: FINETUNE (parallel over combos) ===="
+  pids=()
+  for i in "${!COMB_TAGS[@]}"; do
+    comb_tag="${COMB_TAGS[$i]}"
+    mn="${MODEL_NAMES_PRE[$i]}"
+    if [[ -z "$mn" ]]; then
+      echo "[WARN] Skip finetune for comb=${comb_tag} (empty model name)"
+      continue
+    fi
+    finetune_one_combo_model "${comb_tag}" "${mn}" "${ODE_BLOCK}" & pids+=($!)
+  done
+  for p in "${pids[@]}"; do wait "$p" || ok=1; done
 
-###############################################################################
-# Collect finetuned model names (one per combo)
-###############################################################################
-declare -a MODEL_NAMES_FT=()
-for i in "${!COMB_TAGS[@]}"; do
-  comb_tag="${COMB_TAGS[$i]}"
-  ft_log="${LOGDIR}/${comb_tag}/finetune_${ODE_BLOCK}.log"
-  mn_ft="$(extract_model_name "${ft_log}")"
-  if [[ -z "$mn_ft" ]]; then
-    echo "[WARN] Could not extract finetuned model name from ${ft_log} (comb=${comb_tag})"
-  fi
-  MODEL_NAMES_FT+=( "${mn_ft}" )
-done
+  ###############################################################################
+  # Collect finetuned model names (one per combo)
+  ###############################################################################
+  declare -a MODEL_NAMES_FT=()
+  for i in "${!COMB_TAGS[@]}"; do
+    comb_tag="${COMB_TAGS[$i]}"
+    ft_log="${LOGDIR}/${comb_tag}/finetune_${ODE_BLOCK}.log"
+    mn_ft="$(extract_model_name "${ft_log}")"
+    if [[ -z "$mn_ft" ]]; then
+      echo "[WARN] Could not extract finetuned model name from ${ft_log} (comb=${comb_tag})"
+    fi
+    MODEL_NAMES_FT+=( "${mn_ft}" )
+  done
 
-###############################################################################
-# PHASE 4: EVAL post_ft all combos in parallel
-###############################################################################
-echo "==== PHASE 4: EVAL post_ft (parallel over combos) ===="
-pids=()
-for i in "${!COMB_TAGS[@]}"; do
-  comb_tag="${COMB_TAGS[$i]}"
-  mn_ft="${MODEL_NAMES_FT[$i]}"
-  if [[ -z "$mn_ft" ]]; then
-    echo "[WARN] Skip post_ft eval for comb=${comb_tag} (empty finetuned model name)"
-    continue
-  fi
-  eval_one_combo_model "${comb_tag}" "${mn_ft}" "post_ft" "${ODE_BLOCK}" & pids+=($!)
-done
-for p in "${pids[@]}"; do wait "$p" || ok=1; done
+  ###############################################################################
+  # PHASE 4: EVAL post_ft all combos in parallel
+  ###############################################################################
+  echo "==== PHASE 4: EVAL post_ft (parallel over combos) ===="
+  pids=()
+  for i in "${!COMB_TAGS[@]}"; do
+    comb_tag="${COMB_TAGS[$i]}"
+    mn_ft="${MODEL_NAMES_FT[$i]}"
+    if [[ -z "$mn_ft" ]]; then
+      echo "[WARN] Skip post_ft eval for comb=${comb_tag} (empty finetuned model name)"
+      continue
+    fi
+    eval_one_combo_model "${comb_tag}" "${mn_ft}" "post_ft" "${ODE_BLOCK}" & pids+=($!)
+  done
+  for p in "${pids[@]}"; do wait "$p" || ok=1; done
+else
+  echo "==== FT_MODEL=0: skip PHASE 3 FINETUNE and PHASE 4 post_ft EVAL ===="
+  declare -a MODEL_NAMES_FT=()
+fi
 
 ###############################################################################
 # Merge summaries into MASTER_LOG (simple: append per-combo job logs)
@@ -443,8 +463,8 @@ echo "Merging summaries into ${MASTER_LOG}"
 : > "${MASTER_LOG}"
 for i in "${!COMB_TAGS[@]}"; do
   comb_tag="${COMB_TAGS[$i]}"
-  pre="${MODEL_NAMES_PRE[$i]}"
-  post="${MODEL_NAMES_FT[$i]}"
+  pre="${MODEL_NAMES_PRE[$i]:-}"
+  post="${MODEL_NAMES_FT[$i]:-}"
 
   echo "==================== COMB ${comb_tag} ====================" >> "${MASTER_LOG}"
 
