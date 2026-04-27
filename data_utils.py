@@ -17,6 +17,11 @@ from quant_helper import QUANT_HELPER_CLS, QUANT_SCHEME_PC, replace_with_quant_l
 MISMATCH_LEVELS_5b = {0: 0.0, 15: 0.181, 14: 0.179, 13: 0.177, 12: 0.175, 11: 0.172, 10: 0.169, 9: 0.165, 8: 0.16,
                       7: 0.153, 6: 0.142, 5: 0.125, 4: 0.1, 3: 0.072, 2: 0.105, 1: 0.342}
 
+_CIFAR_STATS = {
+    "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+    "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+}
+
 def get_parametrized_weight_mods(model):
     """
     Only applies to model with modules that have ONLY ONE parametrization.

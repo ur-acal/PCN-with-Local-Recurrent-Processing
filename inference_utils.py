@@ -21,7 +21,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
 from ode_pc import make_ode_block, wrap_ode_block
-from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_quant_model
+from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_quant_model, _CIFAR_STATS
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from quant_helper import QUANT_HELPER_CLS, replace_with_quant_layers, QUANT_SCHEME_PC
 
@@ -37,14 +37,16 @@ log.addHandler(handler)
 def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
+            mean, std = _CIFAR_STATS[task]
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)), ])
+                transforms.Normalize(mean, std), ])
         else:
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
                 ToPackedRGGB(return_orig=False), ])
-        test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+        dataset_cls = torchvision.datasets.CIFAR100 if task == "cifar100" else torchvision.datasets.CIFAR10
+        test_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
     elif img_type == "scanGFI":
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")
