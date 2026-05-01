@@ -189,6 +189,7 @@ run_one_combo () {
     --pcn           "${PCN}" \
     --pc_conv       "PCConvReLU6" \
     --ode_block     "${block}" \
+    --distill_method none \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }
