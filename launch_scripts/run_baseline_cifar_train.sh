@@ -17,7 +17,7 @@ conda activate scanbase
 REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
 cd "${REPO_ROOT}"
 
-DATA_DIR="${DATA_DIR:-/home/rongzeng/_workspce_old/repos/pcn/collaboration/data}"
+DATA_DIR="${DATA_DIR:-/scratch/rzeng7/repos/data}"
 MODEL_OUTPUT_DIR="${MODEL_OUTPUT_DIR:-${REPO_ROOT}/checkpoint/baselines}"
 OUTPUT_DIR="${OUTPUT_DIR:-${REPO_ROOT}/logs/baselines}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-baseline/train_baseline_cifar.py}"

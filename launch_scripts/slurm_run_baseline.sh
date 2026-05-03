@@ -9,6 +9,8 @@ SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_baseline_cifar_train.sh"
 # module swap slurm slurm/24.05.0.b1
 # ( source ./launch_scripts/slurm_run_baseline.sh ) \
 #  > ./logs/scheduler_slurm/slurm_baseline_cifar.log 2>&1 < /dev/null &
+# sched_pid=$!
+# disown -h "$sched_pid"
 ###############################################################################################
 
 EXTRA_OVERRIDE="${EXTRA_OVERRIDE:-eval_every=5}"
