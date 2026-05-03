@@ -324,9 +324,6 @@ class TrainerCiFar(object):
         self.save_path = save_path
         self.optimizer = self._get_optimizer(optim_type, lr=learning_rate, weight_decay=weight_decay)
         # Reuse the LR schedule epoch as before
-        # Todo: Change the scheduler to some more flexible one
-        if warmup_epoch > 0:
-            self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.01, total_iters=100)
         if T0 is not None:
             # With restart seems to be better.
             self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer=self.optimizer,
@@ -419,6 +416,11 @@ class TrainerCiFar(object):
             logging.warning("Mismatch-aware training disabled; proceeding without injected mismatch noise.")
 
         self._prepare_cifar(img_type, self.dataset_name)
+        # Todo: Change the scheduler to some more flexible one
+        if warmup_epoch > 0:
+            warmup_iters = len(self.train_dataloader) * self.warmup_epoch
+            self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.01,
+                                                                total_iters=warmup_iters)
 
     def _find_last_linear(self, model):
         if model is None:
@@ -536,7 +538,7 @@ class TrainerCiFar(object):
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch(epoch)
-            if (epoch + 1) % self.eval_every == 0:
+            if (epoch + 1) % self.eval_every == 0 and epoch >= 70:
                 train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
                 train_loss_list.append(train_loss)
@@ -678,9 +680,6 @@ class TrainerCiFar(object):
             if epoch < self.warmup_epoch:
                 self.warmup_scheduler.step()
 
-        if epoch < self.warmup_epoch - 1:
-            self.warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=0.1,
-                                                                total_iters=10)
         running_loss /= n_samples
         return running_loss
 

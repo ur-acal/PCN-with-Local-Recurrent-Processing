@@ -50,9 +50,9 @@ DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 # Change exp name here
 EXP_SUFFIX="16L96C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
 
-INP=(3  26 26 52 52 52  104 104 104)
-OUT=(26 26 52 52 52 104 104 104 104)
-POOL=(0 0  1  0  0  1   0   0   0)
+INP=(3  64 64  128 128 128 256 256)
+OUT=(64 64 128 128 128 256 256 256)
+POOL=(0 0  1   0   0   1   0   0)
 STRIDE=(1)
 KSZ=(3)
 PADDING=1
@@ -64,6 +64,7 @@ python train_ode_cifar.py \
   --rggb_to_rgb   "false" \
   --dataset       "${DATASET_NAME}" \
   --num_epochs    300 \
+  --warmup_epoch  5 \
   --eval_every    5 \
   --offset_eps    0.0 \
   --inp_channels  "${INP[@]}" \
