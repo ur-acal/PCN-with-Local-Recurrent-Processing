@@ -27,6 +27,7 @@ dist/
 loss_plot/
 expanded_weights/
 saved_ckpt/
+checkpoint/
 logs/
 hw_validation_data/
 run_single*
