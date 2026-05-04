@@ -107,10 +107,11 @@ run_eval_one() {
   local prefer_resize="$5"
   local noise_type="$6"
   local noise_level_list="$7"
+  local noise_to_norm="$8"
 
-  local tag="${dataset_name}_${case_name}_${model_name}_${noise_type}"
+  local tag="${dataset_name}_${case_name}_${model_name}_${noise_type}_noise_to_norm_${noise_to_norm}"
   local eval_log="${EVAL_LOG_DIR}/eval_${tag}.log"
-  local results_dir="${EVAL_RESULTS_DIR}/${dataset_name}/${case_name}/${model_name}/${noise_type}"
+  local results_dir="${EVAL_RESULTS_DIR}/${dataset_name}/${case_name}/${model_name}/${noise_type}_noise_to_norm_${noise_to_norm}"
 
   mkdir -p "${results_dir}"
 
@@ -134,7 +135,7 @@ run_eval_one() {
     --noise_level_list "${noise_level_list}" \
     --noisy_trials "${EVAL_NOISY_TRIALS}" \
     --noise_type "${noise_type}" \
-    --noise_to_norm false \
+    --noise_to_norm "${noise_to_norm}" \
     --results_dir "${results_dir}" \
     2>&1 | tee "${eval_log}"
 }
@@ -171,13 +172,19 @@ run_one() {
   echo "======================================================================"
 
   run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
-    "multiplicative" "${MULT_NOISE_LEVEL_LIST}"
+    "multiplicative" "${MULT_NOISE_LEVEL_LIST}" "false"
 
   run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
-    "additive" "${ADD_NOISE_LEVEL_LIST}"
+    "multiplicative" "${MULT_NOISE_LEVEL_LIST}" "true"
+
+  run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
+    "additive" "${ADD_NOISE_LEVEL_LIST}" "false"
+
+  run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
+    "additive" "${ADD_NOISE_LEVEL_LIST}" "true"
 
   echo "======================================================================"
-  echo "Finished train + multiplicative eval + additive eval"
+  echo "Finished train + multiplicative/additive evals with noise_to_norm=false/true"
   echo "Checkpoint path: ${ckpt_path}"
   echo "======================================================================"
 }

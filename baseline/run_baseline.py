@@ -201,6 +201,8 @@ class FixedMismatchHelper:
 
                 if should_apply and self.noise_sigma > 0:
                     self._apply_noise_(buf)
+                    if "running_var" in name:
+                        buf.clamp_(min=1e-6)
                     changed = not torch.equal(buf.detach(), clean)
                     if all_zero and self.noise_type == "multiplicative":
                         changed = False
