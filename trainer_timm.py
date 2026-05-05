@@ -128,8 +128,11 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         pin_memory=True,
         persistent_workers=False,
 
+        is_timm_model=True,
+
         **kwargs,
     ):
+        self.is_timm_model = is_timm_model
         # ------------------------------------------------------------
         # Disable CRD in this trainer.
         # ------------------------------------------------------------
@@ -578,7 +581,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
             train_loss = self.train_one_epoch(epoch)
 
-            if (epoch + 1) % self.eval_every == 0:
+            if (epoch + 1) % self.eval_every == 0 and epoch >= 70:
                 train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
 
@@ -758,6 +761,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         Your original checkpoint path assumes init_args and reconstructs the
         model class, which is not generally available for timm models. :contentReference[oaicite:3]{index=3}
         """
+        if not self.is_timm_model:
+            return super()._save_model_ckpt(acc, epoch, suffix=suffix)
         save_to = os.path.join(self.save_path, self.model_name)
         os.makedirs(save_to, exist_ok=True)
         save_pth_path = os.path.join(str(save_to), self.model_name + suffix)

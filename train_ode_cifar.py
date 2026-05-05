@@ -11,6 +11,8 @@ import numpy as np
 
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from switch import SWITCH_CLASSES
+from trainer_timm import TrainerCiFarTimmStyle
+from baseline.baseline_cifar_configs import CASE_DEFAULTS
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
@@ -241,6 +243,7 @@ def get_args():
     p.add_argument("--img_type", type=str, default="rgb")
     p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
     p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
+    p.add_argument("--timm_trainer", type=str2bool, default=False)
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
@@ -499,6 +502,8 @@ def _constr_model_name(args, rep=1):
         else:
             # Add DT short for direct training to distinguish from finetuning.
             model_name = "DT" + ft_prefix + model_name
+    if args.timm_trainer:
+        model_name = "TIMM" + model_name
     return model_name
 
 def get_model_name(args):
@@ -839,42 +844,104 @@ def main():
             args.distill_method, args.contrast_method, args.neg_sample))
     elif args.teacher_ckpt:
         logging.warning("teacher_ckpt provided but distillation disabled by configuration; ignoring teacher.")
-    trainer = TrainerCiFar(
-        model         = model,
-        model_name    = model_name,
-        save_path     = args.save_path,
-        batch_size    = args.batch_size,
-        optim_type    = args.optim,
-        weight_decay  = args.weight_decay,
-        loss_fn       = loss_fn,
-        learning_rate = args.learning_rate,
-        num_epochs    = args.num_epochs,
-        warmup_epoch  = args.warmup_epoch,
-        lr_reduce_on  = args.lr_reduce_on,
-        test_bs       = args.batch_size,
-        max_norm      = args.max_g_norm,
-        aug           = args.aug,
-        T0            = args.cosine_t0,
-        eval_every    = args.eval_every,
-        img_type      = args.img_type,
-        dataset_name  = args.dataset,
-        noise_level   = args.noise_level,
-        noise_type    = args.noise_type,
-        contrast_method = args.contrast_method,
-        neg_sample    = args.neg_sample,
-        orig_t_inp    = args.orig_t_inp,
-        distill_alpha = args.distill_alpha,
-        distill_temperature = args.distill_temperature,
-        distill_method = args.distill_method,
-        crd_feat_dim = args.crd_feat_dim,
-        crd_k = args.crd_k,
-        crd_temperature = args.crd_temperature,
-        crd_momentum = args.crd_momentum,
-        crd_beta = args.crd_beta,
-        teacher_model = teacher_model,
-        teacher_input_size = args.teacher_input_size,
-        teacher_center_crop = args.teacher_center_crop,
-    )
+    if args.timm_trainer:
+        cfg = CASE_DEFAULTS["custom_noresize"]
+        cfg["lr"] = args.learning_rate
+        cfg["num_epochs"] = args.num_epochs
+        cfg["warmup_epoch"] = args.warmup_epoch
+        cfg["weight_decay"] = args.weight_decay
+        cfg["batch_size"] = args.batch_size
+        cfg["test_batch_size"] = args.batch_size
+        # Todo: Align the lr scheduler with old train recipe for now.
+        cfg["timm_sched"] = "multistep"
+        cfg["lr_reduce_on"] = args.lr_reduce_on
+
+        trainer_kwargs = dict(
+            # Parent TrainerCiFar args.
+            model=model,
+            model_name=model_name,
+            save_path=args.save_path,
+            batch_size=cfg["batch_size"],
+            optim_type="sgd",  # ignored by TrainerCiFarTimmStyle._get_optimizer
+            weight_decay=cfg["weight_decay"],
+            learning_rate=cfg["lr"],
+            num_epochs=cfg["num_epochs"],
+            warmup_epoch=cfg["warmup_epoch"],
+            lr_reduce_on=cfg.get("lr_reduce_on", "80,122,150,225,262"),
+            test_bs=cfg["test_batch_size"],
+            max_norm=cfg.get("max_norm", None),
+            aug=False,  # transforms are handled by TrainerCiFarTimmStyle
+            eval_every=args.eval_every,
+            img_type="rgb",
+            dataset_name=args.dataset,
+
+            # Keep these disabled for plain baseline training.
+            noise_level=args.noise_level,
+            noise_type=args.noise_type,
+            mismatch_levels=None,
+            distill_alpha=0.0,
+            teacher_model=None,
+            orig_t_inp=False,
+
+            # TrainerCiFarTimmStyle-specific args.
+            timm_opt=cfg["timm_opt"],
+            momentum=cfg["momentum"],
+            timm_sched=cfg["timm_sched"],
+            min_lr=cfg["min_lr"],
+            warmup_lr=cfg["warmup_lr"],
+            timm_aug=True,
+            timm_input_size=cfg["timm_input_size"],
+            timm_train_scale=cfg["timm_train_scale"],
+            timm_train_ratio=cfg["timm_train_ratio"],
+            hflip=cfg["hflip"],
+            color_jitter=cfg["color_jitter"],
+            auto_augment=cfg["auto_augment"],
+            re_prob=cfg["re_prob"],
+            label_smoothing=cfg["label_smoothing"],
+            mixup_alpha=cfg["mixup_alpha"],
+            cutmix_alpha=cfg["cutmix_alpha"],
+
+            # Todo: Later on make the PCN compatible with timm.
+            is_timm_model=False,
+        )
+        trainer = TrainerCiFarTimmStyle(**trainer_kwargs)
+    else:
+        trainer = TrainerCiFar(
+            model         = model,
+            model_name    = model_name,
+            save_path     = args.save_path,
+            batch_size    = args.batch_size,
+            optim_type    = args.optim,
+            weight_decay  = args.weight_decay,
+            loss_fn       = loss_fn,
+            learning_rate = args.learning_rate,
+            num_epochs    = args.num_epochs,
+            warmup_epoch  = args.warmup_epoch,
+            lr_reduce_on  = args.lr_reduce_on,
+            test_bs       = args.batch_size,
+            max_norm      = args.max_g_norm,
+            aug           = args.aug,
+            T0            = args.cosine_t0,
+            eval_every    = args.eval_every,
+            img_type      = args.img_type,
+            dataset_name  = args.dataset,
+            noise_level   = args.noise_level,
+            noise_type    = args.noise_type,
+            contrast_method = args.contrast_method,
+            neg_sample    = args.neg_sample,
+            orig_t_inp    = args.orig_t_inp,
+            distill_alpha = args.distill_alpha,
+            distill_temperature = args.distill_temperature,
+            distill_method = args.distill_method,
+            crd_feat_dim = args.crd_feat_dim,
+            crd_k = args.crd_k,
+            crd_temperature = args.crd_temperature,
+            crd_momentum = args.crd_momentum,
+            crd_beta = args.crd_beta,
+            teacher_model = teacher_model,
+            teacher_input_size = args.teacher_input_size,
+            teacher_center_crop = args.teacher_center_crop,
+        )
 
     if teacher_model is not None:
         evaluate_teacher(teacher_model, trainer)

@@ -47,8 +47,13 @@ CONTRAST_METHOD="${CONTRAST_METHOD:-memory}"
 DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
 DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 
+PCN="${PCN:-PCNetNoBatchNorm}"
+T_END="${T_END:-1.75}"
+WARMUP_EPOCH="${WARMUP_EPOCH:-0}"
+IS_TIMM="${IS_TIMM:-true}"
+
 # Change exp name here
-EXP_SUFFIX="16L96C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
+EXP_SUFFIX="9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
 
 #INP=(3  64 64  128 128 128 256 256) # ~0.73 on CiFar-100
 #OUT=(64 64 128 128 128 256 256 256)
@@ -66,8 +71,9 @@ python train_ode_cifar.py \
   --img_type      "rgb" \
   --rggb_to_rgb   "false" \
   --dataset       "${DATASET_NAME}" \
+  --timm_trainer  "${IS_TIMM}" \
   --num_epochs    300 \
-  --warmup_epoch  5 \
+  --warmup_epoch  "${WARMUP_EPOCH}" \
   --eval_every    5 \
   --offset_eps    0.0 \
   --inp_channels  "${INP[@]}" \
@@ -83,9 +89,9 @@ python train_ode_cifar.py \
   --batch_size    128 \
   --method        "dopri5" \
   --tol           "0.0001" \
-  --t_end         "1.75" \
+  --t_end         "${T_END}" \
   --noise_type    "mul" \
-  --pcn           "PCNetNoBatchNorm" \
+  --pcn           "${PCN}" \
   --pc_conv       "PCConvReLU6" \
   --ode_block     "ODEXInitFFFB" \
   --teacher_ckpt "${TEACHER_CKPT}" \
