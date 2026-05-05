@@ -581,7 +581,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
             train_loss = self.train_one_epoch(epoch)
 
-            if (epoch + 1) % self.eval_every == 0 and epoch >= 70:
+            if (epoch + 1) % self.eval_every == 0 and epoch >= self.skip_eval_epochs:
                 train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
 

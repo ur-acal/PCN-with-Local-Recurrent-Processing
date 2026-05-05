@@ -7,7 +7,7 @@ SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_rgb_ode_train.sh"
 ###############################################################################################
 # running with
 # module swap slurm slurm/24.05.0.b1
-# ( source ./launch_scripts/slurm_run_rbg_ode_train.sh ) \
+# ( source ./launch_scripts/slurm_run_rgb_ode_train.sh ) \
 #  > ./logs/scheduler_slurm/slurm_rgb_ode_train.log 2>&1 < /dev/null &
 ###############################################################################################
 

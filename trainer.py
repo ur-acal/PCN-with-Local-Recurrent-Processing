@@ -305,7 +305,7 @@ def _resolve_cifar_data_root(img_type: str, input_name: str) -> Path:
 class TrainerCiFar(object):
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
-                 loss_fn=nn.CrossEntropyLoss(),
+                 loss_fn=nn.CrossEntropyLoss(), skip_eval_epochs=0,
                  learning_rate=0.01, num_epochs=300, warmup_epoch=1,
                  lr_reduce_on="80,122,150,225,262", test_bs=512, max_norm=None, aug=False, T0=None,
                  eval_every=1, img_type="rgb", dataset_name="cifar10", noise_level=None, noise_type=None,
@@ -315,6 +315,7 @@ class TrainerCiFar(object):
                  distill_method="kd", crd_feat_dim=128, crd_k=16384,
                  crd_temperature=0.07, crd_momentum=0.5, crd_beta=0.8,
                  teacher_input_size=224, teacher_center_crop=True):
+        self.skip_eval_epochs = skip_eval_epochs
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
 
@@ -538,7 +539,7 @@ class TrainerCiFar(object):
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch(epoch)
-            if (epoch + 1) % self.eval_every == 0 and epoch >= 70:
+            if (epoch + 1) % self.eval_every == 0 and epoch >= self.skip_eval_epochs:
                 train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
                 train_loss_list.append(train_loss)

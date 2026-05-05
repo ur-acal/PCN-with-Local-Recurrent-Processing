@@ -240,6 +240,7 @@ def get_args():
     model_save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_ckpt")
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
+    p.add_argument("--skip_eval_epochs", type=int, default=0)
     p.add_argument("--img_type", type=str, default="rgb")
     p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
     p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
@@ -903,6 +904,7 @@ def main():
 
             # Todo: Later on make the PCN compatible with timm.
             is_timm_model=False,
+            skip_eval_epochs=cfg["skip_eval_epochs"],
         )
         trainer = TrainerCiFarTimmStyle(**trainer_kwargs)
     else:
@@ -941,6 +943,7 @@ def main():
             teacher_model = teacher_model,
             teacher_input_size = args.teacher_input_size,
             teacher_center_crop = args.teacher_center_crop,
+            skip_eval_epochs=args.skip_eval_epochs,
         )
 
     if teacher_model is not None:

@@ -192,6 +192,8 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module) -> dict:
         label_smoothing=cfg["label_smoothing"],
         mixup_alpha=cfg["mixup_alpha"],
         cutmix_alpha=cfg["cutmix_alpha"],
+
+        skip_eval_epochs=cfg["skip_eval_epochs"],
     )
 
     return trainer_kwargs

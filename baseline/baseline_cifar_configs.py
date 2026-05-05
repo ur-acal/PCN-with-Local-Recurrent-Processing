@@ -99,6 +99,7 @@ CASE_DEFAULTS = {
         "timm_train_scale": (1.0, 1.0),
         "timm_train_ratio": (1.0, 1.0),
         "hflip": 0.5,
+        "skip_eval_epochs": 70,
     },
 
     # 1b. Built-in timm model adapted to 32x32, scratch.
@@ -125,6 +126,7 @@ CASE_DEFAULTS = {
         "timm_train_scale": (1.0, 1.0),
         "timm_train_ratio": (1.0, 1.0),
         "hflip": 0.5,
+        "skip_eval_epochs": 70,
     },
 
     # 1b. Built-in timm model adapted to 32x32, ImageNet-pretrained fine-tune.
@@ -152,6 +154,7 @@ CASE_DEFAULTS = {
         "timm_train_scale": (1.0, 1.0),
         "timm_train_ratio": (1.0, 1.0),
         "hflip": 0.5,
+        "skip_eval_epochs": 30,
     },
 
     # 2. Built-in timm model, resize CIFAR to ImageNet-style input, scratch.
@@ -178,6 +181,7 @@ CASE_DEFAULTS = {
         "timm_train_scale": (0.75, 1.0),
         "timm_train_ratio": (1.0, 1.0),
         "hflip": 0.5,
+        "skip_eval_epochs": 70,
     },
 
     # 2. Built-in timm model, resize CIFAR to ImageNet-style input, fine-tune.
@@ -204,6 +208,7 @@ CASE_DEFAULTS = {
         "timm_train_scale": (0.75, 1.0),
         "timm_train_ratio": (1.0, 1.0),
         "hflip": 0.5,
+        "skip_eval_epochs": 20,
     },
 }
 
