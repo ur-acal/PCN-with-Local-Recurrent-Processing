@@ -23,9 +23,10 @@ from timm.data import Mixup, create_transform, create_loader, resolve_model_data
 from timm.loss import SoftTargetCrossEntropy, LabelSmoothingCrossEntropy
 from timm.optim import create_optimizer_v2
 from timm.scheduler import CosineLRScheduler, MultiStepLRScheduler
+from timm.data.random_erasing import RandomErasing as TimmRandomErasing
 
 from pc_model import PCNet
-from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods
+from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, PackedRGGBToRGB
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions
 
@@ -122,6 +123,16 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         mixup_mode="batch",
 
         # -------------------------
+        # For rggb-like data (4,16,16)
+        # -------------------------
+        convert_non_rgb_to_rgb=False,
+        non_rgb_spatial_aug=True,
+        non_rgb_crop_padding=2,
+        non_rgb_affine_degrees=0,
+        non_rgb_affine_translate=None,
+        non_rgb_affine_shear=None,
+
+        # -------------------------
         # Loader
         # -------------------------
         num_workers=2,
@@ -211,6 +222,15 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         self.mixup_fn = None
         self.train_loss_fn = None
+
+        # For rggb-like data (4,16,16)
+        self.convert_non_rgb_to_rgb = convert_non_rgb_to_rgb
+
+        self.non_rgb_spatial_aug = non_rgb_spatial_aug
+        self.non_rgb_crop_padding = non_rgb_crop_padding
+        self.non_rgb_affine_degrees = non_rgb_affine_degrees
+        self.non_rgb_affine_translate = non_rgb_affine_translate
+        self.non_rgb_affine_shear = non_rgb_affine_shear
 
         # evaluate() uses hard labels, so keep eval loss as hard-label CE.
         if "loss_fn" not in kwargs:
@@ -425,6 +445,105 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         return transform_train, transform_test
 
+    def _build_scanGFI_to_rgb_timm_transforms(self, dataset_name):
+        # mean, std = _CIFAR_STATS[dataset_name]
+        logging.warning("Building transforms for converted to rgb images.")
+        input_size = self.timm_input_size or (3, 32, 32)
+        mean, std = (0.0,) * input_size[0], (1.0,) * input_size[0]
+        interpolation = self.interpolation or "bicubic"
+
+        transform_train = transforms.Compose([
+            PackedRGGBToRGB(),
+            transforms.ToPILImage(),
+            create_transform(
+                input_size=input_size,
+                is_training=True,
+                use_prefetcher=False,
+                scale=self.timm_train_scale,
+                ratio=self.timm_train_ratio,
+                hflip=self.hflip,
+                vflip=self.vflip,
+                color_jitter=self.color_jitter,
+                auto_augment=self.auto_augment,
+                interpolation=interpolation,
+                mean=mean,
+                std=std,
+                re_prob=self.re_prob,
+                re_mode=self.re_mode,
+                re_count=self.re_count,
+            ),
+        ])
+
+        test_kwargs = dict(
+            input_size=input_size,
+            is_training=False,
+            use_prefetcher=False,
+            interpolation=interpolation,
+            mean=mean,
+            std=std,
+        )
+
+        if input_size[-2:] == (32, 32):
+            transform_test = transforms.Compose([
+                PackedRGGBToRGB(),
+            ])
+        else:
+            transform_test = transforms.Compose([
+                PackedRGGBToRGB(),
+                transforms.ToPILImage(),
+                create_transform(**test_kwargs),
+            ])
+
+        return transform_train, transform_test
+
+    def _build_non_rgb_timm_transforms(self, img_type):
+        logging.warning("Building transforms for non rgb images.")
+        spatial_size = self.timm_input_size[-1] if self.timm_input_size is not None else 16
+
+        train_steps = []
+
+        if self.non_rgb_spatial_aug:
+            train_steps.append(
+                transforms.RandomCrop(
+                    spatial_size,
+                    padding=self.non_rgb_crop_padding,
+                )
+            )
+
+            if self.hflip > 0.0:
+                train_steps.append(transforms.RandomHorizontalFlip(p=self.hflip))
+
+            if self.vflip > 0.0:
+                train_steps.append(transforms.RandomVerticalFlip(p=self.vflip))
+
+            if (
+                    self.non_rgb_affine_degrees
+                    or self.non_rgb_affine_translate is not None
+                    or self.non_rgb_affine_shear is not None
+            ):
+                train_steps.append(
+                    transforms.RandomAffine(
+                        degrees=self.non_rgb_affine_degrees,
+                        translate=self.non_rgb_affine_translate,
+                        shear=self.non_rgb_affine_shear,
+                    )
+                )
+
+        if self.re_prob > 0.0:
+            train_steps.append(
+                TimmRandomErasing(
+                    probability=self.re_prob,
+                    mode=self.re_mode,
+                    max_count=self.re_count,
+                    device="cpu",
+                )
+            )
+
+        transform_train = transforms.Compose(train_steps) if train_steps else None
+        transform_test = None
+
+        return transform_train, transform_test
+
     def _prepare_cifar(self, img_type, dataset_name):
         """
         Parent builds datasets/wrappers first.
@@ -435,7 +554,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         For rggb/scanGFI/raw, original custom transforms are preserved.
         Your original _prepare_cifar has special branches for rgb/rggb/scanGFI/raw,
-        so this subclass only overrides the RGB transform path. :contentReference[oaicite:1]{index=1}
+        so this subclass only overrides the RGB transform path.
         """
         super()._prepare_cifar(img_type, dataset_name)
 
@@ -455,6 +574,14 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                 transform_test,
                 set_teacher=False,
             )
+        elif img_type == "scanGFI" and self.timm_aug and self.convert_non_rgb_to_rgb:
+            transform_train, transform_test = self._build_scanGFI_to_rgb_timm_transforms(dataset_name)
+            self._set_transform_recursive(self.train_set, transform_train, set_teacher=False)
+            self._set_transform_recursive(self.val_set, transform_test, set_teacher=False)
+        elif img_type == "scanGFI" and self.timm_aug:
+            transform_train, transform_test = self._build_non_rgb_timm_transforms(img_type)
+            if transform_train is not None:
+                self._set_transform_recursive(self.train_set, transform_train, set_teacher=False)
 
         elif img_type != "rgb":
             logging.warning(
@@ -463,8 +590,6 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                 img_type,
             )
 
-        # Since augmentation is already inside dataset.transform,
-        # keep no_aug=True here to avoid double augmentation.
         self.train_dataloader = torch.utils.data.DataLoader(
             self.train_set,
             batch_size=self.batch_size,

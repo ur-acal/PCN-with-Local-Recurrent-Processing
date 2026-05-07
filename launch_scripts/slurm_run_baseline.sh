@@ -13,6 +13,7 @@ SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_baseline_cifar_train.sh"
 # disown -h "$sched_pid"
 ###############################################################################################
 
+#EXTRA_OVERRIDE="num_epochs=2,eval_every=2,skip_eval_epochs=0" # For test purpose
 EXTRA_OVERRIDE="${EXTRA_OVERRIDE:-eval_every=5}"
 MULT_NOISE_LEVEL_LIST="${MULT_NOISE_LEVEL_LIST:-0,0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4}"
 ADD_NOISE_LEVEL_LIST="${ADD_NOISE_LEVEL_LIST:-0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.1}"

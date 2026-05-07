@@ -46,6 +46,8 @@ NEG_SAMPLE="${NEG_SAMPLE:-index}"
 CONTRAST_METHOD="${CONTRAST_METHOD:-memory}"
 DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
 DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
+IS_TIMM="${IS_TIMM:-true}"
+RGGB_TO_RGB="${RGGB_TO_RGB:-true}"
 
 # Change exp name here
 EXP_SUFFIX="16L96C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
@@ -57,11 +59,15 @@ STRIDE=(1)
 KSZ=(3)
 PADDING=1
 NOISE_LEVEL=0.
+if [[ "${RGGB_TO_RGB}" == "true" ]]; then
+  INP[0]=3
+fi
 
 python train_ode_cifar.py \
   --optim         "SGD" \
+  --timm_trainer  "${IS_TIMM}" \
   --img_type      "scanGFI" \
-  --rggb_to_rgb   "false" \
+  --rggb_to_rgb   "${RGGB_TO_RGB}" \
   --dataset       "${DATASET_NAME}" \
   --num_epochs    300 \
   --eval_every    5 \
@@ -89,7 +95,7 @@ python train_ode_cifar.py \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
   --teacher_input_size "${TEACHER_INPUT_SIZE}" \
   --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-  --distill_method kd_crd \
+  --distill_method none \
   --contrast_method "${CONTRAST_METHOD}" \
   --neg_sample      "${NEG_SAMPLE}" \
   --orig_t_inp      "${ORIG_T_INP}" \

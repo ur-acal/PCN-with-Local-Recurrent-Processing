@@ -12,6 +12,15 @@ EVAL_SCRIPT="${EVAL_SCRIPT:-baseline/run_baseline.py}"
 TRAIN_LOG_DIR="${TRAIN_LOG_DIR:-${OUTPUT_DIR}/train_logs}"
 EVAL_LOG_DIR="${EVAL_LOG_DIR:-${OUTPUT_DIR}/eval_logs}"
 EVAL_RESULTS_DIR="${EVAL_RESULTS_DIR:-${OUTPUT_DIR}/mismatch_eval}"
+EXTRA_OVERRIDE="eval_every=5"
+#EXTRA_OVERRIDE="num_epochs=2,eval_every=2,skip_eval_epochs=0"
+
+MULT_NOISE_LEVEL_LIST="${MULT_NOISE_LEVEL_LIST:-0,0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4}"
+ADD_NOISE_LEVEL_LIST="${ADD_NOISE_LEVEL_LIST:-0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.1}"
+EVAL_NOISY_TRIALS="${EVAL_NOISY_TRIALS:-10}"
+#MULT_NOISE_LEVEL_LIST="${MULT_NOISE_LEVEL_LIST:-0,0.4}"
+#ADD_NOISE_LEVEL_LIST="${ADD_NOISE_LEVEL_LIST:-0,0.02}"
+#EVAL_NOISY_TRIALS="${EVAL_NOISY_TRIALS:-2}"
 
 mkdir -p "${TRAIN_LOG_DIR}" "${EVAL_LOG_DIR}" "${EVAL_RESULTS_DIR}"
 SAVED_CKPT_PATHS=()
@@ -90,7 +99,7 @@ run_train_one() {
     --case "${case_name}" \
     --pretrained "${pretrained}" \
     --prefer_resize "${prefer_resize}" \
-    --override "num_epochs=2,eval_every=2" \
+    --override "${EXTRA_OVERRIDE}" \
     --print_only false \
     2>&1 | tee "${train_log}"
 }
@@ -101,13 +110,22 @@ run_eval_one() {
   local case_name="$3"
   local ckpt_path="$4"
   local prefer_resize="$5"
+  local noise_type="$6"
+  local noise_level_list="$7"
+  local noise_to_norm="$8"
 
-  local tag="${dataset_name}_${case_name}_${model_name}"
+  local tag="${dataset_name}_${case_name}_${model_name}_${noise_type}_noise_to_norm_${noise_to_norm}"
   local eval_log="${EVAL_LOG_DIR}/eval_${tag}.log"
+  local results_dir="${EVAL_RESULTS_DIR}/${dataset_name}/${case_name}/${model_name}/${noise_type}_noise_to_norm_${noise_to_norm}"
+
+  mkdir -p "${results_dir}"
 
   echo "======================================================================"
-  echo "EVAL: dataset=${dataset_name}, model=${model_name}"
+  echo "EVAL: dataset=${dataset_name}, model=${model_name}, case=${case_name}"
   echo "CKPT: ${ckpt_path}"
+  echo "NOISE_TYPE: ${noise_type}"
+  echo "NOISE_LEVEL_LIST: ${noise_level_list}"
+  echo "NOISY_TRIALS: ${EVAL_NOISY_TRIALS}"
   echo "LOG:  ${eval_log}"
   echo "======================================================================"
 
@@ -119,11 +137,11 @@ run_eval_one() {
     --case "${case_name}" \
     --pretrained false \
     --prefer_resize "${prefer_resize}" \
-    --noise_level_list "0,0.2" \
-    --noisy_trials 2 \
-    --noise_type multiplicative \
-    --noise_to_norm false \
-    --results_dir "${EVAL_RESULTS_DIR}/${dataset_name}/${case_name}/${model_name}" \
+    --noise_level_list "${noise_level_list}" \
+    --noisy_trials "${EVAL_NOISY_TRIALS}" \
+    --noise_type "${noise_type}" \
+    --noise_to_norm "${noise_to_norm}" \
+    --results_dir "${results_dir}" \
     2>&1 | tee "${eval_log}"
 }
 
@@ -155,7 +173,17 @@ run_one() {
 
   SAVED_CKPT_PATHS+=("${ckpt_path}")
 
-  run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}"
+  run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
+    "multiplicative" "${MULT_NOISE_LEVEL_LIST}" "false"
+
+  run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
+    "multiplicative" "${MULT_NOISE_LEVEL_LIST}" "true"
+
+  run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
+    "additive" "${ADD_NOISE_LEVEL_LIST}" "false"
+
+  run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
+    "additive" "${ADD_NOISE_LEVEL_LIST}" "true"
 }
 
 for dataset_name in "${DATASETS[@]}"; do

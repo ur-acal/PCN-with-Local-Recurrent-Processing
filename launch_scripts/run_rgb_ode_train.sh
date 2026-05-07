@@ -51,6 +51,7 @@ PCN="${PCN:-PCNetNoBatchNorm}"
 T_END="${T_END:-1.75}"
 WARMUP_EPOCH="${WARMUP_EPOCH:-0}"
 IS_TIMM="${IS_TIMM:-true}"
+TIMM_SCHED="${TIMM_SCHED:-cosine}"
 
 # Change exp name here
 EXP_SUFFIX="9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
@@ -72,6 +73,7 @@ python train_ode_cifar.py \
   --rggb_to_rgb   "false" \
   --dataset       "${DATASET_NAME}" \
   --timm_trainer  "${IS_TIMM}" \
+  --timm_sched    "${TIMM_SCHED}" \
   --num_epochs    300 \
   --warmup_epoch  "${WARMUP_EPOCH}" \
   --eval_every    5 \

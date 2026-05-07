@@ -133,6 +133,29 @@ def srgb_to_linear(x):
 def linear_to_srgb(x):
     return torch.where(x <= 0.0031308, 12.92 * x, (1 + 0.055) * torch.pow(x, 1 / 2.4) - 0.055)
 
+class PackedRGGBToRGB(nn.Module):
+    """
+    Convert packed RGGB tensor [4, H, W] to approximate RGB tensor [3, 2H, 2W].
+    Channel order assumed: [R, G1, G2, B].
+    """
+
+    def forward(self, x):
+        if x.ndim != 3 or x.size(0) != 4:
+            raise ValueError(f"Expected [4,H,W], got {tuple(x.shape)}")
+
+        r = x[0:1]
+        g = 0.5 * (x[1:2] + x[2:3])
+        b = x[3:4]
+
+        rgb = torch.cat([r, g, b], dim=0)
+        rgb = F.interpolate(
+            rgb.unsqueeze(0),
+            scale_factor=2,
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(0)
+
+        return rgb
 
 # mosaic, sRGB -> raw
 def mosaic_rggb(rgb_lin):  # [3,H,W] linear [0,1]

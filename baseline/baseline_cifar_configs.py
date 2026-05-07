@@ -211,6 +211,31 @@ CASE_DEFAULTS = {
         "skip_eval_epochs": 20,
     },
 }
+# -----------------------------------------------------------------------------
+# Some updated configs for rggb data
+# -----------------------------------------------------------------------------
+RGGB_TO_RGB_EXTRAS = {
+    "convert_non_rgb_to_rgb": True,
+    "in_chans": 3,
+}
+
+RGGB_DEFAULTS = {
+    "convert_non_rgb_to_rgb": False,
+    "in_chans": 4,
+    "timm_input_size": (4, 16, 16),
+    # The two are disabled for rggb
+    "auto_augment": None,
+    "color_jitter": 0.0,
+    # decreased from 0.25
+    "re_prob": 0.08,
+    # Mimicking the other transforms in "auto_augment": "rand-m9-mstd0.5-inc1" that are applicable to rggb
+    "non_rgb_spatial_aug": True,
+    "non_rgb_crop_padding": 2,
+
+    "non_rgb_affine_degrees": 9,
+    "non_rgb_affine_translate": (0.125, 0.125),
+    "non_rgb_affine_shear": 5,
+}
 
 
 # -----------------------------------------------------------------------------

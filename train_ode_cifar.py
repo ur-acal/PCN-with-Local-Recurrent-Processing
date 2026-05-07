@@ -12,219 +12,9 @@ import numpy as np
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from switch import SWITCH_CLASSES
 from trainer_timm import TrainerCiFarTimmStyle
-from baseline.baseline_cifar_configs import CASE_DEFAULTS
+from baseline.baseline_cifar_configs import CASE_DEFAULTS, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
-
-
-class RGGBToRGBTransform(nn.Module):
-    """Transform RGGB (B, 4, 16, 16) to RGB (B, 3, 32, 32).
-
-    RGGB format assumes 4 channels packed from a 2x2 Bayer pattern:
-    - Channel 0: Red
-    - Channel 1: Green (from position 0,1)
-    - Channel 2: Green (from position 1,0)
-    - Channel 3: Blue
-
-    The transformation upsamples each channel to 32x32 using bilinear interpolation
-    and averages the two green channels to produce standard RGB format.
-    """
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        # x: (B, 4, 16, 16) - RGGB format
-        # Split channels: R, G1, G2, B
-        r = x[:, 0:1, :, :]   # (B, 1, 16, 16)
-        g1 = x[:, 1:2, :, :]  # (B, 1, 16, 16)
-        g2 = x[:, 2:3, :, :]  # (B, 1, 16, 16)
-        b = x[:, 3:4, :, :]   # (B, 1, 16, 16)
-
-        # Upsample each channel to 32x32 using bilinear interpolation
-        r_up = F.interpolate(r, scale_factor=2, mode='bilinear', align_corners=False)
-        g1_up = F.interpolate(g1, scale_factor=2, mode='bilinear', align_corners=False)
-        g2_up = F.interpolate(g2, scale_factor=2, mode='bilinear', align_corners=False)
-        b_up = F.interpolate(b, scale_factor=2, mode='bilinear', align_corners=False)
-
-        # Average the two G channels
-        g = (g1_up + g2_up) / 2.0
-
-        # Combine to RGB: (B, 3, 32, 32)
-        rgb = torch.cat([r_up, g, b_up], dim=1)
-
-        return rgb
-
-
-class ModelWithRGGBTransform(nn.Module):
-    """Wrapper that applies RGGB to RGB transform before the model.
-
-    Supports both direct construction and reconstruction from saved init_args.
-    Stores ODE conversion params to ensure reconstructed model matches original.
-    Delegates attribute access to the inner model for compatibility with
-    training/saving code that expects attributes like PcConvs, etc.
-    """
-    # Registry of inner model classes for reconstruction
-    _model_registry = {}
-    # Registry of pc_conv classes for reconstruction
-    _pc_conv_registry = {}
-    # ODE params for reconstruction (set by set_ode_params)
-    _ode_params = None
-    # Original pc_conv class (before ODE conversion)
-    _original_pc_conv_class = None
-
-    @classmethod
-    def register_model_class(cls, model_class):
-        """Register a model class for reconstruction."""
-        cls._model_registry[model_class.__name__] = model_class
-
-    @classmethod
-    def register_pc_conv_class(cls, pc_conv_class):
-        """Register a pc_conv class for reconstruction."""
-        cls._pc_conv_registry[pc_conv_class.__name__] = pc_conv_class
-
-    @classmethod
-    def set_original_pc_conv_class(cls, pc_conv_class):
-        """Store the original pc_conv class (before ODE conversion) for reconstruction."""
-        cls._original_pc_conv_class = pc_conv_class
-        cls.register_pc_conv_class(pc_conv_class)
-
-    @classmethod
-    def set_ode_params(cls, ode_block, method, t_end, tol, n_steps, **ode_kwargs):
-        """Store ODE conversion params for reconstruction."""
-        cls._ode_params = {
-            'ode_block': ode_block,
-            'method': method,
-            't_end': t_end,
-            'tol': tol,
-            'n_steps': n_steps,
-            'ode_kwargs': ode_kwargs,
-        }
-
-    def __init__(self, model=None, transform=None, _rggb_wrapper_inner_class=None,
-                 _rggb_ode_block=None, _rggb_ode_method=None, _rggb_ode_t_end=None,
-                 _rggb_ode_tol=None, _rggb_ode_n_steps=None, _rggb_pc_conv_class=None,
-                 **kwargs):
-        super().__init__()
-
-        # Check if this is reconstruction from saved init_args
-        # The trainer merges model_args and kwargs, so _rggb_wrapper_inner_class comes as a kwarg
-        if _rggb_wrapper_inner_class is not None:
-            # Reconstruction mode
-            inner_class_name = _rggb_wrapper_inner_class
-
-            # Get inner model class from registry
-            inner_class = self._model_registry.get(inner_class_name)
-            if inner_class is None:
-                raise ValueError(f"Unknown inner model class: {inner_class_name}. "
-                               f"Available: {list(self._model_registry.keys())}")
-
-            # Get pc_conv class from registry if specified
-            if _rggb_pc_conv_class and _rggb_pc_conv_class in self._pc_conv_registry:
-                kwargs['pc_conv_layer'] = self._pc_conv_registry[_rggb_pc_conv_class]
-
-            self.transform = RGGBToRGBTransform()
-            # Create inner model (use _pcnet to avoid ".linear.weight" pattern collision with data_utils.py)
-            self._pcnet = inner_class(**kwargs)
-
-            # Apply ODE conversion if params are provided
-            if _rggb_ode_block is not None and self._ode_params is not None:
-                ode_block = self._ode_params['ode_block']
-                self._pcnet = make_ode_block(
-                    pc_net=self._pcnet,
-                    ode_block=ode_block,
-                    noise_level=0.0,
-                    method=_rggb_ode_method or self._ode_params['method'],
-                    t_end=_rggb_ode_t_end or self._ode_params['t_end'],
-                    tol=_rggb_ode_tol or self._ode_params['tol'],
-                    n_steps=_rggb_ode_n_steps or self._ode_params['n_steps'],
-                    **self._ode_params.get('ode_kwargs', {})
-                )
-
-            self._inner_class_name = inner_class_name
-            self._pc_conv_class_name = _rggb_pc_conv_class
-        else:
-            # Direct construction mode
-            if model is None:
-                raise ValueError("model must be provided for direct construction")
-            self.transform = transform if transform is not None else RGGBToRGBTransform()
-            # Use _pcnet to avoid ".linear.weight" pattern collision with data_utils.py
-            self._pcnet = model
-            self._inner_class_name = model.__class__.__name__
-            # Use the original pc_conv class (set before ODE conversion)
-            self._pc_conv_class_name = None
-            if self._original_pc_conv_class is not None:
-                self._pc_conv_class_name = self._original_pc_conv_class.__name__
-            # Register the inner model class
-            self.register_model_class(model.__class__)
-
-    @property
-    def init_args(self):
-        """Return init_args that can reconstruct this wrapped model.
-
-        The trainer extracts model_args and kwargs from init_args and merges them,
-        so we put the wrapper flags inside model_args.
-        """
-        inner_init_args = self._pcnet.init_args if hasattr(self._pcnet, 'init_args') else {}
-        model_args = inner_init_args.get('model_args', {}).copy()
-        model_args['_rggb_wrapper_inner_class'] = self._inner_class_name
-
-        # Include ODE params for reconstruction
-        if self._ode_params is not None:
-            model_args['_rggb_ode_block'] = self._ode_params['ode_block'].__name__
-            model_args['_rggb_ode_method'] = self._ode_params['method']
-            model_args['_rggb_ode_t_end'] = self._ode_params['t_end']
-            model_args['_rggb_ode_tol'] = self._ode_params['tol']
-            model_args['_rggb_ode_n_steps'] = self._ode_params['n_steps']
-
-        # Include pc_conv class for reconstruction
-        if self._pc_conv_class_name:
-            model_args['_rggb_pc_conv_class'] = self._pc_conv_class_name
-
-        return {
-            'model_args': model_args,
-            'kwargs': inner_init_args.get('kwargs', {}),
-        }
-
-    def forward(self, x):
-        x = self.transform(x)
-        return self._pcnet(x)
-
-    def state_dict(self, *args, **kwargs):
-        """Override to rename .linear. keys to .fc. to avoid data_utils.py pattern collision."""
-        sd = super().state_dict(*args, **kwargs)
-        # Rename .linear. to .fc. to avoid triggering quantization mapping in data_utils.py
-        result = {}
-        for k, v in sd.items():
-            if '.linear.' in k:
-                new_key = k.replace('.linear.', '.fc.')
-                result[new_key] = v
-            else:
-                result[k] = v
-        return result
-
-    def load_state_dict(self, state_dict, strict=True):
-        """Override to handle both .linear. and .fc. key formats."""
-        # Map .fc. keys back to .linear. for loading
-        mapped_sd = {}
-        for k, v in state_dict.items():
-            if '.fc.' in k:
-                new_key = k.replace('.fc.', '.linear.')
-                mapped_sd[new_key] = v
-            else:
-                mapped_sd[k] = v
-        return super().load_state_dict(mapped_sd, strict=strict)
-
-    def __getattr__(self, name):
-        # Don't delegate init_args - we have our own property for that
-        if name == 'init_args':
-            raise AttributeError(name)
-        # First try to get from this module's __dict__ or nn.Module
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            # Delegate to the inner model
-            return getattr(self._pcnet, name)
-
 
 from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
@@ -245,6 +35,7 @@ def get_args():
     p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
     p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--timm_trainer", type=str2bool, default=False)
+    p.add_argument("--timm_sched", type=str, default="multistep", choices=["multistep", "cosine"])
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
@@ -741,10 +532,6 @@ def main():
     model_args.update({"pc_conv_layer": pc_conv_mod})
     logging.warning("----- Using PC Conv layer: {} -----".format(pc_conv_mod.__name__))
 
-    # Store original pc_conv class for RGGB wrapper reconstruction (before ODE conversion)
-    if args.rggb_to_rgb:
-        ModelWithRGGBTransform.set_original_pc_conv_class(pc_conv_mod)
-
     # Select PCNet model to use
     pcn_model = PCN_CLASSES.get(args.pcn, PCNet)
     logging.warning("----- Using PCN model: {} -----".format(pcn_model.__name__))
@@ -800,21 +587,6 @@ def main():
     logging.warning("method: {}".format(args.method))
     logging.warning("tol: {}".format(args.tol))
 
-    # Apply RGGB to RGB transformation wrapper if enabled
-    if args.rggb_to_rgb:
-        rggb_transform = RGGBToRGBTransform()
-        model = ModelWithRGGBTransform(model, rggb_transform)
-        # Store ODE params for reconstruction during save/load
-        ModelWithRGGBTransform.set_ode_params(
-            ode_block=ode_block,
-            method=args.method,
-            t_end=args.t_end,
-            tol=args.tol,
-            n_steps=args.n_steps,
-            **ode_kwargs
-        )
-        logging.warning("Model wrapped with RGGB to RGB transformation")
-
     # sanity check if resume training
     if args.model_name is not None:
         logging.warning("Before training, evaluate the accuracy of the loaded model")
@@ -846,7 +618,7 @@ def main():
     elif args.teacher_ckpt:
         logging.warning("teacher_ckpt provided but distillation disabled by configuration; ignoring teacher.")
     if args.timm_trainer:
-        cfg = CASE_DEFAULTS["custom_noresize"]
+        cfg = CASE_DEFAULTS["custom_noresize"].copy()
         cfg["lr"] = args.learning_rate
         cfg["num_epochs"] = args.num_epochs
         cfg["warmup_epoch"] = args.warmup_epoch
@@ -854,8 +626,14 @@ def main():
         cfg["batch_size"] = args.batch_size
         cfg["test_batch_size"] = args.batch_size
         # Todo: Align the lr scheduler with old train recipe for now.
-        cfg["timm_sched"] = "multistep"
+        cfg["timm_sched"] = args.timm_sched
+        # not used when timm_sched is "cosine"
         cfg["lr_reduce_on"] = args.lr_reduce_on
+
+        if args.img_type != "rgb" and args.rggb_to_rgb:
+            cfg.update(RGGB_TO_RGB_EXTRAS)
+        elif args.img_type != "rgb" and not args.rggb_to_rgb:
+            cfg.update(RGGB_DEFAULTS)
 
         trainer_kwargs = dict(
             # Parent TrainerCiFar args.
@@ -873,7 +651,7 @@ def main():
             max_norm=cfg.get("max_norm", None),
             aug=False,  # transforms are handled by TrainerCiFarTimmStyle
             eval_every=args.eval_every,
-            img_type="rgb",
+            img_type=args.img_type,
             dataset_name=args.dataset,
 
             # Keep these disabled for plain baseline training.
@@ -901,6 +679,14 @@ def main():
             label_smoothing=cfg["label_smoothing"],
             mixup_alpha=cfg["mixup_alpha"],
             cutmix_alpha=cfg["cutmix_alpha"],
+
+            # RGGB related args
+            convert_non_rgb_to_rgb=cfg.get("convert_non_rgb_to_rgb", False),
+            non_rgb_spatial_aug=cfg.get("non_rgb_spatial_aug", True),
+            non_rgb_crop_padding=cfg.get("non_rgb_crop_padding", 2),
+            non_rgb_affine_degrees=cfg.get("non_rgb_affine_degrees", 0),
+            non_rgb_affine_translate=cfg.get("non_rgb_affine_translate", None),
+            non_rgb_affine_shear=cfg.get("non_rgb_affine_shear", None),
 
             # Todo: Later on make the PCN compatible with timm.
             is_timm_model=False,

@@ -48,8 +48,8 @@ def parse_args():
                    default=None)
     parser.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()) + [None],
                         default=None)
-    parser.add_argument("--ode_wrapper", type=str, choices=list(ODEWrapper_CLASSES.keys()) + [None],
-                        default=None)
+    parser.add_argument("--ode_wrapper", type=lambda s: None if s.lower() in {"none", ""} else str(s),
+                        choices=list(ODEWrapper_CLASSES.keys()) + [None], default=None)
     parser.add_argument("--state_calib", type=str, required=False,
                         help="The calibration result of ode intermediate states for each layer")
     parser.add_argument("--R", type=float, default=1e5, help="Resistance")
@@ -65,6 +65,7 @@ def parse_args():
                         help="Only useful when self.eps is set in the ODESolver class.")
     parser.add_argument("--mismatch_type", type=str, default="mul", choices=["mul", "add"],
                         help="Additive or multiplicative mismatch.")
+    parser.add_argument("--noise_level_list", type=str, default="0.0,0.01,0.02,0.05")
     parser.add_argument("--sweep_eps", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--patch_node", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
@@ -313,12 +314,11 @@ def run_ode_inference():
         offset_eps_list = [0.2, 0.35, 0.5, 0.65, 0.8] if args.sde_noise_type == "mul" else [None, 0.05, 0.1, 0.15, 0.2]
     else:
         offset_eps_list = [None]
-    noise_level_list_ = [0, 0.1, 0.2, 0.3, 0.4]
-    if args.mismatch_type == "add":
-        noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
+    noise_level_list_ = [float(x.strip()) for x in args.noise_level_list.split(",") if x.strip()]
     noisy_trials = args.noisy_trials
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
+        # In this case we overide the input args.noise_level_list
         if args.diff_mismatch:
             noise_level_list_ = [0, MISMATCH_LEVELS_5b]
         else:
@@ -360,7 +360,7 @@ def run_ode_inference():
         noise_acc_spec_all = {}
         max_real_t, min_real_t, real_t_end = t_end, t_end, t_end
         for offset_eps_ in offset_eps_list:
-            wrapper_params.update({"offset_eps": offset_eps_})
+            wrapper_params.update({"offset_eps": offset_eps_}) if wrapper_params is not None else None
             noise_acc_spec = {}
             for noise_level in noise_level_list_:
                 trials = noisy_trials
