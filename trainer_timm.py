@@ -28,7 +28,7 @@ from timm.data.random_erasing import RandomErasing as TimmRandomErasing
 from pc_model import PCNet
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, PackedRGGBToRGB
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
-from distillation import CRDLoss, CRDOptions
+from distillation import CRDLoss, CRDOptions, MGDLoss
 from distillation import SimKD, SRRLLoss, TeacherFeatureExtractor
 
 
@@ -1372,7 +1372,66 @@ class TrainerCiFarTimmStyleSRRL(TrainerCiFarTimmStyleFeatureKD):
 
 
 class TrainerCiFarTimmStyleMGD(TrainerCiFarTimmStyleFeatureKD):
-    pass
+    feature_kd_name = "mgd"
+
+    def __init__(
+        self,
+        *args,
+        mgd_alpha=7e-5,
+        mgd_lambda=0.5,
+        mgd_mask_mode="channel",
+        **kwargs,
+    ):
+        self.mgd_alpha = float(mgd_alpha)
+        self.mgd_lambda = float(mgd_lambda)
+        self.mgd_mask_mode = mgd_mask_mode
+
+        # MGDLoss already applies alpha_mgd internally, following the official code.
+        # So keep the generic outer feature_kd_beta at 1.0.
+        super().__init__(
+            *args,
+            feature_kd_beta=1.0,
+            **kwargs,
+        )
+
+    def _make_feature_kd_loss(self, student_features, teacher_features):
+        student_feat = student_features[-1]
+        teacher_feat = teacher_features[-1]
+
+        if student_feat.dim() != 4:
+            raise RuntimeError(
+                f"MGD requires 4D student feature [B,C,H,W], got {tuple(student_feat.shape)}."
+            )
+
+        if teacher_feat.dim() != 4:
+            raise RuntimeError(
+                f"MGD requires 4D teacher feature [B,C,H,W], got {tuple(teacher_feat.shape)}."
+            )
+
+        return MGDLoss(
+            student_channels=student_feat.size(1),
+            teacher_channels=teacher_feat.size(1),
+            alpha_mgd=self.mgd_alpha,
+            lambda_mgd=self.mgd_lambda,
+            mask_mode=self.mgd_mask_mode,
+        )
+
+    def _compute_feature_kd_loss(
+        self,
+        student_features,
+        teacher_features,
+        teacher_logits,
+    ):
+        loss, logs = self._feature_kd_loss(
+            feat_student=student_features[-1],
+            feat_teacher=teacher_features[-1],
+            return_dict=True,
+        )
+
+        return loss, {
+            "MGDraw": logs["mgd_raw_loss"],
+        }
+
 
 class TrainerCiFarTimmStyleReviewKD(TrainerCiFarTimmStyleFeatureKD):
     pass

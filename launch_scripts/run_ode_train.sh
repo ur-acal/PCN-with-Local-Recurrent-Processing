@@ -22,7 +22,7 @@ if [[ "${IS_SLURM}" == 1 ]]; then
 fi
 
 ORIG_T_INP="${ORIG_T_INP:-false}"
-DATASET_NAME="${DATASET_NAME:-cifar100}"
+DATASET_NAME="${DATASET_NAME:-cifar10}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
@@ -42,6 +42,8 @@ TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
 
+NUM_EPOCHS="${NUM_EPOCHS:-200}"
+DISTILL_METHOD="${DISTILL_METHOD:-mgd}"
 NEG_SAMPLE="${NEG_SAMPLE:-index}"
 CONTRAST_METHOD="${CONTRAST_METHOD:-memory}"
 DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
@@ -70,7 +72,7 @@ python train_ode_cifar.py \
   --img_type      "scanGFI" \
   --rggb_to_rgb   "${RGGB_TO_RGB}" \
   --dataset       "${DATASET_NAME}" \
-  --num_epochs    200 \
+  --num_epochs    "${NUM_EPOCHS}" \
   --eval_every    5 \
   --offset_eps    0.0 \
   --inp_channels  "${INP[@]}" \
@@ -96,7 +98,7 @@ python train_ode_cifar.py \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
   --teacher_input_size "${TEACHER_INPUT_SIZE}" \
   --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-  --distill_method "srrl" \
+  --distill_method  "${DISTILL_METHOD}" \
   --contrast_method "${CONTRAST_METHOD}" \
   --neg_sample      "${NEG_SAMPLE}" \
   --orig_t_inp      "${ORIG_T_INP}" \
