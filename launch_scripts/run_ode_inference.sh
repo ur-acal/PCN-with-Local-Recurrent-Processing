@@ -168,7 +168,7 @@ run_model(){
     --noise_level_list  "${noise_level_list}" \
     --pc_conv           "${_pc_conv}Noisy" \
     --ode_block         "ODEXInitFFFB" \
-    --test_only         "true" \
+    --test_only         "false" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_mismatch_${mismatch_type}_tol_${tol}/job.log"
 }
 export -f run_model

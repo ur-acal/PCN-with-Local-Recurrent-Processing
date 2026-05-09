@@ -16,27 +16,33 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
 ORIG_T_INP_SEL=(true false)
 CONTRAST_METHODS=(memory)
-NEG_SAMPLES=(index label)
-DISTILL_ALPHAS=(0.3 0.5 0.8)
+NEG_SAMPLES=(index)
+DISTILL_ALPHAS=(0.3)
 DISTILL_TEMPERATURES=(2.0)
+DISTILL_METHODS=( "srrl" "mgd" "kd" "none" )
+N_EPOCHS_LIST=( 300 )
 
-for orig_t_inp in "${ORIG_T_INP_SEL[@]}"; do
-  for contrast_method in "${CONTRAST_METHODS[@]}"; do
-    for neg_sample in "${NEG_SAMPLES[@]}"; do
-      for distill_alpha in "${DISTILL_ALPHAS[@]}"; do
-        for distill_temperature in "${DISTILL_TEMPERATURES[@]}"; do
-          # Note: when using moco, the neg_samples arg is useless.
-          if [[ "${contrast_method}" == "moco" && "${neg_sample}" == "label" ]]; then
-            continue
-          fi
-          jid=$(
-            sbatch --parsable \
-              --gres=gpu:${GPUS_PER_JOB} \
-              --export=ALL,IS_SLURM=1,ORIG_T_INP="${orig_t_inp}",CONTRAST_METHOD="${contrast_method}",NEG_SAMPLE="${neg_sample}",DISTILL_ALPHA="${distill_alpha}",DISTILL_TEMPERATURE="${distill_temperature}" \
-              "${SBATCH_SCRIPT}"
-          )
-          echo "submitted job ${jid}: orig_t_inp=${orig_t_inp}, contrast_method=${contrast_method}, neg_sample=${neg_sample}, alpha=${distill_alpha}, temp=${distill_temperature}"
-          sleep "10"
+for num_epochs in "${N_EPOCHS_LIST[@]}"; do
+  for distill_method in "${DISTILL_METHODS[@]}"; do
+    for orig_t_inp in "${ORIG_T_INP_SEL[@]}"; do
+      for contrast_method in "${CONTRAST_METHODS[@]}"; do
+        for neg_sample in "${NEG_SAMPLES[@]}"; do
+          for distill_alpha in "${DISTILL_ALPHAS[@]}"; do
+            for distill_temperature in "${DISTILL_TEMPERATURES[@]}"; do
+              # Note: when using moco, the neg_samples arg is useless.
+              if [[ "${contrast_method}" == "moco" && "${neg_sample}" == "label" ]]; then
+                continue
+              fi
+              jid=$(
+                sbatch --parsable \
+                  --gres=gpu:${GPUS_PER_JOB} \
+                  --export=ALL,IS_SLURM=1,DISTILL_METHOD="${distill_method}",NUM_EPOCHS="${num_epochs}",ORIG_T_INP="${orig_t_inp}",CONTRAST_METHOD="${contrast_method}",NEG_SAMPLE="${neg_sample}",DISTILL_ALPHA="${distill_alpha}",DISTILL_TEMPERATURE="${distill_temperature}" \
+                  "${SBATCH_SCRIPT}"
+              )
+              echo "submitted job ${jid}: distill_method=${distill_method}, orig_t_inp=${orig_t_inp}, contrast_method=${contrast_method}, neg_sample=${neg_sample}, alpha=${distill_alpha}, temp=${distill_temperature}, num_epochs=${num_epochs}"
+              sleep "1"
+            done
+          done
         done
       done
     done

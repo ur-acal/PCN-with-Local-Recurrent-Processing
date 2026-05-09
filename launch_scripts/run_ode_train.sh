@@ -22,7 +22,7 @@ if [[ "${IS_SLURM}" == 1 ]]; then
 fi
 
 ORIG_T_INP="${ORIG_T_INP:-false}"
-DATASET_NAME="${DATASET_NAME:-cifar10}"
+DATASET_NAME="${DATASET_NAME:-cifar100}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
