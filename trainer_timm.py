@@ -29,6 +29,8 @@ from pc_model import PCNet
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, PackedRGGBToRGB
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions
+from distillation import SimKD, SRRLLoss, TeacherFeatureExtractor
+
 
 from trainer import TrainerCiFar, _normalize_dataset_name, _CIFAR_STATS
 
@@ -914,3 +916,463 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         torch.save(state, save_pth_path)
         return save_pth_path
 
+
+class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
+    """
+    Generic timm trainer for feature-based distillation.
+
+    Designed for methods like:
+        SRRL
+        MGD
+        ReviewKD
+
+    Student inference architecture is unchanged:
+        outputs = self.model(inputs)
+
+    Feature-KD modules are training-only.
+    """
+
+    feature_kd_name = None  # e.g. "srrl", "mgd", "reviewkd"
+
+    def __init__(
+        self,
+        *args,
+        feature_kd_beta=1.0,
+        **kwargs,
+    ):
+        raw_distill_method = (kwargs.get("distill_method", "none") or "none").lower()
+        raw_distill_method = raw_distill_method.replace("+", "_")
+
+        if "crd" in raw_distill_method:
+            raise ValueError(
+                f"{self.__class__.__name__} does not support CRD. "
+                "Use your original trainer for CRD."
+            )
+
+        if self.feature_kd_name is None:
+            raise ValueError("feature_kd_name must be set in subclass.")
+
+        self._feature_kd_requested = self.feature_kd_name in raw_distill_method
+
+        base_tokens = [
+            token for token in raw_distill_method.split("_")
+            if token not in {"", self.feature_kd_name}
+        ]
+        kwargs["distill_method"] = "_".join(base_tokens) if base_tokens else "none"
+
+        self.feature_kd_beta = float(feature_kd_beta)
+
+        super().__init__(*args, **kwargs)
+
+        self._feature_kd_loss = None
+        self._teacher_extractor = None
+
+        if self._feature_kd_requested:
+            if self.teacher_model is None:
+                raise ValueError(f"{self.feature_kd_name.upper()} requires teacher_model.")
+
+            self._teacher_extractor = self._make_teacher_extractor()
+            self._teacher_extractor = self._teacher_extractor.to(self.device)
+
+            self._build_feature_kd_from_one_batch()
+            self._add_feature_kd_to_optimizer()
+
+            # Rebuild timm scheduler after adding auxiliary module params.
+            self._build_timm_scheduler()
+
+    # ------------------------------------------------------------------
+    # Methods intended to be overridden by subclasses
+    # ------------------------------------------------------------------
+    def _make_teacher_extractor(self):
+        """
+        Override if a method needs a different teacher feature extractor.
+
+        For SRRL/MGD, final 4D feature is enough.
+        For ReviewKD, this should return multi-stage teacher features.
+        """
+        return TeacherFeatureExtractor(self.teacher_model)
+
+    def _make_feature_kd_loss(self, student_features, teacher_features):
+        """
+        Build the method-specific auxiliary loss module.
+
+        Args:
+            student_features: usually a list of student feature maps
+            teacher_features: usually a list of teacher feature maps
+
+        Returns:
+            nn.Module with:
+                trainable_parameters()
+                forward(...)
+        """
+        raise NotImplementedError
+
+    def _compute_feature_kd_loss(
+        self,
+        student_features,
+        teacher_features,
+        teacher_logits,
+    ):
+        """
+        Compute method-specific feature KD loss.
+
+        Returns:
+            loss, log_dict
+        """
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    # Shared utilities
+    # ------------------------------------------------------------------
+    def _build_timm_loss_and_mixup(self):
+        super()._build_timm_loss_and_mixup()
+
+        if self._feature_kd_requested and self.orig_t_inp and self.mixup_fn is not None:
+            # Todo: How do we make Mixup/CutMix work with orig_t_inp=True?
+            logging.warning(
+                "Disabling Mixup/CutMix because %s with orig_t_inp=True "
+                "would require applying the same Mixup/CutMix operation to "
+                "student_inputs and teacher_inputs.",
+                self.feature_kd_name.upper(),
+            )
+            self.mixup_fn = None
+
+            if self.label_smoothing > 0.0:
+                self.train_loss_fn = LabelSmoothingCrossEntropy(
+                    smoothing=self.label_smoothing
+                )
+            else:
+                self.train_loss_fn = self.loss_fn
+
+    def _unpack_train_batch(self, _data):
+        teacher_inputs = None
+
+        if self.orig_t_inp and isinstance(_data, (list, tuple)):
+            if len(_data) == 3:
+                inputs, teacher_inputs, labels = _data
+            elif len(_data) == 4:
+                inputs, teacher_inputs, labels, _ = _data
+            elif len(_data) == 5:
+                inputs, teacher_inputs, labels, _, _ = _data
+            else:
+                raise RuntimeError(
+                    f"Unexpected batch format with orig_t_inp=True: len={len(_data)}"
+                )
+
+        elif isinstance(_data, (list, tuple)) and len(_data) == 4:
+            inputs, labels, _, _ = _data
+
+        elif isinstance(_data, (list, tuple)) and len(_data) == 3:
+            inputs, labels, _ = _data
+
+        else:
+            inputs, labels = _data
+
+        return inputs, teacher_inputs, labels
+
+    def _student_forward_feature_kd(self, inputs):
+        """
+        Default: use model(inputs, is_feat=True), and return all features.
+
+        Your PCNet returns:
+            [feat], out
+
+        so this works directly for SRRL/MGD.
+
+        For ReviewKD, modify PCNet to return multiple features:
+            [feat1, feat2, feat3, feat4], out
+        """
+        if self.noisy_model is not None and self.model.training:
+            noisy_params = self.noisy_model.gen_noisy_params()
+            result = torch.func.functional_call(
+                self.model,
+                noisy_params,
+                (inputs,),
+                {"is_feat": True},
+            )
+        else:
+            result = self.model(inputs, is_feat=True)
+
+        if not isinstance(result, (tuple, list)) or len(result) != 2:
+            raise RuntimeError(
+                "Expected student model to return (features, logits) when is_feat=True."
+            )
+
+        features, outputs = result
+
+        if not isinstance(features, (tuple, list)):
+            features = [features]
+
+        if len(features) == 0:
+            raise RuntimeError("Student returned an empty feature list.")
+
+        return outputs, list(features)
+
+    def _prepare_feature_kd_teacher_inputs(self, inputs):
+        if self.img_type == "scanGFI":
+            return self._prepare_teacher_inputs(inputs)
+        return inputs
+
+    def _teacher_forward_feature_kd(self, inputs):
+        """
+        Default: final teacher feature only.
+
+        Return:
+            teacher_logits
+            [teacher_feat]
+
+        ReviewKD can override this to return multiple teacher features.
+        """
+        if self._teacher_extractor is None:
+            raise RuntimeError("Teacher extractor was not initialized.")
+
+        inputs = self._prepare_feature_kd_teacher_inputs(inputs)
+
+        with torch.no_grad():
+            teacher_feat = self._teacher_extractor.forward_features(inputs)
+            teacher_logits = self._teacher_extractor.forward_logits_from_feature(
+                teacher_feat
+            )
+
+        return teacher_logits, [teacher_feat]
+
+    def _build_feature_kd_from_one_batch(self):
+        was_training = self.model.training
+
+        self.model.eval()
+        self.teacher_model.eval()
+
+        _data = next(iter(self.train_dataloader))
+        inputs, teacher_inputs, _ = self._unpack_train_batch(_data)
+
+        inputs = inputs.to(self.device)
+        if teacher_inputs is not None:
+            teacher_inputs = teacher_inputs.to(self.device)
+
+        with torch.no_grad():
+            _, student_features = self._student_forward_feature_kd(inputs)
+            _, teacher_features = self._teacher_forward_feature_kd(
+                teacher_inputs if teacher_inputs is not None else inputs
+            )
+
+        self._feature_kd_loss = self._make_feature_kd_loss(
+            student_features,
+            teacher_features,
+        ).to(self.device)
+
+        if was_training:
+            self.model.train()
+        else:
+            self.model.eval()
+
+    def _add_feature_kd_to_optimizer(self):
+        if self._feature_kd_loss is None:
+            return
+
+        params = list(self._feature_kd_loss.trainable_parameters())
+        if not params:
+            return
+
+        base_group = self.optimizer.param_groups[0]
+
+        new_group = {
+            "params": params,
+            "lr": base_group["lr"],
+            "weight_decay": base_group.get("weight_decay", 0.0),
+        }
+
+        for key in ("betas", "eps", "momentum"):
+            if key in base_group:
+                new_group[key] = base_group[key]
+
+        self.optimizer.add_param_group(new_group)
+
+    def _kd_loss(self, student_logits, teacher_logits):
+        return F.kl_div(
+            F.log_softmax(student_logits / self.distill_temperature, dim=1),
+            F.softmax(teacher_logits / self.distill_temperature, dim=1),
+            reduction="batchmean",
+        ) * (self.distill_temperature ** 2)
+
+    # ------------------------------------------------------------------
+    # Generic feature-KD train loop
+    # ------------------------------------------------------------------
+    def train_one_epoch(self, epoch):
+        if not self._feature_kd_requested:
+            return super().train_one_epoch(epoch)
+
+        self.model.train()
+        self.teacher_model.eval()
+
+        if self._teacher_extractor is not None:
+            self._teacher_extractor.eval()
+
+        if self._feature_kd_loss is not None:
+            self._feature_kd_loss.train()
+
+        running_loss, n_samples = 0.0, 0
+
+        progress_bar = tqdm.tqdm(
+            enumerate(self.train_dataloader),
+            total=len(self.train_dataloader),
+            desc="Training",
+        )
+
+        for _i, _data in progress_bar:
+            inputs, teacher_inputs, labels = self._unpack_train_batch(_data)
+
+            n_samples += inputs.size(0)
+
+            inputs = inputs.to(self.device)
+            labels = labels.to(self.device)
+
+            if teacher_inputs is not None:
+                teacher_inputs = teacher_inputs.to(self.device)
+
+            labels_for_ce = labels
+
+            if self.mixup_fn is not None:
+                if teacher_inputs is not None:
+                    raise RuntimeError(
+                        "Mixup/CutMix with orig_t_inp=True should have been disabled."
+                    )
+                inputs, labels_for_ce = self.mixup_fn(inputs, labels)
+
+            self.optimizer.zero_grad()
+
+            outputs, student_features = self._student_forward_feature_kd(inputs)
+
+            teacher_logits, teacher_features = self._teacher_forward_feature_kd(
+                teacher_inputs if teacher_inputs is not None else inputs
+            )
+
+            ce_loss = self.train_loss_fn(outputs, labels_for_ce)
+
+            kd_loss = None
+            if self._kd_enabled:
+                kd_loss = self._kd_loss(outputs, teacher_logits)
+                base_loss = (
+                    (1.0 - self.distill_alpha) * ce_loss
+                    + self.distill_alpha * kd_loss
+                )
+            else:
+                base_loss = ce_loss
+
+            feature_kd_loss, feature_logs = self._compute_feature_kd_loss(
+                student_features=student_features,
+                teacher_features=teacher_features,
+                teacher_logits=teacher_logits,
+            )
+
+            loss = base_loss + self.feature_kd_beta * feature_kd_loss
+
+            loss.backward()
+
+            if self.max_norm is not None:
+                grad_params = list(self.model.parameters())
+                if self._feature_kd_loss is not None:
+                    grad_params += list(self._feature_kd_loss.trainable_parameters())
+
+                nn.utils.clip_grad_norm_(grad_params, max_norm=self.max_norm)
+
+            self.optimizer.step()
+
+            running_loss += loss.item() * inputs.size(0)
+            avg_loss = running_loss / n_samples
+
+            postfix = {
+                "Iter": f"{_i + 1}/{len(self.train_dataloader)}",
+                "Loss": f"{avg_loss:.4f}",
+                "CE": f"{ce_loss.item():.4f}",
+                self.feature_kd_name.upper(): f"{feature_kd_loss.item():.4f}",
+                "LR": self.optimizer.param_groups[0]["lr"],
+            }
+
+            if kd_loss is not None:
+                postfix["KD"] = f"{kd_loss.item():.4f}"
+
+            for k, v in feature_logs.items():
+                if torch.is_tensor(v):
+                    postfix[k] = f"{v.item():.4f}"
+
+            if self.noisy_model is not None:
+                postfix["Noise"] = f"{self.noisy_model.current_noise_level:.3f}"
+
+            if self.mixup_fn is not None:
+                postfix["Mix"] = "on"
+
+            progress_bar.set_postfix(postfix)
+
+        running_loss /= n_samples
+        return running_loss
+
+
+class TrainerCiFarTimmStyleSRRL(TrainerCiFarTimmStyleFeatureKD):
+    feature_kd_name = "srrl"
+
+    def __init__(
+        self,
+        *args,
+        srrl_beta=1.0,
+        srrl_stat_weight=1.0,
+        srrl_pred_weight=1.0,
+        **kwargs,
+    ):
+        self.srrl_stat_weight = float(srrl_stat_weight)
+        self.srrl_pred_weight = float(srrl_pred_weight)
+
+        super().__init__(
+            *args,
+            feature_kd_beta=srrl_beta,
+            **kwargs,
+        )
+
+    def _make_teacher_extractor(self):
+        return TeacherFeatureExtractor(self.teacher_model)
+
+    def _make_feature_kd_loss(self, student_features, teacher_features):
+        student_feat = student_features[-1]
+        teacher_feat = teacher_features[-1]
+
+        if student_feat.dim() != 4:
+            raise RuntimeError(
+                f"SRRL requires 4D student feature [B,C,H,W], got {tuple(student_feat.shape)}."
+            )
+
+        if teacher_feat.dim() != 4:
+            raise RuntimeError(
+                f"SRRL requires 4D teacher feature [B,C,H,W], got {tuple(teacher_feat.shape)}."
+            )
+
+        return SRRLLoss(
+            in_channels=student_feat.size(1),
+            out_channels=teacher_feat.size(1),
+            stat_weight=self.srrl_stat_weight,
+            pred_weight=self.srrl_pred_weight,
+        )
+
+    def _compute_feature_kd_loss(
+        self,
+        student_features,
+        teacher_features,
+        teacher_logits,
+    ):
+        loss, logs = self._feature_kd_loss(
+            feat_student=student_features[-1],
+            feat_teacher=teacher_features[-1],
+            teacher_logits=teacher_logits,
+            teacher_head=self._teacher_extractor.classify_feature,
+            return_dict=True,
+        )
+
+        return loss, {
+            "Stat": logs["srrl_stat_loss"],
+            "Pred": logs["srrl_pred_loss"],
+        }
+
+
+class TrainerCiFarTimmStyleMGD(TrainerCiFarTimmStyleFeatureKD):
+    pass
+
+class TrainerCiFarTimmStyleReviewKD(TrainerCiFarTimmStyleFeatureKD):
+    pass

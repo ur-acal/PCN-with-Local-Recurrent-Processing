@@ -62,7 +62,7 @@ class PCNet(nn.Module):
         self.noise_level = kwargs.get("noise_level", 0.0)
         self.noise_level = 0.0 if self.noise_level is None else self.noise_level
 
-    def forward(self, x, clamp=False):
+    def forward(self, x, clamp=False, is_feat=False):
         for i in range(self.num_layers):
             x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
@@ -75,9 +75,12 @@ class PCNet(nn.Module):
         if self.dropout > 0.0:
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        out = F.avg_pool2d(self.relu(self.BNend(x)), x.size(-1))
+        feat = self.relu(self.BNend(x))
+        out = F.avg_pool2d(feat, feat.size(-1))
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+        if is_feat:
+            return [feat], out
         return out
 
     def save_expanded_weights(self, sample_imgs, save_to):
@@ -210,7 +213,7 @@ class PCNetNoBatchNorm(PCNet):
             max_abs = torch.max(max_abs, cur_max)
         return max_abs
 
-    def forward(self, x, clamp=False):
+    def forward(self, x, clamp=False, is_feat=False):
         for i in range(self.num_layers):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
@@ -224,9 +227,12 @@ class PCNetNoBatchNorm(PCNet):
         if self.dropout > 0.0:
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        out = F.avg_pool2d(F.relu(x), x.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        feat = F.relu(x)
+        out = F.avg_pool2d(feat, feat.size(-1)) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+        if is_feat:
+            return [feat], out
         return out
 
 
@@ -241,7 +247,7 @@ class PCNetWithMiddleConv(PCNet):
             nn.Conv2d(self.ocs[-1], self.ocs[-1], kernel_size=mid_kernel,
                       stride=1, padding=(mid_kernel-1)//2, bias=False))
 
-    def forward(self, x, clamp=False):
+    def forward(self, x, clamp=False, is_feat=False):
         for i in range(self.num_layers):
             log.info("layer {} shape: {}".format(i, x.shape))
             x = self.mid_convs[i](x)
@@ -256,9 +262,12 @@ class PCNetWithMiddleConv(PCNet):
         if self.dropout > 0.0:
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        out = F.avg_pool2d(self.relu(self.BNend(self.mid_convs[-1](x))), x.size(-1))
+        feat = self.relu(self.BNend(self.mid_convs[-1](x)))
+        out = F.avg_pool2d(feat, feat.size(-1))
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+        if is_feat:
+            return [feat], out
         return out
 
 
@@ -276,9 +285,9 @@ class PCNetSeparable(PCNetNoBatchNorm):
             self.first_conv = nn.Conv2d(self.inp_chan, self.chan, kernel_size=patch_dim, stride=patch_dim)
         self.init_args = self._get_init_args(**kwargs)
 
-    def forward(self, x, clamp=False):
+    def forward(self, x, clamp=False, is_feat=False):
         x = F.relu(self.first_conv(x))
-        out = super().forward(x, clamp)
+        out = super().forward(x, clamp, is_feat=is_feat)
         return out
 
     def _get_init_args(self, inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=None,
@@ -310,7 +319,7 @@ class PCNetSepBN(PCNetSeparable):
         self.BN_start = nn.BatchNorm2d(self.chan)
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ocs[i]) for i in range(self.num_layers)])
 
-    def forward(self, x, clamp=False):
+    def forward(self, x, clamp=False, is_feat=False):
         x = F.relu(self.first_conv(x))
         for i in range(self.num_layers):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
@@ -323,9 +332,12 @@ class PCNetSepBN(PCNetSeparable):
         # classifier
         if self.dropout > 0.0:
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        out = F.avg_pool2d(F.relu(x), x.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        feat = F.relu(x)
+        out = F.avg_pool2d(feat, feat.size(-1)) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+        if is_feat:
+            return [feat], out
         return out
 
 
@@ -333,7 +345,7 @@ class PCNetSepBNRes(PCNetSepBN):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def forward(self, x, clamp=False):
+    def forward(self, x, clamp=False, is_feat=False):
         x = F.relu(self.first_conv(x))
         for i in range(self.num_layers):
             inp = x.clone()
@@ -347,9 +359,12 @@ class PCNetSepBNRes(PCNetSepBN):
         # classifier
         if self.dropout > 0.0:
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        out = F.avg_pool2d(F.relu(x), x.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        feat = F.relu(x)
+        out = F.avg_pool2d(feat, feat.size(-1)) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+        if is_feat:
+            return [feat], out
         return out
 
 

@@ -11,7 +11,7 @@ import numpy as np
 
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from switch import SWITCH_CLASSES
-from trainer_timm import TrainerCiFarTimmStyle
+from trainer_timm import TrainerCiFarTimmStyle, TrainerCiFarTimmStyleSRRL, TrainerCiFarTimmStyleMGD, TrainerCiFarTimmStyleReviewKD
 from baseline.baseline_cifar_configs import CASE_DEFAULTS, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
@@ -123,7 +123,7 @@ def get_args():
         "--distill_method",
         type=str,
         default="kd",
-        choices=["none", "kd", "crd", "kd_crd", "kd+crd"],
+        choices=["none", "kd", "crd", "kd_crd", "kd+crd", "simkd", "kd_simkd", "kd+simkd", "srrl", "mgd", "reviewkd"],
         help="Distillation strategy to apply.",
     )
     p.add_argument(
@@ -390,7 +390,11 @@ def build_teacher_model(args, student_in_channels=None, orig_t_inp=False):
     method_lower = method.lower()
     needs_kd = "kd" in method_lower and args.distill_alpha > 0.0
     needs_crd = "crd" in method_lower
-    if not args.teacher_ckpt or not (needs_kd or needs_crd):
+    needs_simkd = "simkd" in method_lower
+    needs_srrl = "srrl" in method_lower
+    needs_mgd = "mgd" in method_lower
+    needs_reviewkd = "reviewkd" in method_lower
+    if not args.teacher_ckpt or not (needs_kd or needs_crd or needs_simkd or needs_srrl or needs_mgd or needs_reviewkd):
         return None
     if args.teacher_arch is None:
         raise ValueError("teacher_arch must be specified when using a teacher checkpoint.")
@@ -463,6 +467,22 @@ def build_teacher_model(args, student_in_channels=None, orig_t_inp=False):
     teacher_model.to(device)
     teacher_model.eval()
     return teacher_model
+
+def _get_feature_kd_trainer(args):
+    method = getattr(args, "distill_method", "none")
+    method_lower = method.lower()
+
+    needs_srrl = "srrl" in method_lower
+    needs_mgd = "mgd" in method_lower
+    needs_reviewkd = "reviewkd" in method_lower
+
+    if needs_srrl:
+        return TrainerCiFarTimmStyleSRRL
+    if needs_mgd:
+        return TrainerCiFarTimmStyleMGD
+    if needs_reviewkd:
+        return TrainerCiFarTimmStyleReviewKD
+    return TrainerCiFarTimmStyle
 
 def main():
     args = get_args()
@@ -608,7 +628,9 @@ def main():
         args.lr_reduce_on, args.max_g_norm, args.cosine_t0))
     teacher_model = None
     method_lower = args.distill_method.lower()
-    needs_teacher = ("crd" in method_lower) or ("kd" in method_lower and args.distill_alpha > 0.0)
+
+    needs_teacher = ("crd" in method_lower) or ("kd" in method_lower and args.distill_alpha > 0.0) or ("simkd" in method_lower)\
+                    or ("srrl" in method_lower) or ("mgd" in method_lower) or ("reviewkd" in method_lower)
     if needs_teacher:
         if not args.teacher_ckpt:
             raise ValueError(f"distill_method={args.distill_method} requires --teacher_ckpt.")
@@ -618,6 +640,7 @@ def main():
     elif args.teacher_ckpt:
         logging.warning("teacher_ckpt provided but distillation disabled by configuration; ignoring teacher.")
     if args.timm_trainer:
+        timm_trainer_cls = _get_feature_kd_trainer(args)
         cfg = CASE_DEFAULTS["custom_noresize"].copy()
         cfg["lr"] = args.learning_rate
         cfg["num_epochs"] = args.num_epochs
@@ -654,13 +677,14 @@ def main():
             img_type=args.img_type,
             dataset_name=args.dataset,
 
-            # Keep these disabled for plain baseline training.
-            noise_level=args.noise_level,
-            noise_type=args.noise_type,
-            mismatch_levels=None,
-            distill_alpha=0.0,
-            teacher_model=None,
-            orig_t_inp=False,
+            # Distillation related args.
+            distill_method=args.distill_method,
+            distill_alpha=args.distill_alpha,
+            distill_temperature=args.distill_temperature,
+            teacher_model=teacher_model,
+            orig_t_inp=args.orig_t_inp,
+            teacher_input_size=args.teacher_input_size,
+            teacher_center_crop=args.teacher_center_crop,
 
             # TrainerCiFarTimmStyle-specific args.
             timm_opt=cfg["timm_opt"],
@@ -692,7 +716,7 @@ def main():
             is_timm_model=False,
             skip_eval_epochs=cfg["skip_eval_epochs"],
         )
-        trainer = TrainerCiFarTimmStyle(**trainer_kwargs)
+        trainer = timm_trainer_cls(**trainer_kwargs)
     else:
         trainer = TrainerCiFar(
             model         = model,
