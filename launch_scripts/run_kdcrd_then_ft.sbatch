@@ -55,6 +55,12 @@ else
 fi
 TRAIN_BATCH_SIZE="${patch_bs:-128}"
 
+##########################################################################
+# Newly added TIMM + distillation args
+##########################################################################
+DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
+IS_TIMM="${IS_TIMM:-true}"
+
 TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
 TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
@@ -167,6 +173,8 @@ run_one_combo () {
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --optim         "SGD" \
+    --timm_trainer  "${IS_TIMM}" \
+    --timm_sched    "cosine" \
     --img_type      "${IMG_TYPE}" \
     --dataset       "${TASK}" \
     --num_classes   "${N_CLASSES}" \
@@ -203,7 +211,7 @@ run_one_combo () {
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
     --teacher_input_size "${TEACHER_INPUT_SIZE}" \
     --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-    --distill_method kd_crd \
+    --distill_method "${DISTILL_METHOD}" \
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \
     --mem_frac      "${MEM_FRAC}" \
@@ -291,6 +299,7 @@ eval_one_combo_model() {
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
     --img_type        "${IMG_TYPE}" \
+    --noisy_trials    "20" \
     --conv_only       "true" \
     --test_expanded   "true" \
     --diff_mismatch   "true" \
@@ -324,6 +333,8 @@ finetune_one_combo_model() {
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --dataset       "${TASK}" \
+    --timm_trainer  "${IS_TIMM}" \
+    --timm_sched    "cosine" \
     --num_classes   "${N_CLASSES}" \
     --ckpt          "${ckpt}" \
     --optim         "SGD" \
@@ -368,7 +379,7 @@ finetune_one_combo_model() {
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
     --teacher_input_size "${TEACHER_INPUT_SIZE}" \
     --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-    --distill_method kd_crd \
+    --distill_method "${DISTILL_METHOD}" \
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \
     --contrast_method "memory" \

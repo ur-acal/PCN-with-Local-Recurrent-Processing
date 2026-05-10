@@ -14,13 +14,13 @@ SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_ode_train.sh"
 MAX_TASKS_PER_GPU="${MAX_TASKS_PER_GPU:-1}"
 GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
-ORIG_T_INP_SEL=(true false)
+ORIG_T_INP_SEL=(false)
 CONTRAST_METHODS=(memory)
 NEG_SAMPLES=(index)
 DISTILL_ALPHAS=(0.3)
 DISTILL_TEMPERATURES=(2.0)
-DISTILL_METHODS=( "srrl" "mgd" "kd" "none" )
-N_EPOCHS_LIST=( 300 )
+DISTILL_METHODS=( "srrl" "kd" "none" )
+N_EPOCHS_LIST=( 600 )
 
 for num_epochs in "${N_EPOCHS_LIST[@]}"; do
   for distill_method in "${DISTILL_METHODS[@]}"; do
