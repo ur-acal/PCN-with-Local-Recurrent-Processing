@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
 #SBATCH --gres=gpu:1                  # exactly ONE GPU; allows packing on 4-GPU nodes
-#SBATCH -t 72:10:00
+#SBATCH -t 90:10:00
 #SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082
 #SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
@@ -214,6 +214,7 @@ run_one_combo () {
     --distill_method "${DISTILL_METHOD}" \
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \
+    --test_only     "false" \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }
@@ -383,6 +384,7 @@ finetune_one_combo_model() {
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \
     --contrast_method "memory" \
+    --test_only     "false" \
     --mem_frac      "${MEM_FRAC}" \
     2>&1 | tee "${logfile}"
 }

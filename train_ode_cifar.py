@@ -652,6 +652,8 @@ def main():
         cfg["timm_sched"] = args.timm_sched
         # not used when timm_sched is "cosine"
         cfg["lr_reduce_on"] = args.lr_reduce_on
+        if args.timm_sched == "cosine":
+            cfg["skip_eval_epochs"] = max(cfg["skip_eval_epochs"], 0.5 * args.num_epochs)
 
         if args.img_type != "rgb" and args.rggb_to_rgb:
             cfg.update(RGGB_TO_RGB_EXTRAS)
@@ -667,13 +669,13 @@ def main():
             optim_type="sgd",  # ignored by TrainerCiFarTimmStyle._get_optimizer
             weight_decay=cfg["weight_decay"],
             learning_rate=cfg["lr"],
-            num_epochs=cfg["num_epochs"],
+            num_epochs=cfg["num_epochs"] if not args.test_only else 2,
             warmup_epoch=cfg["warmup_epoch"],
             lr_reduce_on=cfg.get("lr_reduce_on", "80,122,150,225,262"),
             test_bs=cfg["test_batch_size"],
             max_norm=cfg.get("max_norm", None),
             aug=False,  # transforms are handled by TrainerCiFarTimmStyle
-            eval_every=args.eval_every,
+            eval_every=args.eval_every if not args.test_only else 2,
             img_type=args.img_type,
             dataset_name=args.dataset,
 
@@ -714,7 +716,11 @@ def main():
 
             # Todo: Later on make the PCN compatible with timm.
             is_timm_model=False,
-            skip_eval_epochs=cfg["skip_eval_epochs"],
+            skip_eval_epochs=cfg["skip_eval_epochs"] if not args.test_only else 0,
+
+            # Mismatch aware training
+            noise_level=args.noise_level,
+            noise_type=args.noise_type,
         )
         trainer = timm_trainer_cls(**trainer_kwargs)
     else:
@@ -727,14 +733,14 @@ def main():
             weight_decay  = args.weight_decay,
             loss_fn       = loss_fn,
             learning_rate = args.learning_rate,
-            num_epochs    = args.num_epochs,
+            num_epochs    = args.num_epochs if not args.test_only else 2,
             warmup_epoch  = args.warmup_epoch,
             lr_reduce_on  = args.lr_reduce_on,
             test_bs       = args.batch_size,
             max_norm      = args.max_g_norm,
             aug           = args.aug,
             T0            = args.cosine_t0,
-            eval_every    = args.eval_every,
+            eval_every    = args.eval_every if not args.test_only else 2,
             img_type      = args.img_type,
             dataset_name  = args.dataset,
             noise_level   = args.noise_level,
@@ -753,17 +759,14 @@ def main():
             teacher_model = teacher_model,
             teacher_input_size = args.teacher_input_size,
             teacher_center_crop = args.teacher_center_crop,
-            skip_eval_epochs=args.skip_eval_epochs,
+            skip_eval_epochs=args.skip_eval_epochs if not args.test_only else 0,
         )
 
     if teacher_model is not None:
         evaluate_teacher(teacher_model, trainer)
 
     if args.test_only:
-        _ = model(next(iter(trainer.train_dataloader))[0].to(trainer.device))
-        logging.info("Test model forward only. Exit without training the model.")
-        logging.info("Result: {}".format(_))
-        exit(0)
+        logging.warning("Test only. Run 2 epochs.")
 
     trainer.train()
 
