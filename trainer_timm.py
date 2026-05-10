@@ -20,6 +20,7 @@ from pathlib import Path
 
 import timm
 from timm.data import Mixup, create_transform, create_loader, resolve_model_data_config
+from timm.data.mixup import mixup_target, cutmix_bbox_and_lam
 from timm.loss import SoftTargetCrossEntropy, LabelSmoothingCrossEntropy
 from timm.optim import create_optimizer_v2
 from timm.scheduler import CosineLRScheduler, MultiStepLRScheduler
@@ -962,6 +963,10 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
         self.feature_kd_beta = float(feature_kd_beta)
 
+        # To support mixup/cutmix with orig_t_inp=True when training with distillation.
+        self._paired_mixup_active = False
+        self._paired_mixup_fn = None
+
         super().__init__(*args, **kwargs)
 
         self._feature_kd_loss = None
@@ -1025,24 +1030,115 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
     # Shared utilities
     # ------------------------------------------------------------------
     def _build_timm_loss_and_mixup(self):
+        # Parent TrainerCiFarTimmStyle disables Mixup/CutMix when
+        # _kd_enabled and orig_t_inp=True. For feature-KD, we want to
+        # keep Mixup/CutMix and apply paired mixing ourselves.
+        old_kd_enabled = getattr(self, "_kd_enabled", False)
+
+        if self._feature_kd_requested and self.orig_t_inp:
+            self._kd_enabled = False
+
         super()._build_timm_loss_and_mixup()
+        self._kd_enabled = old_kd_enabled
+
+        self._paired_mixup_active = False
+        self._paired_mixup_fn = None
 
         if self._feature_kd_requested and self.orig_t_inp and self.mixup_fn is not None:
-            # Todo: How do we make Mixup/CutMix work with orig_t_inp=True?
+            assert self.mixup_mode == "batch" and self.cutmix_minmax is None
+
             logging.warning(
-                "Disabling Mixup/CutMix because %s with orig_t_inp=True "
-                "would require applying the same Mixup/CutMix operation to "
-                "student_inputs and teacher_inputs.",
+                "Using paired timm-style Mixup/CutMix for %s with orig_t_inp=True. ",
                 self.feature_kd_name.upper(),
             )
+
+            # Keep timm's Mixup object for its params / label smoothing config.
+            # Do not call it directly because it only mixes one input tensor.
+            self._paired_mixup_active = True
+            self._paired_mixup_fn = self.mixup_fn
+
+            # Disable normal one-input timm Mixup path.
+            # train_loss_fn remains SoftTargetCrossEntropy from super().
             self.mixup_fn = None
 
-            if self.label_smoothing > 0.0:
-                self.train_loss_fn = LabelSmoothingCrossEntropy(
-                    smoothing=self.label_smoothing
+    def _scale_bbox_to_tensor(self, bbox, src_shape, dst_shape):
+        """
+        Scale a CutMix bbox from src H/W to dst H/W.
+
+        bbox is timm-style: (yl, yh, xl, xh).
+        """
+        yl, yh, xl, xh = bbox
+
+        src_h, src_w = src_shape[-2:]
+        dst_h, dst_w = dst_shape[-2:]
+
+        yl2 = int(round(float(yl) / float(src_h) * dst_h))
+        yh2 = int(round(float(yh) / float(src_h) * dst_h))
+        xl2 = int(round(float(xl) / float(src_w) * dst_w))
+        xh2 = int(round(float(xh) / float(src_w) * dst_w))
+
+        yl2 = max(0, min(dst_h, yl2))
+        yh2 = max(0, min(dst_h, yh2))
+        xl2 = max(0, min(dst_w, xl2))
+        xh2 = max(0, min(dst_w, xh2))
+
+        return yl2, yh2, xl2, xh2
+
+    def _paired_timm_mixup_cutmix(self, inputs, teacher_inputs, labels):
+        """
+        Timm-aligned paired Mixup/CutMix.
+
+        Aligns with timm batch mode:
+          - uses Mixup._params_per_batch()
+          - uses x.flip(0) as the paired source
+          - uses cutmix_bbox_and_lam()
+          - uses mixup_target()
+        """
+        if self._paired_mixup_fn is None:
+            raise RuntimeError("_paired_mixup_fn is None.")
+
+        assert len(inputs) % 2 == 0, "Batch size should be even when using timm Mixup."
+
+        lam, use_cutmix = self._paired_mixup_fn._params_per_batch()
+
+        mixed_inputs = inputs.clone()
+        mixed_teacher_inputs = teacher_inputs.clone()
+
+        if lam != 1.0:
+            if use_cutmix:
+                # Generate bbox on student input resolution, exactly like timm batch mode.
+                bbox_s, lam = cutmix_bbox_and_lam(
+                    mixed_inputs.shape,
+                    lam,
+                    ratio_minmax=self._paired_mixup_fn.cutmix_minmax,
+                    correct_lam=self._paired_mixup_fn.correct_lam,
                 )
+                syl, syh, sxl, sxh = bbox_s
+
+                # Apply corresponding normalized bbox to teacher input resolution.
+                tyl, tyh, txl, txh = self._scale_bbox_to_tensor(
+                    bbox_s,
+                    src_shape=mixed_inputs.shape,
+                    dst_shape=mixed_teacher_inputs.shape,
+                )
+
+                mixed_inputs[:, :, syl:syh, sxl:sxh] = inputs.flip(0)[:, :, syl:syh, sxl:sxh]
+                mixed_teacher_inputs[:, :, tyl:tyh, txl:txh] = teacher_inputs.flip(0)[:, :, tyl:tyh, txl:txh]
+
             else:
-                self.train_loss_fn = self.loss_fn
+                mixed_inputs = mixed_inputs.mul(lam).add_(inputs.flip(0).mul(1.0 - lam))
+                mixed_teacher_inputs = mixed_teacher_inputs.mul(lam).add_(
+                    teacher_inputs.flip(0).mul(1.0 - lam)
+                )
+
+        labels_for_ce = mixup_target(
+            labels,
+            self._paired_mixup_fn.num_classes,
+            lam,
+            self._paired_mixup_fn.label_smoothing,
+        )
+
+        return mixed_inputs, mixed_teacher_inputs, labels_for_ce
 
     def _unpack_train_batch(self, _data):
         teacher_inputs = None
@@ -1231,11 +1327,21 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
             labels_for_ce = labels
 
-            if self.mixup_fn is not None:
-                if teacher_inputs is not None:
+            if self._paired_mixup_active:
+                if teacher_inputs is None:
                     raise RuntimeError(
-                        "Mixup/CutMix with orig_t_inp=True should have been disabled."
+                        "Paired Mixup/CutMix requires teacher_inputs, but teacher_inputs is None."
                     )
+
+                inputs, teacher_inputs, labels_for_ce = self._paired_timm_mixup_cutmix(
+                    inputs,
+                    teacher_inputs,
+                    labels,
+                )
+            elif self.mixup_fn is not None:
+                # teacher_inputs is available when orig_t_inp=True.
+                # In this case, we should use self._paired_timm_mixup_cutmix
+                assert teacher_inputs is None
                 inputs, labels_for_ce = self.mixup_fn(inputs, labels)
 
             self.optimizer.zero_grad()
@@ -1298,7 +1404,7 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
             if self.noisy_model is not None:
                 postfix["Noise"] = f"{self.noisy_model.current_noise_level:.3f}"
 
-            if self.mixup_fn is not None:
+            if self.mixup_fn is not None or self._paired_mixup_active:
                 postfix["Mix"] = "on"
 
             progress_bar.set_postfix(postfix)
