@@ -486,8 +486,6 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
-    if args.test_only:
-        logging.basicConfig(level=logging.INFO)
     if args.dataset == "cifar100" and args.num_classes == 10:
         logging.warning("Overriding num_classes to 100 for CIFAR-100.")
         args.num_classes = 100
