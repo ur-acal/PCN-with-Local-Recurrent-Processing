@@ -186,7 +186,10 @@ def evaluate_teacher(model: torch.nn.Module, trainer: TrainerCiFar) -> float:
     correct = 0
     correct_top5 = 0
     total = 0
-    compute_top5 = getattr(trainer, "dataset_name", "cifar10") == "cifar100"
+    compute_top5 = (
+            getattr(trainer, "dataset_name", "cifar10") in {"cifar100", "imagenet", "imagenet1k", "ilsvrc2012"}
+            or getattr(trainer, "num_classes", 10) >= 100
+    )
     with torch.no_grad():
         for batch in dataloader:
             if isinstance(batch, (list, tuple)):
@@ -253,6 +256,8 @@ def _constr_model_name(args, rep=1):
         model_name += str(args.learning_rate) + 'LR_'
     if args.dataset == "cifar100":
         model_name += "C100_"
+    elif args.dataset in {"imagenet", "imagenet1k", "ilsvrc2012"}:
+        model_name += "IN1K_"
     _ksz = args.kernel_size if not isinstance(args.kernel_size, List) else args.kernel_size[0]
     _stride = args.stride if not isinstance(args.stride, List) else args.stride[0]
     model_name += "{}K{}S{}C_".format(_ksz, _stride, max(args.inp_channels)) \
@@ -670,6 +675,7 @@ def main():
             num_epochs=cfg["num_epochs"] if not args.test_only else 2,
             warmup_epoch=cfg["warmup_epoch"],
             lr_reduce_on=cfg.get("lr_reduce_on", "80,122,150,225,262"),
+            T0=args.cosine_t0,
             test_bs=cfg["test_batch_size"],
             max_norm=cfg.get("max_norm", None),
             aug=False,  # transforms are handled by TrainerCiFarTimmStyle
@@ -721,6 +727,11 @@ def main():
             noise_type=args.noise_type,
         )
         trainer = timm_trainer_cls(**trainer_kwargs)
+        if args.model_name is not None and hasattr(trainer, "load_feature_kd_from_ckpt"):
+            # Make sure the original model's distillation method matches the distillation method used now.
+            # For example, loaded model trained with MGD, now finetuning with SRRL might throw error.
+            logging.warning("Loading distillation method's auxillary module for FT.")
+            trainer.load_feature_kd_from_ckpt(ckpt_path=ckpt_path)
     else:
         trainer = TrainerCiFar(
             model         = model,

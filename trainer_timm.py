@@ -222,6 +222,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         # Parent receives lr_reduce_on but does not store it.
         self.lr_reduce_on = kwargs.get("lr_reduce_on", "80,122,150,225,262")
+        self.T_0 = kwargs.get("T0", None)
 
         self.mixup_fn = None
         self.train_loss_fn = None
@@ -281,14 +282,28 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             self.scheduler.step(epoch + 1)
         """
         if self.timm_sched == "cosine":
-            self.scheduler = CosineLRScheduler(
-                self.optimizer,
-                t_initial=self.num_epochs,
-                lr_min=self.min_lr,
-                warmup_t=self.warmup_epoch,
-                warmup_lr_init=self.warmup_lr,
-                warmup_prefix=True,
-            )
+            if self.T_0 is None:
+                logging.warning("Using cosine LR with NO restart.")
+                self.scheduler = CosineLRScheduler(
+                    self.optimizer,
+                    t_initial=self.num_epochs,
+                    lr_min=self.min_lr,
+                    warmup_t=self.warmup_epoch,
+                    warmup_lr_init=self.warmup_lr,
+                    warmup_prefix=True,
+                )
+            else:
+                logging.warning("Using cosine LR with restart. T0: {}".format(self.T_0))
+                self.scheduler = CosineLRScheduler(
+                    self.optimizer,
+                    t_initial=self.T_0,
+                    cycle_mul=2,
+                    cycle_limit=999,
+                    lr_min=self.min_lr,
+                    warmup_t=self.warmup_epoch,
+                    warmup_lr_init=self.warmup_lr,
+                    warmup_prefix=True,
+                )
 
         elif self.timm_sched == "multistep":
             decay_t = list(map(int, self.lr_reduce_on.split(",")))
@@ -359,7 +374,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             input_size, _, _, _ = self._get_timm_data_config(self.dataset_name)
             return input_size
 
-        # For non-RGB branches, keep your original custom convention.
+        # For non-RGB branches, keep the original custom convention.
         # This trainer is mainly intended for RGB/timm models.
         if self.timm_input_size is not None:
             return self.timm_input_size
@@ -556,7 +571,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
           - replaces dataloaders with timm create_loader
 
         For rggb/scanGFI/raw, original custom transforms are preserved.
-        Your original _prepare_cifar has special branches for rgb/rggb/scanGFI/raw,
+        The original _prepare_cifar has special branches for rgb/rggb/scanGFI/raw,
         so this subclass only overrides the RGB transform path.
         """
         super()._prepare_cifar(img_type, dataset_name)
@@ -785,7 +800,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         for _i, _data in progress_bar:
             teacher_inputs = None
 
-            # Keep compatibility with your original batch formats.
+            # Keep compatibility with the original batch formats.
             if self.orig_t_inp and isinstance(_data, (list, tuple)):
                 if len(_data) == 3:
                     inputs, teacher_inputs, labels = _data
@@ -886,7 +901,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         Generic checkpoint saving.
 
         This works for timm models because it does not require model.init_args.
-        Your original checkpoint path assumes init_args and reconstructs the
+        The original checkpoint path assumes init_args and reconstructs the
         model class, which is not generally available for timm models. :contentReference[oaicite:3]{index=3}
         """
         if not self.is_timm_model:
@@ -947,7 +962,7 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
         if "crd" in raw_distill_method:
             raise ValueError(
                 f"{self.__class__.__name__} does not support CRD. "
-                "Use your original trainer for CRD."
+                "Use the original trainer for CRD."
             )
 
         if self.feature_kd_name is None:
@@ -1170,7 +1185,7 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
         """
         Default: use model(inputs, is_feat=True), and return all features.
 
-        Your PCNet returns:
+        PCNet returns:
             [feat], out
 
         so this works directly for SRRL/MGD.
@@ -1411,6 +1426,55 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
         running_loss /= n_samples
         return running_loss
+
+    def _save_model_ckpt(self, acc, epoch, suffix=""):
+        save_to = os.path.join(self.save_path, self.model_name)
+        default_path = os.path.join(str(save_to), self.model_name + suffix)
+
+        save_pth_path = super()._save_model_ckpt(acc, epoch, suffix=suffix)
+
+        if not (self._feature_kd_requested and self._feature_kd_loss is not None):
+            return save_pth_path
+
+        feature_kd_state = {
+            "name": self.feature_kd_name,
+            "beta": self.feature_kd_beta,
+            "module_class": self._feature_kd_loss.__class__.__name__,
+            "state_dict": self._feature_kd_loss.state_dict(),
+        }
+
+        paths_to_update = []
+        for path in [default_path, save_pth_path]:
+            if path not in paths_to_update and os.path.exists(path):
+                paths_to_update.append(path)
+
+        for path in paths_to_update:
+            state = torch.load(path, map_location="cpu", weights_only=False)
+            state["feature_kd"] = feature_kd_state
+            torch.save(state, path)
+
+        return save_pth_path
+
+    def load_feature_kd_from_ckpt(self, ckpt_path, strict=True):
+        if self._feature_kd_loss is None:
+            raise RuntimeError("Feature-KD module has not been initialized.")
+
+        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+
+        if "feature_kd" not in ckpt:
+            raise KeyError(f"No feature_kd state found in {ckpt_path}")
+
+        saved_name = ckpt["feature_kd"].get("name", None)
+        if saved_name != self.feature_kd_name:
+            raise ValueError(
+                f"Feature-KD method mismatch: checkpoint has {saved_name}, "
+                f"current trainer has {self.feature_kd_name}."
+            )
+
+        self._feature_kd_loss.load_state_dict(
+            ckpt["feature_kd"]["state_dict"],
+            strict=strict,
+        )
 
 
 class TrainerCiFarTimmStyleSRRL(TrainerCiFarTimmStyleFeatureKD):
