@@ -34,7 +34,9 @@ mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S112C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
 
-MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+#MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+# The ckpt of this model does NOT have auxiliary modules for distillation
+MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_5REP"
 
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockXInit_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
 #######################################################################################################################
@@ -83,6 +85,8 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
           python train_ode_cifar.py \
             --dataset       "${_task}" \
             --ckpt          "${CKPT}" \
+            --timm_trainer  "true" \
+            --timm_sched    "cosine" \
             --rggb_to_rgb   "false" \
             --optim         "SGD" \
             --learning_rate 0.005 \
@@ -93,6 +97,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --model_name    "${MODEL_NAME}" \
             --offset_eps    0.0 \
             --dropout       0.25 \
+            --avg_pooling   "true" \
             --tie_weights   "false" \
             --tie_bp        "false" \
             --bypass        "false" \
@@ -104,7 +109,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --R             "20e3" \
             --R_max         "${R_max}" \
             --C             "49e-15" \
-            --v_dd          "0.2" \
+            --v_dd          "0.1" \
             --enob          "8" \
             --w_bits        "${n_bits}" \
             --patch_node    "8" \
@@ -125,7 +130,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
             --teacher_input_size  "${TEACHER_INPUT_SIZE}" \
             --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-            --distill_method kd_crd \
+            --distill_method srrl \
             --contrast_method "memory" \
             --distill_alpha  0.3 \
             --distill_temperature 2.0 \

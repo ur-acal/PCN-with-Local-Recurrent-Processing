@@ -1462,7 +1462,8 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
         ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
 
         if "feature_kd" not in ckpt:
-            raise KeyError(f"No feature_kd state found in {ckpt_path}")
+            logging.warning("No feature_kd state found. Training with newly initialized aux module.")
+            return
 
         saved_name = ckpt["feature_kd"].get("name", None)
         if saved_name != self.feature_kd_name:

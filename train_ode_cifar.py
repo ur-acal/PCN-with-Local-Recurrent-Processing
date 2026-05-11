@@ -720,7 +720,7 @@ def main():
 
             # Todo: Later on make the PCN compatible with timm.
             is_timm_model=False,
-            skip_eval_epochs=cfg["skip_eval_epochs"] if not args.test_only else 0,
+            skip_eval_epochs=cfg["skip_eval_epochs"] if (not args.test_only and args.cosine_t0 is None) else 0,
 
             # Mismatch aware training
             noise_level=args.noise_level,
@@ -768,7 +768,7 @@ def main():
             teacher_model = teacher_model,
             teacher_input_size = args.teacher_input_size,
             teacher_center_crop = args.teacher_center_crop,
-            skip_eval_epochs=args.skip_eval_epochs if not args.test_only else 0,
+            skip_eval_epochs=args.skip_eval_epochs if (not args.test_only and args.cosine_t0 is None) else 0,
         )
 
     if teacher_model is not None:
