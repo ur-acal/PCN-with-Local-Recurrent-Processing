@@ -138,7 +138,7 @@ class FixedMismatchHelper:
         if self.noise_type == "multiplicative":
             x.mul_(1.0 + self.noise_sigma * noise)
         elif self.noise_type == "additive":
-            x.add_(self.noise_sigma * noise)
+            x.add_(self.noise_sigma * noise * x.abs().max())
         else:
             raise ValueError(f"Unsupported noise_type: {self.noise_type}")
 

@@ -423,7 +423,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             is_training=True,
             use_prefetcher=False,
 
-            # Crop / flip.
+            # Crop / flip. Random resize and crop is included.
             scale=self.timm_train_scale,
             ratio=self.timm_train_ratio,
             hflip=self.hflip,
@@ -459,6 +459,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                 transforms.Normalize(mean, std),
             ])
         else:
+            # Deterministic resize and crop for test/validation
             transform_test = create_transform(**test_kwargs)
 
         return transform_train, transform_test

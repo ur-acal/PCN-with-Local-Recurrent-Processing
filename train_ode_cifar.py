@@ -656,7 +656,7 @@ def main():
         # not used when timm_sched is "cosine"
         cfg["lr_reduce_on"] = args.lr_reduce_on
         if args.timm_sched == "cosine":
-            cfg["skip_eval_epochs"] = max(cfg["skip_eval_epochs"], 0.5 * args.num_epochs)
+            cfg["skip_eval_epochs"] = min(max(cfg["skip_eval_epochs"], 0.5 * args.num_epochs), args.num_epochs * 0.8)
 
         if args.img_type != "rgb" and args.rggb_to_rgb:
             cfg.update(RGGB_TO_RGB_EXTRAS)

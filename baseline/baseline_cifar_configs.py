@@ -79,7 +79,7 @@ CASE_DEFAULTS = {
     "custom_noresize": {
         "pretrained": False,
         "timm_input_size": (3, 32, 32),
-        "num_epochs": 200,
+        "num_epochs": 300,
         "batch_size": 128,
         "test_batch_size": 1024,
         "lr": 0.1,
@@ -106,7 +106,7 @@ CASE_DEFAULTS = {
     "adapt_noresize_scratch": {
         "pretrained": False,
         "timm_input_size": (3, 32, 32),
-        "num_epochs": 200,
+        "num_epochs": 300,
         "batch_size": 128,
         "test_batch_size": 256,
         "lr": 0.1,
@@ -209,6 +209,43 @@ CASE_DEFAULTS = {
         "timm_train_ratio": (1.0, 1.0),
         "hflip": 0.5,
         "skip_eval_epochs": 20,
+    },
+
+    "imagenet1k_scratch": {
+        "pretrained": False,
+        "timm_input_size": (3, 224, 224),
+
+        "num_epochs": 300,
+        "batch_size": 128,
+        "test_batch_size": 128,
+
+        "lr": 0.01,
+        "weight_decay": 1e-4,
+        "timm_opt": "sgd",
+        "momentum": 0.9,
+
+        "timm_sched": "cosine",
+        "warmup_epoch": 5,
+        "min_lr": 1e-6,
+        "warmup_lr": 1e-6,
+
+        "label_smoothing": 0.1,
+        "mixup_alpha": 0.2,
+        "cutmix_alpha": 1.0,
+
+        "auto_augment": "rand-m9-mstd0.5-inc1",
+        "color_jitter": 0.4,
+        "re_prob": 0.25,
+
+        "timm_train_scale": (0.08, 1.0),
+        "timm_train_ratio": (3.0 / 4.0, 4.0 / 3.0),
+        "hflip": 0.5,
+
+        "amp_enabled": True,
+        "amp_dtype": "bf16",
+        "grad_accum_steps": 4,
+
+        "skip_eval_epochs": 70,
     },
 }
 # -----------------------------------------------------------------------------

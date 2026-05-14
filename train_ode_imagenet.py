@@ -26,6 +26,8 @@ from train_ode_cifar import (
     evaluate_teacher,
 )
 
+from baseline.baseline_cifar_configs import CASE_DEFAULTS
+
 from trainer_imagenet import (
     TrainerImageNetTimmStyle,
     TrainerImageNetTimmStyleSRRL,
@@ -54,22 +56,15 @@ def get_args():
                    help="Must be true for ImageNet. The non-timm TrainerCiFar path is CIFAR-only.")
     p.add_argument("--timm_sched", type=str, default="cosine", choices=["multistep", "cosine"])
 
-    p.add_argument("--batch_size", type=int, default=256)
-    p.add_argument("--test_batch_size", type=int, default=None)
-    p.add_argument("--num_workers", type=int, default=8)
-    p.add_argument("--persistent_workers", type=str2bool, default=True)
+    p.add_argument("--batch_size", type=int, default=64)
 
     p.add_argument("--optim", type=str, choices=["SGD", "Adam"], default="SGD")
-    p.add_argument("--timm_opt", type=str, default="sgd")
-    p.add_argument("--momentum", type=float, default=0.9)
     p.add_argument("--weight_decay", type=float, default=1e-4)
-    p.add_argument("--learning_rate", type=float, default=0.1)
+    p.add_argument("--learning_rate", type=float, default=0.01)
     p.add_argument("--lr_reduce_on", type=str, default="30,60,90")
     p.add_argument("--num_epochs", type=int, default=100)
     p.add_argument("--max_g_norm", type=float, default=None)
-    p.add_argument("--warmup_epoch", type=int, default=5)
-    p.add_argument("--warmup_lr", type=float, default=1e-6)
-    p.add_argument("--min_lr", type=float, default=1e-6)
+    p.add_argument("--warmup_epoch", type=int, default=0)
     p.add_argument("--cosine_t0", type=int, default=None)
     p.add_argument("--eval_every", type=int, default=1)
 
@@ -84,22 +79,6 @@ def get_args():
     p.add_argument("--rggb_to_rgb", type=str2bool, default=False)
 
     # ------------------------------------------------------------------
-    # ImageNet timm transform / recipe args
-    # ------------------------------------------------------------------
-    p.add_argument("--timm_input_size", type=int, nargs=3, default=[3, 224, 224])
-    p.add_argument("--use_model_data_config", type=str2bool, default=True)
-    p.add_argument("--timm_train_scale", type=float, nargs=2, default=[0.08, 1.0])
-    p.add_argument("--timm_train_ratio", type=float, nargs=2, default=[3.0 / 4.0, 4.0 / 3.0])
-    p.add_argument("--hflip", type=float, default=0.5)
-    p.add_argument("--vflip", type=float, default=0.0)
-    p.add_argument("--color_jitter", type=float, default=0.4)
-    p.add_argument("--auto_augment", type=str, default="rand-m9-mstd0.5-inc1")
-    p.add_argument("--re_prob", type=float, default=0.25)
-    p.add_argument("--label_smoothing", type=float, default=0.1)
-    p.add_argument("--mixup_alpha", type=float, default=0.2)
-    p.add_argument("--cutmix_alpha", type=float, default=1.0)
-
-    # ------------------------------------------------------------------
     # PCNet / PCConv args
     # ------------------------------------------------------------------
     p.add_argument("--inp_channels", type=int, nargs="+",
@@ -112,7 +91,7 @@ def get_args():
     p.add_argument("--kernel_size", type=int, nargs="+", default=3)
     p.add_argument("--first_ksz", type=int, default=7)
     p.add_argument("--first_stride", type=int, default=2)
-    p.add_argument("--first_pad", type=str, choices=["same", "valid"], default="same")
+    p.add_argument("--first_pad", type=int, default=3)
     p.add_argument("--max_pool", type=int, nargs="+",
                    default=[True, False, True, False, True, False, False, False])
     p.add_argument("--avg_pooling", type=str2bool, default=True)
@@ -196,7 +175,7 @@ def get_args():
     # ------------------------------------------------------------------
     # PCConv hyper-params
     # ------------------------------------------------------------------
-    p.add_argument("--padding", type=int, default=1)
+    p.add_argument("--padding", type=int, nargs="+", default=1)
     p.add_argument("--dropout", type=float, default=0.0)
     p.add_argument("--bias", action="store_true")
     p.add_argument("--tie_weights", type=str2bool, default=False)
@@ -240,9 +219,6 @@ def main():
     args.task = "imagenet"
     args.img_type = "rgb"
     args.num_classes = 1000
-
-    if args.test_batch_size is None:
-        args.test_batch_size = args.batch_size
 
     if torch.cuda.is_available():
         torch.cuda.set_per_process_memory_fraction(args.mem_frac, device=0)
@@ -438,22 +414,39 @@ def main():
 
     timm_trainer_cls = _get_feature_kd_trainer(args)
 
+    cfg = CASE_DEFAULTS["imagenet1k_scratch"].copy()
+
+    # Runtime overrides, same style as train_ode_cifar.py.
+    cfg["lr"] = args.learning_rate
+    cfg["num_epochs"] = args.num_epochs
+    cfg["warmup_epoch"] = args.warmup_epoch
+    cfg["weight_decay"] = args.weight_decay
+    cfg["batch_size"] = args.batch_size
+    cfg["test_batch_size"] = args.batch_size
+
+    # Scheduler choice from args.
+    cfg["timm_sched"] = args.timm_sched
+    cfg["lr_reduce_on"] = args.lr_reduce_on
+
+    if args.timm_sched == "cosine":
+        cfg["skip_eval_epochs"] = max(cfg.get("skip_eval_epochs", 0), 0.5 * args.num_epochs)
+
     trainer_kwargs = dict(
         # Trainer base args.
         model=model,
         model_name=model_name,
         save_path=args.save_path,
-        batch_size=args.batch_size,
+        batch_size=cfg["batch_size"],
         optim_type="sgd",  # ignored by TrainerImageNetTimmStyle._get_optimizer
-        weight_decay=args.weight_decay,
+        weight_decay=cfg["weight_decay"],
         loss_fn=loss_fn,
-        learning_rate=args.learning_rate,
-        num_epochs=args.num_epochs if not args.test_only else 2,
-        warmup_epoch=args.warmup_epoch,
-        lr_reduce_on=args.lr_reduce_on,
+        learning_rate=cfg["lr"],
+        num_epochs=cfg["num_epochs"] if not args.test_only else 2,
+        warmup_epoch=cfg["warmup_epoch"],
+        lr_reduce_on=cfg.get("lr_reduce_on", "30,60,90"),
         T0=args.cosine_t0,
-        test_bs=args.test_batch_size,
-        max_norm=args.max_g_norm,
+        test_bs=cfg["test_batch_size"],
+        max_norm=cfg.get("max_norm", None),
         aug=False,
         eval_every=args.eval_every if not args.test_only else 2,
         img_type="rgb",
@@ -472,31 +465,37 @@ def main():
         teacher_input_size=args.teacher_input_size,
         teacher_center_crop=args.teacher_center_crop,
 
-        # timm-style args.
-        timm_opt=args.timm_opt,
-        momentum=args.momentum,
-        timm_sched=args.timm_sched,
-        min_lr=args.min_lr,
-        warmup_lr=args.warmup_lr,
+        # TrainerImageNetTimmStyle / timm-style args from config.
+        timm_opt=cfg["timm_opt"],
+        momentum=cfg["momentum"],
+        timm_sched=cfg["timm_sched"],
+        min_lr=cfg["min_lr"],
+        warmup_lr=cfg["warmup_lr"],
         timm_aug=True,
-        use_model_data_config=args.use_model_data_config,
-        timm_input_size=tuple(args.timm_input_size),
-        timm_train_scale=tuple(args.timm_train_scale),
-        timm_train_ratio=tuple(args.timm_train_ratio),
-        hflip=args.hflip,
-        vflip=args.vflip,
-        color_jitter=args.color_jitter,
-        auto_augment=args.auto_augment,
-        re_prob=args.re_prob,
-        label_smoothing=args.label_smoothing,
-        mixup_alpha=args.mixup_alpha,
-        cutmix_alpha=args.cutmix_alpha,
-        num_workers=args.num_workers,
-        persistent_workers=args.persistent_workers,
+        use_model_data_config=cfg.get("use_model_data_config", True),
+        timm_input_size=cfg["timm_input_size"],
+        timm_train_scale=cfg["timm_train_scale"],
+        timm_train_ratio=cfg["timm_train_ratio"],
+        hflip=cfg["hflip"],
+        vflip=cfg.get("vflip", 0.0),
+        color_jitter=cfg["color_jitter"],
+        auto_augment=cfg["auto_augment"],
+        re_prob=cfg["re_prob"],
+        label_smoothing=cfg["label_smoothing"],
+        mixup_alpha=cfg["mixup_alpha"],
+        cutmix_alpha=cfg["cutmix_alpha"],
+        num_workers=cfg.get("num_workers", 8),
+        pin_memory=cfg.get("pin_memory", True),
+        persistent_workers=cfg.get("persistent_workers", True),
 
         # PCNet is custom, not timm-created.
         is_timm_model=False,
-        skip_eval_epochs=args.skip_eval_epochs if not args.test_only else 0,
+        skip_eval_epochs=cfg.get("skip_eval_epochs", 0) if (not args.test_only and args.cosine_t0 is None) else 0,
+
+        # AMP and gradient accumulation related args.
+        amp_enabled=cfg.get("amp_enabled", False),
+        amp_dtype=cfg.get("amp_dtype", "bf16"),
+        grad_accum_steps=cfg.get("grad_accum_steps", 1),
 
         # Mismatch-aware training.
         noise_level=args.noise_level,

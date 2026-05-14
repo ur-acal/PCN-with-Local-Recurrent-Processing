@@ -1,5 +1,4 @@
-# trainer_imagenet.py
-
+import tqdm
 import inspect
 import logging
 import os
@@ -70,6 +69,11 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         num_workers=8,
         persistent_workers=True,
 
+        # AMP / gradient accumulation
+        amp_enabled=False,
+        amp_dtype="bf16",
+        grad_accum_steps=1,
+
         **kwargs,
     ):
         if imagenet_root is None:
@@ -125,6 +129,19 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         self.num_workers = num_workers
         self.pin_memory = kwargs.pop("pin_memory", True)
         self.persistent_workers = persistent_workers
+
+        self.amp_enabled = bool(amp_enabled)
+        self.grad_accum_steps = max(1, int(grad_accum_steps))
+
+        amp_dtype = str(amp_dtype).lower()
+        if amp_dtype in {"bf16", "bfloat16"}:
+            self.amp_dtype = torch.bfloat16
+        elif amp_dtype in {"fp16", "float16"}:
+            self.amp_dtype = torch.float16
+        else:
+            raise ValueError(f"Unknown amp_dtype: {amp_dtype}. Use 'bf16' or 'fp16'.")
+
+        self.grad_scaler = None
 
         # Compatibility attrs used by inherited helper methods.
         # ImageNet trainer only supports rgb, but these attributes prevent
@@ -200,6 +217,13 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         self.skip_eval_epochs = cfg["skip_eval_epochs"]
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         print("----- Using {} device -----".format(self.device))
+
+        if self.device.type != "cuda":
+            self.amp_enabled = False
+        self.grad_scaler = torch.amp.GradScaler(
+            "cuda",
+            enabled=(self.amp_enabled and self.amp_dtype is torch.float16),
+        )
 
         self.model = cfg["model"].to(self.device)
         self.model_name = cfg["model_name"]
@@ -515,6 +539,128 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         else:
             self.mixup_fn = None
             self.train_loss_fn = self.loss_fn
+
+    def _amp_autocast(self):
+        return torch.autocast(
+            device_type=self.device.type,
+            dtype=self.amp_dtype,
+            enabled=(self.amp_enabled and self.device.type == "cuda"),
+        )
+
+    def _backward_step_accum(
+            self,
+            loss,
+            grad_params,
+            is_update_step,
+            accum_divisor=None,
+    ):
+        if accum_divisor is None:
+            accum_divisor = self.grad_accum_steps
+
+        loss_for_backward = loss / accum_divisor
+
+        if self.grad_scaler is not None and self.grad_scaler.is_enabled():
+            self.grad_scaler.scale(loss_for_backward).backward()
+        else:
+            loss_for_backward.backward()
+
+        if not is_update_step:
+            return False
+
+        if self.max_norm is not None:
+            if self.grad_scaler is not None and self.grad_scaler.is_enabled():
+                self.grad_scaler.unscale_(self.optimizer)
+
+            nn.utils.clip_grad_norm_(
+                grad_params,
+                max_norm=self.max_norm,
+            )
+
+        if self.grad_scaler is not None and self.grad_scaler.is_enabled():
+            self.grad_scaler.step(self.optimizer)
+            self.grad_scaler.update()
+        else:
+            self.optimizer.step()
+
+        self.optimizer.zero_grad(set_to_none=True)
+
+        return True
+
+    def train_one_epoch(self, epoch):
+        self.model.train()
+        running_loss, n_samples = 0.0, 0
+
+        num_batches = len(self.train_dataloader)
+
+        progress_bar = tqdm.tqdm(
+            enumerate(self.train_dataloader),
+            total=num_batches,
+            desc="Training",
+        )
+
+        self.optimizer.zero_grad(set_to_none=True)
+
+        last_accum_steps = num_batches % self.grad_accum_steps
+        if last_accum_steps == 0:
+            last_accum_steps = self.grad_accum_steps
+
+        for _i, _data in progress_bar:
+            if isinstance(_data, (list, tuple)):
+                inputs, labels = _data[0], _data[1]
+            else:
+                inputs, labels = _data
+
+            n_samples += inputs.size(0)
+
+            inputs = inputs.to(self.device, non_blocking=True)
+            labels = labels.to(self.device, non_blocking=True)
+
+            labels_for_ce = labels
+
+            if self.mixup_fn is not None:
+                inputs, labels_for_ce = self.mixup_fn(inputs, labels)
+
+            with self._amp_autocast():
+                outputs, _ = self._student_forward(inputs)
+                loss = self.train_loss_fn(outputs, labels_for_ce)
+
+            is_update_step = (
+                    ((_i + 1) % self.grad_accum_steps == 0)
+                    or ((_i + 1) == num_batches)
+            )
+
+            is_last_accum_window = _i >= (num_batches - last_accum_steps)
+            accum_divisor = last_accum_steps if is_last_accum_window else self.grad_accum_steps
+
+            did_update = self._backward_step_accum(
+                loss=loss,
+                grad_params=list(self.model.parameters()),
+                is_update_step=is_update_step,
+                accum_divisor=accum_divisor,
+            )
+
+            running_loss += loss.detach().item() * inputs.size(0)
+            avg_loss = running_loss / n_samples
+
+            postfix = {
+                "Iter": f"{_i + 1}/{num_batches}",
+                "Loss": f"{avg_loss:.4f}",
+                "LR": self.optimizer.param_groups[0]["lr"],
+            }
+
+            if self.amp_enabled:
+                postfix["AMP"] = "bf16" if self.amp_dtype is torch.bfloat16 else "fp16"
+
+            if self.grad_accum_steps > 1:
+                postfix["Accum"] = str(self.grad_accum_steps)
+
+            if did_update:
+                postfix["Step"] = "yes"
+
+            progress_bar.set_postfix(postfix)
+
+        running_loss /= n_samples
+        return running_loss
 
     def evaluate(self, dataloader):
         correct1 = 0
