@@ -48,6 +48,7 @@ DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
 DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 
 PCN="${PCN:-PCNetNoBatchNorm}"
+PCCONV="${PCCONV:-PCConvReLU6}"
 T_END="${T_END:-1.75}"
 WARMUP_EPOCH="${WARMUP_EPOCH:-0}"
 IS_TIMM="${IS_TIMM:-true}"
@@ -97,7 +98,7 @@ python train_ode_cifar.py \
   --t_end         "${T_END}" \
   --noise_type    "mul" \
   --pcn           "${PCN}" \
-  --pc_conv       "PCConvReLU6" \
+  --pc_conv       "${PCCONV}" \
   --ode_block     "ODEXInitFFFB" \
   --teacher_ckpt "${TEACHER_CKPT}" \
   --teacher_arch "${TEACHER_ARCH}" \

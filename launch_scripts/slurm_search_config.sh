@@ -74,13 +74,13 @@ MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
 
 SHOW_COMB_ONLY="${SHOW_COMB_ONLY:-0}"   # 1 => print comb_tag only and exit
 COMB_MODE="${COMB_MODE:-balanced_A}"      # choose in (n_params | balanced_A)
-SEARCH_ARCH="${SEARCH_ARCH:-two_stage_fixed}"     # choose in (default | two_stage_fixed | one_stage_fixed)
+SEARCH_ARCH="${SEARCH_ARCH:-one_stage_fixed}"     # choose in (default | two_stage_fixed | one_stage_fixed)
 
 SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 # Change the saved pickle file name here
 ####################################################
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0514_kdcrd_then_ft_TwoStage_AvgPool_TIMM_SRRL.pkl"
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0514_kdcrd_then_ft_OneStage_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
 ####################################################
