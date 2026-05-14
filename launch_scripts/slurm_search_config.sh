@@ -21,13 +21,17 @@ TASK="${TASK:-cifar100}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
 
+# If true, train with 5-step euler and inferencing using switched ODEBlock with 5 iters
+SWITCH_INF="${SWITCH_INF:-true}"
+
 PCNS=( "PCNetNoBatchNorm" )
 IMG_TYPES=( "scanGFI" )
 CIRC_CONFS=( "" )
 
 # CHAN_0 options (order matters)
 #CHAN_0_LIST=( 24 ) # For the default three pattern
-CHAN_0_LIST=( 40 42 44 46 48 ) # For the time-interleaving
+#CHAN_0_LIST=( 40 42 44 46 48 ) # For the time-interleaving, two_stage_fixed
+CHAN_0_LIST=( 72 74 76 78 80 ) # For the time-interleaving, one_stage_fixed
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers..."
 declare -A NUM_LAYERS_BY_CHAN0
@@ -40,12 +44,18 @@ declare -A NUM_LAYERS_BY_CHAN0
 #NUM_LAYERS_BY_CHAN0[28]="14 16"
 #NUM_LAYERS_BY_CHAN0[30]="12 14"
 #NUM_LAYERS_BY_CHAN0[32]="10 12"
-# For the time-interleaving
-NUM_LAYERS_BY_CHAN0[40]="7"
-NUM_LAYERS_BY_CHAN0[42]="6"
-NUM_LAYERS_BY_CHAN0[44]="6"
-NUM_LAYERS_BY_CHAN0[46]="5"
-NUM_LAYERS_BY_CHAN0[48]="5"
+# For the time-interleaving, two_stage_fixed
+#NUM_LAYERS_BY_CHAN0[40]="7"
+#NUM_LAYERS_BY_CHAN0[42]="6"
+#NUM_LAYERS_BY_CHAN0[44]="6"
+#NUM_LAYERS_BY_CHAN0[46]="5"
+#NUM_LAYERS_BY_CHAN0[48]="5"
+# For the time-interleaving, one_stage_fixed
+NUM_LAYERS_BY_CHAN0[72]="11"
+NUM_LAYERS_BY_CHAN0[74]="11"
+NUM_LAYERS_BY_CHAN0[76]="10"
+NUM_LAYERS_BY_CHAN0[78]="10"
+NUM_LAYERS_BY_CHAN0[80]="9"
 
 TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
@@ -64,13 +74,13 @@ MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
 
 SHOW_COMB_ONLY="${SHOW_COMB_ONLY:-0}"   # 1 => print comb_tag only and exit
 COMB_MODE="${COMB_MODE:-balanced_A}"      # choose in (n_params | balanced_A)
-SEARCH_ARCH="${SEARCH_ARCH:-two_stage_fixed}"     # choose in (default | two_stage_fixed)
+SEARCH_ARCH="${SEARCH_ARCH:-two_stage_fixed}"     # choose in (default | two_stage_fixed | one_stage_fixed)
 
 SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 # Change the saved pickle file name here
 ####################################################
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0513_kdcrd_then_ft_TwoStage_AvgPool_TIMM_SRRL.pkl"
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0514_kdcrd_then_ft_TwoStage_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
 ####################################################
@@ -99,8 +109,11 @@ generate_combs() {
     two_stage_fixed)
       generate_two_stage_fixed_combs "$chan0" "$num_layers" "$k"
       ;;
+    one_stage_fixed)
+      generate_one_stage_fixed_combs "$chan0" "$num_layers" "$k"
+      ;;
     *)
-      echo "ERROR: Unknown SEARCH_ARCH='$SEARCH_ARCH' (expected: default | two_stage_fixed)" >&2
+      echo "ERROR: Unknown SEARCH_ARCH='$SEARCH_ARCH' (expected: default | two_stage_fixed | one_stage_fixed)" >&2
       return 2
       ;;
   esac
@@ -308,6 +321,81 @@ generate_two_stage_fixed_combs() {
     "${INP[*]}" "${OUT[*]}" "${POOL[*]}"
 }
 
+generate_one_stage_fixed_combs() {
+  local chan0="$1"
+  local num_layers="$2"
+  local k="$3"
+
+  local K2=9  # 3x3
+  local params
+  local lines=()
+
+  local mid_pos=$(( (num_layers + 1) / 2 ))   # if even, picks the smaller middle
+  local pool_pos
+  local i
+
+  # ranked pool positions:
+  # middle, then all the way left, then continue right
+  for ((pool_pos=mid_pos; pool_pos>=1; pool_pos--)); do
+    local -a INP OUT POOL
+    local comb_tag
+
+    INP=(); OUT=(); POOL=()
+
+    # 3 -> chan0, never pool here
+    INP+=(3); OUT+=("$chan0"); POOL+=(0)
+
+    # chan0 -> chan0 repeated num_layers, exactly one pool
+    for ((i=1; i<=num_layers; i++)); do
+      INP+=("$chan0"); OUT+=("$chan0")
+      if (( i == pool_pos )); then
+        POOL+=(1)
+      else
+        POOL+=(0)
+      fi
+    done
+
+    params=$(( K2 * (
+      3*chan0 +
+      num_layers*chan0*chan0
+    ) ))
+
+    comb_tag="OneStage_N${num_layers}_C${chan0}_pool${pool_pos}"
+    lines+=( "${params}"$'\t'"${comb_tag}"$'\t'"${chan0}"$'\t'"${num_layers}"$'\t'"${INP[*]}"$'\t'"${OUT[*]}"$'\t'"${POOL[*]}" )
+  done
+
+  for ((pool_pos=mid_pos+1; pool_pos<=num_layers; pool_pos++)); do
+    local -a INP OUT POOL
+    local comb_tag
+
+    INP=(); OUT=(); POOL=()
+
+    # 3 -> chan0, never pool here
+    INP+=(3); OUT+=("$chan0"); POOL+=(0)
+
+    # chan0 -> chan0 repeated num_layers, exactly one pool
+    for ((i=1; i<=num_layers; i++)); do
+      INP+=("$chan0"); OUT+=("$chan0")
+      if (( i == pool_pos )); then
+        POOL+=(1)
+      else
+        POOL+=(0)
+      fi
+    done
+
+    params=$(( K2 * (
+      3*chan0 +
+      num_layers*chan0*chan0
+    ) ))
+
+    comb_tag="OneStage_N${num_layers}_C${chan0}_pool${pool_pos}"
+    lines+=( "${params}"$'\t'"${comb_tag}"$'\t'"${chan0}"$'\t'"${num_layers}"$'\t'"${INP[*]}"$'\t'"${OUT[*]}"$'\t'"${POOL[*]}" )
+  done
+
+  # return top-k ranked candidates; if fewer exist, return all
+  printf '%s\n' "${lines[@]}" | head -n "${k}"
+}
+
 # Submit ONE sbatch job for the current chunk.
 # Inputs:
 #   $1 pcn, $2 img_type, $3 circ_conf, $4 chan0, $5 num_layers, $6 chunk_id, $7 chunk_tag, $8 comb_list
@@ -330,7 +418,7 @@ submit_chunk() {
   # Human-readable + unique EXP:
   # - if MAX_TASKS_PER_GPU==1, chunk_tag will be the exact comb_tag
   # - else it is first__to__last
-  local EXP="0510_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
+  local EXP="0514_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
 
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"
@@ -340,7 +428,7 @@ submit_chunk() {
     BLOCKS_LIST="${BLOCKS_LIST}" \
     sbatch --parsable \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
+      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",SWITCH_INF="${SWITCH_INF}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
       "${SBATCH_SCRIPT}"
   )
   echo "  -> job ${jid}"

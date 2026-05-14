@@ -308,7 +308,8 @@ def run_ode_inference():
                                     ckpt_path, pc_conv, device)
             exit(0)
 
-    # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40]
+    # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40] # mul
+    # noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2] # add
     if args.sweep_eps:
         # offset_eps None means using Johnson noise
         offset_eps_list = [0.2, 0.35, 0.5, 0.65, 0.8] if args.sde_noise_type == "mul" else [None, 0.05, 0.1, 0.15, 0.2]
@@ -316,15 +317,13 @@ def run_ode_inference():
         offset_eps_list = [None]
     noise_level_list_ = [float(x.strip()) for x in args.noise_level_list.split(",") if x.strip()]
     noisy_trials = args.noisy_trials
+    if args.diff_mismatch and args.mismatch_type == "mul":
+        noise_level_list_ = [0, MISMATCH_LEVELS_5b]
     if args.test_expanded:
         # Too time-consuming, only run one mismatch level.
         # In this case we overide the input args.noise_level_list
-        if args.diff_mismatch:
-            noise_level_list_ = [0, MISMATCH_LEVELS_5b]
-        else:
+        if not args.diff_mismatch:
             noise_level_list_ = [0, 0.15, 0.25]
-        if args.mismatch_type == "add":
-            noise_level_list_ = [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2]
     if args.nonlinear_R:
         logging.warning("To enable nonlinear R, support non-mismatch for now.")
         noise_level_list_ = [0]

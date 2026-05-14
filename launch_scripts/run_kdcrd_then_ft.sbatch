@@ -19,6 +19,7 @@ conda activate scanbase
 ##########################################################################
 IMG_TYPE=${IMG_TYPE:-rgb}
 PCN=${PCN:-PCNetNoBatchNorm}
+SWITCH_INF=${SWITCH_INF:-false}
 
 TASK="${TASK:-cifar10}"
 if [[ "$TASK" == "cifar100" ]]; then
@@ -170,6 +171,11 @@ run_one_combo () {
 
   local t_end="1.75"
 
+  train_solver="dopri5"
+  if [[ "${SWITCH_INF}" == "true" ]]; then
+    train_solver="euler"
+  fi
+
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --optim         "SGD" \
@@ -200,7 +206,8 @@ run_one_combo () {
     --tie_bp        "false" \
     --bypass        "false" \
     --batch_size    "${TRAIN_BATCH_SIZE}" \
-    --method        "dopri5" \
+    --method        "${train_solver}" \
+    --n_steps        5 \
     --tol           "1e-4" \
     --t_end         "${t_end}" \
     --pcn           "${PCN}" \
@@ -264,6 +271,13 @@ eval_one_combo_model() {
     fi
   fi
 
+  test_expanded="true"
+  if [[ "${SWITCH_INF}" == "true" ]]; then
+    # Todo: Hardcode for now
+    test_block="ODEXInitFFFBPixelSwitchStretchT"
+    test_expanded="false"
+  fi
+
   echo "[EVAL ${tag}] comb=${comb_tag} ${name} (block=${test_block}, ckpt=${ckpt}) → $dir/job.log"
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u ode_inference.py \
@@ -300,9 +314,11 @@ eval_one_combo_model() {
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
     --img_type        "${IMG_TYPE}" \
+    --switch_period   "" \
+    --switch_iter     "5" \
     --noisy_trials    "20" \
     --conv_only       "true" \
-    --test_expanded   "true" \
+    --test_expanded   "${test_expanded}" \
     --diff_mismatch   "true" \
     --nonlinear_R     "false" \
     --mem_frac        "${MEM_FRAC}" \
@@ -331,6 +347,11 @@ finetune_one_combo_model() {
   local nl="0.25"
   local nt="mul"
 
+  train_solver="dopri5"
+  if [[ "${SWITCH_INF}" == "true" ]]; then
+    train_solver="euler"
+  fi
+
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
     --dataset       "${TASK}" \
@@ -340,7 +361,6 @@ finetune_one_combo_model() {
     --ckpt          "${ckpt}" \
     --optim         "SGD" \
     --learning_rate 0.005 \
-    --cosine_t0     20 \
     --eval_every    2 \
     --num_epochs    140 \
     --img_type      "${IMG_TYPE}" \
@@ -352,7 +372,8 @@ finetune_one_combo_model() {
     --tie_bp        "false" \
     --bypass        "false" \
     --batch_size    128 \
-    --method        "${METHOD}" \
+    --method        "${train_solver}" \
+    --n_steps       5 \
     --tol           "${TOL}" \
     --t_end         "${t_end}" \
     --R             "${R_val}" \

@@ -265,6 +265,9 @@ def _constr_model_name(args, rep=1):
                   + str(len(args.inp_channels)) + "Layers{}_".format(parse_n0n1n2(args.inp_channels, args.out_channels)) \
                   + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
+    if len(set(args.out_channels)) == 1 and len([_ for _ in args.max_pool if _]) >= 1:
+        pooling_pos = [str(_pos + 1) for _pos, _has_pool in enumerate(args.max_pool) if _has_pool]
+        model_name += "p".join(pooling_pos)
     if args.tie_method is not None:
         model_name += "_" + args.tie_method + "TieMethod_" + str(args.tie_frac) + "TieFrac"
     distill_method = getattr(args, "distill_method", "none")
