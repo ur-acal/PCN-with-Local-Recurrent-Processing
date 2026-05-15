@@ -36,7 +36,13 @@ mkdir -p "${LOGDIR}"
 
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
 # The ckpt of this model does NOT have auxiliary modules for distillation
-MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_5REP"
+#MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_5REP"
+#MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP"
+MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
+
+SWITCH_INF=${SWITCH_INF:-true} # Change depending on model name; true if using Euler solver.
+TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
+echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL} ==========="
 
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockXInit_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
 #######################################################################################################################
@@ -75,6 +81,12 @@ if [[ "${DATASET_NAME}" == "cifar10" ]]; then
   TEACHER_CKPT="checkpoint/b4.pth"
   TEACHER_ARCH="efficientnet-b4"
 fi
+
+train_solver="dopri5"
+if [[ "${SWITCH_INF}" == "true" ]]; then
+  train_solver="euler"
+fi
+
 # No 2
 for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
   for nt in "${NOISE_TYPES[@]}"; do
@@ -87,10 +99,10 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --ckpt          "${CKPT}" \
             --timm_trainer  "true" \
             --timm_sched    "cosine" \
+            --timm_aug_level "${TIMM_AUG_LEVEL}" \
             --rggb_to_rgb   "false" \
             --optim         "SGD" \
             --learning_rate 0.005 \
-            --cosine_t0     20 \
             --eval_every    2 \
             --num_epochs    140 \
             --img_type      "scanGFI" \
@@ -102,7 +114,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --tie_bp        "false" \
             --bypass        "false" \
             --batch_size    128 \
-            --method        "dopri5" \
+            --method        "${train_solver}" \
             --n_steps       5 \
             --tol           "1e-6" \
             --t_end         "1.75" \

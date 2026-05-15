@@ -12,7 +12,7 @@ import numpy as np
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from switch import SWITCH_CLASSES
 from trainer_timm import TrainerCiFarTimmStyle, TrainerCiFarTimmStyleSRRL, TrainerCiFarTimmStyleMGD, TrainerCiFarTimmStyleReviewKD
-from baseline.baseline_cifar_configs import CASE_DEFAULTS, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS
+from baseline.baseline_cifar_configs import CASE_DEFAULTS, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS, RGGB_NO_AUG, RGGB_MILD_AUG, RGGB_MID_AUG
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
@@ -35,6 +35,9 @@ def get_args():
     p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
     p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--timm_trainer", type=str2bool, default=False)
+    p.add_argument("--timm_aug_level", type=str,
+                   default="none", choices=["no_aug", "mild", "mid", "none", ""],
+                   help="Passing none and empty string means using default timm aug.")
     p.add_argument("--timm_sched", type=str, default="multistep", choices=["multistep", "cosine"])
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
@@ -665,6 +668,13 @@ def main():
             cfg.update(RGGB_TO_RGB_EXTRAS)
         elif args.img_type != "rgb" and not args.rggb_to_rgb:
             cfg.update(RGGB_DEFAULTS)
+
+        if args.timm_aug_level == "no_aug":
+            cfg.update(RGGB_NO_AUG)
+        elif args.timm_aug_level == "mild":
+            cfg.update(RGGB_MILD_AUG)
+        elif args.timm_aug_level == "mid":
+            cfg.update(RGGB_MID_AUG)
 
         trainer_kwargs = dict(
             # Parent TrainerCiFar args.

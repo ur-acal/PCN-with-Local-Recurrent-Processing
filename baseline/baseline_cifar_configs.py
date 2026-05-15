@@ -274,6 +274,45 @@ RGGB_DEFAULTS = {
     "non_rgb_affine_shear": 5,
 }
 
+RGGB_NO_AUG = {
+    # disable strong mixing first
+    "mixup_alpha": 0.0,
+    "cutmix_alpha": 0.0,
+    "label_smoothing": 0.0,
+
+    # keep only mild spatial augmentation
+    "auto_augment": None,
+    "color_jitter": 0.0,
+    "re_prob": 0.0,
+
+    "non_rgb_spatial_aug": True,
+    "non_rgb_crop_padding": 2,
+
+    # Disable affine first
+    "non_rgb_affine_degrees": 0,
+    "non_rgb_affine_translate": None,
+    "non_rgb_affine_shear": None,
+}
+
+RGGB_MILD_AUG = deepcopy(RGGB_NO_AUG)
+RGGB_MILD_AUG.update(
+    {
+        "label_smoothing": 0.05,
+        "re_prob": 0.03,
+        "non_rgb_affine_degrees": 5,
+        "non_rgb_affine_translate": (0.0625, 0.0625),
+        "non_rgb_affine_shear": 0,
+    }
+)
+
+RGGB_MID_AUG = deepcopy(RGGB_MILD_AUG)
+RGGB_MID_AUG.update(
+    {
+        "mixup_alpha": 0.1,
+        "cutmix_alpha": 0.5,
+        "label_smoothing": 0.05,
+    }
+)
 
 # -----------------------------------------------------------------------------
 # Optional model-specific overrides
