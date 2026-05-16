@@ -103,6 +103,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --rggb_to_rgb   "false" \
             --optim         "SGD" \
             --learning_rate 0.005 \
+            --cosine_t0     20 \
             --eval_every    2 \
             --num_epochs    140 \
             --img_type      "scanGFI" \
