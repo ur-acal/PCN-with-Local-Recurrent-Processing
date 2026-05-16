@@ -357,6 +357,7 @@ finetune_one_combo_model() {
     --dataset       "${TASK}" \
     --timm_trainer  "${IS_TIMM}" \
     --timm_sched    "cosine" \
+    --timm_aug_level "no_aug" \
     --num_classes   "${N_CLASSES}" \
     --ckpt          "${ckpt}" \
     --optim         "SGD" \
