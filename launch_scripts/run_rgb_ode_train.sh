@@ -6,7 +6,6 @@
 #SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
 #SBATCH --gres=gpu:1                  # exactly ONE GPU; allows packing on 4-GPU nodes
 #SBATCH -t 90:10:00
-#SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082
 #SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
 # OpenMP settings:
@@ -54,8 +53,17 @@ WARMUP_EPOCH="${WARMUP_EPOCH:-0}"
 IS_TIMM="${IS_TIMM:-true}"
 TIMM_SCHED="${TIMM_SCHED:-cosine}"
 
+INP_CHANNELS="${INP_CHANNELS:-3 64 64 128 128 256 256 256}"
+OUT_CHANNELS="${OUT_CHANNELS:-64 64 128 128 256 256 256 256}"
+MAX_POOL="${MAX_POOL:-0 0 1 0 1 0 0 0}"
+
 # Change exp name here
-EXP_SUFFIX="9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
+EXP_SUFFIX="9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}_INP_${INP_CHANNELS// /-}_OUT_${OUT_CHANNELS// /-}_POOL_${MAX_POOL// /-}"
+
+
+read -r -a INP <<< "${INP_CHANNELS}"
+read -r -a OUT <<< "${OUT_CHANNELS}"
+read -r -a POOL <<< "${MAX_POOL}"
 
 #INP=(3  64 64  128 128 128 256 256) # ~0.73 on CiFar-100
 #OUT=(64 64 128 128 128 256 256 256)
@@ -63,9 +71,9 @@ EXP_SUFFIX="9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_AL
 #INP=(3  64 64  128 128 128 128 256 256 256 512 512)
 #OUT=(64 64 128 128 128 128 256 256 256 512 512 512)
 #POOL=(0 0  1   0   0   0   1   0   0   0   0   0  )
-INP=(3  64 64  128 128 256 256 256)
-OUT=(64 64 128 128 256 256 256 256)
-POOL=(0 0  1   0   1   0   0   0)
+#INP=(3  64 64  128 128 256 256 256)
+#OUT=(64 64 128 128 256 256 256 256)
+#POOL=(0 0  1   0   1   0   0   0)
 STRIDE=(1)
 KSZ=(3)
 PADDING=1

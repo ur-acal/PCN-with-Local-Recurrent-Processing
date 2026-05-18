@@ -112,6 +112,11 @@ MODEL_NAMES=(
   "TIMMPCNetWith1stConv_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_1REP"
   "TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_1REP"
 
+  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_1REP"
+  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_1REP"
+  "TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_6REP"
+  "TIMMPCNetWith1stConv_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_6REP"
+
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_1REP"
 )
 
@@ -180,7 +185,7 @@ for method in "${METHOD_VALS[@]}"; do
     ##########################################################################################
     # Modify log name here before each run
     ##########################################################################################
-    EXP_NAME="0507_rgb_256C8L_${method}Method_${mismatch_type}Mismatch_${tol}Tol.log"
+    EXP_NAME="0518_rgb_256C8L_${method}Method_${mismatch_type}Mismatch_${tol}Tol.log"
     MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
     JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
     > "$MASTER_LOG"
