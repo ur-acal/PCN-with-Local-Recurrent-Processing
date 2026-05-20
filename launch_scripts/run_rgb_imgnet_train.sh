@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
 #SBATCH --gres=gpu:1                  # exactly ONE GPU; allows packing on 4-GPU nodes
-#SBATCH -t 90000:10:00
+#SBATCH -t 29-23:10:00
 #SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082
 #SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
@@ -45,6 +45,7 @@ T_END="${T_END:-1.75}"
 WARMUP_EPOCH="${WARMUP_EPOCH:-0}"
 IS_TIMM="${IS_TIMM:-true}"
 TIMM_SCHED="${TIMM_SCHED:-cosine}"
+NUM_EPOCHS="${NUM_EPOCHS:-100}"
 
 # Change exp name here
 EXP_SUFFIX="12L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
@@ -89,11 +90,10 @@ python train_ode_imagenet.py \
   --dataset       "imagenet" \
   --learning_rate 0.01 \
   --weight_decay  "1e-4" \
-  --warmup_epoch  0 \
   --imagenet_root "${IMAGENET_ROOT}" \
   --timm_trainer  "${IS_TIMM}" \
   --timm_sched    "${TIMM_SCHED}" \
-  --num_epochs    300 \
+  --num_epochs    "${NUM_EPOCHS}" \
   --warmup_epoch  "${WARMUP_EPOCH}" \
   --eval_every    5 \
   --offset_eps    0.0 \
