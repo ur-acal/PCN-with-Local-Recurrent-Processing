@@ -903,7 +903,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         This works for timm models because it does not require model.init_args.
         The original checkpoint path assumes init_args and reconstructs the
-        model class, which is not generally available for timm models. :contentReference[oaicite:3]{index=3}
+        model class, which is not generally available for timm models.
         """
         if not self.is_timm_model:
             return super()._save_model_ckpt(acc, epoch, suffix=suffix)

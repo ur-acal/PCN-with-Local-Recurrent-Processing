@@ -243,9 +243,9 @@ CASE_DEFAULTS = {
 
         "amp_enabled": True,
         "amp_dtype": "bf16",
-        "grad_accum_steps": 4,
+        "grad_accum_steps": 2,
 
-        "skip_eval_epochs": 70,
+        "skip_eval_epochs": 200,
     },
 }
 # -----------------------------------------------------------------------------

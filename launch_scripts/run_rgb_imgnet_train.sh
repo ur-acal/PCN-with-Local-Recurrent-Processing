@@ -111,7 +111,7 @@ python train_ode_imagenet.py \
   --tie_weights   "false" \
   --tie_bp        "false" \
   --bypass        "false" \
-  --batch_size    32 \
+  --batch_size    64 \
   --method        "euler" \
   --n_steps       10 \
   --tol           "0.01" \

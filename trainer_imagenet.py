@@ -74,6 +74,8 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         amp_dtype="bf16",
         grad_accum_steps=1,
 
+        save_every=10,
+
         **kwargs,
     ):
         if imagenet_root is None:
@@ -132,6 +134,8 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
 
         self.amp_enabled = bool(amp_enabled)
         self.grad_accum_steps = max(1, int(grad_accum_steps))
+
+        self.save_every = save_every
 
         amp_dtype = str(amp_dtype).lower()
         if amp_dtype in {"bf16", "bfloat16"}:
@@ -730,6 +734,10 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
                         epoch + 1,
                         "_best_ckpt.pth",
                     )
+
+            if (epoch + 1) % self.save_every == 0:
+                # note: This is for recovery purpose only. val_acc might still be 0.
+                _ = self._save_model_ckpt(val_acc, epoch + 1, "_last_ckpt.pth")
 
             self.scheduler.step(epoch + 1)
 
