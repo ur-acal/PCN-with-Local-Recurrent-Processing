@@ -16,7 +16,7 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
 PCNS=( "PCNetNoBatchNorm" "PCNetWith1stConv" )
 T_END_LIST=( 1.75 )
-WARMUP_EPOCH_LIST=( 0 )
+WARMUP_EPOCH_LIST=( 5 )
 TIMM_TRAINER=( "true" )
 TIMM_SCHED_LIST=( "cosine" )
 PCCONV_LIST=( "PCConv" "PCConvReLU6" )

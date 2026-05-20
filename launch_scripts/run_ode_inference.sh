@@ -1,4 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/bash -l
+#SBATCH -N 1
+#SBATCH -p ising
+#SBATCH -N 1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
+#SBATCH --gres=gpu:1                  # exactly ONE GPU; allows packing on 4-GPU nodes
+#SBATCH -t 90:10:00
+#SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
+
 #set -eu
 #trap '' HUP   # ignore hangup so the children survive
 
