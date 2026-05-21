@@ -26,34 +26,43 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 SLURM_LOG_DIR="${SLURM_LOG_DIR:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs}"
 
 CUSTOM_CIFAR_MODELS=(
-  resnet20_cifar
-  resnet32_cifar
-  resnet44_cifar
-  resnet56_cifar
-  preact_resnet164_cifar
-  wrn_28_10_cifar
+#  resnet20_cifar
+#  resnet32_cifar
+#  resnet44_cifar
+#  resnet56_cifar
+#  preact_resnet164_cifar
+#  wrn_28_10_cifar
+  wrn_16_2_cifar
+  wrn_16_4_cifar
+  wrn_16_8_cifar
+  wrn_16_10_cifar
+  wrn_28_2_cifar
+  wrn_28_4_cifar
+  wrn_28_5_cifar
+  wrn_40_2_cifar
+  wrn_40_4_cifar
 )
 
 ADAPT_NORESIZE_TIMM_MODELS=(
-  resnet18
-  resnet34
-  resnet50
-  resnext26ts
-  resnext50_32x4d
-  seresnet18
-  seresnet34
-  seresnet50
-  mobilenetv2_100
+#  resnet18
+#  resnet34
+#  resnet50
+#  resnext26ts
+#  resnext50_32x4d
+#  seresnet18
+#  seresnet34
+#  seresnet50
+#  mobilenetv2_100
 #  vgg19
 )
 
 RESIZE_FINETUNE_TIMM_MODELS=(
-  efficientnet_b0
-  mobilenetv3_small_100
-  vit_tiny_patch16_224
-  deit_tiny_patch16_224
-  mixer_b16_224
-  convnext_tiny
+#  efficientnet_b0
+#  mobilenetv3_small_100
+#  vit_tiny_patch16_224
+#  deit_tiny_patch16_224
+#  mixer_b16_224
+#  convnext_tiny
 )
 
 DATASETS=(cifar10 cifar100)

@@ -408,3 +408,65 @@ def wrn_28_10_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: i
     if pretrained:
         raise ValueError("No registered pretrained weights for wrn_28_10_cifar. Use checkpoint_map/checkpoint_dir instead.")
     return WideResNetCIFAR(depth=28, widen_factor=10, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+@register_model
+def wrn_16_2_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_16_2_cifar.")
+    return WideResNetCIFAR(depth=16, widen_factor=2, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_4_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_16_4_cifar.")
+    return WideResNetCIFAR(depth=16, widen_factor=4, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_8_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_16_8_cifar.")
+    return WideResNetCIFAR(depth=16, widen_factor=8, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_10_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_16_10_cifar.")
+    return WideResNetCIFAR(depth=16, widen_factor=10, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_2_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_28_2_cifar.")
+    return WideResNetCIFAR(depth=28, widen_factor=2, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_4_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_28_4_cifar.")
+    return WideResNetCIFAR(depth=28, widen_factor=4, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_5_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_28_5_cifar.")
+    return WideResNetCIFAR(depth=28, widen_factor=5, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_40_2_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_40_2_cifar.")
+    return WideResNetCIFAR(depth=40, widen_factor=2, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def wrn_40_4_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_40_4_cifar.")
+    return WideResNetCIFAR(depth=40, widen_factor=4, num_classes=num_classes, in_chans=in_chans, **kwargs)
