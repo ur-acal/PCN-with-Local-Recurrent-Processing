@@ -49,8 +49,8 @@ else
 #  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_5Layers3l0l0_2Pool_1REP"
 #  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_6Layers1l1l1_2Pool_1REP"
 #  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_6Layers1l1l1_2Pool_1REP"
-  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
-#  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
+#  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
+  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
 #  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S64C_0.25Dropout_5Layers3l0l0_2Pool_1REP"
 #  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S64C_0.25Dropout_5Layers3l0l0_2Pool_1REP"
 #  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_6Layers1l1l1_2Pool_1REP"
@@ -115,8 +115,9 @@ run_model(){
     --noise_level_list  "${noise_level_list}" \
     --pc_conv           "${_pc_conv}Noisy" \
     --ode_block         "ODEXInitFFFB" \
-    --test_only         "true" \
-    --analyze_mm        "false" \
+    --noisy_trials      "10" \
+    --test_only         "false" \
+    --analyze_mm        "true" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_mismatch_${mismatch_type}_tol_${tol}/job.log"
 }
 export -f run_model

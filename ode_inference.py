@@ -183,9 +183,11 @@ def _merge_metric_dicts(metric_dicts, weights=None):
     return out
 
 
-def _print_metrics_for_block(layer_idx, metrics):
+def _print_metrics_for_block(layer_idx, metrics, skip_keys=None):
     print(f"\nLayer {layer_idx}")
     for key, value in metrics.items():
+        if skip_keys is not None and key in skip_keys:
+            continue
         print(f"{key}: {value}")
 
 
@@ -228,7 +230,7 @@ def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sig
     # Case 1: one selected layer
     if layer_idx is not None:
         merged = _merge_metric_dicts(batch_metrics, weights=batch_weights)
-        _print_metrics_for_block(layer_idx, merged)
+        _print_metrics_for_block(layer_idx, merged, skip_keys={"H", "C_from_H", "C_avg_cos"})
         return merged
 
     # Case 2: all layers
@@ -237,7 +239,7 @@ def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sig
     for i in range(model.num_layers):
         layer_metrics_i = [bm[i] for bm in batch_metrics]
         all_merged[i] = _merge_metric_dicts(layer_metrics_i, weights=batch_weights)
-        _print_metrics_for_block(i, all_merged[i])
+        _print_metrics_for_block(i, all_merged[i], skip_keys={"H", "C_from_H", "C_avg_cos"})
 
     return all_merged
 
@@ -317,10 +319,10 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                                 n_samples=args.valid_samples, sample_inp=sample_inp)
 
 
-def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=False):
+def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=False, noise_level=None):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
-    noisy_params = {"noise_level": 0.15, "weight": None}
+    noisy_params = {"noise_level": 0.15 if noise_level is None else noise_level, "weight": None}
     if args.diff_mismatch:
         noisy_params["noise_level"] = MISMATCH_LEVELS_5b
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
@@ -416,9 +418,9 @@ def run_ode_inference():
                                     ckpt_path, pc_conv, device)
             exit(0)
         elif args.analyze_mm:
-            net_ = run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, True)
+            net_ = run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, True, 0.0)
             run_ode_mismatch_analysis_multi_batch(model=net_, test_loader=test_dataloader, device=device,
-                                                  sigma=0.25, n_steps=args.n_steps, n_seeds=args.noisy_trials,
+                                                  sigma=0.4, n_steps=args.n_steps, n_seeds=args.noisy_trials,
                                                   mismatch_type=args.mismatch_type, n_batches=args.noisy_trials)
             exit(0)
 
