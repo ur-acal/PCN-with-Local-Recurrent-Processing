@@ -104,6 +104,9 @@ def parse_args():
                         default=False)
     parser.add_argument("--mem_frac", type=float, default=1.0)
     parser.add_argument("--noisy_trials", type=int, default=20)
+    parser.add_argument("--analyze_mm", type=float, default=0.25, help="Mismatch level for analysis.")
+    parser.add_argument("--analyze_mode", type=lambda s: None if s.lower() in {"none", ""} else str(s),
+                        default=None, choices=[None, "none", "", "real", "clean"])
     parser.add_argument("--count_mac", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
@@ -113,8 +116,6 @@ def parse_args():
     parser.add_argument("--rec_full_traj", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--test_expanded", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
-                        default=False)
-    parser.add_argument("--analyze_mm", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--diff_mismatch", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
@@ -192,8 +193,13 @@ def _print_metrics_for_block(layer_idx, metrics, skip_keys=None):
 
 
 def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sigma=0.25, n_steps=50, n_seeds=10,
-                                          mismatch_type="mul", add_scale="max_abs", layer_idx=None, n_batches=3):
+                                          mismatch_type="mul", add_scale="max_abs", layer_idx=None, n_batches=3,
+                                          analyze_mode="clean"):
     """
+    analyze_mode == "real" means that we are using propagated noisy output from previous layers as input to
+    each layer.
+    analyze_mode == "clean" means that we are using clean input for each layer to study the mismatch on each
+    layer only.
     Structure:
         for batch in selected_batches:
             for mismatch_seed in seeds:
@@ -203,6 +209,7 @@ def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sig
     The inner seed loop is inside ODEMismatchAnalyzer.
     This function adds the outer batch loop.
     """
+    assert analyze_mode in ("real", "clean")
     analyzer = ODEMismatchAnalyzer(
         model=model, test_loader=test_loader, device=device, sigma=sigma, n_steps=n_steps,
         n_seeds=n_seeds, mismatch_type=mismatch_type, add_scale=add_scale,
@@ -221,16 +228,24 @@ def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sig
         batch_weights.append(float(batch_size))
 
         if layer_idx is None:
-            metrics = analyzer.analyze_all_blocks(images=images)
+            if analyze_mode == "clean":
+                metrics = analyzer.analyze_all_blocks(images=images)
+            else:
+                metrics = analyzer.analyze_all_blocks_realistic(images=images)
         else:
-            metrics = analyzer.analyze_block(layer_idx=layer_idx, images=images)
+            if analyze_mode == "clean":
+                metrics = analyzer.analyze_block(layer_idx=layer_idx, images=images)
+            else:
+                metrics = analyzer.analyze_block_realistic(layer_idx=layer_idx, images=images)
 
         batch_metrics.append(metrics)
 
     # Case 1: one selected layer
     if layer_idx is not None:
         merged = _merge_metric_dicts(batch_metrics, weights=batch_weights)
-        _print_metrics_for_block(layer_idx, merged, skip_keys={"H", "C_from_H", "C_avg_cos"})
+        _print_metrics_for_block(layer_idx, merged, skip_keys={"H", "C_from_H", "C_avg_cos",
+                                                               "H_realistic", "C_from_H_realistic",
+                                                               "C_avg_cos_realistic"})
         return merged
 
     # Case 2: all layers
@@ -239,7 +254,9 @@ def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sig
     for i in range(model.num_layers):
         layer_metrics_i = [bm[i] for bm in batch_metrics]
         all_merged[i] = _merge_metric_dicts(layer_metrics_i, weights=batch_weights)
-        _print_metrics_for_block(i, all_merged[i], skip_keys={"H", "C_from_H", "C_avg_cos"})
+        _print_metrics_for_block(i, all_merged[i], skip_keys={"H", "C_from_H", "C_avg_cos",
+                                                              "H_realistic", "C_from_H_realistic",
+                                                              "C_avg_cos_realistic"})
 
     return all_merged
 
@@ -417,11 +434,12 @@ def run_ode_inference():
                                         task=args.task, shuffle=args.shuffle_test),
                                     ckpt_path, pc_conv, device)
             exit(0)
-        elif args.analyze_mm:
+        elif args.analyze_mode is not None:
             net_ = run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, True, 0.0)
-            run_ode_mismatch_analysis_multi_batch(model=net_, test_loader=test_dataloader, device=device,
-                                                  sigma=0.4, n_steps=args.n_steps, n_seeds=args.noisy_trials,
-                                                  mismatch_type=args.mismatch_type, n_batches=args.noisy_trials)
+            run_ode_mismatch_analysis_multi_batch(model=net_, test_loader=test_dataloader,
+                                                  device=device, sigma=args.analyze_mm, n_steps=args.n_steps,
+                                                  n_seeds=args.noisy_trials, mismatch_type=args.mismatch_type,
+                                                  n_batches=args.noisy_trials, analyze_mode=args.analyze_mode)
             exit(0)
 
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40] # mul
