@@ -23,6 +23,7 @@ from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLA
 from cross_sim_inference import calibrate_input
 from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised
 from switch import SWITCH_CLASSES
+from ode_mismatch_analyzer import ODEMismatchAnalyzer
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
@@ -113,6 +114,8 @@ def parse_args():
                         default=False)
     parser.add_argument("--test_expanded", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
+    parser.add_argument("--analyze_mm", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
     parser.add_argument("--diff_mismatch", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--pvt_to_origin", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -135,6 +138,108 @@ def get_t_end(args):
     else:
         assert args.t_end is not None
         return args.t_end
+
+
+def _merge_metric_dicts(metric_dicts, weights=None):
+    """
+    Average metrics from multiple batches.
+    Scalars and tensors are averaged.
+    D_ratio is recomputed from averaged D_ode and D_one_step.
+    """
+    if weights is None:
+        weights = [1.0 for _ in metric_dicts]
+
+    total_w = sum(weights)
+    out = {}
+
+    keys = metric_dicts[0].keys()
+
+    for key in keys:
+        vals = [m[key] for m in metric_dicts]
+
+        # Do not average metadata strings.
+        if isinstance(vals[0], str):
+            out[key] = vals[0]
+            continue
+
+        # Average tensors.
+        if hasattr(vals[0], "shape"):
+            acc = None
+            for v, w in zip(vals, weights):
+                acc = v * w if acc is None else acc + v * w
+            out[key] = acc / total_w
+
+        # Average scalars.
+        elif isinstance(vals[0], (float, int)):
+            out[key] = sum(v * w for v, w in zip(vals, weights)) / total_w
+
+        else:
+            out[key] = vals[0]
+
+    # Recompute ratio from averaged values.
+    if "D_ode" in out and "D_one_step" in out:
+        out["D_ratio_ode_over_one_step"] = out["D_ode"] / max(out["D_one_step"], 1e-12)
+
+    return out
+
+
+def _print_metrics_for_block(layer_idx, metrics):
+    print(f"\nLayer {layer_idx}")
+    for key, value in metrics.items():
+        print(f"{key}: {value}")
+
+
+def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sigma=0.25, n_steps=50, n_seeds=10,
+                                          mismatch_type="mul", add_scale="max_abs", layer_idx=None, n_batches=3):
+    """
+    Structure:
+        for batch in selected_batches:
+            for mismatch_seed in seeds:
+                analyze same batch under different mismatch seeds
+        average over batch and seed
+
+    The inner seed loop is inside ODEMismatchAnalyzer.
+    This function adds the outer batch loop.
+    """
+    analyzer = ODEMismatchAnalyzer(
+        model=model, test_loader=test_loader, device=device, sigma=sigma, n_steps=n_steps,
+        n_seeds=n_seeds, mismatch_type=mismatch_type, add_scale=add_scale,
+    )
+
+    batch_metrics = []
+    batch_weights = []
+
+    data_iter = iter(test_loader)
+
+    for batch_idx in range(n_batches):
+        images, labels = next(data_iter)
+        images = images.to(device, non_blocking=True)
+
+        batch_size = images.shape[0]
+        batch_weights.append(float(batch_size))
+
+        if layer_idx is None:
+            metrics = analyzer.analyze_all_blocks(images=images)
+        else:
+            metrics = analyzer.analyze_block(layer_idx=layer_idx, images=images)
+
+        batch_metrics.append(metrics)
+
+    # Case 1: one selected layer
+    if layer_idx is not None:
+        merged = _merge_metric_dicts(batch_metrics, weights=batch_weights)
+        _print_metrics_for_block(layer_idx, merged)
+        return merged
+
+    # Case 2: all layers
+    all_merged = {}
+
+    for i in range(model.num_layers):
+        layer_metrics_i = [bm[i] for bm in batch_metrics]
+        all_merged[i] = _merge_metric_dicts(layer_metrics_i, weights=batch_weights)
+        _print_metrics_for_block(i, all_merged[i])
+
+    return all_merged
 
 
 def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
@@ -212,7 +317,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                                 n_samples=args.valid_samples, sample_inp=sample_inp)
 
 
-def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
+def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=False):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
     noisy_params = {"noise_level": 0.15, "weight": None}
@@ -242,6 +347,9 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.warning("Model output channels: {}".format(net_.ocs))
     logging.warning("Model pooling layers: {}".format(net_.max_pool))
     net_.eval()
+
+    if return_net:
+        return net_
     # logging.warning("Model info: {}".format(torchinfo.summary(net_, input_size=(16,4,16,16))))
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
@@ -306,6 +414,12 @@ def run_ode_inference():
                                         test_bs=args.test_bs, img_type=args.img_type,
                                         task=args.task, shuffle=args.shuffle_test),
                                     ckpt_path, pc_conv, device)
+            exit(0)
+        elif args.analyze_mm:
+            net_ = run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, True)
+            run_ode_mismatch_analysis_multi_batch(model=net_, test_loader=test_dataloader, device=device,
+                                                  sigma=0.25, n_steps=args.n_steps, n_seeds=args.noisy_trials,
+                                                  mismatch_type=args.mismatch_type, n_batches=args.noisy_trials)
             exit(0)
 
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40] # mul
