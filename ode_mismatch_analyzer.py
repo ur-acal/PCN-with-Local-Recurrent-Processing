@@ -272,8 +272,14 @@ class ODEMismatchAnalyzer:
 
         D_ode_vals = []
         D_one_step_vals = []
+
+        ode_abs_err_vals = []
+        one_step_abs_err_vals = []
+        empirical_ode_vs_one_step_abs_ratio_vals = []
+
         rho_vals = []
         eta_vals = []
+        linearized_vsum_vs_big_v0_abs_ratio_vals = []
 
         H_accum = torch.zeros(self.n_steps, self.n_steps, device=x.device, dtype=x.dtype)
         C_avg_cos_accum = torch.zeros_like(H_accum)
@@ -292,11 +298,14 @@ class ODEMismatchAnalyzer:
 
             self._remove_param_perturb(params, deltas)
 
-            D_ode_b = (
-                (yN_pert.flatten(1) - yN_clean_flat).norm(dim=1)
-                / (self.sigma * yN_clean_norm)
-            )
+            ode_abs_err_b = (
+                yN_pert.flatten(1) - yN_clean_flat
+            ).norm(dim=1)
+
+            D_ode_b = ode_abs_err_b / (self.sigma * yN_clean_norm)
+
             D_ode_vals.append(D_ode_b)
+            ode_abs_err_vals.append(ode_abs_err_b)
 
             # ----------------------------------------------------------
             # 2. One-step same-vector-field sensitivity
@@ -309,11 +318,18 @@ class ODEMismatchAnalyzer:
 
             self._remove_param_perturb(params, deltas)
 
-            D_one_b = (
-                (y1_pert.flatten(1) - y1_clean_flat).norm(dim=1)
-                / (self.sigma * y1_clean_norm)
-            )
+            one_step_abs_err_b = (
+                y1_pert.flatten(1) - y1_clean_flat
+            ).norm(dim=1)
+
+            D_one_b = one_step_abs_err_b / (self.sigma * y1_clean_norm)
+
             D_one_step_vals.append(D_one_b)
+            one_step_abs_err_vals.append(one_step_abs_err_b)
+
+            empirical_ode_vs_one_step_abs_ratio_vals.append(
+                ode_abs_err_b / one_step_abs_err_b.clamp_min(self.eps)
+            )
 
             # ----------------------------------------------------------
             # 3. Stepwise contributions v_k.
@@ -356,6 +372,13 @@ class ODEMismatchAnalyzer:
             V_step_sq = V.pow(2).sum(dim=2)               # [K, B]
             V_step_norm = V_step_sq.clamp_min(self.eps).sqrt()
 
+            # Absolute linearized ratio:
+            # ||sum_k v_k|| / ||N v_0||
+            linearized_vsum_vs_big_v0_abs_ratio_b = (
+                V_sum_sq.clamp_min(self.eps).sqrt()
+                / (self.n_steps * V_step_norm[0].clamp_min(self.eps))
+            )
+
             # rho: mixes directional coherence and magnitude imbalance.
             rho_b = V_sum_sq / (
                 self.n_steps * V_step_sq.sum(dim=0).clamp_min(self.eps)
@@ -368,6 +391,9 @@ class ODEMismatchAnalyzer:
 
             rho_vals.append(rho_b)
             eta_vals.append(eta_b)
+            linearized_vsum_vs_big_v0_abs_ratio_vals.append(
+                linearized_vsum_vs_big_v0_abs_ratio_b
+            )
 
             # H_kl = E[(v_k)^T v_l], averaged over batch and seeds.
             H_seed = torch.einsum("kbd,lbd->kl", V, V) / V.shape[1]
@@ -397,12 +423,27 @@ class ODEMismatchAnalyzer:
             "D_ratio_ode_over_one_step": (
                 D_ode_mean / D_one_step_mean.clamp_min(self.eps)
             ).item(),
+
+            # Absolute empirical mismatch errors.
+            "ode_abs_err": torch.cat(ode_abs_err_vals).mean().item(),
+            "one_step_abs_err": torch.cat(one_step_abs_err_vals).mean().item(),
+            "empirical_ode_vs_one_step_abs_ratio": (
+                torch.cat(empirical_ode_vs_one_step_abs_ratio_vals).mean().item()
+            ),
+
+            # Linearized absolute ratio:
+            # ||sum_k v_k|| / ||N v_0||
+            "linearized_vsum_vs_big_v0_abs_ratio": (
+                torch.cat(linearized_vsum_vs_big_v0_abs_ratio_vals).mean().item()
+            ),
+
             "rho": torch.cat(rho_vals).mean().item() * self.n_steps,
             "rho_over_N": torch.cat(rho_vals).mean().item(),
             "eta": torch.cat(eta_vals).mean().item(),
             "H": H.detach().cpu(),
             "C_from_H": C_from_H.detach().cpu(),
             "C_avg_cos": C_avg_cos.detach().cpu(),
+
             # scalar summaries
             **C_from_H_summary,
             **C_avg_cos_summary,
@@ -649,13 +690,22 @@ class ODEMismatchAnalyzer:
         D_ode_realistic_vals = []
         D_one_step_realistic_vals = []
 
+        ode_abs_err_realistic_vals = []
+        one_step_abs_err_realistic_vals = []
+        empirical_ode_vs_one_step_abs_ratio_realistic_vals = []
+
         D_ode_current_noisy_prefix_vals = []
         D_one_step_current_noisy_prefix_vals = []
+
+        ode_abs_err_current_noisy_prefix_vals = []
+        one_step_abs_err_current_noisy_prefix_vals = []
+        empirical_ode_vs_one_step_abs_ratio_current_noisy_prefix_vals = []
 
         prefix_input_distortion_vals = []
 
         rho_vals = []
         eta_vals = []
+        linearized_vsum_vs_big_v0_abs_ratio_realistic_vals = []
 
         H_accum = torch.zeros(
             self.n_steps,
@@ -741,18 +791,30 @@ class ODEMismatchAnalyzer:
             finally:
                 self._remove_param_perturb(current_params, current_deltas)
 
-            D_ode_realistic_b = (
-                (yN_pert.flatten(1) - yN_clean_ref_flat).norm(dim=1)
-                / (self.sigma * yN_clean_ref_norm)
+            ode_abs_err_realistic_b = (
+                yN_pert.flatten(1) - yN_clean_ref_flat
+            ).norm(dim=1)
+
+            D_ode_realistic_b = ode_abs_err_realistic_b / (
+                self.sigma * yN_clean_ref_norm
             )
+
             D_ode_realistic_vals.append(D_ode_realistic_b)
+            ode_abs_err_realistic_vals.append(ode_abs_err_realistic_b)
 
             # Current-layer-only ODE sensitivity at noisy-prefix input.
-            D_ode_current_noisy_prefix_b = (
-                (yN_pert.flatten(1) - yN_noisy_input_clean_flat).norm(dim=1)
-                / (self.sigma * yN_noisy_input_clean_norm)
+            ode_abs_err_current_noisy_prefix_b = (
+                yN_pert.flatten(1) - yN_noisy_input_clean_flat
+            ).norm(dim=1)
+
+            D_ode_current_noisy_prefix_b = ode_abs_err_current_noisy_prefix_b / (
+                self.sigma * yN_noisy_input_clean_norm
             )
+
             D_ode_current_noisy_prefix_vals.append(D_ode_current_noisy_prefix_b)
+            ode_abs_err_current_noisy_prefix_vals.append(
+                ode_abs_err_current_noisy_prefix_b
+            )
 
             # ----------------------------------------------------------
             # 6. Total realistic one-step sensitivity.
@@ -767,19 +829,41 @@ class ODEMismatchAnalyzer:
             finally:
                 self._remove_param_perturb(current_params, current_deltas)
 
-            D_one_step_realistic_b = (
-                (y1_pert.flatten(1) - y1_clean_ref_flat).norm(dim=1)
-                / (self.sigma * y1_clean_ref_norm)
+            one_step_abs_err_realistic_b = (
+                y1_pert.flatten(1) - y1_clean_ref_flat
+            ).norm(dim=1)
+
+            D_one_step_realistic_b = one_step_abs_err_realistic_b / (
+                self.sigma * y1_clean_ref_norm
             )
+
             D_one_step_realistic_vals.append(D_one_step_realistic_b)
+            one_step_abs_err_realistic_vals.append(one_step_abs_err_realistic_b)
+
+            empirical_ode_vs_one_step_abs_ratio_realistic_vals.append(
+                ode_abs_err_realistic_b
+                / one_step_abs_err_realistic_b.clamp_min(self.eps)
+            )
 
             # Current-layer-only one-step sensitivity at noisy-prefix input.
-            D_one_step_current_noisy_prefix_b = (
-                (y1_pert.flatten(1) - y1_noisy_input_clean_flat).norm(dim=1)
-                / (self.sigma * y1_noisy_input_clean_norm)
+            one_step_abs_err_current_noisy_prefix_b = (
+                y1_pert.flatten(1) - y1_noisy_input_clean_flat
+            ).norm(dim=1)
+
+            D_one_step_current_noisy_prefix_b = one_step_abs_err_current_noisy_prefix_b / (
+                self.sigma * y1_noisy_input_clean_norm
             )
+
             D_one_step_current_noisy_prefix_vals.append(
                 D_one_step_current_noisy_prefix_b
+            )
+            one_step_abs_err_current_noisy_prefix_vals.append(
+                one_step_abs_err_current_noisy_prefix_b
+            )
+
+            empirical_ode_vs_one_step_abs_ratio_current_noisy_prefix_vals.append(
+                ode_abs_err_current_noisy_prefix_b
+                / one_step_abs_err_current_noisy_prefix_b.clamp_min(self.eps)
             )
 
             # ----------------------------------------------------------
@@ -826,6 +910,13 @@ class ODEMismatchAnalyzer:
             V_step_sq = V.pow(2).sum(dim=2)
             V_step_norm = V_step_sq.clamp_min(self.eps).sqrt()
 
+            # Absolute linearized ratio:
+            # ||sum_k v_k|| / ||N v_0||
+            linearized_vsum_vs_big_v0_abs_ratio_realistic_b = (
+                V_sum_sq.clamp_min(self.eps).sqrt()
+                / (self.n_steps * V_step_norm[0].clamp_min(self.eps))
+            )
+
             rho_b = V_sum_sq / (
                 self.n_steps * V_step_sq.sum(dim=0).clamp_min(self.eps)
             )
@@ -836,6 +927,9 @@ class ODEMismatchAnalyzer:
 
             rho_vals.append(rho_b)
             eta_vals.append(eta_b)
+            linearized_vsum_vs_big_v0_abs_ratio_realistic_vals.append(
+                linearized_vsum_vs_big_v0_abs_ratio_realistic_b
+            )
 
             H_seed = torch.einsum("kbd,lbd->kl", V, V) / V.shape[1]
             H_accum += H_seed
@@ -885,6 +979,19 @@ class ODEMismatchAnalyzer:
                 / D_one_step_realistic_mean.clamp_min(self.eps)
             ).item(),
 
+            # Absolute empirical total realistic errors.
+            "ode_abs_err_realistic": (
+                torch.cat(ode_abs_err_realistic_vals).mean().item()
+            ),
+            "one_step_abs_err_realistic": (
+                torch.cat(one_step_abs_err_realistic_vals).mean().item()
+            ),
+            "empirical_ode_vs_one_step_abs_ratio_realistic": (
+                torch.cat(
+                    empirical_ode_vs_one_step_abs_ratio_realistic_vals
+                ).mean().item()
+            ),
+
             # Current-layer-only distortion evaluated at noisy-prefix input.
             "D_ode_current_noisy_prefix": D_ode_current_noisy_prefix_mean.item(),
             "D_one_step_current_noisy_prefix": (
@@ -895,14 +1002,37 @@ class ODEMismatchAnalyzer:
                 / D_one_step_current_noisy_prefix_mean.clamp_min(self.eps)
             ).item(),
 
+            # Absolute empirical current-layer-only errors.
+            "ode_abs_err_current_noisy_prefix": (
+                torch.cat(ode_abs_err_current_noisy_prefix_vals).mean().item()
+            ),
+            "one_step_abs_err_current_noisy_prefix": (
+                torch.cat(one_step_abs_err_current_noisy_prefix_vals).mean().item()
+            ),
+            "empirical_ode_vs_one_step_abs_ratio_current_noisy_prefix": (
+                torch.cat(
+                    empirical_ode_vs_one_step_abs_ratio_current_noisy_prefix_vals
+                ).mean().item()
+            ),
+
             # Prefix corruption before current layer.
             "prefix_input_distortion": (
                 torch.cat(prefix_input_distortion_vals).mean().item()
             ),
 
             # Current-layer temporal coherence at noisy-prefix input.
-            "rho_realistic": torch.cat(rho_vals).mean().item(),
+            "rho_realistic": torch.cat(rho_vals).mean().item() * self.n_steps,
+            "rho_over_N_realistic": torch.cat(rho_vals).mean().item(),
             "eta_realistic": torch.cat(eta_vals).mean().item(),
+
+            # Linearized absolute ratio:
+            # ||sum_k v_k|| / ||N v_0||
+            "linearized_vsum_vs_big_v0_abs_ratio_realistic": (
+                torch.cat(
+                    linearized_vsum_vs_big_v0_abs_ratio_realistic_vals
+                ).mean().item()
+            ),
+
             "H_realistic": H_realistic.detach().cpu(),
             "C_from_H_realistic": C_from_H_realistic.detach().cpu(),
             "C_avg_cos_realistic": C_avg_cos_realistic.detach().cpu(),

@@ -50,7 +50,7 @@ else
 #  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_6Layers1l1l1_2Pool_1REP"
 #  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_6Layers1l1l1_2Pool_1REP"
 
-#  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
+  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
 #  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
 
 #  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S64C_0.25Dropout_5Layers3l0l0_2Pool_1REP"
@@ -61,7 +61,7 @@ else
 #  "TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_7Layers1l1l2_2Pool_1REP"
 
 #  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S128C_0.25Dropout_13Layers0l3l6_2Pool_1REP"
-  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S256C_0.25Dropout_13Layers0l3l6_2Pool_1REP"
+#  "TIMMPCNetNoBatchNorm_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S256C_0.25Dropout_13Layers0l3l6_2Pool_1REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_8Layers1l1l3_2Pool_1REP"
   )
@@ -120,7 +120,7 @@ run_model(){
     --noise_level_list  "${noise_level_list}" \
     --pc_conv           "${_pc_conv}Noisy" \
     --ode_block         "ODEXInitFFFB" \
-    --noisy_trials      "10" \
+    --noisy_trials      "20" \
     --test_only         "false" \
     --analyze_mode      "real" \
     --analyze_mm        "0.4" \
