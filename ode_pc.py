@@ -1514,6 +1514,10 @@ class ODEWrapperRC(nn.Module):
         self.C = C
         self.v_dd = v_dd
 
+        setattr(self.ode_block, "R", R)
+        setattr(self.ode_block, "C", C)
+        setattr(self.ode_block, "v_dd", v_dd)
+
         # the bound to scale the states, can be either the maximum absolute value or percentile (99.99)
         self.state_bound = state_bound
         self.q = v_dd / state_bound

@@ -759,6 +759,9 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
         return ode_func
 
+    def _post_scan_update(self, y_next, T_iter):
+        return y_next
+
     def _run_explicit_pixel_switch(self, x, full_traj=False):
         y = self.init_y(x)
         self.integration_time = self.integration_time.type_as(x)
@@ -815,6 +818,9 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
                 # Commit only the selected chunk pixels into the write buffer.
                 y_next[:, :, active_h, active_w] = y_chunk[:, :, active_h, active_w]
+
+            # Optional post-scan correction for possible decay simulation, default does nothing.
+            y_next = self._post_scan_update(y_next, T_iter)
 
             # Commit once after the full iteration.
             y = y_next
@@ -969,6 +975,70 @@ class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
 
 
 class ODEXInitFFFBPixelSwitchStretchT(ODEXInitFFFBPixelSwitchEfficient):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.scale_RHS = False
+
+
+class ODEXInitFFFBPixelSwitchEfficientDecay(ODEXInitFFFBPixelSwitchEfficient):
+    def __init__(self, i_leak=None, leak_to=0.0, **kwargs):
+        super().__init__(**kwargs)
+        self.i_leak = i_leak
+        self.leak_to = leak_to
+        self.tau_decay = None
+
+    def _init_tau_decay_if_needed(self):
+        """
+        When using this class, make sure the model is wrapped by the wrapper to provide needed
+        parameters including C and v_dd.
+
+        It calculates a fixed R_leak = v * C / i_leak.
+        The i_leak is the leak current when v = v_dd.
+        If v is a * v_dd, then the i_leak will also be smaller as a * i_leak.
+        """
+        if self.tau_decay is not None:
+            return
+
+        if self.i_leak is None or self.i_leak <= 0:
+            self.tau_decay = None
+            return
+
+        C_store = getattr(self, "C", 49e-15)
+        v_ref = getattr(self, "v_dd", 0.1)
+
+        self.tau_decay = v_ref * C_store / self.i_leak
+
+    def _post_scan_update(self, y_next, T_iter):
+        self._init_tau_decay_if_needed()
+
+        if self.tau_decay is None:
+            return y_next
+
+        tau_decay = y_next.new_tensor(self.tau_decay)
+
+        _, _, h, w = y_next.shape
+        n_pix = h * w
+
+        if getattr(self, "scale_RHS", True):
+            dt_slot = T_iter / n_pix
+        else:
+            dt_slot = T_iter
+
+        pix_idx = torch.arange(n_pix, device=y_next.device, dtype=y_next.dtype)
+        wait_steps = (n_pix - 1) - pix_idx
+
+        rho = torch.exp(
+            -wait_steps * y_next.new_tensor(dt_slot) / tau_decay
+        ).view(1, 1, h, w)
+
+        if self.leak_to == 0.0:
+            return y_next * rho
+
+        leak_to = y_next.new_tensor(self.leak_to)
+        return leak_to + rho * (y_next - leak_to)
+
+
+class ODEXInitFFFBPixelSwitchStretchTDecay(ODEXInitFFFBPixelSwitchEfficientDecay):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.scale_RHS = False
@@ -1158,5 +1228,7 @@ SWITCH_CLASSES = {
     "ODEXInitFFFBPixelSwitchParallel": ODEXInitFFFBPixelSwitchParallel,
     "ODEXInitFFFBPixelSwitchEfficient": ODEXInitFFFBPixelSwitchEfficient,
     "ODEXInitFFFBPixelSwitchStretchT": ODEXInitFFFBPixelSwitchStretchT,
+    "ODEXInitFFFBPixelSwitchEfficientDecay": ODEXInitFFFBPixelSwitchEfficientDecay,
+    "ODEXInitFFFBPixelSwitchStretchTDecay": ODEXInitFFFBPixelSwitchStretchTDecay,
     "PerturbODEXInitFFFB": PerturbODEXInitFFFB,
 }

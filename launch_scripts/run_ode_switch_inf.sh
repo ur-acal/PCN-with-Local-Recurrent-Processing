@@ -98,7 +98,8 @@ run_model(){
   local test_bs=128
   if [[ "${_ode_block}" == *Circ* ]]; then test_bs=128; fi
 #  _ode_block="ODEXInitFFFBPixelSwitchEfficient"
-  _ode_block="ODEXInitFFFBPixelSwitchStretchT"
+#  _ode_block="ODEXInitFFFBPixelSwitchStretchT"
+  _ode_block="ODEXInitFFFBPixelSwitchStretchTDecay"
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -141,6 +142,7 @@ run_model(){
     --noisy_trials    "2" \
     --switch_period   "" \
     --switch_iter     "5" \
+    --i_leak          "3e-9" \
     --conv_only       "true" \
     --test_expanded   "false" \
     --diff_mismatch   "true" \
