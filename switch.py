@@ -648,7 +648,7 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
         return patches_flat
 
-    def _make_ode_fn(self, x, noisy_cu=None, y_ref=None, active_h=None, active_w=None):
+    def _make_ode_fn(self, x, noisy_cu=None, y_ref=None, active_h=None, active_w=None, read_decay=None):
         """
         Build an RHS that updates a chunk of active pixels in parallel, but
         computes all local quantities from one shared frozen y_ref.
@@ -759,6 +759,9 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
         return ode_func
 
+    def _get_read_decay(self, pix_idx, n_pix, T_iter, ref_tensor):
+        return None
+
     def _post_scan_update(self, y_next, T_iter):
         return y_next
 
@@ -798,6 +801,9 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
                 active_h = pix_idx // w
                 active_w = pix_idx % w
 
+                # Calculate the read_decay for different pixels.
+                read_decay = self._get_read_decay(pix_idx, n_pix, T_iter, y_base)
+
                 # Each chunk solve represents the SAME per-pixel local solve duration delta.
                 # Chunk size should NOT stretch time; chunking must not change dynamics.
                 if getattr(self, "scale_RHS", True):
@@ -810,10 +816,19 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
                     y_ref=y_base,
                     active_h=active_h,
                     active_w=active_w,
+                    read_decay=read_decay
                 )
 
                 # solve using the frozen base state, not from y_next
-                out = aca_ode_solve(ode_fn, y_base, option_aca)
+                # Decay the initialized value for each update pixel.
+                if read_decay is not None:
+                    read_decay_mask = y_base.new_ones(1, 1, h, w)
+                    read_decay_mask[:, :, active_h, active_w] = read_decay.view(1, 1, -1)
+                    # print("Initial value decayed :{}".format(read_decay_mask))
+                    out = aca_ode_solve(ode_fn, y_base * read_decay_mask, option_aca)
+                else:
+                    out = aca_ode_solve(ode_fn, y_base, option_aca)
+
                 y_chunk = out[-1]
 
                 # Commit only the selected chunk pixels into the write buffer.
@@ -839,7 +854,7 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
 
 class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
-    def _make_ode_fn(self, x, noisy_cu=None, y_ref=None, active_h=None, active_w=None):
+    def _make_ode_fn(self, x, noisy_cu=None, y_ref=None, active_h=None, active_w=None, read_decay=None):
         """
         Build an RHS that updates a chunk of active pixels in parallel, but
         computes all local quantities from one shared frozen y_ref.
@@ -872,6 +887,18 @@ class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
         # Stack copied FB bank weights once.
         # Precompute training-only exact quantities without materializing FB input patches.
         valid_mask = valid.view(1, n_active, n_sites, 1).to(dtype)
+        if read_decay is not None:
+            read_decay = torch.as_tensor(read_decay, device=device, dtype=dtype).view(n_active)
+
+            read_decay_z = read_decay.view(1, n_active, 1, 1)
+            read_decay_y = read_decay.view(1, n_active, 1)
+
+            recover_decay_mask = y_ref.new_ones(1, 1, h, w)
+            recover_decay_mask[:, :, active_h, active_w] = (1.0 / read_decay).view(1, 1, -1)
+        else:
+            read_decay_z = None
+            read_decay_y = None
+            recover_decay_mask = None
         if self.training:
             self.in_training_proc = True
             # Use the exact same local weight layout as _fb_weight_to_site_matrix.
@@ -911,24 +938,47 @@ class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
             # weight_flat:  [S, O, I]
             # z_sites:      [B, P, S, O]
             # O = C_out of W_FB, I = C_in * 9 (C_in and C_out are relative to FB not layer)
+            # Note: To calculate the cached values, we must use y instead of y_ref.
+            # Because later on the model might be wrapped by the wrapper, which
+            # will patch the init method to get a different y than raw y_ref.
+            # Also, the _patch_init_y in the wrapper must be scaling only and no shifting.
             nonlocal z_sites_ref_cached, y_ref_active_cached
             if z_sites_ref_cached is None:
                 if self.training:
-                    fb_out_ref = self.FBconv(y)
+                    # The _patch_init_y in the wrapper must be scaling only and no shifting.
+                    if recover_decay_mask is not None:
+                        fb_out_ref = self.FBconv(y * recover_decay_mask)
+                    else:
+                        fb_out_ref = self.FBconv(y)
                     fb_out_ref_flat = fb_out_ref.view(bsz, fb_out_ref.shape[1], -1)
                     z_sites_ref_cached = fb_out_ref_flat[:, :, flat_idx.reshape(-1)]
                     z_sites_ref_cached = z_sites_ref_cached.view(
                         bsz, fb_out_ref.shape[1], n_active, n_sites
                     ).permute(0, 2, 3, 1).contiguous()
                     z_sites_ref_cached = z_sites_ref_cached * valid_mask
+                    # Multiply with possible decay.
+                    # Note: The decay is actually on y. But for the same pixel in y, it can
+                    # be the input for different update pixels and thus suffer from
+                    # different decay.
+                    if read_decay_z is not None:
+                        z_sites_ref_cached = read_decay_z * z_sites_ref_cached
                 else:
                     z_sites_ref_cached = []
                     for s, conv in enumerate(self.FBconv_copies):
-                        fb_out_ref = conv(y)
+                        if recover_decay_mask is not None:
+                            fb_out_ref = conv(y * recover_decay_mask)
+                        else:
+                            fb_out_ref = conv(y)
                         fb_out_ref_flat = fb_out_ref.view(bsz, fb_out_ref.shape[1], -1)
                         z_s_ref = fb_out_ref_flat[:, :, flat_idx[:, s]]
                         z_s_ref = z_s_ref.permute(0, 2, 1).contiguous()
                         z_s_ref = z_s_ref * valid[:, s].view(1, n_active, 1).to(dtype)
+
+                        # Multiply with possible decay.
+                        if read_decay_y is not None:
+                            # print("Decaying z_ref: {}".format(read_decay_y))
+                            z_s_ref = read_decay_y * z_s_ref
+
                         z_sites_ref_cached.append(z_s_ref)
                     z_sites_ref_cached = torch.stack(z_sites_ref_cached, dim=2)  # [B, P, S, O]
 
@@ -936,6 +986,11 @@ class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
                 # Imagine flattening the H and W dimension to be a vector for each b, c_in.
                 # Previously it is a 2D matrix of shape (H, W).
                 y_ref_active_cached = y[:, :, active_h, active_w].permute(0, 2, 1).contiguous()
+                # Multiply with decay. This is the decay for the initial value of the update pixel.
+                # Thus, different pixel positions have different decay factor.
+                # Note: y is decayed as the initial value. No need to decay again here.
+                # if read_decay_y is not None:
+                #     y_ref_active_cached = read_decay_y * y_ref_active_cached
             # Current active-pixel values: [B, P, Cin]
             y_active = y[:, :, active_h, active_w].permute(0, 2, 1).contiguous()
             # Exact delta from the frozen source state.
@@ -987,12 +1042,36 @@ class ODEXInitFFFBPixelSwitchEfficientDecay(ODEXInitFFFBPixelSwitchEfficient):
         self.leak_to = leak_to
         self.tau_decay = None
 
+    def _get_read_decay(self, pix_idx, n_pix, T_iter, ref_tensor):
+        """
+        Calculates the input decay.
+        """
+        self._init_tau_decay_if_needed()
+
+        if self.tau_decay is None:
+            return None
+
+        tau_decay = ref_tensor.new_tensor(self.tau_decay)
+
+        if getattr(self, "scale_RHS", True):
+            dt_slot = T_iter / n_pix
+        else:
+            dt_slot = T_iter
+
+        pix_idx = pix_idx.to(device=ref_tensor.device, dtype=ref_tensor.dtype)
+
+        read_decay = torch.exp(
+            -pix_idx * ref_tensor.new_tensor(dt_slot) / tau_decay
+        )
+
+        return read_decay
+
     def _init_tau_decay_if_needed(self):
         """
         When using this class, make sure the model is wrapped by the wrapper to provide needed
         parameters including C and v_dd.
 
-        It calculates a fixed R_leak = v * C / i_leak.
+        It calculates a fixed R_leak = v / i_leak. And tau = R_leak * C.
         The i_leak is the leak current when v = v_dd.
         If v is a * v_dd, then the i_leak will also be smaller as a * i_leak.
         """

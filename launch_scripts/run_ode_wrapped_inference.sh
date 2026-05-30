@@ -175,8 +175,10 @@ MODEL_NAMES=(
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP" # one_over_q = 1, clamp 0-0.2
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_6REP" # one_over_q = 1, qat with output quantization 8 enob, clamp 0-0.2
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_10REP" # one_over_q = 1, qat with output quantization 8 enob, clamp 0-0.2, 160 epochs (effectively 140 epochs)
-  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_14REP" # one_over_q = 1, qat + kd_crd with output quantization 8 enob, clamp 0-0.2, 140 epochs
+#  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_14REP" # one_over_q = 1, qat + kd_crd with output quantization 8 enob, clamp 0-0.2, 140 epochs
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+
+  "TIMMQAT5bNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_11REP" # srrl + timm trained model, then QAT + MT
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockXInit_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockPC_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
@@ -257,10 +259,10 @@ run_model(){
     --tol             "$tol" \
     --n_steps         100 \
     --ts_scale        1 \
-    --d_start         0 \
-    --d_end           1 \
-    --n_sweep_left    0 \
-    --n_sweep_right   1 \
+    --d_start         0.5 \
+    --d_end           0.5 \
+    --n_sweep_left    5 \
+    --n_sweep_right   5 \
     --thermal_noise   "true" \
     --sde_noise_type  "mul" \
     --mismatch_type   "mul" \
