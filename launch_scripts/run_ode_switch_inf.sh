@@ -50,8 +50,10 @@ for n_bits in "${N_BITS_VALS[@]}"; do
     for method in "${METHOD_VALS[@]}"; do
       for name in "${MODEL_NAMES[@]}"; do
         for i_leak in "${I_LEAK_VALS[@]}"; do
-          mkdir -p "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}"
-          > "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}/job.log"
+          short_name="$(printf '%s' "$name" | md5sum | awk '{print $1}' | cut -c1-12)"
+          logdir="$BASE_LOGDIR/${short_name}_m_${method}_t_${tol}_n_${n_bits}_c_${cap_val}_i_${i_leak}"
+          mkdir -p "$logdir"
+          > "$logdir/job.log"
         done
       done
     done
@@ -107,6 +109,10 @@ run_model(){
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
+  local short_name
+  local logdir
+  short_name="$(printf '%s' "$name" | md5sum | awk '{print $1}' | cut -c1-12)"
+  logdir="$BASE_LOGDIR/${short_name}_m_${method}_t_${tol}_n_${n_bits}_c_${cap_val}_i_${i_leak}"
   set -o pipefail
   python -u ode_inference.py \
     --model_name      "$name" \
@@ -152,7 +158,7 @@ run_model(){
     --diff_mismatch   "true" \
     --nonlinear_R     "false" \
     --test_only       "false" \
-    2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}/job.log"
+    2>&1 | tee -a "$logdir/job.log"
 }
 export -f run_model
 
@@ -186,7 +192,8 @@ for method in "${METHOD_VALS[@]}"; do
         for i_leak in "${I_LEAK_VALS[@]}"; do
           printf '========== %s | method=%s | n_bits=%s | cap=%s | i_leak=%s ==========\n' \
                  "$name" "$method" "$n_bits" "$cap_val" "$i_leak" >>"$MASTER_LOG"
-          logfile="$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}/job.log"
+          short_name="$(printf '%s' "$name" | md5sum | awk '{print $1}' | cut -c1-12)"
+          logfile="$BASE_LOGDIR/${short_name}_m_${method}_t_${tol}_n_${n_bits}_c_${cap_val}_i_${i_leak}/job.log"
           if ! grep -A 100 "Model name: ${name} " "$logfile" >>"$MASTER_LOG"; then
             echo "[Final Result not found] $logfile" >>"$MASTER_LOG"
           fi
