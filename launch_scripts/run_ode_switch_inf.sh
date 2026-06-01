@@ -18,6 +18,7 @@ N_BITS_VALS=(5)
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
 METHOD_VALS=("dopri5")
 CAP_VALS=("49e-12")
+I_LEAK_VALS=("0.5e-9" "1e-9" "2e-9" "3e-9" "4e-9" "5e-9" "6e-9" "8e-9" "10e-9")
 #METHOD_VALS=("euler")
 #METHOD_VALS=("rk4")
 
@@ -48,8 +49,10 @@ for n_bits in "${N_BITS_VALS[@]}"; do
   for cap_val in "${CAP_VALS[@]}"; do
     for method in "${METHOD_VALS[@]}"; do
       for name in "${MODEL_NAMES[@]}"; do
-        mkdir -p "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}"
-        > "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
+        for i_leak in "${I_LEAK_VALS[@]}"; do
+          mkdir -p "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}"
+          > "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}/job.log"
+        done
       done
     done
   done
@@ -61,6 +64,7 @@ run_model(){
   local method="$2"
   local n_bits="$3"
   local cap_val="$4"
+  local i_leak="$5"
 
   if [[ "$name" == *C100* ]]; then
     local _task="cifar100"
@@ -139,26 +143,24 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
-    --noisy_trials    "2" \
+    --noisy_trials    "5" \
     --switch_period   "" \
     --switch_iter     "5" \
-    --i_leak          "3e-9" \
+    --i_leak          "${i_leak}" \
     --conv_only       "true" \
     --test_expanded   "false" \
     --diff_mismatch   "true" \
     --nonlinear_R     "false" \
     --test_only       "false" \
-    2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
+    2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}/job.log"
 }
 export -f run_model
 
 # ─────────────── loop over methods ───────────────
-#for n_bits in "${N_BITS_VALS[@]}"; do
 for method in "${METHOD_VALS[@]}"; do
   ##########################################################################################
   # Modify log name here before each run
   ##########################################################################################
-#  EXP_NAME="0818_3pooling_wrapped_${n_bits}bits_ODESumAsBInitY_${method}Method_${tol}Tol.log"
   EXP_NAME="0317_scanGFI_multiplicative_mismatch_${method}Method_${tol}Tol.log"
   MASTER_LOG="$BASE_LOGDIR/master_${EXP_NAME}"
   JOB_LOG="$BASE_LOGDIR/parallel_master_${EXP_NAME}"
@@ -170,29 +172,31 @@ for method in "${METHOD_VALS[@]}"; do
     --jobs 1 \
     --joblog "$JOB_LOG" \
     --keep-order \
-    run_model {1} "${method}" {2} {3} \
+    run_model {1} "${method}" {2} {3} {4} \
     ::: "${MODEL_NAMES[@]}" \
     ::: "${N_BITS_VALS[@]}" \
-    ::: "${CAP_VALS[@]}"
+    ::: "${CAP_VALS[@]}" \
+    ::: "${I_LEAK_VALS[@]}"
   echo "All jobs finished — merging logs into $MASTER_LOG"
   # ─────────────── merge logs sequentially ───────────────
   : >"$MASTER_LOG"
   for n_bits in "${N_BITS_VALS[@]}"; do
     for cap_val in "${CAP_VALS[@]}"; do
       for name in "${MODEL_NAMES[@]}"; do
-        printf '========== %s | method=%s | n_bits=%s | cap=%s ==========\n' \
-               "$name" "$method" "$n_bits" "$cap_val" >>"$MASTER_LOG"
-        logfile="$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
-        if ! grep -A 100 "Model name: ${name} " "$logfile" >>"$MASTER_LOG"; then
-          echo "[Final Result not found] $logfile" >>"$MASTER_LOG"
-        fi
-        printf '\n\n' >>"$MASTER_LOG"
+        for i_leak in "${I_LEAK_VALS[@]}"; do
+          printf '========== %s | method=%s | n_bits=%s | cap=%s | i_leak=%s ==========\n' \
+                 "$name" "$method" "$n_bits" "$cap_val" "$i_leak" >>"$MASTER_LOG"
+          logfile="$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}_ileak_${i_leak}/job.log"
+          if ! grep -A 100 "Model name: ${name} " "$logfile" >>"$MASTER_LOG"; then
+            echo "[Final Result not found] $logfile" >>"$MASTER_LOG"
+          fi
+          printf '\n\n' >>"$MASTER_LOG"
+        done
       done
     done
   done
   echo "All summaries written to $MASTER_LOG"
 done
-#done
 
 #######################################################
 # running

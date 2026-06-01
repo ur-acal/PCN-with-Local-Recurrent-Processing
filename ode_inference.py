@@ -302,7 +302,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     logging.warning("Model pooling layers: {}".format(net_.max_pool))
 
     valid_ins = Validator(model=net_,
-                          expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name, "{}b".format(args.w_bits)),
+                          expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name,
+                                                           args.ode_wrapper, "{}b".format(args.w_bits)),
                           device=device, test_dataloader=test_dataloader,
                           result_path=os.path.join(args.hw_val_path, args.model_name, "{}b".format(args.w_bits)),
                           wrapper=saved_wrappers["wrappers"],
@@ -521,6 +522,7 @@ def run_ode_inference():
                             # Use validator to expand the weights of the model
                             valid_ins = Validator(model=net_,
                                                   expanded_weight_dir=os.path.join(args.expanded_w_dir, args.model_name,
+                                                                                   args.ode_wrapper,
                                                                                    "{}b".format(args.w_bits)),
                                                   device=device, test_dataloader=test_dataloader,
                                                   result_path=os.path.join(args.hw_val_path, args.model_name,

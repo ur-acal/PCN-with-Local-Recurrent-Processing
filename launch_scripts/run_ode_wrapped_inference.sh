@@ -239,6 +239,7 @@ run_model(){
       _ode_wrapper="QATTester1State"
     fi
   fi
+#  local _ode_wrapper="ODEWrapperRC"
 #  _ode_wrapper="ODEWrapper1StateWithX"
 #  _ode_wrapper="WrapQuantizeWXInit"
 #  _ode_wrapper="QATTester1StateWithX"
@@ -284,7 +285,7 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
-    --noisy_trials    "2" \
+    --noisy_trials    "10" \
     --conv_only       "true" \
     --test_expanded   "true" \
     --diff_mismatch   "true" \
