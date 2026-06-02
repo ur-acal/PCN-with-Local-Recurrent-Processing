@@ -51,6 +51,7 @@ def parse_args():
                         default=None)
     parser.add_argument("--ode_wrapper", type=lambda s: None if s.lower() in {"none", ""} else str(s),
                         choices=list(ODEWrapper_CLASSES.keys()) + [None], default=None)
+    parser.add_argument("--return_init", type=str, default="0")
     parser.add_argument("--state_calib", type=str, required=False,
                         help="The calibration result of ode intermediate states for each layer")
     parser.add_argument("--R", type=float, default=1e5, help="Resistance")
@@ -107,6 +108,8 @@ def parse_args():
                         default=False)
     parser.add_argument("--mem_frac", type=float, default=1.0)
     parser.add_argument("--noisy_trials", type=int, default=20)
+    parser.add_argument("--test_only_nl", type=float, default=0.15,
+                        help="The noise level to use when test_only=True.")
     parser.add_argument("--analyze_mm", type=float, default=0.25, help="Mismatch level for analysis.")
     parser.add_argument("--analyze_mode", type=lambda s: None if s.lower() in {"none", ""} else str(s),
                         default=None, choices=[None, "none", "", "real", "clean"])
@@ -269,11 +272,15 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     t_end = get_t_end(args)
     unrolled_noise_level = 0.0
     noisy_params = {"noise_level": 0.0, "weight": None}
+    num_layers = int(args.model_name.split("Layers")[0].split("_")[-1])
+    return_init = list(map(lambda x: bool(int(x)), args.return_init.split(",")))
+    return_init = return_init + [False] * (num_layers - len(return_init))
     if args.pvt_to_origin:
         # addinig non-ideality to the original weights and then expand (expanded values have the same non-ideality)
         # Todo: This needs unrolling at each forward pass, very inefficient. Thus is not used for now.
         noisy_params["noise_level"] = unrolled_noise_level
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block],
+                  "return_init": return_init,
                   "t_end": t_end * args.t_end_sf, # possibly scaling the t_end to plot the spin voltage
                   "t_end_sf": args.t_end_sf,
                   "method": args.method,
@@ -344,10 +351,13 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
     noisy_params = {"noise_level": 0.15 if noise_level is None else noise_level, "weight": None}
+    num_layers = int(args.model_name.split("Layers")[0].split("_")[-1])
+    return_init = list(map(lambda x: bool(int(x)), args.return_init.split(",")))
+    return_init = return_init + [False] * (num_layers - len(return_init))
     if args.diff_mismatch:
         noisy_params["noise_level"] = MISMATCH_LEVELS_5b
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
-                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
+                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
                   "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
@@ -429,7 +439,7 @@ def run_ode_inference():
 
     with torch.no_grad():
         if args.test_only:
-            run_test_only(args, test_dataloader, ckpt_path, pc_conv, device)
+            run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, noise_level=args.test_only_nl)
             exit(0)
         elif args.hw_validate:
             run_validation_data_gen(args,
@@ -479,11 +489,14 @@ def run_ode_inference():
     t_end_list = torch.cat([t_end_before, t_end_after]).tolist()
 
     logging.warning("Running ODE pcn inference, method: {}, tol: {}".format(args.method, args.tol))
+    num_layers = int(args.model_name.split("Layers")[0].split("_")[-1])
+    return_init = list(map(lambda x: bool(int(x)), args.return_init.split(",")))
+    return_init = return_init + [False] * (num_layers - len(return_init))
     acc_dict = {}
     for t_end in t_end_list:
         logging.warning("Current t_end: {}, ground truth t_end: {}".format(t_end, gt_t_end))
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
-                      "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
+                      "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
                       "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
                       "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
