@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+#######################################################
+# An example launch
+# sbatch -N 1 --export=ALL,TIMM_AUG_LEVEL=no_aug,ENOB=6,SWITCH_INF=false ./launch_scripts/run_slurm_ode_mixed_ft.sh
+#######################################################
+
 declare -A NOISE_LEVELS=(
   [mul]="0.25"
   [add]="0.05 0.08 0.1 0.15 0.2"
@@ -11,7 +16,7 @@ NOISE_TYPES=(
 NBITS=(5)
 R_MAX_LIST=("300e3")
 ONE_OVER_Q_LIST=("1")
-EXP="NODE_0324_QAT_with_noise_inject_kd_crd_training_C100"
+EXP="NODE_0602_QAT_with_noise_inject_kd_crd_training_C100"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.002eps_S2NoMinusZChgZNoisyI_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_0.25Dropout_7Layers_2Pool_2REP"
@@ -37,12 +42,13 @@ mkdir -p "${LOGDIR}"
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
 # The ckpt of this model does NOT have auxiliary modules for distillation
 #MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_5REP"
-#MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP"
-MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
+MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP"
+#MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
 
-SWITCH_INF=${SWITCH_INF:-true} # Change depending on model name; true if using Euler solver.
+SWITCH_INF=${SWITCH_INF:-false} # Change depending on model name; true if using Euler solver.
 TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
-echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL} ==========="
+ENOB="${ENOB:-5}"
+echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL}, SWITCH_INF: ${SWITCH_INF}, ENOB: ${ENOB} ==========="
 
 #MODEL_NAME="PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockXInit_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
 #######################################################################################################################
@@ -123,7 +129,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --R_max         "${R_max}" \
             --C             "49e-15" \
             --v_dd          "0.1" \
-            --enob          "8" \
+            --enob          "${ENOB}" \
             --w_bits        "${n_bits}" \
             --patch_node    "8" \
             --patch_stride  "8" \
