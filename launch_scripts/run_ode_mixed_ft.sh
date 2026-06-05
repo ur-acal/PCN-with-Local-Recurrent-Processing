@@ -14,7 +14,7 @@ NOISE_TYPES=(
 #  "add"
 )
 NBITS=(5)
-R_MAX_LIST=("300e3")
+R_MAX_LIST=("150e3")
 ONE_OVER_Q_LIST=("1")
 EXP="NODE_0602_QAT_with_noise_inject_kd_crd_training_C100"
 LOGDIR="./logs/${EXP}"
@@ -125,7 +125,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --n_steps       5 \
             --tol           "1e-6" \
             --t_end         "1.75" \
-            --R             "20e3" \
+            --R             "10e3" \
             --R_max         "${R_max}" \
             --C             "49e-15" \
             --v_dd          "0.1" \

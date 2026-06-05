@@ -290,9 +290,9 @@ def _constr_model_name(args, rep=1):
         if args.ode_wrapper is None:
             ft_prefix = "ft"
         elif args.qat_cls is None or args.qat_cls == "SymQuantizeWeight":
-            ft_prefix = "QAT{}b".format(args.w_bits)
+            ft_prefix = "QAT{}b{}a".format(args.w_bits, args.enob)
         else:
-            ft_prefix = "QAT{}b{}".format(args.w_bits, args.qat_cls)
+            ft_prefix = "QAT{}b{}a{}".format(args.w_bits, args.enob, args.qat_cls)
         if args.noise_level is not None:
             ft_prefix += "NT{}{}".format(str(args.noise_level).replace('.', 'p'), args.noise_type)
         if args.model_name is not None:
