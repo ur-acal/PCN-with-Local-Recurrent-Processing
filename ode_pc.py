@@ -229,11 +229,42 @@ class ODEBlockPC(nn.Module):
                 p.add_(noise_)
 
     def add_noise(self):
-        self._apply_noise(self.FFconv.weight)
+        # If the conv layers in the model have been replaced to MVMConv, call the add_noise
+        # method of the MVMConv. In this case, we should initialize the model with 0.0
+        # noise_level first, and then wrap with validator, and then set mismatch, and
+        # finally call the add_noise method.
+        if hasattr(self.FFconv, "add_noise"):
+            self.FFconv.add_noise(
+                noise_level=self.noise_level,
+                mismatch_type=self.mismatch_type,
+                q_hi=getattr(self, "q_hi", None),
+                weight_scale=getattr(self, "weight_scale", 1.0)
+            )
+        else:
+            self._apply_noise(self.FFconv.weight)
+
         if not self.tie_weights:
-            self._apply_noise(self.FBconv.weight)
+            if hasattr(self.FBconv, "add_noise"):
+                self.FBconv.add_noise(
+                    noise_level=self.noise_level,
+                    mismatch_type=self.mismatch_type,
+                    q_hi=getattr(self, "q_hi", None),
+                    weight_scale=getattr(self, "weight_scale", 1.0)
+                )
+            else:
+                self._apply_noise(self.FBconv.weight)
+
         if not self.tie_bp and self.bypass is not None:
-            self._apply_noise(self.bypass.weight)
+            if hasattr(self.bypass, "add_noise"):
+                self.bypass.add_noise(
+                    noise_level=self.noise_level,
+                    mismatch_type=self.mismatch_type,
+                    q_hi=getattr(self, "q_hi", None),
+                    weight_scale=getattr(self, "weight_scale", 1.0)
+                )
+            else:
+                self._apply_noise(self.bypass.weight)
+
         if not torch.allclose(self.b0[0], torch.zeros_like(self.b0[0])):
             self._apply_noise(self.b0[0])
 
@@ -1645,6 +1676,8 @@ class WrapQuantizeW(ODEWrapperRC):
 
         self.nonlinear_R = kwargs.pop("nonlinear_R", False)
         self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
+        self.mul_mismatch_mode = kwargs.pop("mul_mismatch_mode", "scale_mismatch")
+        assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
 
         self.v_grid, self.R_codes, self.R_table = None, None, None
         self.R_left, self.R_slope = None, None # Use piecewise-linear function as interpolant
@@ -1800,7 +1833,8 @@ class WrapQuantizeW(ODEWrapperRC):
             "R": self.R,
             "R_left": self.R_left,
             "R_slope": self.R_slope,
-            "proj_fn": getattr(self, "proj_fn", None)
+            "proj_fn": getattr(self, "proj_fn", None),
+            "mul_mismatch_mode": self.mul_mismatch_mode,
         }
 
 

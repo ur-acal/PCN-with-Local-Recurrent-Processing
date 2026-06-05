@@ -59,6 +59,8 @@ def parse_args():
                         default=None, help="Maximum meaningful Resistance")
     parser.add_argument("--nonlinear_R", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False, help="R change with v_in or not")
+    parser.add_argument("--mul_mismatch_mode", type=str, default="scale_mismatch",
+                        choices=["scale_mismatch", "static_mismatch"])
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
@@ -294,7 +296,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "enob": args.enob, "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
-                      "nonlinear_R": args.nonlinear_R,  # Only valid when wrapped with Validator
+                      "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     saved_wrappers = {}
@@ -366,7 +368,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
-                      "nonlinear_R": args.nonlinear_R, # Only valid when wrapped with Validator
+                      "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -472,9 +474,6 @@ def run_ode_inference():
         # In this case we overide the input args.noise_level_list
         if not args.diff_mismatch:
             noise_level_list_ = [0, 0.15, 0.25]
-    if args.nonlinear_R:
-        logging.warning("To enable nonlinear R, support non-mismatch for now.")
-        noise_level_list_ = [0]
     gt_t_end = get_t_end(args)
 
     # Get t_end_list for experiments
@@ -504,7 +503,7 @@ def run_ode_inference():
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
-                          "nonlinear_R": args.nonlinear_R,  # Only valid when wrapped with Validator
+                          "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None
         noise_acc_spec_all = {}
@@ -562,7 +561,10 @@ def run_ode_inference():
                                         assert torch.allclose(_buf, torch.zeros_like(_buf)) or not torch.allclose(_buf,
                                                                                                                   clean_buffs[
                                                                                                                   _name])
-                                assert_mvm_mats_all_values_noised(net_, clean_vals)
+                                if not args.nonlinear_R:
+                                    # Now we keep a fixed mismatch matrix in the MVMConv, add that
+                                    # before we do the sparse mm. The original weights are clean.
+                                    assert_mvm_mats_all_values_noised(net_, clean_vals)
                     real_t_list = torch.tensor([_.integration_time[-1].cpu() for _ in net_.PcConvs])
                     max_real_t, min_real_t, avg_real_t = real_t_list.max(), real_t_list.min(), real_t_list.mean()
                     max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"

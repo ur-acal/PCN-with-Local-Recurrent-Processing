@@ -5,8 +5,8 @@ trap '' HUP   # ignore hangup so the children survive
 # ─────────────── fixed params ───────────────
 export MODEL_DIR="./saved_ckpt"
 export tol="1e-6"
-export R_VAL="20e3"
-export R_MAX="300e3"
+export R_VAL="10e3"
+export R_MAX="150e3"
 #export CKPT="full_param_best"
 export CKPT="best"
 
@@ -272,10 +272,10 @@ run_model(){
     --tol             "$tol" \
     --n_steps         100 \
     --ts_scale        1 \
-    --d_start         0.5 \
-    --d_end           0.5 \
-    --n_sweep_left    5 \
-    --n_sweep_right   5 \
+    --d_start         0 \
+    --d_end           1 \
+    --n_sweep_left    0 \
+    --n_sweep_right   1 \
     --thermal_noise   "true" \
     --sde_noise_type  "mul" \
     --mismatch_type   "mul" \
@@ -297,14 +297,15 @@ run_model(){
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
-    --noisy_trials    "10" \
+    --noisy_trials    "1" \
     --conv_only       "true" \
     --test_expanded   "true" \
-    --diff_mismatch   "false" \
-    --nonlinear_R     "false" \
+    --diff_mismatch   "true" \
+    --nonlinear_R     "true" \
+    --mul_mismatch_mode "static_mismatch" \
     --test_only_nl    "0.0" \
     --return_init     "0,0" \
-    --test_only       "true" \
+    --test_only       "false" \
     2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
 }
 export -f run_model

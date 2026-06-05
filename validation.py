@@ -241,7 +241,12 @@ class MVMConv(nn.Module):
         self.proj_fn = None
         self.R = None
 
-    def enable_csv(self, v_grid, R_codes, R_left, R_slope, proj_fn, R):
+        self.mismatch_mat = None
+        self.mismatch_type = "mul"
+        self.mul_mismatch_mode = None
+
+    def enable_csv(self, v_grid, R_codes, R_left, R_slope, proj_fn, R,
+                   mul_mismatch_mode="scale_mismatch"):
         self.csv_enabled = True
 
         self.v_grid = v_grid
@@ -250,6 +255,9 @@ class MVMConv(nn.Module):
         self.R_slope = R_slope
         self.proj_fn = proj_fn
         self.R = R
+
+        self.mul_mismatch_mode = mul_mismatch_mode
+        assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
 
         self.code_idx_mat = self._build_code_idx_mat()
 
@@ -267,20 +275,24 @@ class MVMConv(nn.Module):
         code_idx[zero_mask] = -1
         return code_idx
 
-    def _build_code_idx_mat(self):
+    def _build_code_idx_mat(self, val_sign_and_noise=None):
         # Returns a list of tuples
         # The first element of the tuple is code idx
-        # The second element of the tuple is a sparse matrix storing
-        # the signs of values that corresponds to that code idx in the original matrix.
+        # The second element of the tuple is a sparse matrix storing:
+        #   no mismatch: sign(weight)
+        #   mul mismatch: sign(weight) * (1 + eps)
+        # When combining the non-linearity with multiplicative mismatch,
+        # if mul_mismatch_mode = "scale_mismatch", the noisy weight is
+        # w_noisy = w * (1 + eps). We played a math trick and put the (1 + eps)
+        # part along with the sign. So the original weights are left untouched.
+        # The mismatch is applied after we get the interpolated weights.
         mat_coo = self.mat.to_sparse_coo().coalesce()
         idx = mat_coo.indices()
         vals = mat_coo.values()
 
         code_idx_vals = self._values_to_code_idx(vals)  # (nnz,); Get the column index in the R_table.
-        sign_vals = vals.sign()
+        sign_vals = vals.sign() if val_sign_and_noise is None else val_sign_and_noise
 
-        # Loop over all possible column indices.
-        # Todo: This only works for R_table with limited number of columns (e.g. 15 for 5-bit quantization).
         mats = []
         uniq = torch.unique(code_idx_vals)
         for j in uniq.tolist():
@@ -290,7 +302,6 @@ class MVMConv(nn.Module):
             if sel.any():
                 idx_j = idx[:, sel]
                 val_j = sign_vals[sel].to(vals.dtype)
-                # Sign only
                 mat_j = torch.sparse_coo_tensor(
                     idx_j, val_j,
                     size=self.mat.shape,
@@ -299,6 +310,147 @@ class MVMConv(nn.Module):
                 ).coalesce().to_sparse_csr()
                 mats.append((int(j), mat_j))
         return mats
+
+    # Three helper functions to support different mismatch levels for
+    # different quantization levels
+    def _get_quant_magnitude_levels(self, values, q_hi, weight_scale):
+        # Maps the weight values to quantization levels.
+        k = torch.arange(q_hi + 1, device=values.device, dtype=values.dtype)
+
+        if weight_scale == 1.0:
+            levels = k / q_hi
+        else:
+            first = weight_scale / q_hi
+            delta = (1.0 - first) / (q_hi - 1)
+
+            levels = torch.zeros_like(k)
+            mask = k > 0
+            levels[mask] = first + (k[mask] - 1.0) * delta
+
+        return levels
+
+    def _values_to_level_idx(self, values, q_hi, weight_scale):
+        # Get level idx.
+        levels = self._get_quant_magnitude_levels(values, q_hi, weight_scale)
+        v_abs = values.abs().reshape(-1, 1)
+        dist = (v_abs - levels.reshape(1, -1)).abs()
+        level_idx = dist.argmin(dim=1).to(torch.long)
+        return level_idx.reshape_as(values)
+
+    def _get_sparse_sigma_tensor(self, values, noise_level, q_hi, weight_scale):
+        # Get different mismatch levels for each element in the values,
+        # depending on the quantization level of each element.
+        if not isinstance(noise_level, dict):
+            return noise_level
+
+        level_idx = self._values_to_level_idx(values, q_hi, weight_scale)
+
+        # Same as ODEBlockPC: missing keys default to max sigma.
+        sigma_lut = torch.full(
+            (q_hi + 1,),
+            max(noise_level.values()),
+            device=values.device,
+            dtype=values.dtype
+        )
+        for _k, _sigma in noise_level.items():
+            sigma_lut[_k] = _sigma
+
+        sigma = sigma_lut[level_idx]
+        return sigma
+
+    @torch.no_grad()
+    def add_noise(self, noise_level, mismatch_type="mul", q_hi=None, weight_scale=1.0):
+        if noise_level is None:
+            return
+        if not isinstance(noise_level, dict) and noise_level <= 0:
+            return
+
+        self.mismatch_type = mismatch_type
+
+        if q_hi is None and isinstance(noise_level, dict):
+            raise ValueError("q_hi is required when noise_level is a dict.")
+
+        if not self.csv_enabled:
+            # Now if not using nonlinear_R, we add mismatch here. Copying the same
+            # logic in ODEBlockPC.
+            v_ = self.mat.values()
+            sigma_ = self._get_sparse_sigma_tensor(v_, noise_level, q_hi, weight_scale)
+
+            if mismatch_type == "mul":
+                noise_ = torch.randn_like(v_, device=v_.device, requires_grad=False) * sigma_
+                v_.mul_(1 + noise_)
+            else:
+                max_abs = v_.abs().max()
+                noise_ = torch.randn_like(v_, device=v_.device, requires_grad=False) * (sigma_ * max_abs)
+                v_.add_(noise_)
+            return
+
+        mat_coo = self.mat.to_sparse_coo().coalesce()
+        idx = mat_coo.indices()
+        vals = mat_coo.values()
+
+        sigma_ = self._get_sparse_sigma_tensor(vals, noise_level, q_hi, weight_scale)
+
+        if mismatch_type == "mul":
+            noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * sigma_
+
+            # In this case we sample a fixed val_sign_and_noise, the actual mismatch scales
+            # with the input dependent resistance value.
+            if self.mul_mismatch_mode == "scale_mismatch":
+                val_sign_and_noise = vals.sign() * (1 + noise_)
+                self.code_idx_mat = self._build_code_idx_mat(
+                    val_sign_and_noise=val_sign_and_noise
+                )
+                self.mismatch_mat = None
+
+            # In this case, we keep a fixed mismatch.
+            elif self.mul_mismatch_mode == "static_mismatch":
+                # Static conductance mismatch based on the selected CSV column name.
+                # clean self.mat decides the nominal programmed resistance column.
+                # mismatch is a fixed extra conductance/weight term and does NOT depend on input voltage.
+
+                self.code_idx_mat = self._build_code_idx_mat()
+
+                clean_code_idx = self._values_to_code_idx(vals)
+                valid_mask = clean_code_idx >= 0
+
+                mismatch_vals = torch.zeros_like(vals)
+
+                # calculate R_ij, non-distorted by non-linearity
+                clean_R_code = self.R_codes[clean_code_idx[valid_mask]]
+                # Compensate the 1/self.R in the wrapper's transform method.
+                clean_W_code_abs = self.R / clean_R_code
+
+                # Multiplicative conductance mismatch:
+                # real_mismatch = G_ij * sigma * N(0,1) = 1 / R_ij * sigma * N(0,1)
+                # The wrapper will divide the result by R, thus we calculate
+                # mismatch = R * real_mismatch in this function.
+                mismatch_vals[valid_mask] = vals.sign()[valid_mask] * clean_W_code_abs * noise_[valid_mask]
+
+                self.mismatch_mat = torch.sparse_coo_tensor(
+                    idx,
+                    mismatch_vals,
+                    size=self.mat.shape,
+                    device=self.mat.device,
+                    dtype=self.mat.dtype
+                ).coalesce().to_sparse_csr()
+
+        else:
+            max_abs = vals.abs().max()
+            noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * (sigma_ * max_abs)
+
+            # Keep nonlinear-R nominal path unchanged.
+            self.code_idx_mat = self._build_code_idx_mat()
+
+            # Additive mismatch path: out += delta_w @ x
+            # For additive mismatch, we store it in an extra class attributes.
+            self.mismatch_mat = torch.sparse_coo_tensor(
+                idx,
+                noise_,
+                size=self.mat.shape,
+                device=self.mat.device,
+                dtype=self.mat.dtype
+            ).coalesce().to_sparse_csr()
 
     def _get_R_eff(self, v, code_idx):
         # Performs interpolation based on current input value and weight value.
@@ -343,6 +495,7 @@ class MVMConv(nn.Module):
             return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
 
         out = None
+        # If with scaled multiplicative mismatch, it is already in self.code_idx_mat and mat_j.
         for (j, mat_j) in self.code_idx_mat:
             R_eff_j = self._get_R_eff(x, j)
             x_j = x / R_eff_j
@@ -351,7 +504,18 @@ class MVMConv(nn.Module):
 
         if out is None:
             out = torch.sparse.mm(self.mat, x)
+            return out.t().view(batch_size, self.meta["out_chan"], output_h, output_w)
+
+        ################################################################################
+        # This is to compensate the self.R in the transform method of ODEWrapper1State
+        # so that we are using R_eff instead of R in the ODE.
+        ################################################################################
         out = out * self.R
+
+        # Add additive mismatch or static multiplicative mismatch part.
+        if self.mismatch_mat is not None:
+            out = out + torch.sparse.mm(self.mismatch_mat, x)
+
         return out.t().view(batch_size, self.meta["out_chan"], output_h, output_w)
 
     @property
@@ -370,6 +534,11 @@ class MVMConv(nn.Module):
 class Validator(nn.Module):
     def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, wrapper=None,
                  record_full_traj=False, t_end_sf=1.0, **kwargs):
+        """
+        Do weight unroll_or_load in the init method. The mismatch to weight is added later on
+        after unroll_or_load is finished. Make sure the model passed in to init method has
+        noise_level=0.0. Otherwise, we will save the unrolled noisy weights.
+        """
         super().__init__()
         # The model should contain conv layers only. All transposed conv layers should be converted to conv layers.
         # The model needs to be converted to ode blocks and wrapped with wrapper before.
