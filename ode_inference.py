@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torchvision
 import os
+import gc
 import pickle
 import argparse
 import json
@@ -21,7 +22,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLASSES, wrap_ode_block
 from cross_sim_inference import calibrate_input
-from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised
+from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised, MVMConv
 from switch import SWITCH_CLASSES
 from ode_mismatch_analyzer import ODEMismatchAnalyzer
 
@@ -543,7 +544,9 @@ def run_ode_inference():
                             logging.warning("Unroll or load expanded weights finished")
                             clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
                             clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
-                            clean_vals = snapshot_clean_mvm_mat_values(net_) # not part of named_parameters
+                            clean_vals = None
+                            if not args.nonlinear_R:
+                                clean_vals = snapshot_clean_mvm_mat_values(net_) # not part of named_parameters
                             net_ = valid_ins.model
                             # Add noise after wrapped with Validator
                             net_.noise_level = noise_level
@@ -593,6 +596,48 @@ def run_ode_inference():
                     accuracy = 100 * correct / total
                     acc_list.append(accuracy)
                     log.warning(f'Test Accuracy at noise level {noise_level} thermal noise eps {offset_eps_}: {accuracy:.2f}%')
+
+                    # Cross trial clean up code
+                    if args.test_expanded:
+                        for _m in net_.modules():
+                            if isinstance(_m, MVMConv):
+                                _m.code_idx_mat = None
+                                _m.mismatch_mat = None
+                                _m.mat = None
+                                _m.v_grid = None
+                                _m.R_codes = None
+                                _m.R_left = None
+                                _m.R_slope = None
+
+                        for _w in saved_wrappers["wrappers"]:
+                            _blk = getattr(_w, "ode_block", None)
+                            if _blk is not None:
+                                if hasattr(_w, "original_forward"):
+                                    _blk.forward = _w.original_forward
+                                if hasattr(_w, "original_make_fn"):
+                                    _blk._make_ode_fn = _w.original_make_fn
+                                if hasattr(_w, "original_init_y"):
+                                    _blk.init_y = _w.original_init_y
+                                if hasattr(_w, "original_make_z_fn") and hasattr(_blk, "_make_z_ode_fn"):
+                                    _blk._make_z_ode_fn = _w.original_make_z_fn
+
+                        valid_ins.model = None
+                        valid_ins.wrappers = None
+                        valid_ins.dataloader = None
+
+                    del net_, saved_wrappers
+                    if args.test_expanded:
+                        del valid_ins, clean_params, clean_buffs, clean_vals
+
+                    try:
+                        del inputs, targets, output_tensor, predicted, pbar, real_t_list
+                    except NameError:
+                        pass
+
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
                 avg_acc = sum(acc_list) / len(acc_list)
                 _nl_key = np.mean(list(noise_level.values())).round(3) if isinstance(noise_level, dict) else noise_level
                 noise_acc_spec[_nl_key] = acc_list

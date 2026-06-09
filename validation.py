@@ -259,8 +259,6 @@ class MVMConv(nn.Module):
         self.mul_mismatch_mode = mul_mismatch_mode
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
 
-        self.code_idx_mat = self._build_code_idx_mat()
-
     def _values_to_code_idx(self, values):
         # The input values is the weight matrix values.
         # This function converts that to the column index in self.R_table.
@@ -434,6 +432,8 @@ class MVMConv(nn.Module):
                     device=self.mat.device,
                     dtype=self.mat.dtype
                 ).coalesce().to_sparse_csr()
+            else:
+                raise ValueError("Unknown mismatch mode.")
 
         else:
             max_abs = vals.abs().max()
@@ -494,6 +494,8 @@ class MVMConv(nn.Module):
         if not self.csv_enabled:
             return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
 
+        if self.code_idx_mat is None:
+            self.code_idx_mat = self._build_code_idx_mat()
         out = None
         # If with scaled multiplicative mismatch, it is already in self.code_idx_mat and mat_j.
         for (j, mat_j) in self.code_idx_mat:
