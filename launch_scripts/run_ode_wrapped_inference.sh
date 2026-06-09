@@ -12,7 +12,6 @@ export CKPT="best"
 
 # ─────────────── noise toggles ───────────────
 #N_BITS_VALS=(4 5 6 7 8)
-N_BITS_VALS=()
 N_BITS_VALS=(5)
 #for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
@@ -263,6 +262,12 @@ run_model(){
 #  _ode_wrapper="WrapQuantizeWXInit"
 #  _ode_wrapper="QATTester1StateWithX"
 
+  local enob=8
+  if [[ "$name" =~ TIMMQAT[0-9]+b([0-9]+)a ]]; then
+    enob="${BASH_REMATCH[1]}"
+  fi
+  echo "extracted ENOB: ${enob}"
+
   local test_bs=128
   if [[ "${_ode_block}" == *Circ* ]]; then test_bs=128; fi
   ########################################
@@ -291,7 +296,7 @@ run_model(){
     --R_max           "$R_MAX" \
     --C               "$cap_val" \
     --v_dd            "0.1" \
-    --enob            "8" \
+    --enob            "${enob}" \
     --w_bits          "$n_bits" \
     --patch_node      "8" \
     --patch_stride    "8" \
