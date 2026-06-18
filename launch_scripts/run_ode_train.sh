@@ -21,7 +21,7 @@ if [[ "${IS_SLURM}" == 1 ]]; then
   conda activate scanbase
 fi
 
-ORIG_T_INP="${ORIG_T_INP:-true}"
+ORIG_T_INP="${ORIG_T_INP:-false}"
 DATASET_NAME="${DATASET_NAME:-cifar100}"
 EXP="DS_PCN"
 LOGDIR="./logs/${EXP}"
