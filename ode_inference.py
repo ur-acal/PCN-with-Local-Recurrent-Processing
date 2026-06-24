@@ -133,8 +133,10 @@ def parse_args():
     parser.add_argument("--expanded_w_dir", type=str, default="./expanded_weights")
     parser.add_argument("--hw_val_path", type=str, default="./hw_validation_data")
     parser.add_argument("--hw_val_inp", type=lambda s: None if s.lower() in {"none", ""} else s, default="")
-    parser.add_argument("--valid_samples", type=int, default=10,
+    parser.add_argument("--valid_samples", type=int, default=20,
                         help="Number of samples used for validation")
+    parser.add_argument("--valid_select_layer", type=int, default=6,
+                        help="Layer used to rank validation samples by trajectory change")
     return parser.parse_args()
 
 
@@ -347,7 +349,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
             samples = pickle.load(fp)
             sample_inp = torch.from_numpy(samples["layer_0"]["inp"])
     valid_ins.gen_validate_data(wrappers=saved_wrappers["wrappers"], solver=args.method,
-                                n_samples=args.valid_samples, sample_inp=sample_inp)
+                                n_samples=args.valid_samples, sample_inp=sample_inp,
+                                select_layer=args.valid_select_layer)
 
 
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=False, noise_level=None):

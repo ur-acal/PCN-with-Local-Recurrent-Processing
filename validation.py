@@ -767,12 +767,27 @@ class Validator(nn.Module):
         return res, handlers
 
     @torch.no_grad()
-    def gen_validate_data(self, wrappers, solver, n_samples=10, sample_inp=None):
+    def gen_validate_data(self, wrappers, solver, n_samples=20, sample_inp=None, select_layer=6):
         res, handlers = self._register_hook_for_record(wrappers)
 
         if sample_inp is None:
-            _inp = next(iter(self.dataloader))[0][:n_samples].to(self.device)
+            _inp, _targets = next(iter(self.dataloader))
+            _inp = _inp.to(self.device)
+            _targets = _targets.to(self.device)
             _ = self.model(_inp)
+            select_key = "layer_{}".format(select_layer)
+            if select_key not in res:
+                raise ValueError("{} not found in validation results".format(select_key))
+            if "traj" not in res[select_key]:
+                raise ValueError("{} does not have full trajectory data".format(select_key))
+            selected_idx = self._select_top_changed_samples(res[select_key]["traj"], n_samples)
+            selected_idx = torch.as_tensor(selected_idx, device=self.device)
+            _inp = _inp[selected_idx].contiguous()
+            _targets = _targets[selected_idx].contiguous()
+            output_tensor = self.model(_inp)
+            _, predicted = torch.max(output_tensor, 1)
+            _acc = 100 * (predicted == _targets).sum().item() / _targets.size(0)
+            logging.warning("Accuracy using selected top changed validation samples: {}".format(_acc))
             save_name = "{}samples_{}.pkl"
         else:
             sample_bs = sample_inp.shape[0]
@@ -790,3 +805,13 @@ class Validator(nn.Module):
             _h.remove()
 
         logging.warning("Validation samples dumped to: {}".format(sample_path))
+
+
+    @staticmethod
+    def _select_top_changed_samples(traj, n_samples):
+        traj_main = traj[0] if isinstance(traj, (tuple, list)) else traj
+        start = traj_main[0]
+        end = traj_main[-1]
+        denom = np.maximum(np.abs(start), np.finfo(start.dtype).eps)
+        change_ratio = np.mean(np.abs(start - end) / denom, axis=1)
+        return np.argsort(-change_ratio)[:n_samples]
