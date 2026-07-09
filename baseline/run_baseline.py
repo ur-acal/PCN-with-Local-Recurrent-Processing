@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Set
 
 import numpy as np
 import timm
@@ -29,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import baseline.cifar_resnet  # registers custom CIFAR models into timm
 from baseline.baseline_cifar_configs import get_baseline_config, build_model
 from trainer import _CIFAR_STATS
+from weight_range_audit import collect_wrn_weight_range_audit_rows, save_audit_csv
 
 
 log = logging.getLogger(__name__)
@@ -110,6 +111,7 @@ class FixedMismatchHelper:
         noise_to_norm: bool = False,
         include_buffers: bool = True,
         seed: Optional[int] = None,
+        exclude_param_names: Optional[Iterable[str]] = None,
     ):
         self.model = model
         self.noise_sigma = float(noise_sigma)
@@ -117,6 +119,7 @@ class FixedMismatchHelper:
         self.noise_to_norm = bool(noise_to_norm)
         self.include_buffers = bool(include_buffers)
         self.seed = seed
+        self.exclude_param_names: Set[str] = set(exclude_param_names or [])
 
         self._clean_state = None
         self._last_summary = None
@@ -174,6 +177,8 @@ class FixedMismatchHelper:
 
     def _should_noise_param(self, name: str, p: torch.Tensor) -> bool:
         if not p.is_floating_point():
+            return False
+        if name in self.exclude_param_names:
             return False
 
         module = self._param_to_module.get(name, None)
@@ -333,11 +338,24 @@ def parse_args():
     parser.add_argument("--noise_type", type=str, choices=["multiplicative", "additive"], default="multiplicative")
     parser.add_argument("--noise_to_norm", type=str2bool, default=False)
     parser.add_argument("--fold_norm", type=str2bool, default=False)
+    parser.add_argument(
+        "--fold_norm_mode",
+        type=str,
+        choices=["sequential", "wrn_preact_no_mismatch_bias"],
+        default="sequential",
+        help=(
+            "Norm folding implementation used when --fold_norm=true. "
+            "'wrn_preact_no_mismatch_bias' folds function-preserving WRN Conv/BN pairs "
+            "and excludes only the newly induced folded Conv bias parameters from mismatch."
+        ),
+    )
     parser.add_argument("--results_dir", type=str, default="./results_mismatch_eval")
     parser.add_argument("--pin_memory", type=str2bool, default=False)
     parser.add_argument("--use_amp", type=str2bool, default=False)
     parser.add_argument("--max_eval_batches", type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None,
                         help="Optional smoke-test limit for evaluation batches. Default preserves full evaluation.")
+    parser.add_argument("--weight_range_audit_csv", type=str, default="",
+                        help="Optional sidecar CSV for clean-checkpoint max_abs/rms/kappa audit of selected tensors.")
 
     parser.add_argument("--bn_recalibration_enabled", type=str2bool, default=False)
     parser.add_argument("--bn_recalibration_num_samples", type=str, default="all")
@@ -373,7 +391,73 @@ def infer_num_classes(dataset_name: str, explicit_num_classes: Optional[int]) ->
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
-def maybe_fold_norms(model: nn.Module) -> nn.Module:
+def _mark_mismatch_excluded_params(model: nn.Module, names: Iterable[str]):
+    current = set(getattr(model, "_mismatch_excluded_param_names", set()))
+    current.update(names)
+    model._mismatch_excluded_param_names = current
+
+
+def _replace_child(root: nn.Module, dotted_name: str, new_module: nn.Module):
+    parts = dotted_name.split(".")
+    parent = root
+    for part in parts[:-1]:
+        parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
+    leaf = parts[-1]
+    if leaf.isdigit():
+        parent[int(leaf)] = new_module
+    else:
+        setattr(parent, leaf, new_module)
+
+
+def _get_child(root: nn.Module, dotted_name: str) -> nn.Module:
+    cur = root
+    for part in dotted_name.split("."):
+        cur = cur[int(part)] if part.isdigit() else getattr(cur, part)
+    return cur
+
+
+def _fold_conv_bn_pair(model: nn.Module, conv_name: str, bn_name: str) -> Optional[str]:
+    conv = _get_child(model, conv_name)
+    bn = _get_child(model, bn_name)
+    if not isinstance(conv, (nn.Conv1d, nn.Conv2d, nn.Conv3d)) or not isinstance(
+        bn, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
+    ):
+        return None
+    fused = torch.nn.utils.fusion.fuse_conv_bn_eval(conv.eval(), bn.eval())
+    _replace_child(model, conv_name, fused)
+    _replace_child(model, bn_name, nn.Identity())
+    return f"{conv_name}.bias" if fused.bias is not None else None
+
+
+def fold_wrn_preact_norms_no_mismatch_bias(model: nn.Module) -> nn.Module:
+    """Fold function-preserving WRN Conv->BN pairs and mark induced biases for mismatch exclusion."""
+    model.eval()
+    excluded = []
+
+    for layer_name in ("layer1", "layer2", "layer3"):
+        layer = getattr(model, layer_name, None)
+        if layer is None:
+            continue
+        for idx, block in enumerate(layer):
+            if hasattr(block, "conv1") and hasattr(block, "bn2"):
+                bias_name = _fold_conv_bn_pair(model, f"{layer_name}.{idx}.conv1", f"{layer_name}.{idx}.bn2")
+                if bias_name:
+                    excluded.append(bias_name)
+
+    _mark_mismatch_excluded_params(model, excluded)
+    log.warning(
+        "WRN preactivation norm folding finished. Folded %d Conv/BN pairs; excluding %d induced bias params from mismatch.",
+        len(excluded),
+        len(excluded),
+    )
+    return model
+
+
+def maybe_fold_norms(model: nn.Module, mode: str = "sequential") -> nn.Module:
+    if mode == "wrn_preact_no_mismatch_bias":
+        return fold_wrn_preact_norms_no_mismatch_bias(model)
+    if mode != "sequential":
+        raise ValueError(f"Unsupported fold_norm_mode: {mode}")
     """
     Conservative best-effort Conv/BatchNorm folding.
 
@@ -874,6 +958,8 @@ def main():
 
     all_rows = []
     all_noise_acc_spec = {}
+    audit_primary_rows = []
+    audit_nonprimary_rows = []
 
     for model_idx, model_arch in enumerate(model_list):
         log.warning("=" * 120)
@@ -890,6 +976,8 @@ def main():
         model = build_model(model_arch, cfg, num_classes=num_classes).to(device)
         ckpt_path = resolve_checkpoint_path(model_arch, checkpoint_map, args.checkpoint_dir)
         load_model_weights(model, ckpt_path, device)
+        if args.fold_norm:
+            model = maybe_fold_norms(model, mode=args.fold_norm_mode).to(device)
         test_dataloader = build_test_loader(model, args, cfg)
         calibration_dataloader = None
         if bn_recalibration_cfg.enabled:
@@ -901,8 +989,20 @@ def main():
             noise_type=args.noise_type,
             noise_to_norm=args.noise_to_norm,
             include_buffers=True,
+            exclude_param_names=getattr(model, "_mismatch_excluded_param_names", set()),
         )
         mismatch_helper.snapshot_clean_state()
+
+        if args.weight_range_audit_csv:
+            primary_rows, nonprimary_rows = collect_wrn_weight_range_audit_rows(
+                model,
+                dataset=args.dataset,
+                model_name=model_arch,
+                should_noise_param=mismatch_helper._should_noise_param,
+                param_to_module=mismatch_helper._param_to_module,
+            )
+            audit_primary_rows.extend(primary_rows)
+            audit_nonprimary_rows.extend(nonprimary_rows)
 
         noise_acc_spec = {}
 
@@ -989,6 +1089,8 @@ def main():
     save_results_csv(csv_path, all_rows)
     with open(pkl_path, "wb") as f:
         pickle.dump(all_noise_acc_spec, f)
+    if args.weight_range_audit_csv:
+        save_audit_csv(args.weight_range_audit_csv, audit_primary_rows, audit_nonprimary_rows)
 
     print("\n=== Final Summary ===")
     for row in all_rows:
@@ -997,6 +1099,8 @@ def main():
         )
     print(f"\nSaved CSV to: {csv_path}")
     print(f"Saved pickle to: {pkl_path}")
+    if args.weight_range_audit_csv:
+        print(f"Saved weight-range audit CSV to: {args.weight_range_audit_csv}")
 
 
 if __name__ == "__main__":

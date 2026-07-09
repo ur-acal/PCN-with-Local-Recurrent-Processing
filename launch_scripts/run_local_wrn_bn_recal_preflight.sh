@@ -19,6 +19,8 @@ NUM_WORKERS="${NUM_WORKERS:-2}"
 MAX_EVAL_BATCHES="${MAX_EVAL_BATCHES:-none}"
 PREFLIGHT_ARCHITECTURE="${PREFLIGHT_ARCHITECTURE:-WRN_16_2}"
 PREFLIGHT_DATASET="${PREFLIGHT_DATASET:-cifar10}"
+MISMATCH_PARAMETER_POLICY="${MISMATCH_PARAMETER_POLICY:-existing}"
+INCLUDE_ALL_BN_RECAL_BEFORE_FOLD_COLUMN="${INCLUDE_ALL_BN_RECAL_BEFORE_FOLD_COLUMN:-false}"
 
 python baseline/run_wrn_bn_recalibration_experiment.py \
   --mode preflight \
@@ -31,6 +33,8 @@ python baseline/run_wrn_bn_recalibration_experiment.py \
   --preflight_additive_level 0.01 \
   --preflight_multiplicative_level 0.05 \
   --preflight_trials 2 \
+  --mismatch_parameter_policy "${MISMATCH_PARAMETER_POLICY}" \
+  $(if [[ "${INCLUDE_ALL_BN_RECAL_BEFORE_FOLD_COLUMN}" == "true" ]]; then echo --include_all_bn_recal_before_fold_column; fi) \
   --calibration_num_samples "${CALIBRATION_NUM_SAMPLES}" \
   --calibration_batch_size "${CALIBRATION_BATCH_SIZE}" \
   --calibration_subset_seed "${CALIBRATION_SUBSET_SEED}" \

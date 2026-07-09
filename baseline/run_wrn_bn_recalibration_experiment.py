@@ -6,6 +6,7 @@ It reuses baseline.run_baseline model loading, mismatch, deterministic transform
 and BN-stat recalibration utilities.
 """
 import argparse
+import copy
 import csv
 import json
 import os
@@ -37,6 +38,7 @@ from baseline.run_baseline import (  # noqa: E402
     get_baseline_config,
     infer_num_classes,
     load_model_weights,
+    maybe_fold_norms,
     parse_checkpoint_map,
     recalibrate_batchnorm_statistics,
 )
@@ -75,6 +77,23 @@ def parse_args():
     p.add_argument("--preflight_trials", type=int, default=2)
     p.add_argument("--preflight_repro_tolerance", type=float, default=15.0, help="Percentage points vs old frozen-BN mean.")
     p.add_argument("--save_predictions", action="store_true")
+    p.add_argument(
+        "--mismatch_parameter_policy",
+        choices=["existing", "bn_fold_no_mismatch_bias"],
+        default="existing",
+        help=(
+            "WRN parameter treatment before mismatch. 'existing' preserves the original evaluator. "
+            "'bn_fold_no_mismatch_bias' folds supported WRN BatchNorms and excludes only induced folded Conv bias params from mismatch."
+        ),
+    )
+    p.add_argument(
+        "--include_all_bn_recal_before_fold_column",
+        action="store_true",
+        help=(
+            "Also evaluate a companion WRN column with the same mismatch realization applied to the original unfused model, "
+            "all original BatchNorm statistics recalibrated, then supported WRN BN pairs folded before test evaluation."
+        ),
+    )
     return p.parse_args()
 
 
@@ -225,6 +244,69 @@ def run_clean_sanity(model, calibration_loader, test_loader, device, recal_cfg, 
     }
 
 
+def build_loaded_wrn_model(args, dataset: str, model_name: str, checkpoint: Path, device: torch.device):
+    num_classes = infer_num_classes(dataset, None)
+    cfg = get_baseline_config(model_name=model_name, pretrained=False, case=args.case, prefer_resize=False, extra_overrides=None)
+    model = build_model(model_name, cfg, num_classes=num_classes).to(device)
+    load_model_weights(model, str(checkpoint), device)
+    return model, cfg
+
+
+def evaluate_all_bn_recal_before_fold_trial(
+    *,
+    source_model: nn.Module,
+    calibration_loader,
+    test_loader,
+    device: torch.device,
+    recal_cfg: BNRecalibrationConfig,
+    args,
+    model_name: str,
+    mismatch_type: str,
+    noise_level: float,
+    mismatch_seed_value: int,
+    trial: int,
+) -> Dict[str, object]:
+    model = copy.deepcopy(source_model).to(device)
+    helper = FixedMismatchHelper(
+        model,
+        noise_sigma=noise_level,
+        noise_type=mismatch_type,
+        noise_to_norm=False,
+        include_buffers=True,
+    )
+    helper.seed = mismatch_seed_value
+    helper.snapshot_clean_state()
+    if noise_level > 0:
+        helper.add_noise()
+
+    noisy_hash_before_recal = combined_hash(conv_linear_classifier_tensors(model))
+    report = recalibrate_batchnorm_statistics(
+        model=model,
+        calibration_loader=calibration_loader,
+        device=device,
+        recal_cfg=recal_cfg,
+        model_arch=f"{model_name}_all_bn_before_fold",
+        noise_level=noise_level,
+        trial=trial,
+    )
+    noisy_hash_after_recal = combined_hash(conv_linear_classifier_tensors(model))
+    if noisy_hash_before_recal != noisy_hash_after_recal:
+        raise AssertionError("Noisy weight hash changed during all-BN recalibration before folding.")
+
+    model = maybe_fold_norms(model, mode="wrn_preact_no_mismatch_bias").to(device)
+    acc, _, _ = evaluate_with_predictions(
+        model, test_loader, device, use_amp=args.use_amp, max_batches=args.max_eval_batches
+    )
+    return {
+        "accuracy": acc,
+        "changed_bn_buffer_count": len(report.changed_bn_buffers),
+        "calibration_sample_count": report.num_calibration_samples,
+        "pre_fold_noisy_weight_hash": noisy_hash_before_recal,
+        "pre_fold_noisy_weight_hash_unchanged": noisy_hash_before_recal == noisy_hash_after_recal,
+        "folded_excluded_mismatch_params": ";".join(sorted(getattr(model, "_mismatch_excluded_param_names", set()))),
+    }
+
+
 def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], preflight_checks: List[Dict]):
     dataset = spec["dataset"]
     mismatch_type = spec["mismatch_type"]
@@ -235,10 +317,14 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
         raise FileNotFoundError(f"Missing checkpoint: {checkpoint}")
 
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
-    num_classes = infer_num_classes(dataset, None)
-    cfg = get_baseline_config(model_name=model_name, pretrained=False, case=args.case, prefer_resize=False, extra_overrides=None)
-    model = build_model(model_name, cfg, num_classes=num_classes).to(device)
-    load_model_weights(model, str(checkpoint), device)
+    model, cfg = build_loaded_wrn_model(args, dataset, model_name, checkpoint, device)
+    all_bn_source_model = None
+    if args.mismatch_parameter_policy == "bn_fold_no_mismatch_bias":
+        if args.include_all_bn_recal_before_fold_column:
+            all_bn_source_model, _ = build_loaded_wrn_model(args, dataset, model_name, checkpoint, device)
+        model = maybe_fold_norms(model, mode="wrn_preact_no_mismatch_bias").to(device)
+    elif args.include_all_bn_recal_before_fold_column:
+        raise ValueError("--include_all_bn_recal_before_fold_column requires --mismatch_parameter_policy bn_fold_no_mismatch_bias.")
 
     loader_args = argparse.Namespace(
         dataset=dataset,
@@ -257,11 +343,33 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
         diagnostics_dir=str(Path(args.output_dir) / "diagnostics" / dataset / architecture / mismatch_type),
     )
     calibration_loader = build_bn_calibration_loader(model, loader_args, cfg, recal_cfg)
+    all_bn_before_fold_recal_cfg = BNRecalibrationConfig(
+        enabled=True,
+        num_samples=str(args.calibration_num_samples),
+        batch_size=args.calibration_batch_size,
+        subset_seed=args.calibration_subset_seed,
+        num_workers=args.calibration_num_workers,
+        diagnostics_dir=str(Path(args.output_dir) / "diagnostics_all_bn_before_fold" / dataset / architecture / mismatch_type),
+    )
 
-    helper = FixedMismatchHelper(model, noise_sigma=0.0, noise_type=mismatch_type, noise_to_norm=False, include_buffers=True)
+    helper = FixedMismatchHelper(
+        model,
+        noise_sigma=0.0,
+        noise_type=mismatch_type,
+        noise_to_norm=False,
+        include_buffers=True,
+        exclude_param_names=getattr(model, "_mismatch_excluded_param_names", set()),
+    )
     helper.snapshot_clean_state()
 
-    clean_metadata = {"dataset": dataset, "architecture": architecture, "model_name": model_name, "checkpoint": str(checkpoint)}
+    clean_metadata = {
+        "dataset": dataset,
+        "architecture": architecture,
+        "model_name": model_name,
+        "checkpoint": str(checkpoint),
+        "mismatch_parameter_policy": args.mismatch_parameter_policy,
+        "excluded_mismatch_params": ";".join(sorted(getattr(model, "_mismatch_excluded_param_names", set()))),
+    }
     helper.restore_clean_state()
     clean_rows.append(run_clean_sanity(model, calibration_loader, test_loader, device, recal_cfg, args, clean_metadata))
 
@@ -313,6 +421,22 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
             if not torch.equal(targets, recal_targets):
                 raise AssertionError("Frozen/recalibrated evaluations used different target ordering.")
 
+            all_bn_before_fold = None
+            if all_bn_source_model is not None:
+                all_bn_before_fold = evaluate_all_bn_recal_before_fold_trial(
+                    source_model=all_bn_source_model,
+                    calibration_loader=calibration_loader,
+                    test_loader=test_loader,
+                    device=device,
+                    recal_cfg=all_bn_before_fold_recal_cfg,
+                    args=args,
+                    model_name=model_name,
+                    mismatch_type=mismatch_type,
+                    noise_level=noise_level,
+                    mismatch_seed_value=helper.seed,
+                    trial=trial,
+                )
+
             pred_path = ""
             if args.save_predictions or args.mode == "preflight":
                 pred_path_obj = Path(args.output_dir) / "predictions" / dataset / architecture / mismatch_type / f"level_{noise_level:g}_trial_{trial}.pt"
@@ -345,8 +469,22 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
                 "pcn_node_best_mean_accuracy": best_pcn["mean"] if best_pcn else "",
                 "pcn_node_best_std_accuracy": best_pcn["std"] if best_pcn else "",
                 "prediction_path": pred_path,
+                "mismatch_parameter_policy": args.mismatch_parameter_policy,
+                "excluded_mismatch_params": ";".join(sorted(getattr(model, "_mismatch_excluded_param_names", set()))),
                 "old_seed_logic_reconstructed": True,
             }
+            if all_bn_before_fold is not None:
+                row.update(
+                    {
+                        "all_bn_recal_before_fold_accuracy": all_bn_before_fold["accuracy"],
+                        "all_bn_recal_before_fold_recovery": all_bn_before_fold["accuracy"] - frozen_acc,
+                        "all_bn_recal_before_fold_changed_bn_buffer_count": all_bn_before_fold["changed_bn_buffer_count"],
+                        "all_bn_recal_before_fold_calibration_sample_count": all_bn_before_fold["calibration_sample_count"],
+                        "all_bn_recal_before_fold_pre_fold_noisy_weight_hash": all_bn_before_fold["pre_fold_noisy_weight_hash"],
+                        "all_bn_recal_before_fold_pre_fold_noisy_weight_hash_unchanged": all_bn_before_fold["pre_fold_noisy_weight_hash_unchanged"],
+                        "all_bn_recal_before_fold_excluded_mismatch_params_after_fold": all_bn_before_fold["folded_excluded_mismatch_params"],
+                    }
+                )
             rows.append(row)
 
             if args.mode == "preflight" and old_frozen_mean is not None:
@@ -387,11 +525,17 @@ def aggregate_rows(rows: List[Dict]) -> List[Dict]:
     for (dataset, arch, mismatch_type, level), items in sorted(groups.items()):
         frozen = np.array([float(x["frozen_bn_accuracy"]) for x in items])
         recal = np.array([float(x["recalibrated_bn_accuracy"]) for x in items])
+        all_bn_before_fold_vals = [
+            float(x["all_bn_recal_before_fold_accuracy"])
+            for x in items
+            if x.get("all_bn_recal_before_fold_accuracy", "") != ""
+        ]
+        all_bn_before_fold = np.array(all_bn_before_fold_vals) if all_bn_before_fold_vals else None
         recovery = recal - frozen
         pcn_vals = [x for x in items if x["pcn_node_best_mean_accuracy"] != ""]
         pcn_mean = float(pcn_vals[0]["pcn_node_best_mean_accuracy"]) if pcn_vals else np.nan
         pcn_std = float(pcn_vals[0]["pcn_node_best_std_accuracy"]) if pcn_vals else np.nan
-        out.append({
+        row = {
             "dataset": dataset,
             "architecture": arch,
             "mismatch_type": mismatch_type,
@@ -407,7 +551,22 @@ def aggregate_rows(rows: List[Dict]) -> List[Dict]:
             "mean_paired_bn_recovery": float(recovery.mean()),
             "std_paired_bn_recovery": float(recovery.std()),
             "remaining_pcn_gap": float(pcn_mean - recal.mean()) if not np.isnan(pcn_mean) else "",
-        })
+            "mismatch_parameter_policy": items[0].get("mismatch_parameter_policy", "existing"),
+        }
+        if all_bn_before_fold is not None:
+            all_bn_recovery = all_bn_before_fold - frozen
+            row.update(
+                {
+                    "wrn_all_bn_recal_before_fold_mean_accuracy": float(all_bn_before_fold.mean()),
+                    "wrn_all_bn_recal_before_fold_std_accuracy": float(all_bn_before_fold.std()),
+                    "mean_paired_all_bn_recal_before_fold_recovery": float(all_bn_recovery.mean()),
+                    "std_paired_all_bn_recal_before_fold_recovery": float(all_bn_recovery.std()),
+                    "remaining_pcn_gap_all_bn_recal_before_fold": (
+                        float(pcn_mean - all_bn_before_fold.mean()) if not np.isnan(pcn_mean) else ""
+                    ),
+                }
+            )
+        out.append(row)
     return out
 
 
@@ -445,6 +604,12 @@ def make_plots(output_dir: Path, aggregate: List[Dict], rows: List[Dict]):
         pcn = [float(r["pcn_node_mean_accuracy"]) if r["pcn_node_mean_accuracy"] != "" else np.nan for r in items]
         frozen = [float(r["paired_wrn_frozen_bn_mean_accuracy"]) for r in items]
         recal = [float(r["wrn_recalibrated_bn_mean_accuracy"]) for r in items]
+        all_bn_before_fold = [
+            float(r["wrn_all_bn_recal_before_fold_mean_accuracy"])
+            if r.get("wrn_all_bn_recal_before_fold_mean_accuracy", "") != ""
+            else np.nan
+            for r in items
+        ]
         recovery = [float(r["mean_paired_bn_recovery"]) for r in items]
         gap = [float(r["remaining_pcn_gap"]) if r["remaining_pcn_gap"] != "" else np.nan for r in items]
 
@@ -453,6 +618,8 @@ def make_plots(output_dir: Path, aggregate: List[Dict], rows: List[Dict]):
         ax.plot(levels, pcn, marker="o", label="PCN/NODE")
         ax.plot(levels, frozen, marker="o", label="WRN frozen BN")
         ax.plot(levels, recal, marker="o", label="WRN recalibrated BN")
+        if not np.all(np.isnan(all_bn_before_fold)):
+            ax.plot(levels, all_bn_before_fold, marker="o", label="WRN all-BN recal before fold")
         ax.set_xlabel("Mismatch level")
         ax.set_ylabel("Accuracy (%)")
         ax.legend()
@@ -533,6 +700,7 @@ def main():
         "calibration_subset_seed": args.calibration_subset_seed,
         "calibration_batch_size": args.calibration_batch_size,
         "old_mismatch_seed_logic_reconstructed": True,
+        "mismatch_parameter_policy": args.mismatch_parameter_policy,
         "interpretation_label": interpretation_label(aggregate),
         "preflight_checks": preflight_checks,
     }

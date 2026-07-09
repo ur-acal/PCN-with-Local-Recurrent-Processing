@@ -25,6 +25,7 @@ from cross_sim_inference import calibrate_input
 from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised, MVMConv
 from switch import SWITCH_CLASSES
 from ode_mismatch_analyzer import ODEMismatchAnalyzer
+from weight_range_audit import collect_pcn_ode_weight_range_audit_rows, save_audit_csv
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
@@ -135,6 +136,10 @@ def parse_args():
     parser.add_argument("--hw_val_inp", type=lambda s: None if s.lower() in {"none", ""} else s, default="")
     parser.add_argument("--valid_samples", type=int, default=10,
                         help="Number of samples used for validation")
+    parser.add_argument("--weight_range_audit_csv", type=str, default="",
+                        help="Optional sidecar CSV for clean-checkpoint max_abs/rms/kappa audit of selected tensors.")
+    parser.add_argument("--weight_range_audit_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False, help="Write the weight-range audit and exit without running evaluation.")
     return parser.parse_args()
 
 
@@ -350,6 +355,42 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                                 n_samples=args.valid_samples, sample_inp=sample_inp)
 
 
+def run_weight_range_audit(args, ckpt_path, pc_conv, device, t_end=None, return_init=None):
+    if not args.weight_range_audit_csv:
+        return
+    if t_end is None:
+        t_end = get_t_end(args)
+    if return_init is None:
+        num_layers = int(args.model_name.split("Layers")[0].split("_")[-1])
+        return_init = list(map(lambda x: bool(int(x)), args.return_init.split(",")))
+        return_init = return_init + [False] * (num_layers - len(return_init))
+
+    ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
+                  "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
+                  "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
+                  "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
+                  "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
+                  "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
+    wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
+                      "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                      "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
+                      "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode,
+                      "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
+    with torch.no_grad():
+        net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
+                                      pc_conv_layer=pc_conv, data_parallel=False,
+                                      noise_to_bn=True, noise_to_linear=True,
+                                      fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
+                                      ode_wrapper_params=wrapper_params,
+                                      noise_level=0.0, weight=None)
+        primary_rows, nonprimary_rows = collect_pcn_ode_weight_range_audit_rows(
+            net_, dataset=args.task, model_name=args.model_name
+        )
+        save_audit_csv(args.weight_range_audit_csv, primary_rows, nonprimary_rows)
+        logging.warning("Weight-range audit saved to %s", args.weight_range_audit_csv)
+
+
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=False, noise_level=None):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
@@ -441,6 +482,11 @@ def run_ode_inference():
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
 
     with torch.no_grad():
+        if args.weight_range_audit_csv:
+            run_weight_range_audit(args, ckpt_path, pc_conv, device)
+            if args.weight_range_audit_only:
+                exit(0)
+
         if args.test_only:
             run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, noise_level=args.test_only_nl)
             exit(0)

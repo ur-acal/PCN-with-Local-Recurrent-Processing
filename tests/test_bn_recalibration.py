@@ -57,6 +57,39 @@ class TinyBNNet(nn.Module):
         return self.fc(x)
 
 
+
+
+class TinyPreActBlock(nn.Module):
+    def __init__(self, channels=4):
+        super().__init__()
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu1 = nn.ReLU()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.relu2 = nn.ReLU()
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+        self.shortcut = nn.Identity()
+
+    def forward(self, x):
+        out = self.conv1(self.relu1(self.bn1(x)))
+        out = self.conv2(self.relu2(self.bn2(out)))
+        return out + self.shortcut(x)
+
+
+class TinyPreActWRNLike(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 4, kernel_size=3, padding=1, bias=False)
+        self.layer1 = nn.Sequential(TinyPreActBlock(4))
+        self.layer2 = nn.Sequential()
+        self.layer3 = nn.Sequential()
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.layer1(x)
+        return x.mean(dim=(2, 3))
+
+
 class TinyNoBNNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -230,6 +263,59 @@ class BNRecalibrationTests(unittest.TestCase):
             report = _recalibrate(model, _inputs(n=16), tmp_path, noise_level=0.0)
             self.assertEqual(before, rb._snapshot_hashes(model.named_parameters()))
             self.assertEqual(report.num_calibration_samples, 16)
+
+    def test_wrn_preact_bn_fold_excludes_only_induced_conv_bias_from_mismatch(self):
+        torch.manual_seed(10)
+        model = TinyPreActWRNLike().eval()
+        with torch.no_grad():
+            model.layer1[0].bn1.running_mean.copy_(torch.tensor([0.1, -0.2, 0.3, -0.4]))
+            model.layer1[0].bn1.running_var.copy_(torch.tensor([0.7, 1.2, 1.5, 2.0]))
+            model.layer1[0].bn1.weight.copy_(torch.tensor([1.2, 0.8, -1.1, 1.5]))
+            model.layer1[0].bn1.bias.copy_(torch.tensor([0.05, -0.1, 0.2, -0.3]))
+            model.layer1[0].bn2.running_mean.copy_(torch.tensor([-0.3, 0.4, -0.5, 0.6]))
+            model.layer1[0].bn2.running_var.copy_(torch.tensor([1.1, 0.9, 1.7, 2.3]))
+            model.layer1[0].bn2.weight.copy_(torch.tensor([0.9, -1.3, 1.1, 0.7]))
+            model.layer1[0].bn2.bias.copy_(torch.tensor([0.2, 0.1, -0.2, 0.3]))
+
+        x = torch.randn(3, 3, 8, 8)
+        with torch.no_grad():
+            logits_before_fold = model(x)
+        self.assertIsNone(model.conv1.bias)
+        self.assertIsNone(model.layer1[0].conv1.bias)
+
+        rb.fold_wrn_preact_norms_no_mismatch_bias(model)
+        with torch.no_grad():
+            logits_after_fold = model(x)
+        self.assertTrue(torch.allclose(logits_before_fold, logits_after_fold, atol=1e-5, rtol=1e-5))
+
+        excluded = set(model._mismatch_excluded_param_names)
+        self.assertEqual(excluded, {"layer1.0.conv1.bias"})
+        self.assertIsInstance(model.layer1[0].bn1, nn.BatchNorm2d)
+        self.assertIsInstance(model.layer1[0].bn2, nn.Identity)
+        self.assertIsNone(model.conv1.bias)
+        self.assertIsNotNone(model.layer1[0].conv1.bias)
+
+        before = {name: p.detach().clone() for name, p in model.named_parameters()}
+        helper = rb.FixedMismatchHelper(
+            model=model,
+            noise_sigma=0.1,
+            noise_type="additive",
+            noise_to_norm=False,
+            include_buffers=True,
+            seed=99,
+            exclude_param_names=excluded,
+        )
+        helper.snapshot_clean_state()
+        summary = helper.add_noise()
+        applied = {rec.name for rec in summary.applied_records}
+        skipped = {rec.name for rec in summary.skipped_records}
+
+        self.assertIn("conv1.weight", applied)
+        self.assertIn("layer1.0.conv1.weight", applied)
+        self.assertIn("layer1.0.conv1.bias", skipped)
+        self.assertFalse(torch.equal(model.conv1.weight, before["conv1.weight"]))
+        self.assertFalse(torch.equal(model.layer1[0].conv1.weight, before["layer1.0.conv1.weight"]))
+        self.assertTrue(torch.equal(model.layer1[0].conv1.bias, before["layer1.0.conv1.bias"]))
 
     def test_no_bn_model_is_documented_noop(self):
         with tempfile.TemporaryDirectory() as tmp_path:
