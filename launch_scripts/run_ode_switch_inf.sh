@@ -16,10 +16,11 @@ N_BITS_VALS=()
 N_BITS_VALS=(5)
 #for ((i=0; i<20; i++)); do N_BITS_VALS+=(5); done
 #N_BITS_VALS=(15 15 15 15 15 15 15 15 15 15)
-METHOD_VALS=("dopri5")
-CAP_VALS=("49e-12")
-I_LEAK_VALS=("0.5e-9" "1e-9" "2e-9" "3e-9" "4e-9" "5e-9" "6e-9" "8e-9" "10e-9")
-#METHOD_VALS=("euler")
+#METHOD_VALS=("dopri5")
+CAP_VALS=("49e-15")
+#I_LEAK_VALS=("0.5e-9" "1e-9" "2e-9" "3e-9" "4e-9" "5e-9" "6e-9" "8e-9" "10e-9")
+I_LEAK_VALS=("0.5e-9")
+METHOD_VALS=("euler")
 #METHOD_VALS=("rk4")
 
 export BASE_LOGDIR="./logs/test_ode_noisy"
@@ -39,8 +40,8 @@ MODEL_NAMES=(
 #  "QAT5bNT0p0mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_PerturbODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP" # ft with 5 step Euler, perturbed
 #  "QAT5bNT0p0mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP" # ft with 5 step RK4
 
-#  "TIMMQAT5bNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_3REP"
-  "TIMMQAT5bNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_PerturbODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+  "TIMMQAT5bNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_3REP"
+#  "TIMMQAT5bNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_PerturbODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_1REP"
 )
 
 # ─────────────── prepare logs ───────────────
@@ -105,7 +106,7 @@ run_model(){
   if [[ "${_ode_block}" == *Circ* ]]; then test_bs=128; fi
 #  _ode_block="ODEXInitFFFBPixelSwitchEfficient"
 #  _ode_block="ODEXInitFFFBPixelSwitchStretchT"
-  _ode_block="ODEXInitFFFBPixelSwitchStretchTDecay"
+#  _ode_block="ODEXInitFFFBPixelSwitchStretchTDecay"
   ########################################
   # only fuse_bn when noise is added to bn
   ########################################
@@ -122,7 +123,7 @@ run_model(){
     --test_bs         "${test_bs}" \
     --method          "$method" \
     --tol             "$tol" \
-    --n_steps         2 \
+    --n_steps         5 \
     --ts_scale        1 \
     --d_start         0 \
     --d_end           1 \
@@ -155,9 +156,10 @@ run_model(){
     --i_leak          "${i_leak}" \
     --conv_only       "true" \
     --test_expanded   "false" \
-    --diff_mismatch   "true" \
+    --diff_mismatch   "false" \
     --nonlinear_R     "false" \
-    --test_only       "false" \
+    --test_only       "true" \
+    --test_only_nl    "0.0" \
     2>&1 | tee -a "$logdir/job.log"
 }
 export -f run_model

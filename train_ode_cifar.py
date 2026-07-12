@@ -98,12 +98,19 @@ def get_args():
     p.add_argument("--R_max", type=lambda s: None if s.lower() in {"none", ""} else float(s),
                    default=None, help="Maximum meaningful Resistance")
     p.add_argument("--C", type=float, default=49e-15, help="Capacitance")
+    p.add_argument("--k", type=float, default=1e3, help="1-state hardware gain used by toggle physical models and wrappers")
     p.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     p.add_argument("--enob", type=lambda s: None if s.lower() in {"none", ""} else int(s),
                    default=None, help="The effective number of bits applied to the output spins.")
     p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     p.add_argument("--tie_cap", type=str2bool, default=False)
     p.add_argument("--one_over_q", type=float, default=10, help="1/q")
+    p.add_argument("--toggle_n_cycles", type=lambda s: None if s.lower() in {"none", ""} else int(s),
+                   default=None, help="Number of staged toggle cycles. Defaults to the layer n_steps/cls value.")
+    p.add_argument("--toggle_time_split", type=float, default=0.5,
+                   help="Fraction of each t_end/N_cycles toggle cycle used by the z-stage.")
+    p.add_argument("--toggle_fast_path", type=str2bool, default=True,
+                   help="Use direct constant-RHS updates inside Level 3 pulse slices.")
     # Noise-inject training related args
     p.add_argument('--noise_level', default=None, type=float,
                         help='noise level in noise inject training. None means normal training without noise injection')
@@ -597,7 +604,8 @@ def main():
     # convert block to Neural ode
     # Todo: The offset eps in ode_block is currently useless. Need to pass that to the wrapper.
     ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "patch_node", "patch_stride",
-                          "patch_cycle", "patch_pad", "fold_scalar", "n_iters"], {}
+                          "patch_cycle", "patch_pad", "fold_scalar", "n_iters",
+                          "toggle_n_cycles", "toggle_time_split", "toggle_fast_path"], {}
     for _name, _val in vars(args).items():
         if _name in ode_kw and _val is not None:
             ode_kwargs[_name] = _val
@@ -625,7 +633,8 @@ def main():
     # wrap blocks for QAT
     if args.ode_wrapper is not None:
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
-                          "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
+                          "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q}
         model, _ = wrap_ode_block(model, **wrapper_params)

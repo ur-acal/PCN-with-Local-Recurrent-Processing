@@ -63,6 +63,7 @@ def parse_args():
     parser.add_argument("--mul_mismatch_mode", type=str, default="scale_mismatch",
                         choices=["scale_mismatch", "static_mismatch"])
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
+    parser.add_argument("--k", type=float, default=1e3, help="1-state hardware gain used by toggle physical models and wrappers")
     parser.add_argument("--v_dd", type=float, default=1.0, help="V_DD")
     parser.add_argument("--thermal_noise", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True)
@@ -83,6 +84,12 @@ def parse_args():
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
     parser.add_argument("--tie_cap", type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
     parser.add_argument("--one_over_q", type=float, default=10, help="1/q")
+    parser.add_argument("--toggle_n_cycles", type=lambda s: None if s.lower() in {"none", ""} else int(s),
+                        default=None, help="Number of staged toggle cycles. Defaults to the layer n_steps/cls value.")
+    parser.add_argument("--toggle_time_split", type=float, default=0.5,
+                        help="Fraction of each t_end/N_cycles toggle cycle used by the z-stage.")
+    parser.add_argument("--toggle_fast_path", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=True, help="Use direct constant-RHS updates inside Level 3 pulse slices.")
     parser.add_argument("--w_quant_mode", type=str, default="min_max", help="min_max or perc")
     parser.add_argument("--w_perc", type=float, default=0.99999, help="percentile for quantization")
     parser.add_argument("--method", type=str, default="dopri5")
@@ -293,9 +300,12 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
-                  "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
+                  "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
+                  "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
+                  "toggle_fast_path": args.toggle_fast_path}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                      "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
+                      "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "enob": args.enob, "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
@@ -367,9 +377,12 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                   "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
-                  "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
+                  "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
+                  "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
+                  "toggle_fast_path": args.toggle_fast_path}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                      "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                      "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
+                      "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
@@ -503,9 +516,12 @@ def run_ode_inference():
                       "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
                       "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
-                      "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
+                      "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
+                      "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
+                      "toggle_fast_path": args.toggle_fast_path}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
-                          "R": args.R, "R_max": args.R_max, "C": args.C, "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
+                          "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,

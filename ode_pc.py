@@ -587,6 +587,392 @@ class ODEXInitFFFB(ODEBlockXInit):
             return self.FFconv(self.act_fn(self.FBconv(y)))
         return ode_func
 
+
+class ToggleBaseFFFB(ODEXInitFFFB):
+    """
+    Base for staged toggle hardware dynamics:
+    y is the output spin state, z is the pre-nonlinearity spin state,
+    h = f(z), and the topology is W_FB -> f -> W_FF.
+    """
+    reset_z = None
+
+    def __init__(self, toggle_n_cycles=None, toggle_time_split=0.5,
+                 toggle_fast_path=True, **kwargs):
+        super().__init__(**kwargs)
+        self.toggle_n_cycles = toggle_n_cycles
+        self.toggle_time_split = toggle_time_split
+        self.toggle_fast_path = toggle_fast_path
+
+        if self.reset_z is None:
+            raise ValueError("ToggleBaseFFFB subclasses must set reset_z.")
+        if self.toggle_n_cycles is not None and self.toggle_n_cycles <= 0:
+            raise ValueError("toggle_n_cycles must be positive when provided.")
+        if not 0.0 < self.toggle_time_split < 1.0:
+            raise ValueError("toggle_time_split must be between 0 and 1.")
+
+    def _integration_end_like(self, ref):
+        return self.integration_time[-1].to(device=ref.device, dtype=ref.dtype)
+
+    def init_z(self, y):
+        return torch.zeros_like(self.FBconv(y), device=y.device)
+
+    def _finish_forward(self, y):
+        if self.bypass is not None:
+            y = self.bypass(y) + y
+        return y
+
+    def _run_cycles(self, y, z, cycle_params):
+        n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
+        for _ in range(n_cycles):
+            if self.reset_z:
+                z = torch.zeros_like(z)
+            y, z = self.run_one_cycle(y, z, cycle_params)
+        self._last_toggle_z = z
+        return y
+
+    def forward(self, x, layer_idx=None):
+        y = self.init_y(x)
+        if self.return_init:
+            return y
+        z = self.init_z(y)
+        cycle_params = self.resolve_cycle_params(y)
+        y = self._run_cycles(y, z, cycle_params)
+        return self._finish_forward(y)
+
+
+class ToggleUnitlessFFFB(ToggleBaseFFFB):
+    def resolve_cycle_params(self, ref):
+        n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
+        cycle_t = self._integration_end_like(ref) / float(n_cycles)
+        t_z = cycle_t * float(self.toggle_time_split)
+        t_y = cycle_t * float(1.0 - self.toggle_time_split)
+        if t_z.detach().cpu().item() <= 0 or t_y.detach().cpu().item() <= 0:
+            raise ValueError("Unitless toggle stage durations must be positive.")
+        return t_z, t_y
+
+    def run_one_cycle(self, y, z, cycle_params):
+        t_z, t_y = cycle_params
+        z = z + t_z * self.FBconv(y)
+        h = self.act_fn(z)
+        y = y + t_y * self.FFconv(h)
+        return y, z
+
+
+class ToggleUnitlessResetZFFFB(ToggleUnitlessFFFB):
+    reset_z = True
+
+
+class ToggleUnitlessPersistentZFFFB(ToggleUnitlessFFFB):
+    reset_z = False
+
+
+class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
+    def project_state(self, state):
+        if not hasattr(self, "v_dd"):
+            raise ValueError("Physical toggle blocks require wrapper-provided v_dd.")
+        v_dd = self.v_dd
+        return state.clamp(min=-v_dd, max=v_dd)
+
+    def resolve_cycle_params(self, ref):
+        missing = [name for name in ("R", "C", "C_fb", "C_ff", "alpha", "w_bits") if not hasattr(self, name)]
+        if missing:
+            raise ValueError("ToggleAveragedPhysicalFFFB requires wrapper-provided " + ", ".join(missing))
+        n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
+        cycle_t = self._integration_end_like(ref) / float(n_cycles)
+        t_z = cycle_t * float(self.toggle_time_split)
+        t_y = cycle_t * float(1.0 - self.toggle_time_split)
+        time_scale = self.R * self.C / self.alpha
+        T_z = t_z * time_scale
+        T_y = t_y * time_scale
+        if T_z <= 0 or T_y <= 0:
+            raise ValueError("Physical toggle stage durations must be positive.")
+        return T_z, T_y
+
+    def z_stage_update(self, z, y_hold, T_z):
+        return z + (T_z / (self.R * self.C_fb)) * self.FBconv(y_hold)
+
+    def y_stage_update(self, y, h_hold, T_y):
+        return y + (T_y / (self.R * self.C_ff)) * self.FFconv(h_hold)
+
+    def run_one_cycle(self, y, z, cycle_params):
+        T_z, T_y = cycle_params
+        z = self.project_state(self.z_stage_update(z, y, T_z))
+        h = self.act_fn(z)
+        y = self.project_state(self.y_stage_update(y, h, T_y))
+        return y, z
+
+
+class ToggleResetZ(ToggleAveragedPhysicalFFFB):
+    reset_z = True
+
+
+class ToggleKeepZ(ToggleAveragedPhysicalFFFB):
+    reset_z = False
+
+
+class ToggleODEXInitFFFB(ToggleAveragedPhysicalFFFB):
+    reset_z = True
+
+    def resolve_cycle_params(self, ref):
+        missing = [name for name in ("R", "C", "C_fb", "k", "alpha_1state", "w_bits") if not hasattr(self, name)]
+        if missing:
+            raise ValueError("ToggleODEXInitFFFB requires wrapper-provided " + ", ".join(missing))
+        n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
+        cycle_t = self._integration_end_like(ref) / float(n_cycles)
+        R = self.R
+        C = self.C
+        C_fb = self.C_fb
+        k = self.k
+        alpha_1state = self.alpha_1state
+        T_z = k * C_fb
+        T_y = cycle_t * R * R * C / (k * alpha_1state)
+        if T_z <= 0 or T_y <= 0:
+            raise ValueError("ODEXInit-approx toggle stage durations must be positive.")
+        return T_z, T_y
+
+    def y_stage_update(self, y, h_hold, T_y):
+        return y + (T_y / (self.R * self.C)) * self.FFconv(h_hold)
+
+
+class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
+    @torch.no_grad()
+    def add_noise(self):
+        self._pulse_on_values = {}
+        sigma = self.noise_level
+        if isinstance(sigma, dict):
+            sigma = sigma.get(self.q_hi, max(sigma.values()))
+        sigma = 0.0 if sigma is None else float(sigma)
+
+        def add_coupler_noise(module):
+            if hasattr(module, "add_noise"):
+                module.add_noise(
+                    noise_level=sigma, mismatch_type=self.mismatch_type,
+                    q_hi=self.q_hi, weight_scale=self.weight_scale)
+            elif sigma > 0.0:
+                mismatch = torch.randn_like(module.weight) * sigma
+                if self.mismatch_type == "mul":
+                    module.weight.mul_(1 + mismatch)
+                else:
+                    module.weight.add_(mismatch * module.weight.abs().max())
+
+        add_coupler_noise(self.FFconv)
+        if not self.tie_weights:
+            add_coupler_noise(self.FBconv)
+
+        if not self.tie_bp and self.bypass is not None:
+            if hasattr(self.bypass, "add_noise"):
+                self.bypass.add_noise(
+                    noise_level=self.noise_level,
+                    mismatch_type=self.mismatch_type,
+                    q_hi=self.q_hi, weight_scale=self.weight_scale)
+            else:
+                self._apply_noise(self.bypass.weight)
+
+        if not torch.allclose(self.b0[0], torch.zeros_like(self.b0[0])):
+            self._apply_noise(self.b0[0])
+
+    def _num_slices(self, stage):
+        assert self.q_hi > 0
+        return self.q_hi
+
+    def _clean_weight(self, module):
+        # get clean weights based on if we are in test_expanded mode
+        key = "FBconv" if module is self.FBconv else "FFconv"
+        clean_weight = self.clean_params[key]
+        if not hasattr(module, "mat"):
+            return key, clean_weight
+
+        from validation import conv2d_to_matrix_fixed_padding
+        input_pixels = module.mat.shape[1] // int(module.meta["inp_chan"])
+        input_size = int(math.isqrt(input_pixels))
+        assert input_size * input_size == input_pixels
+        clean_weight, _, _ = conv2d_to_matrix_fixed_padding(
+            (int(module.meta["inp_chan"]), input_size, input_size),
+            clean_weight, stride=int(module.meta["stride"]),
+            padding=int(module.meta["padding"]))
+        return key, clean_weight
+
+    def _on_values(self, clean_values, noisy_values, key):
+        # To get mismatch
+        if not hasattr(self, "_pulse_on_values"):
+            self._pulse_on_values = {}
+        cached = self._pulse_on_values.get(key)
+        if cached is not None and cached.shape == clean_values.shape:
+            return cached
+
+        if self.mismatch_type == "mul":
+            scale = torch.ones_like(clean_values)
+            nonzero = clean_values != 0
+            scale[nonzero] = noisy_values[nonzero] / clean_values[nonzero]
+            on_values = clean_values.sign() * scale
+        else:
+            on_values = clean_values.sign() + noisy_values - clean_values
+        self._pulse_on_values[key] = on_values
+        return on_values
+
+    def _pulse_values(self, clean_values, on_values, slice_idx):
+        # From the clean_values in {-1, -14/15, ..., -1/15, 0, 1/15, ..., 14/15, 1}, calculate
+        # which quantization level each clean_values are in: {1, 2, ..., 15}.
+        # on_values determine the sign and merging mismatch in (if any).
+        # We have split a T_z/y into number of quant levels slices.
+        # If the quantization level >= current pulse slice_idx, then this quantization level is on.
+        # Todo: Currently we are generating perfect pulse width based on clean weights.
+        #  The mismatch is added via on_values. We need to implement non-ideal width pulse.
+        pulse_count = torch.round(clean_values.abs() * self.q_hi)
+        pulse_count = pulse_count.clamp(min=0, max=self.q_hi)
+        active = pulse_count > slice_idx
+        return on_values * active.to(dtype=clean_values.dtype)
+
+    def get_pulse_matrix(self, module, slice_idx, num_slices):
+        assert num_slices == self.q_hi
+        key, clean_weight = self._clean_weight(module)
+        if getattr(clean_weight, "is_sparse_csr", False):
+            clean_values = clean_weight.values()
+            noisy_values = module.mat.values()
+            values = self._pulse_values(
+                clean_values, self._on_values(clean_values, noisy_values, key), slice_idx)
+            return torch.sparse_csr_tensor(
+                clean_weight.crow_indices(), clean_weight.col_indices(), values,
+                size=clean_weight.shape, dtype=clean_weight.dtype,
+                device=clean_weight.device)
+        if getattr(clean_weight, "is_sparse", False):
+            clean_weight = clean_weight.coalesce()
+            clean_values = clean_weight.values()
+            noisy_values = module.mat.to_sparse_coo().coalesce().values()
+            values = self._pulse_values(
+                clean_values, self._on_values(clean_values, noisy_values, key), slice_idx)
+            return torch.sparse_coo_tensor(
+                clean_weight.indices(), values, size=clean_weight.shape,
+                dtype=clean_weight.dtype, device=clean_weight.device).coalesce()
+        return self._pulse_values(
+            clean_weight, self._on_values(clean_weight, module.weight, key), slice_idx)
+
+    def get_pulse_matrices_for_slice(self, z_slice_idx=None, y_slice_idx=None):
+        fb_weight = None
+        ff_weight = None
+        if z_slice_idx is not None:
+            fb_weight = self.get_pulse_matrix(
+                self.FBconv, z_slice_idx, self._num_slices("z"))
+        if y_slice_idx is not None:
+            ff_weight = self.get_pulse_matrix(
+                self.FFconv, y_slice_idx, self._num_slices("y"))
+        return fb_weight, ff_weight
+
+    def _apply_sparse_pulse_module(self, module, x, pulse_weight):
+        if getattr(module, "csv_enabled", False):
+            raise NotImplementedError("Pulse-level toggle does not support nonlinear_R CSV MVMConv yet.")
+        batch_size, _, input_h, input_w = x.shape
+        padding = int(module.meta["padding"])
+        stride = int(module.meta["stride"])
+        ker_h = int(module.meta["ker_h"])
+        ker_w = int(module.meta["ker_w"])
+        output_h = (input_h + 2 * padding - ker_h) // stride + 1
+        output_w = (input_w + 2 * padding - ker_w) // stride + 1
+        x_flat = x.reshape(batch_size, -1).t()
+        y = torch.sparse.mm(pulse_weight, x_flat)
+        return y.t().reshape(batch_size, module.meta["out_chan"], output_h, output_w)
+
+    def _apply_pulse_module(self, module, x, pulse_weight):
+        if isinstance(module, nn.Conv2d):
+            return F.conv2d(x, pulse_weight, None, module.stride, module.padding, module.dilation, module.groups)
+        if isinstance(module, nn.ConvTranspose2d):
+            return F.conv_transpose2d(x, pulse_weight, None, module.stride, module.padding,
+                                      module.output_padding, module.groups, module.dilation)
+        if hasattr(module, "mat") and (getattr(pulse_weight, "is_sparse", False) or
+                                       getattr(pulse_weight, "is_sparse_csr", False)):
+            return self._apply_sparse_pulse_module(module, x, pulse_weight)
+        raise TypeError("Pulse-level toggle supports Conv2d, ConvTranspose2d, and non-CSV MVMConv modules.")
+
+    def z_stage_rhs(self, t, z, y_hold, pulse_weight):
+        rhs = self._apply_pulse_module(self.FBconv, y_hold, pulse_weight)
+        return rhs / (self.R * self.C_fb)
+
+    def y_stage_rhs(self, t, y, h_hold, pulse_weight):
+        rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
+        return rhs / (self.R * self.C_ff)
+
+    def _make_slice_options(self, duration, state):
+        opts = deepcopy(self.option_aca)
+        opts["t0"] = state.new_tensor(0.0)
+        opts["t1"] = duration.to(device=state.device, dtype=state.dtype)
+        opts["t_eval"] = [opts["t0"], opts["t1"]]
+        opts["h"] = opts["t1"] if opts.get("h", None) is not None else None
+        return opts
+
+    def integrate_pulse_slice(self, state, duration, rhs_fn, stage, slice_idx, constant_rhs=None):
+        if self.toggle_fast_path and constant_rhs is not None:
+            updated = state + duration * constant_rhs
+        else:
+            updated = aca_ode_solve(
+                lambda t, y: rhs_fn(t, y), state,
+                self._make_slice_options(duration, state))[-1]
+        return self.project_state(updated)
+
+    def run_z_stage(self, y_hold, z, T_z):
+        # get the number of quantization levels
+        # split the full pulse width into number of quant levels
+        num_slices = self._num_slices("z")
+        dt = T_z / float(num_slices)
+        for slice_idx in range(num_slices):
+            pulse_weight = self.get_pulse_matrix(self.FBconv, slice_idx, num_slices)
+            constant_rhs = self.z_stage_rhs(None, z, y_hold, pulse_weight) if self.toggle_fast_path else None
+            rhs_fn = lambda t, cur_z, pw=pulse_weight: self.z_stage_rhs(t, cur_z, y_hold, pw)
+            z = self.integrate_pulse_slice(z, dt, rhs_fn, "z", slice_idx, constant_rhs=constant_rhs)
+        return z
+
+    def run_y_stage(self, y, h_hold, T_y):
+        num_slices = self._num_slices("y")
+        dt = T_y / float(num_slices)
+        for slice_idx in range(num_slices):
+            pulse_weight = self.get_pulse_matrix(self.FFconv, slice_idx, num_slices)
+            constant_rhs = self.y_stage_rhs(None, y, h_hold, pulse_weight) if self.toggle_fast_path else None
+            rhs_fn = lambda t, cur_y, pw=pulse_weight: self.y_stage_rhs(t, cur_y, h_hold, pw)
+            y = self.integrate_pulse_slice(y, dt, rhs_fn, "y", slice_idx, constant_rhs=constant_rhs)
+        return y
+
+    def run_one_cycle(self, y, z, cycle_params):
+        # cycle_params are from self.resolve_cycle_params, which will generate t_z, t_y
+        # and perform scaling to get physical time from unitless time.
+        T_z, T_y = cycle_params
+        z = self.run_z_stage(y, z, T_z)
+        h = self.act_fn(z)
+        y = self.run_y_stage(y, h, T_y)
+        return y, z
+
+
+class TogglePulseResetZ(TogglePulseFFFB):
+    reset_z = True
+
+
+class TogglePulseKeepZ(TogglePulseFFFB):
+    reset_z = False
+
+
+class TogglePulseODEXInitFFFB(TogglePulseFFFB):
+    reset_z = True
+
+    def resolve_cycle_params(self, ref):
+        missing = [name for name in ("R", "C", "C_fb", "k", "alpha_1state", "w_bits") if not hasattr(self, name)]
+        if missing:
+            raise ValueError("TogglePulseODEXInitFFFB requires wrapper-provided " + ", ".join(missing))
+        n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
+        cycle_t = self._integration_end_like(ref) / float(n_cycles)
+        R = self.R
+        C = self.C
+        C_fb = self.C_fb
+        k = self.k
+        alpha_1state = self.alpha_1state
+        T_z = k * C_fb
+        T_y = cycle_t * R * R * C / (k * alpha_1state)
+        if T_z <= 0 or T_y <= 0:
+            raise ValueError("ODEXInit-approx pulse stage durations must be positive.")
+        return T_z, T_y
+
+    def y_stage_rhs(self, t, y, h_hold, pulse_weight):
+        rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
+        return rhs / (self.R * self.C)
+
+
 class ODEFixNoiseXInitFFFB(ODEFixNoiseOffset):
     """
     Used in training. During testing, use SumAsBInitYAsXFFFB.
@@ -2354,6 +2740,157 @@ class QATWrapper1State(ODEWrapper1State):
                                                 max_val=min(self.beta_c, self.v_dd))
 
 
+class ToggleWrapper1State(ODEWrapper1State):
+    """
+    Quantizing wrapper for ToggleAveragedPhysical* and TogglePulse* blocks.
+    It keeps the existing weight/input/output quantization path, but does not
+    scale ODE time or wrap _make_ode_fn because toggle blocks convert unitless
+    stage times into physical durations directly.
+    """
+    def _set_toggle_scale_values(self):
+        if self.s_ff is None or self.s_fb is None:
+            self.s_ff, self.s_fb = self.FF_quantizer.s_w, self.FB_quantizer.s_w
+        self.alpha_1state = self.s_fb * self.s_ff
+        self.alpha = self.s_fb
+        self.cap_scale = self._round(self.s_ff / self.s_fb, 1) if not self.tie_cap else 1
+        self.C_fb = self.C
+        self.C_ff = self.C_fb * self.cap_scale
+
+    def _ship_toggle_params(self, module=None):
+        module = self.ode_block if module is None else module
+        setattr(module, "R", self.R)
+        setattr(module, "C", self.C)
+        setattr(module, "C_fb", self.C_fb)
+        setattr(module, "C_ff", self.C_ff)
+        setattr(module, "k", self.k)
+        setattr(module, "alpha", self.alpha)
+        setattr(module, "alpha_1state", self.alpha_1state)
+        setattr(module, "s_fb", self.s_fb)
+        setattr(module, "s_ff", self.s_ff)
+        setattr(module, "cap_scale", self.cap_scale)
+        setattr(module, "tie_cap", self.tie_cap)
+        setattr(module, "w_bits", self.w_bits)
+        setattr(module, "q_hi", self.q_hi)
+        setattr(module, "beta_c", self.beta_c)
+
+    def _scale_act_fn(self):
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
+                upper = self.v_dd
+            else:
+                upper = min(6 * self.q, self.v_dd)
+            self.ode_block.act_fn = ReLUX(upper)
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            bound = min(self.q, self.v_dd)
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-bound, max_val=bound)
+
+    def _scale_act_fn_dynamically(self):
+        act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
+        if "relu6" in act_fn_cls or "relux" in act_fn_cls:
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
+                upper = self.v_dd
+            else:
+                upper = min(6 * self.q, self.v_dd)
+            self.ode_block.act_fn.set_scale(upper)
+        elif "hardtanh" in act_fn_cls:
+            bound = min(self.q, self.v_dd)
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-bound, max_val=bound)
+
+    def _patch(self):
+        self._set_toggle_scale_values()
+        self.time_scaler = self.R * self.C / self.alpha
+        self._ship_toggle_params()
+        self._scale_act_fn()
+        self._patch_forward()
+        self._patch_init_y()
+        self._ship_nonlinear_R_pkg()
+
+
+class ToggleQATTester1State(ToggleWrapper1State):
+    def __init__(self, **kwargs):
+        kwargs.update({"patch": True, "quantize": False})
+        super().__init__(**kwargs)
+
+
+class ToggleQATWrapper1State(QATWrapper1State):
+    """
+    QAT wrapper for trainable averaged toggle hardware models. It updates fake
+    quantization scales before each forward pass, but does not rescale the
+    integration time because the toggle block owns physical timing.
+    """
+    def _set_toggle_scale_values(self):
+        if self.s_ff is None or self.s_fb is None:
+            self.s_ff, self.s_fb = self.FF_quantizer.s_w, self.FB_quantizer.s_w
+        self.alpha_1state = self.s_fb * self.s_ff
+        self.alpha = self.s_fb
+        self.cap_scale = self._round(self.s_ff / self.s_fb, 1) if not self.tie_cap else 1
+        self.C_fb = self.C
+        self.C_ff = self.C_fb * self.cap_scale
+
+    def _ship_toggle_params(self, module=None):
+        module = self.ode_block if module is None else module
+        setattr(module, "R", self.R)
+        setattr(module, "C", self.C)
+        setattr(module, "C_fb", self.C_fb)
+        setattr(module, "C_ff", self.C_ff)
+        setattr(module, "k", self.k)
+        setattr(module, "alpha", self.alpha)
+        setattr(module, "alpha_1state", self.alpha_1state)
+        setattr(module, "s_fb", self.s_fb)
+        setattr(module, "s_ff", self.s_ff)
+        setattr(module, "cap_scale", self.cap_scale)
+        setattr(module, "tie_cap", self.tie_cap)
+        setattr(module, "w_bits", self.w_bits)
+        setattr(module, "q_hi", self.q_hi)
+        setattr(module, "beta_c", self.beta_c)
+
+    def _scale_act_fn(self):
+        if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
+                upper = self.v_dd
+            else:
+                upper = min(6 * self.q, self.v_dd)
+            self.ode_block.act_fn = ReLUX(upper)
+        elif "hardtanh" in self.ode_block.act_fn.__class__.__name__.lower():
+            bound = min(self.q, self.v_dd)
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-bound, max_val=bound)
+
+    def _scale_act_fn_dynamically(self):
+        act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
+        if "relu6" in act_fn_cls or "relux" in act_fn_cls:
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
+                upper = self.v_dd
+            else:
+                upper = min(6 * self.q, self.v_dd)
+            self.ode_block.act_fn.set_scale(upper)
+        elif "hardtanh" in act_fn_cls:
+            bound = min(self.q, self.v_dd)
+            self.ode_block.act_fn = nn.Hardtanh(min_val=-bound, max_val=bound)
+
+    def _patch(self):
+        self._set_toggle_scale_values()
+        self.time_scaler = self.R * self.C / self.alpha
+        self._ship_toggle_params()
+        self._scale_act_fn()
+        self._patch_forward()
+        self._patch_init_y()
+        self._ship_nonlinear_R_pkg()
+
+    def _update_vals(self, module, inputs):
+        self._set_quantize_s(module)
+
+        self._set_toggle_scale_values()
+        self.beta = self.q * self.s_fb
+        self.beta_c = self.beta * self.k / self.R
+        self.inp_scale = self.q if self.is_first else 1
+        self.out_scale = self.q if self.is_last else 1
+
+        self.time_scaler = self.R * self.C / self.alpha
+        self._ship_toggle_params(module)
+        self._scale_act_fn_dynamically()
+        return None
+
+
 class ODEWrapper1StateWithX(ODEWrapper1State):
     def _patch_forward(self):
         # scale the forward method
@@ -2509,10 +3046,13 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
         else:
             t_step = t_end / cls if cls != 0 else 1.0
         t_step = t_step / ts_scale
+        ode_kwargs = dict(kwargs)
+        if isinstance(ode_block, type) and issubclass(ode_block, ToggleBaseFFFB):
+            ode_kwargs.setdefault("toggle_n_cycles", int(cls))
         pc_net.PcConvs[i] = ode_block(
             pc_conv=pc_net.PcConvs[i], noise_level=noise_level, method=method, t_end=t_end, t_step=t_step, tol=tol,
             return_init=return_init[i] if isinstance(return_init, list) else False,
-            **kwargs)
+            **ode_kwargs)
     return pc_net
 
 
@@ -2526,7 +3066,11 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
     else:
         pass
         # calib_res = np.load(calib_path)
+    toggle_wrappers = (ToggleWrapper1State, ToggleQATTester1State, ToggleQATWrapper1State)
     for i in range(pc_net.num_layers):
+        if isinstance(pc_net.PcConvs[i], (ToggleAveragedPhysicalFFFB, TogglePulseFFFB)) and \
+                not issubclass(ode_wrapper, toggle_wrappers):
+            raise ValueError("Use ToggleWrapper1State/ToggleQATTester1State/ToggleQATWrapper1State with physical or pulse toggle blocks to avoid legacy RC/time double scaling.")
         if i == 0:
             ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
                                           R=R, C=C, v_dd=v_dd, is_first=True, is_last=False, **kwargs)
@@ -2571,6 +3115,14 @@ ODEBLOCK_CLASSES = {
     "SumAsBInitYAsXFFFB": SumAsBInitYAsXFFFB,
     "FixNoiseXInitFFFBNoExpand": FixNoiseXInitFFFBNoExpand,
     "ODEXInitFFFB": ODEXInitFFFB,
+    "ToggleUnitlessResetZFFFB": ToggleUnitlessResetZFFFB,
+    "ToggleUnitlessPersistentZFFFB": ToggleUnitlessPersistentZFFFB,
+    "ToggleResetZ": ToggleResetZ,
+    "ToggleKeepZ": ToggleKeepZ,
+    "ToggleODEXInitFFFB": ToggleODEXInitFFFB,
+    "TogglePulseResetZ": TogglePulseResetZ,
+    "TogglePulseKeepZ": TogglePulseKeepZ,
+    "TogglePulseODEXInitFFFB": TogglePulseODEXInitFFFB,
     "ODEFixNoise0InitExpand": ODEFixNoise0InitExpand,
     "ODEFixNoise0InitFFFB": ODEFixNoise0InitFFFB,
     "ODESumAsBInitYAs0": ODESumAsBInitYAs0,
@@ -2613,6 +3165,9 @@ ODEWrapper_CLASSES = {
     "ODEWrapper1State": ODEWrapper1State,
     "QATTester1State": QATTester1State,
     "QATWrapper1State": QATWrapper1State,
+    "ToggleWrapper1State": ToggleWrapper1State,
+    "ToggleQATTester1State": ToggleQATTester1State,
+    "ToggleQATWrapper1State": ToggleQATWrapper1State,
     "ODEWrapper1StateWithX": ODEWrapper1StateWithX,
     "QATTester1StateWithX": QATTester1StateWithX,
     "QATWrapper1StateWithX": QATWrapper1StateWithX,
