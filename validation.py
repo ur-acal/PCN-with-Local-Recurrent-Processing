@@ -175,7 +175,10 @@ def snapshot_clean_mvm_mat_values(net):
     clean_vals = OrderedDict()
     for mod_name, m in net.named_modules():
         if isinstance(m, MVMConv):
-            clean_vals[mod_name] = m.mat.values().detach().clone()
+            # Cache the clean expanded weights in MVMConv for pulse-based implementation.
+            if not hasattr(m, "clean_mat_values"):
+                m.clean_mat_values = m.mat.values().detach().clone()
+            clean_vals[mod_name] = m.clean_mat_values
     return clean_vals
 
 def assert_mvm_mats_all_values_noised(net, clean_vals, max_print=10, allow_unchanged_frac=1e-4):
@@ -598,6 +601,7 @@ class Validator(nn.Module):
                 # Replace plain conv with unrolled weights
                 unrolled, meta = stored[mod_name]["weight"], stored[mod_name]["meta"]
                 mvm_conv = MVMConv(unrolled, meta)
+                mvm_conv.clean_mat_values = mvm_conv.mat.values().detach().clone()
                 if hasattr(parent, "_nonlinear_R_pkg"):
                     mvm_conv.enable_csv(**parent._nonlinear_R_pkg)
                 setattr(parent, mod_name, mvm_conv)

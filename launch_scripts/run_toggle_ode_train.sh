@@ -64,8 +64,8 @@ PADDING=1
 NOISE_LEVEL=0.
 RESET_MODE="${RESET_MODE:-reset}" # reset or persistent
 case "${RESET_MODE}" in
-  reset) ODE_BLOCK="ToggleUnitlessResetZFFFB" ;;
-  persistent) ODE_BLOCK="ToggleUnitlessPersistentZFFFB" ;;
+  reset) ODE_BLOCK="ToggleResetZ" ;;
+  persistent) ODE_BLOCK="ToggleKeepZ" ;;
   *) echo "RESET_MODE must be reset or persistent, got: ${RESET_MODE}" >&2; exit 2 ;;
 esac
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-${N_STEPS:-5}}"

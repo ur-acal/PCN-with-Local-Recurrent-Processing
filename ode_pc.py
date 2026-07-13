@@ -640,32 +640,6 @@ class ToggleBaseFFFB(ODEXInitFFFB):
         return self._finish_forward(y)
 
 
-class ToggleUnitlessFFFB(ToggleBaseFFFB):
-    def resolve_cycle_params(self, ref):
-        n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
-        cycle_t = self._integration_end_like(ref) / float(n_cycles)
-        t_z = cycle_t * float(self.toggle_time_split)
-        t_y = cycle_t * float(1.0 - self.toggle_time_split)
-        if t_z.detach().cpu().item() <= 0 or t_y.detach().cpu().item() <= 0:
-            raise ValueError("Unitless toggle stage durations must be positive.")
-        return t_z, t_y
-
-    def run_one_cycle(self, y, z, cycle_params):
-        t_z, t_y = cycle_params
-        z = z + t_z * self.FBconv(y)
-        h = self.act_fn(z)
-        y = y + t_y * self.FFconv(h)
-        return y, z
-
-
-class ToggleUnitlessResetZFFFB(ToggleUnitlessFFFB):
-    reset_z = True
-
-
-class ToggleUnitlessPersistentZFFFB(ToggleUnitlessFFFB):
-    reset_z = False
-
-
 class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
     def project_state(self, state):
         if not hasattr(self, "v_dd"):
@@ -674,6 +648,15 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         return state.clamp(min=-v_dd, max=v_dd)
 
     def resolve_cycle_params(self, ref):
+        if not getattr(self, "physical", False):
+            n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
+            cycle_t = self._integration_end_like(ref) / float(n_cycles)
+            t_z = cycle_t * float(self.toggle_time_split)
+            t_y = cycle_t * float(1.0 - self.toggle_time_split)
+            if t_z.detach().cpu().item() <= 0 or t_y.detach().cpu().item() <= 0:
+                raise ValueError("Unitless toggle stage durations must be positive.")
+            return t_z, t_y
+
         missing = [name for name in ("R", "C", "C_fb", "C_ff", "alpha", "w_bits") if not hasattr(self, name)]
         if missing:
             raise ValueError("ToggleAveragedPhysicalFFFB requires wrapper-provided " + ", ".join(missing))
@@ -696,6 +679,12 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
 
     def run_one_cycle(self, y, z, cycle_params):
         T_z, T_y = cycle_params
+        if not getattr(self, "physical", False):
+            z = z + T_z * self.FBconv(y)
+            h = self.act_fn(z)
+            y = y + T_y * self.FFconv(h)
+            return y, z
+
         z = self.project_state(self.z_stage_update(z, y, T_z))
         h = self.act_fn(z)
         y = self.project_state(self.y_stage_update(y, h, T_y))
@@ -782,15 +771,9 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         if not hasattr(module, "mat"):
             return key, clean_weight
 
-        from validation import conv2d_to_matrix_fixed_padding
-        input_pixels = module.mat.shape[1] // int(module.meta["inp_chan"])
-        input_size = int(math.isqrt(input_pixels))
-        assert input_size * input_size == input_pixels
-        clean_weight, _, _ = conv2d_to_matrix_fixed_padding(
-            (int(module.meta["inp_chan"]), input_size, input_size),
-            clean_weight, stride=int(module.meta["stride"]),
-            padding=int(module.meta["padding"]))
-        return key, clean_weight
+        if not hasattr(module, "clean_mat_values"):
+            raise ValueError("Expanded pulse modules require Validator's clean MVM value snapshot.")
+        return key, module.clean_mat_values
 
     def _on_values(self, clean_values, noisy_values, key):
         # To get mismatch
@@ -826,41 +809,23 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
     def get_pulse_matrix(self, module, slice_idx, num_slices):
         assert num_slices == self.q_hi
         key, clean_weight = self._clean_weight(module)
-        if getattr(clean_weight, "is_sparse_csr", False):
-            clean_values = clean_weight.values()
+        if hasattr(module, "mat"):
+            clean_values = clean_weight
             noisy_values = module.mat.values()
             values = self._pulse_values(
                 clean_values, self._on_values(clean_values, noisy_values, key), slice_idx)
+            assert getattr(module.mat, "is_sparse_csr", False)
+            # Reconstruct the sparse tensor based on current slice_idx and quant level of each weight.
             return torch.sparse_csr_tensor(
-                clean_weight.crow_indices(), clean_weight.col_indices(), values,
-                size=clean_weight.shape, dtype=clean_weight.dtype,
-                device=clean_weight.device)
-        if getattr(clean_weight, "is_sparse", False):
-            clean_weight = clean_weight.coalesce()
-            clean_values = clean_weight.values()
-            noisy_values = module.mat.to_sparse_coo().coalesce().values()
-            values = self._pulse_values(
-                clean_values, self._on_values(clean_values, noisy_values, key), slice_idx)
-            return torch.sparse_coo_tensor(
-                clean_weight.indices(), values, size=clean_weight.shape,
-                dtype=clean_weight.dtype, device=clean_weight.device).coalesce()
+                module.mat.crow_indices(), module.mat.col_indices(), values,
+                size=module.mat.shape, dtype=module.mat.dtype,
+                device=module.mat.device)
         return self._pulse_values(
             clean_weight, self._on_values(clean_weight, module.weight, key), slice_idx)
 
-    def get_pulse_matrices_for_slice(self, z_slice_idx=None, y_slice_idx=None):
-        fb_weight = None
-        ff_weight = None
-        if z_slice_idx is not None:
-            fb_weight = self.get_pulse_matrix(
-                self.FBconv, z_slice_idx, self._num_slices("z"))
-        if y_slice_idx is not None:
-            ff_weight = self.get_pulse_matrix(
-                self.FFconv, y_slice_idx, self._num_slices("y"))
-        return fb_weight, ff_weight
-
     def _apply_sparse_pulse_module(self, module, x, pulse_weight):
-        if getattr(module, "csv_enabled", False):
-            raise NotImplementedError("Pulse-level toggle does not support nonlinear_R CSV MVMConv yet.")
+        assert not getattr(module, "csv_enabled", False), \
+            "Pulse-level toggle does not support nonlinear_R CSV MVMConv yet."
         batch_size, _, input_h, input_w = x.shape
         padding = int(module.meta["padding"])
         stride = int(module.meta["stride"])
@@ -2758,6 +2723,7 @@ class ToggleWrapper1State(ODEWrapper1State):
 
     def _ship_toggle_params(self, module=None):
         module = self.ode_block if module is None else module
+        setattr(module, "physical", True)
         setattr(module, "R", self.R)
         setattr(module, "C", self.C)
         setattr(module, "C_fb", self.C_fb)
@@ -2829,6 +2795,7 @@ class ToggleQATWrapper1State(QATWrapper1State):
 
     def _ship_toggle_params(self, module=None):
         module = self.ode_block if module is None else module
+        setattr(module, "physical", True)
         setattr(module, "R", self.R)
         setattr(module, "C", self.C)
         setattr(module, "C_fb", self.C_fb)
@@ -3115,8 +3082,6 @@ ODEBLOCK_CLASSES = {
     "SumAsBInitYAsXFFFB": SumAsBInitYAsXFFFB,
     "FixNoiseXInitFFFBNoExpand": FixNoiseXInitFFFBNoExpand,
     "ODEXInitFFFB": ODEXInitFFFB,
-    "ToggleUnitlessResetZFFFB": ToggleUnitlessResetZFFFB,
-    "ToggleUnitlessPersistentZFFFB": ToggleUnitlessPersistentZFFFB,
     "ToggleResetZ": ToggleResetZ,
     "ToggleKeepZ": ToggleKeepZ,
     "ToggleODEXInitFFFB": ToggleODEXInitFFFB,

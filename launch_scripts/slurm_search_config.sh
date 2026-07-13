@@ -19,19 +19,35 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
+TOGGLE_MODE="${TOGGLE_MODE:-none}"       # none, reset, or persistent
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
 
+##############################################################################################
+# Two special modes
+##############################################################################################
+# 1. Toggle mode. If set, this will ignore SWITCH_INF.
+# Works with three pattern-2 pool model archs.
+case "${TOGGLE_MODE}" in
+  none) ;;
+  reset) ODE_BLOCK="ToggleResetZ" ;;
+  persistent) ODE_BLOCK="ToggleKeepZ" ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+esac
+
+# 2. SWITCH_INF mode. This is for the time-interleaved model.
+# Works with both the three pattern and two pattern model arch.
 # If true, train with 5-step euler and inferencing using switched ODEBlock with 5 iters
-SWITCH_INF="${SWITCH_INF:-true}"
+SWITCH_INF="${SWITCH_INF:-false}"
+##############################################################################################
 
 PCNS=( "PCNetNoBatchNorm" )
 IMG_TYPES=( "scanGFI" )
 CIRC_CONFS=( "" )
 
 # CHAN_0 options (order matters)
-#CHAN_0_LIST=( 24 ) # For the default three pattern
+CHAN_0_LIST=( 24 ) # For the default three pattern
 #CHAN_0_LIST=( 40 42 44 46 48 ) # For the time-interleaving, two_stage_fixed
-CHAN_0_LIST=( 72 74 76 78 80 ) # For the time-interleaving, one_stage_fixed
+#CHAN_0_LIST=( 72 74 76 78 80 ) # For the time-interleaving, one_stage_fixed
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers..."
 declare -A NUM_LAYERS_BY_CHAN0
@@ -39,7 +55,7 @@ declare -A NUM_LAYERS_BY_CHAN0
 #NUM_LAYERS_BY_CHAN0[18]="20 22"
 #NUM_LAYERS_BY_CHAN0[20]="18 20"
 #NUM_LAYERS_BY_CHAN0[22]="22 24"
-#NUM_LAYERS_BY_CHAN0[24]="16"
+NUM_LAYERS_BY_CHAN0[24]="16"
 #NUM_LAYERS_BY_CHAN0[26]="16 18"
 #NUM_LAYERS_BY_CHAN0[28]="14 16"
 #NUM_LAYERS_BY_CHAN0[30]="12 14"
@@ -51,11 +67,11 @@ declare -A NUM_LAYERS_BY_CHAN0
 #NUM_LAYERS_BY_CHAN0[46]="5"
 #NUM_LAYERS_BY_CHAN0[48]="5"
 # For the time-interleaving, one_stage_fixed
-NUM_LAYERS_BY_CHAN0[72]="11"
-NUM_LAYERS_BY_CHAN0[74]="11"
-NUM_LAYERS_BY_CHAN0[76]="10"
-NUM_LAYERS_BY_CHAN0[78]="10"
-NUM_LAYERS_BY_CHAN0[80]="9"
+#NUM_LAYERS_BY_CHAN0[72]="11"
+#NUM_LAYERS_BY_CHAN0[74]="11"
+#NUM_LAYERS_BY_CHAN0[76]="10"
+#NUM_LAYERS_BY_CHAN0[78]="10"
+#NUM_LAYERS_BY_CHAN0[80]="9"
 
 TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
@@ -418,7 +434,11 @@ submit_chunk() {
   # Human-readable + unique EXP:
   # - if MAX_TASKS_PER_GPU==1, chunk_tag will be the exact comb_tag
   # - else it is first__to__last
-  local EXP="0514_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}_Exp"
+  local toggle_exp_suffix=""
+  if [[ "${TOGGLE_MODE}" != "none" ]]; then
+    toggle_exp_suffix="_toggle_${TOGGLE_MODE}"
+  fi
+  local EXP="0712_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}${toggle_exp_suffix}_Exp"
 
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"
@@ -428,7 +448,7 @@ submit_chunk() {
     BLOCKS_LIST="${BLOCKS_LIST}" \
     sbatch --parsable \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",SWITCH_INF="${SWITCH_INF}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
+      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",SWITCH_INF="${SWITCH_INF}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",TOGGLE_MODE="${TOGGLE_MODE}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
       "${SBATCH_SCRIPT}"
   )
   echo "  -> job ${jid}"

@@ -35,6 +35,11 @@ SAN_BLOCKS="${SAN_BLOCKS//,/+}"
 EXP="${EXP:-no_bn_${PCN}_NODE_search_${TASK}_${IMG_TYPE}_${CIRC_CONF:-NoCirc}_job${SLURM_JOB_ID}_Exp}"
 
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"
+TOGGLE_MODE="${TOGGLE_MODE:-none}"
+TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
+TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
+TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
+TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
 CHAN_0=${CHAN_0:-}
 NUM_LAYERS=${NUM_LAYERS:-}
 CHUNK_ID="${CHUNK_ID:-0}"
@@ -88,6 +93,33 @@ fi
 BLOCKS=( "${ODE_BLOCK}" )
 echo "BLOCKS_LIST=${BLOCKS_LIST}"
 echo "Using single ODE block: ${BLOCKS[*]}"
+
+TRAIN_ODE_BLOCK="${ODE_BLOCK}"
+FT_ODE_BLOCK="${ODE_BLOCK}"
+INF_ODE_BLOCK="${ODE_BLOCK}"
+TOGGLE_ARGS=()
+case "${TOGGLE_MODE}" in
+  none) ;;
+  reset)
+    TRAIN_ODE_BLOCK="ToggleResetZ"
+    FT_ODE_BLOCK="ToggleResetZ"
+    INF_ODE_BLOCK="TogglePulseResetZ"
+    ;;
+  persistent)
+    TRAIN_ODE_BLOCK="ToggleKeepZ"
+    FT_ODE_BLOCK="ToggleKeepZ"
+    INF_ODE_BLOCK="TogglePulseKeepZ"
+    ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+esac
+if [[ "${TOGGLE_MODE}" != "none" ]]; then
+  TOGGLE_ARGS=(
+    --toggle_n_cycles "${TOGGLE_N_CYCLES}"
+    --toggle_time_split "${TOGGLE_TIME_SPLIT}"
+    --toggle_fast_path "${TOGGLE_FAST_PATH}"
+  )
+fi
+echo "Toggle mode=${TOGGLE_MODE}: train=${TRAIN_ODE_BLOCK}, ft=${FT_ODE_BLOCK}, inference=${INF_ODE_BLOCK}"
 ##########################################################################
 
 ##########################################################################
@@ -213,6 +245,7 @@ run_one_combo () {
     --pcn           "${PCN}" \
     --pc_conv       "PCConvReLU6" \
     --ode_block     "${block}" \
+    "${TOGGLE_ARGS[@]}" \
     --teacher_ckpt  "${TEACHER_CKPT}" \
     --teacher_arch  "${TEACHER_ARCH}" \
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
@@ -234,8 +267,11 @@ n_bits=5
 ENOB=8
 V_DD="0.1"
 ONE_OVER_Q="1"
-R_val="20e3"
-R_MAX="300e3"
+if [[ "${TOGGLE_MODE}" != "none" ]]; then
+  ONE_OVER_Q="${TOGGLE_ONE_OVER_Q}"
+fi
+R_val="10e3"
+R_MAX="150e3"
 C_val="49e-15"
 EVAL_BASE="${LOGDIR}/evals"
 MASTER_LOG="${LOGDIR}/eval_master_merged.log"
@@ -270,9 +306,12 @@ eval_one_combo_model() {
       wrapper="QATTester1State"
     fi
   fi
+  if [[ "${TOGGLE_MODE}" != "none" ]]; then
+    wrapper="ToggleQATTester1State"
+  fi
 
   test_expanded="true"
-  if [[ "${SWITCH_INF}" == "true" ]]; then
+  if [[ "${SWITCH_INF}" == "true" && "${TOGGLE_MODE}" == "none" ]]; then
     # Todo: Hardcode for now
     test_block="ODEXInitFFFBPixelSwitchStretchT"
     test_expanded="false"
@@ -310,6 +349,7 @@ eval_one_combo_model() {
     --fold_scalar     "${fold_scalar}" \
     --tie_cap         "false" \
     --one_over_q      "${ONE_OVER_Q}" \
+    "${TOGGLE_ARGS[@]}" \
     --pc_conv         "${pc_conv}Noisy" \
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
@@ -342,6 +382,9 @@ finetune_one_combo_model() {
   local qat_wrapper="QATWrapper1State"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
     qat_wrapper="QATWrapper2State"
+  fi
+  if [[ "${TOGGLE_MODE}" != "none" ]]; then
+    qat_wrapper="ToggleQATWrapper1State"
   fi
 
   local nl="0.25"
@@ -390,6 +433,7 @@ finetune_one_combo_model() {
     --fold_scalar   "${fold_scalar}" \
     --tie_cap       "false" \
     --one_over_q    "${ONE_OVER_Q}" \
+    "${TOGGLE_ARGS[@]}" \
     --qat_cls       "SymQuantizeWeight" \
     --pcn           "${PCN}" \
     --ode_wrapper   "${qat_wrapper}" \
@@ -417,7 +461,7 @@ finetune_one_combo_model() {
 echo "==== PHASE 1: TRAIN (parallel over combos) ===="
 pids=()
 for comb in "${COMBS[@]}"; do
-  run_one_combo "${comb}" "${ODE_BLOCK}" & pids+=($!)
+  run_one_combo "${comb}" "${TRAIN_ODE_BLOCK}" & pids+=($!)
 done
 
 ok=0
@@ -435,7 +479,7 @@ for comb in "${COMBS[@]}"; do
   # record: comb_tag<TAB>params<TAB>inp_str<TAB>out_str<TAB>pool_str
   IFS=$'\t' read -r comb_tag params inp_str out_str pool_str <<< "${comb}"
   COMB_TAGS+=( "${comb_tag}" )
-  train_log="${LOGDIR}/${comb_tag}/train_${EXP}_${comb_tag}_${ODE_BLOCK}.log"
+  train_log="${LOGDIR}/${comb_tag}/train_${EXP}_${comb_tag}_${TRAIN_ODE_BLOCK}.log"
   mn="$(extract_model_name "${train_log}")"
   if [[ -z "$mn" ]]; then
     echo "[WARN] Could not extract model name from ${train_log}"
@@ -461,7 +505,7 @@ for i in "${!COMB_TAGS[@]}"; do
     echo "[WARN] Skip finetune for comb=${comb_tag} (empty model name)"
     continue
   fi
-  finetune_one_combo_model "${comb_tag}" "${mn}" "${ODE_BLOCK}" & pids+=($!)
+  finetune_one_combo_model "${comb_tag}" "${mn}" "${FT_ODE_BLOCK}" & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || ok=1; done
 
@@ -471,7 +515,7 @@ for p in "${pids[@]}"; do wait "$p" || ok=1; done
 declare -a MODEL_NAMES_FT=()
 for i in "${!COMB_TAGS[@]}"; do
   comb_tag="${COMB_TAGS[$i]}"
-  ft_log="${LOGDIR}/${comb_tag}/finetune_${ODE_BLOCK}.log"
+  ft_log="${LOGDIR}/${comb_tag}/finetune_${FT_ODE_BLOCK}.log"
   mn_ft="$(extract_model_name "${ft_log}")"
   if [[ -z "$mn_ft" ]]; then
     echo "[WARN] Could not extract finetuned model name from ${ft_log} (comb=${comb_tag})"
@@ -491,7 +535,7 @@ for i in "${!COMB_TAGS[@]}"; do
     echo "[WARN] Skip post_ft eval for comb=${comb_tag} (empty finetuned model name)"
     continue
   fi
-  eval_one_combo_model "${comb_tag}" "${mn_ft}" "post_ft" "${ODE_BLOCK}" & pids+=($!)
+  eval_one_combo_model "${comb_tag}" "${mn_ft}" "post_ft" "${INF_ODE_BLOCK}" & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || ok=1; done
 

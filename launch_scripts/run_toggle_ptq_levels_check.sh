@@ -10,12 +10,12 @@ set -euo pipefail
 RESET_MODE="${RESET_MODE:-reset}" # reset or persistent
 case "${RESET_MODE}" in
   reset)
-    LEVEL1_BLOCK="ToggleUnitlessResetZFFFB"
+    LEVEL1_BLOCK="ToggleResetZ"
     LEVEL2_BLOCK="ToggleResetZ"
     LEVEL3_BLOCK="TogglePulseResetZ"
     ;;
   persistent)
-    LEVEL1_BLOCK="ToggleUnitlessPersistentZFFFB"
+    LEVEL1_BLOCK="ToggleKeepZ"
     LEVEL2_BLOCK="ToggleKeepZ"
     LEVEL3_BLOCK="TogglePulseKeepZ"
     ;;

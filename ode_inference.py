@@ -363,6 +363,17 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                                 select_layer=args.valid_select_layer)
 
 
+def print_quantization_level_ratios(net, q_hi):
+    for layer_idx, block in enumerate(net.PcConvs):
+        weights = [block.clean_params[name].detach().reshape(-1) for name in ("FFconv", "FBconv")]
+        values = torch.cat(weights).abs()
+        level_idx = torch.round(values * q_hi).to(torch.long).clamp_(0, q_hi)
+        counts = torch.bincount(level_idx, minlength=q_hi + 1)
+        ratios = counts.to(torch.float64) / counts.sum()
+        ratios_str = ",".join(f"{ratio.item():.8f}" for ratio in ratios)
+        print(f"QUANT_LEVEL_RATIOS layer={layer_idx} ratios={ratios_str}")
+
+
 def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=False, noise_level=None):
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
@@ -402,6 +413,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
 
     if return_net:
         return net_
+    print_quantization_level_ratios(net_, 2 ** (args.w_bits - 1) - 1)
     # logging.warning("Model info: {}".format(torchinfo.summary(net_, input_size=(16,4,16,16))))
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
