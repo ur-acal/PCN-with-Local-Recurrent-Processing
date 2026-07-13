@@ -73,6 +73,11 @@ NUM_LAYERS_BY_CHAN0[24]="16"
 #NUM_LAYERS_BY_CHAN0[78]="10"
 #NUM_LAYERS_BY_CHAN0[80]="9"
 
+SHOW_COMB_ONLY="${SHOW_COMB_ONLY:-0}"   # 1 => print comb_tag only and exit
+COMB_MODE="${COMB_MODE:-balanced_A}"      # choose in (n_params | balanced_A)
+SEARCH_ARCH="${SEARCH_ARCH:-default}"     # choose in (default | two_stage_fixed | one_stage_fixed)
+##############################################################################################
+
 TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
 REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
 if [[ "${TRAIN_MODE}" == "mix_all" ]]; then
@@ -87,10 +92,6 @@ SLURM_LOG_DIR="${REPO_ROOT}/logs/slurm_jobs"
 declare -A JOBS_BY_EXP
 MERGE_OUT_DIR="${REPO_ROOT}/shell_utils/parse_res/neural_ode_res"
 MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
-
-SHOW_COMB_ONLY="${SHOW_COMB_ONLY:-0}"   # 1 => print comb_tag only and exit
-COMB_MODE="${COMB_MODE:-balanced_A}"      # choose in (n_params | balanced_A)
-SEARCH_ARCH="${SEARCH_ARCH:-one_stage_fixed}"     # choose in (default | two_stage_fixed | one_stage_fixed)
 
 SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
