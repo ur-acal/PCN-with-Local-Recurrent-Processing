@@ -96,7 +96,7 @@ SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 # Change the saved pickle file name here
 ####################################################
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0514_kdcrd_then_ft_OneStage_AvgPool_TIMM_SRRL.pkl"
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0712_kdcrd_then_ft_toggle_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
 ####################################################
@@ -376,7 +376,7 @@ generate_one_stage_fixed_combs() {
       num_layers*chan0*chan0
     ) ))
 
-    comb_tag="OneStage_N${num_layers}_C${chan0}_pool${pool_pos}"
+    comb_tag="Toggle_N${num_layers}_C${chan0}_pool${pool_pos}"
     lines+=( "${params}"$'\t'"${comb_tag}"$'\t'"${chan0}"$'\t'"${num_layers}"$'\t'"${INP[*]}"$'\t'"${OUT[*]}"$'\t'"${POOL[*]}" )
   done
 
