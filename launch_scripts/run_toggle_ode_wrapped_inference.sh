@@ -22,7 +22,7 @@ CAP_VALS=("49e-15")
 
 export BASE_LOGDIR="${BASE_LOGDIR:-./logs/test_toggle_ode_noisy}"
 export K_VAL="${K_VAL:-1e3}"
-export RESET_MODE="${RESET_MODE:-reset}" # reset or persistent
+export RESET_MODE="${RESET_MODE:-reset}" # reset, persistent, odexinit, or odexinit_keep
 export TOGGLE_LEVEL="${TOGGLE_LEVEL:-2}" # 1, 2, or 3
 export TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-${N_STEPS:-5}}"
 export TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
@@ -37,7 +37,10 @@ case "${RESET_MODE}_${TOGGLE_LEVEL}" in
   odexinit_1) export TOGGLE_ODE_BLOCK="ODEXInitFFFB" ;;
   odexinit_2) export TOGGLE_ODE_BLOCK="ToggleODEXInitFFFB" ;;
   odexinit_3) export TOGGLE_ODE_BLOCK="TogglePulseODEXInitFFFB" ;;
-  *) echo "RESET_MODE must be reset/persistent/odexinit and TOGGLE_LEVEL must be 1/2/3" >&2; exit 2 ;;
+  odexinit_keep_1) export TOGGLE_ODE_BLOCK="ToggleODEXInitKeep" ;;
+  odexinit_keep_2) export TOGGLE_ODE_BLOCK="ToggleODEXInitKeep" ;;
+  odexinit_keep_3) export TOGGLE_ODE_BLOCK="TogglePulseODEXInitKeep" ;;
+  *) echo "Invalid RESET_MODE/TOGGLE_LEVEL combination" >&2; exit 2 ;;
 esac
 # MASTER_LOG and JOB_LOG will be set per noise combination
 
@@ -53,6 +56,8 @@ MODEL_NAMES=(
   "TIMMQAT5b7aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
   "TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
 
+  # "TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP" # The model used as ft base for the model below.
+  "TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP" # ft with ToggleODEXInitFFFB 5-steps based on a pretrained model on dopri45
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockXInit_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockPC_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockXInit_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_2REP"
@@ -70,8 +75,9 @@ for n_bits in "${N_BITS_VALS[@]}"; do
   for cap_val in "${CAP_VALS[@]}"; do
     for method in "${METHOD_VALS[@]}"; do
       for name in "${MODEL_NAMES[@]}"; do
-        mkdir -p "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}"
-        > "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
+        job_dir_name="${JOB_DIR_NAME_OVERRIDE:-${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}}"
+        mkdir -p "$BASE_LOGDIR/${job_dir_name}"
+        > "$BASE_LOGDIR/${job_dir_name}/job.log"
       done
     done
   done
@@ -83,6 +89,7 @@ run_model(){
   local method="$2"
   local n_bits="$3"
   local cap_val="$4"
+  local job_dir_name="${JOB_DIR_NAME_OVERRIDE:-${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}}"
 
   if [[ "$name" == *C100* ]]; then
     local _task="cifar100"
@@ -103,7 +110,7 @@ run_model(){
   fi
 
   if [[ "${TOGGLE_LEVEL}" == "1" ]]; then
-    if [[ "${RESET_MODE}" == "odexinit" ]]; then
+    if [[ "${RESET_MODE}" == odexinit* ]]; then
       _ode_wrapper="QATTester1State"
     else
       _ode_wrapper="none"
@@ -176,7 +183,7 @@ run_model(){
     --test_only_nl    "0.0" \
     --return_init     "${RETURN_INIT:-0}" \
     --test_only       "${TEST_ONLY:-false}" \
-    2>&1 | tee -a "$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
+    2>&1 | tee -a "$BASE_LOGDIR/${job_dir_name}/job.log"
 }
 export -f run_model
 
@@ -210,7 +217,8 @@ for method in "${METHOD_VALS[@]}"; do
       for name in "${MODEL_NAMES[@]}"; do
         printf '========== %s | method=%s | n_bits=%s | cap=%s ==========\n' \
                "$name" "$method" "$n_bits" "$cap_val" >>"$MASTER_LOG"
-        logfile="$BASE_LOGDIR/${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}/job.log"
+        job_dir_name="${JOB_DIR_NAME_OVERRIDE:-${name}_method_${method}_tol_${tol}_nbits_${n_bits}_cap_${cap_val}}"
+        logfile="$BASE_LOGDIR/${job_dir_name}/job.log"
         if ! grep -A 100 "Model name: ${name} " "$logfile" >>"$MASTER_LOG"; then
           echo "[Final Result not found] $logfile" >>"$MASTER_LOG"
         fi

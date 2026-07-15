@@ -62,11 +62,13 @@ STRIDE=(1)
 KSZ=(3)
 PADDING=1
 NOISE_LEVEL=0.
-RESET_MODE="${RESET_MODE:-reset}" # reset or persistent
+RESET_MODE="${RESET_MODE:-reset}" # reset, persistent, odexinit, or odexinit_keep
 case "${RESET_MODE}" in
   reset) ODE_BLOCK="ToggleResetZ" ;;
   persistent) ODE_BLOCK="ToggleKeepZ" ;;
-  *) echo "RESET_MODE must be reset or persistent, got: ${RESET_MODE}" >&2; exit 2 ;;
+  odexinit) ODE_BLOCK="ToggleODEXInitFFFB" ;;
+  odexinit_keep) ODE_BLOCK="ToggleODEXInitKeep" ;;
+  *) echo "Invalid RESET_MODE: ${RESET_MODE}" >&2; exit 2 ;;
 esac
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-${N_STEPS:-5}}"
 TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"

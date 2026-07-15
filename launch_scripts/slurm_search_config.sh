@@ -10,6 +10,8 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 # module swap slurm slurm/24.05.0.b1
 # ( source ./launch_scripts/slurm_search_config.sh ) \
 #  > ./logs/scheduler_slurm/search_scheduler.log 2>&1 < /dev/null &
+# Or with TOGGLE:
+# ( export TOGGLE_MODE=persistent; source ./launch_scripts/slurm_search_config.sh ) > ./logs/scheduler_slurm/search_scheduler_persistent.log 2>&1 < /dev/null &
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
@@ -95,9 +97,11 @@ MERGE_SCRIPT="${REPO_ROOT}/shell_utils/merge_csvs.py"
 
 SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
-# Change the saved pickle file name here
+# Experiment naming
 ####################################################
-SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_0712_kdcrd_then_ft_toggle_AvgPool_TIMM_SRRL.pkl"
+RUN_DATE="${RUN_DATE:-$(date +%m%d)}"
+EXP_PREFIX="${EXP_PREFIX:-${RUN_DATE}_${TRAIN_MODE}_${ODE_BLOCK}}"
+SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_${EXP_PREFIX}_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
 ####################################################
@@ -377,7 +381,7 @@ generate_one_stage_fixed_combs() {
       num_layers*chan0*chan0
     ) ))
 
-    comb_tag="Toggle_N${num_layers}_C${chan0}_pool${pool_pos}"
+    comb_tag="OneStage_N${num_layers}_C${chan0}_pool${pool_pos}"
     lines+=( "${params}"$'\t'"${comb_tag}"$'\t'"${chan0}"$'\t'"${num_layers}"$'\t'"${INP[*]}"$'\t'"${OUT[*]}"$'\t'"${POOL[*]}" )
   done
 
@@ -439,7 +443,7 @@ submit_chunk() {
   if [[ "${TOGGLE_MODE}" != "none" ]]; then
     toggle_exp_suffix="_toggle_${TOGGLE_MODE}"
   fi
-  local EXP="0712_${TRAIN_MODE}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}${toggle_exp_suffix}_Exp"
+  local EXP="${EXP_PREFIX}_${pcn}_NODE_search_${TASK}_${img_type}_${circ_conf:-NoCirc}_C${chan0}_N${num_layers}_${chunk_tag}_chunk${chunk_id}${toggle_exp_suffix}_Exp"
 
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"
@@ -620,4 +624,3 @@ if ((${#CSV_PATHS[@]} > 0)); then
 else
   echo "[SUMMARY] No merged CSVs found; skip pickle summary."
 fi
-

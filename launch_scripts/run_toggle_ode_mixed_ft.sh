@@ -19,15 +19,16 @@ ONE_OVER_Q_LIST=("1")
 EXP="NODE_0602_QAT_with_noise_inject_kd_crd_training_C100"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
-MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP"
+MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP}"
 #MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
 
 SWITCH_INF=${SWITCH_INF:-false} # Change depending on model name; true if using Euler solver.
 TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
-ENOB="${ENOB:-5}"
+ENOB="${ENOB:-8}"
 K_VAL="${K_VAL:-1e3}"
-ODE_BLOCK_OVERRIDE="${ODE_BLOCK_OVERRIDE:-}"
+ODE_BLOCK_OVERRIDE="${ODE_BLOCK_OVERRIDE:-ToggleODEXInitFFFB}"
 TOGGLE_ARGS=()
+TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
 if [[ -n "${TOGGLE_N_CYCLES:-}" ]]; then TOGGLE_ARGS+=(--toggle_n_cycles "${TOGGLE_N_CYCLES}"); fi
 if [[ -n "${TOGGLE_TIME_SPLIT:-}" ]]; then TOGGLE_ARGS+=(--toggle_time_split "${TOGGLE_TIME_SPLIT}"); fi
 if [[ -n "${TOGGLE_FAST_PATH:-}" ]]; then TOGGLE_ARGS+=(--toggle_fast_path "${TOGGLE_FAST_PATH}"); fi
@@ -59,7 +60,7 @@ ODE_BLK="${parts[3]}"
 if [[ -n "${ODE_BLOCK_OVERRIDE}" ]]; then
   ODE_BLK="${ODE_BLOCK_OVERRIDE}"
 fi
-if [[ "${ODE_BLK}" == "ToggleResetZ" || "${ODE_BLK}" == "ToggleKeepZ" || "${ODE_BLK}" == "ToggleODEXInitFFFB" || "${ODE_BLK}" == TogglePulse* ]]; then
+if [[ "${ODE_BLK}" == "ToggleResetZ" || "${ODE_BLK}" == "ToggleKeepZ" || "${ODE_BLK}" == ToggleODEXInit* || "${ODE_BLK}" == TogglePulse* ]]; then
   QAT_WRAPPER="ToggleQATWrapper1State"
 fi
 # Teacher model setting
@@ -94,8 +95,8 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --rggb_to_rgb   "false" \
             --optim         "SGD" \
             --learning_rate 0.005 \
-            --eval_every    2 \
-            --num_epochs    140 \
+            --eval_every    "${EVAL_EVERY:-2}" \
+            --num_epochs    "${NUM_EPOCHS:-140}" \
             --img_type      "scanGFI" \
             --model_name    "${MODEL_NAME}" \
             --offset_eps    0.0 \
@@ -121,7 +122,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --patch_cycle   "1" \
             --patch_pad     "0" \
             --fold_scalar   "1" \
-            --tie_cap       "true" \
+            --tie_cap       "false" \
             --one_over_q    "${one_over_q}" \
             "${TOGGLE_ARGS[@]}" \
             --qat_cls       "SymQuantizeWeight" \
