@@ -9,6 +9,7 @@ import argparse
 import json
 import torchinfo
 import logging
+import random
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -90,6 +91,33 @@ def parse_args():
                         help="Fraction of each t_end/N_cycles toggle cycle used by the z-stage.")
     parser.add_argument("--toggle_fast_path", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True, help="Use direct constant-RHS updates inside Level 3 pulse slices.")
+    parser.add_argument("--enable_spin_variation", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=False)
+    parser.add_argument("--sigma_spin", type=float, default=0.10)
+    parser.add_argument("--spin_variation_seed",
+                        type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    parser.add_argument("--enable_measured_activation",
+                        type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
+    parser.add_argument("--activation_curve_path", type=str,
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             "hardware_data", "relu_0p3mV.csv"))
+    parser.add_argument("--activation_corner", type=str, default="TT")
+    parser.add_argument("--activation_spline_parameters", type=int, default=10)
+    parser.add_argument("--activation_normalize_positive_endpoint",
+                        type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
+    parser.add_argument("--compile_measured_activation",
+                        type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
+    parser.add_argument("--enable_summing_current_noise",
+                        type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
+    parser.add_argument("--summing_current_p", type=float, default=12.73e-12)
+    parser.add_argument("--summing_noise_seed",
+                        type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    parser.add_argument("--ablation_single_case",
+                        type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
+    parser.add_argument("--ablation_case_name", type=str, default="")
+    parser.add_argument("--hardware_seed",
+                        type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    parser.add_argument("--data_seed", type=int, default=20260721)
     parser.add_argument("--w_quant_mode", type=str, default="min_max", help="min_max or perc")
     parser.add_argument("--w_perc", type=float, default=0.99999, help="percentile for quantization")
     parser.add_argument("--method", type=str, default="dopri5")
@@ -302,7 +330,12 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
                   "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
-                  "toggle_fast_path": args.toggle_fast_path}
+                  "toggle_fast_path": args.toggle_fast_path,
+                  "enable_spin_variation": args.enable_spin_variation, "sigma_spin": args.sigma_spin,
+                  "spin_variation_seed": args.spin_variation_seed,
+                  "enable_summing_current_noise": args.enable_summing_current_noise,
+                  "summing_current_p": args.summing_current_p,
+                  "summing_noise_seed": args.summing_noise_seed}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                       "v_dd": args.v_dd, "w_bits": args.w_bits,
@@ -310,6 +343,11 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
                       "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
+                      "enable_measured_activation": args.enable_measured_activation,
+                      "activation_curve_path": args.activation_curve_path,
+                      "activation_corner": args.activation_corner,
+                      "activation_spline_parameters": args.activation_spline_parameters,
+                      "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     saved_wrappers = {}
@@ -390,13 +428,23 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
                   "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
-                  "toggle_fast_path": args.toggle_fast_path}
+                  "toggle_fast_path": args.toggle_fast_path,
+                  "enable_spin_variation": args.enable_spin_variation, "sigma_spin": args.sigma_spin,
+                  "spin_variation_seed": args.spin_variation_seed,
+                  "enable_summing_current_noise": args.enable_summing_current_noise,
+                  "summing_current_p": args.summing_current_p,
+                  "summing_noise_seed": args.summing_noise_seed}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                       "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
+                      "enable_measured_activation": args.enable_measured_activation,
+                      "activation_curve_path": args.activation_curve_path,
+                      "activation_corner": args.activation_corner,
+                      "activation_spline_parameters": args.activation_spline_parameters,
+                      "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -503,6 +551,8 @@ def run_ode_inference():
         # In this case we overide the input args.noise_level_list
         if not args.diff_mismatch:
             noise_level_list_ = [0, 0.15, 0.25]
+    if args.ablation_single_case:
+        noise_level_list_ = [MISMATCH_LEVELS_5b if args.diff_mismatch else 0.0]
     gt_t_end = get_t_end(args)
 
     # Get t_end_list for experiments
@@ -530,12 +580,23 @@ def run_ode_inference():
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
                       "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
-                      "toggle_fast_path": args.toggle_fast_path}
+                      "toggle_fast_path": args.toggle_fast_path,
+                      "enable_spin_variation": args.enable_spin_variation, "sigma_spin": args.sigma_spin,
+                      "spin_variation_seed": args.spin_variation_seed,
+                      "enable_summing_current_noise": args.enable_summing_current_noise,
+                      "summing_current_p": args.summing_current_p,
+                      "summing_noise_seed": args.summing_noise_seed}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
+                          "enable_measured_activation": args.enable_measured_activation,
+                          "activation_curve_path": args.activation_curve_path,
+                          "activation_corner": args.activation_corner,
+                          "activation_spline_parameters": args.activation_spline_parameters,
+                          "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
+                          "compile_measured_activation": args.compile_measured_activation,
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None
         noise_acc_spec_all = {}
@@ -545,8 +606,9 @@ def run_ode_inference():
             noise_acc_spec = {}
             for noise_level in noise_level_list_:
                 trials = noisy_trials
-                if not isinstance(noise_level, dict):
-                    trials = noisy_trials if noise_level > 0 or args.thermal_noise else 1
+                if not args.ablation_single_case and not isinstance(noise_level, dict):
+                    trials = noisy_trials if (noise_level > 0 or args.thermal_noise or
+                                             args.enable_spin_variation or args.enable_summing_current_noise) else 1
                     trials = min(5, trials) if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
                 for t in range(trials):
@@ -554,6 +616,17 @@ def run_ode_inference():
                     if args.test_expanded:
                         # Add non-ideality to expanded weights
                         noisy_params["noise_level"] = 0.0
+                    if args.hardware_seed is not None:
+                        trial_seed = args.hardware_seed + t
+                        random.seed(trial_seed)
+                        np.random.seed(trial_seed)
+                        torch.manual_seed(trial_seed)
+                        if torch.cuda.is_available():
+                            torch.cuda.manual_seed_all(trial_seed)
+                    if args.spin_variation_seed is not None:
+                        ode_params["spin_variation_seed"] = args.spin_variation_seed + t
+                    if args.summing_noise_seed is not None:
+                        ode_params["summing_noise_seed"] = args.summing_noise_seed + t
                     with torch.no_grad():
                         saved_wrappers = {}
                         net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -584,9 +657,22 @@ def run_ode_inference():
                             for _blk in net_.PcConvs:
                                 _blk.noise_level = noise_level
                                 # _blk.add_noise()
-                            # All mismatch added in this method
-                            net_.add_noise(noise_to_bn=True, noise_to_linear=True) # Add noise to linear and bn also
-                            if isinstance(noise_level, dict) or noise_level > 0.0:
+                            # Ablation isolates physical pulse couplers; the legacy top-level call also noises BN/linear.
+                            if args.ablation_single_case:
+                                for _blk in net_.PcConvs:
+                                    _blk.add_noise()
+                                if isinstance(noise_level, dict) or noise_level > 0.0:
+                                    pulse_mvms = [m for m in net_.modules() if isinstance(m, MVMConv)]
+                                    assert pulse_mvms, "Expanded ablation requires MVMConv modules."
+                                    for mvm in pulse_mvms:
+                                        if mvm.csv_enabled:
+                                            assert mvm.pulse_noisy_values is not None
+                                            assert not torch.allclose(mvm.pulse_noisy_values, mvm.clean_mat_values)
+                                        else:
+                                            assert not torch.allclose(mvm.mat.values(), mvm.clean_mat_values)
+                            else:
+                                net_.add_noise(noise_to_bn=True, noise_to_linear=True) # Add noise to linear and bn also
+                            if (isinstance(noise_level, dict) or noise_level > 0.0) and not args.ablation_single_case:
                                 for _name, _p in net_.named_parameters():
                                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[
                                         _name]), "{} noise not added".format(_name)
@@ -607,6 +693,13 @@ def run_ode_inference():
                     total = 0
                     correct = 0
 
+                    if args.ablation_single_case:
+                        # Keep the evaluated dataset identical while hardware seeds advance.
+                        random.seed(args.data_seed)
+                        np.random.seed(args.data_seed)
+                        torch.manual_seed(args.data_seed)
+                        if torch.cuda.is_available():
+                            torch.cuda.manual_seed_all(args.data_seed)
                     pbar = tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False)
                     for batch_idx, (inputs, targets) in pbar:
                         inputs, targets = inputs.to(device), targets.to(device)
@@ -626,6 +719,9 @@ def run_ode_inference():
                     # Calculate the accuracy
                     accuracy = 100 * correct / total
                     acc_list.append(accuracy)
+                    if args.ablation_single_case:
+                        print("ABLATION_RESULT case={} trial_index={} accuracy={:.8f}".format(
+                            args.ablation_case_name, t, accuracy), flush=True)
                     log.warning(f'Test Accuracy at noise level {noise_level} thermal noise eps {offset_eps_}: {accuracy:.2f}%')
 
                     # Cross trial clean up code
@@ -688,6 +784,9 @@ def run_ode_inference():
                     t_end, real_t_end, _nl, sum(_acc) / len(_acc), np.std(_acc)))
 
         acc_dict[real_t_end] = {"noise_acc_spec": noise_acc_spec_all, "t": (t_end, real_t_end, min_real_t, max_real_t)}
+
+    if args.ablation_single_case:
+        return
 
     # save noise acc spec to a pkl
     if args.ode_wrapper is None:

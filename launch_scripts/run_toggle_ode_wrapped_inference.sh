@@ -170,6 +170,16 @@ run_model(){
     --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
     --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
     --toggle_fast_path "${TOGGLE_FAST_PATH}" \
+    --enable_spin_variation "${ENABLE_SPIN_VARIATION:-false}" \
+    --sigma_spin "${SIGMA_SPIN:-0.10}" \
+    --spin_variation_seed "${SPIN_VARIATION_SEED:-none}" \
+    --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-false}" \
+    --activation_curve_path "${ACTIVATION_CURVE_PATH:-${PWD}/hardware_data/relu_0p3mV.csv}" \
+    --activation_corner "${ACTIVATION_CORNER:-TT}" \
+    --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS:-10}" \
+    --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE:-false}" \
+    --summing_current_p "${SUMMING_CURRENT_P:-12.73e-12}" \
+    --summing_noise_seed "${SUMMING_NOISE_SEED:-none}" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \

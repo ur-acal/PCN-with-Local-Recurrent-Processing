@@ -1,0 +1,1512 @@
+COMMAND: /home/rongzeng/anaconda3/envs/scanbase/bin/python -u ode_inference.py --model_name TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP --ckpt best --model_dir saved_ckpt --task cifar100 --img_type scanGFI --test_bs 128 --pc_conv PCConvReLU6Noisy --ode_block TogglePulseODEXInitFFFB --ode_wrapper ToggleQATTester1State --method dopri5 --tol 1e-6 --n_steps 100 --ts_scale 1 --d_start 0 --d_end 1 --n_sweep_left 0 --n_sweep_right 1 --noise_level_list 0.0 --noisy_trials 5 --thermal_noise false --sde_noise_type mul --mismatch_type mul --sweep_eps false --R 10e3 --R_max 150e3 --C 49e-15 --k 1e3 --v_dd 0.1 --enob 8 --w_bits 5 --patch_node 8 --patch_stride 8 --patch_cycle 1 --patch_pad 0 --fold_scalar 1 --tie_cap false --one_over_q 1 --toggle_n_cycles 5 --toggle_time_split 0.5 --toggle_fast_path true --conv_only true --test_expanded true --expanded_w_dir expanded_weights --diff_mismatch false --nonlinear_R false --mul_mismatch_mode static_mismatch --enable_spin_variation false --sigma_spin 0.10 --spin_variation_seed 20260721 --enable_measured_activation true --activation_curve_path /home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv --activation_corner TT --activation_spline_parameters 10 --activation_normalize_positive_endpoint true --compile_measured_activation true --enable_summing_current_noise false --summing_current_p 12.73e-12 --summing_noise_seed 20260721 --return_init 0 --test_only false --ablation_single_case true --ablation_case_name measured_activation_only --hardware_seed 20260721 --data_seed 20260721
+WARNING:root:----- Using PC Conv layer: PCConvReLU6Noisy -----
+Configuration saved to: /tmp/tmp79l4w8se/config.json
+Edit the file to customize generation parameters
+WARNING:root:Running ODE pcn inference, method: dopri5, tol: 1e-06
+WARNING:root:Current t_end: 1.75, ground truth t_end: 1.75
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260721, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260721}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': True, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'activation_normalize_positive_endpoint': True, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:02<?, ?it/s, acc=1.56%]
+  1%|▏         | 1/79 [00:02<02:46,  2.14s/it, acc=1.56%]
+  1%|▏         | 1/79 [00:04<02:46,  2.14s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:04<02:35,  2.03s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:06<02:35,  2.03s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:06<02:31,  1.99s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:07<02:31,  1.99s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:07<02:27,  1.97s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:09<02:27,  1.97s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:09<02:25,  1.96s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:11<02:25,  1.96s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:11<02:23,  1.97s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:13<02:23,  1.97s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:13<02:21,  1.96s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:15<02:21,  1.96s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:15<02:18,  1.96s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:17<02:18,  1.96s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:17<02:16,  1.95s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:19<02:16,  1.95s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:19<02:14,  1.95s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:21<02:14,  1.95s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:21<02:12,  1.95s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:23<02:12,  1.95s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:23<02:10,  1.95s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:25<02:10,  1.95s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:25<02:08,  1.95s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:27<02:08,  1.95s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:27<02:07,  1.96s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:29<02:07,  1.96s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:29<02:05,  1.96s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:31<02:05,  1.96s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:31<02:03,  1.96s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:33<02:03,  1.96s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:33<02:01,  1.96s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:35<02:01,  1.96s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:35<01:59,  1.95s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:37<01:59,  1.95s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:37<01:57,  1.95s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:39<01:57,  1.95s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:39<01:55,  1.95s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:41<01:55,  1.95s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:41<01:53,  1.95s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:43<01:53,  1.95s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:43<01:51,  1.95s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:45<01:51,  1.95s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:45<01:49,  1.95s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:47<01:49,  1.95s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:47<01:47,  1.95s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:48<01:47,  1.95s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:48<01:45,  1.95s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:50<01:45,  1.95s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:50<01:43,  1.95s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:52<01:43,  1.95s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:52<01:41,  1.95s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:54<01:41,  1.95s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:54<01:39,  1.95s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:56<01:39,  1.95s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:56<01:37,  1.95s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:58<01:37,  1.95s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [00:58<01:35,  1.95s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [01:00<01:35,  1.95s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:00<01:33,  1.95s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:02<01:33,  1.95s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:02<01:31,  1.95s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:04<01:31,  1.95s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:04<01:29,  1.95s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:06<01:29,  1.95s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:06<01:27,  1.95s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:08<01:27,  1.95s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:08<01:25,  1.95s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:10<01:25,  1.95s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:10<01:23,  1.95s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:12<01:23,  1.95s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:12<01:21,  1.95s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:14<01:21,  1.95s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:14<01:19,  1.95s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:16<01:19,  1.95s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:16<01:18,  1.95s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:18<01:18,  1.95s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:18<01:16,  1.95s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:20<01:16,  1.95s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:20<01:14,  1.95s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:22<01:14,  1.95s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:22<01:12,  1.95s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:24<01:12,  1.95s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:24<01:10,  1.95s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:26<01:10,  1.95s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:26<01:08,  1.95s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:28<01:08,  1.95s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:28<01:06,  1.95s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:29<01:06,  1.95s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:29<01:04,  1.95s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:31<01:04,  1.95s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:31<01:02,  1.95s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:33<01:02,  1.95s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:33<01:00,  1.95s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:35<01:00,  1.95s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:35<00:58,  1.95s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:37<00:58,  1.95s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:37<00:56,  1.95s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:39<00:56,  1.95s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:39<00:54,  1.95s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:41<00:54,  1.95s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:41<00:52,  1.95s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:43<00:52,  1.95s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:43<00:50,  1.95s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:45<00:50,  1.95s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:45<00:48,  1.95s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:47<00:48,  1.95s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:47<00:46,  1.95s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:49<00:46,  1.95s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:49<00:44,  1.95s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:51<00:44,  1.95s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:51<00:42,  1.95s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:53<00:42,  1.95s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:53<00:40,  1.95s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:55<00:40,  1.95s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:55<00:39,  1.95s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:57<00:39,  1.95s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:57<00:37,  1.95s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:59<00:37,  1.95s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [01:59<00:35,  1.95s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [02:01<00:35,  1.95s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:01<00:33,  1.95s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:03<00:33,  1.95s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:03<00:31,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:05<00:31,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:05<00:29,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:07<00:29,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:07<00:27,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:09<00:27,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:09<00:25,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:11<00:25,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:11<00:23,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:12<00:23,  1.96s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:12<00:21,  1.96s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:14<00:21,  1.96s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:14<00:19,  1.96s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:16<00:19,  1.96s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:16<00:17,  1.96s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:18<00:17,  1.96s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:18<00:15,  1.96s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:20<00:15,  1.96s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:20<00:13,  1.96s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:22<00:13,  1.96s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:22<00:11,  1.96s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:24<00:11,  1.96s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:24<00:09,  1.96s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:26<00:09,  1.96s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:26<00:07,  1.97s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:28<00:07,  1.97s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:28<00:05,  1.98s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:30<00:05,  1.98s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:30<00:03,  1.97s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:32<00:03,  1.97s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:32<00:01,  1.97s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:32<00:01,  1.97s/it, acc=0.80%]
+100%|██████████| 79/79 [02:32<00:00,  1.46s/it, acc=0.80%]
+100%|██████████| 79/79 [02:32<00:00,  1.94s/it, acc=0.80%]
+ABLATION_RESULT case=measured_activation_only trial_index=0 accuracy=0.80000000
+Test Accuracy at noise level 0.0 thermal noise eps None: 0.80%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260722, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260722}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': True, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'activation_normalize_positive_endpoint': True, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:02<?, ?it/s, acc=1.56%]
+  1%|▏         | 1/79 [00:02<02:37,  2.02s/it, acc=1.56%]
+  1%|▏         | 1/79 [00:03<02:37,  2.02s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:03<02:32,  1.99s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:05<02:32,  1.99s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:05<02:30,  1.98s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:07<02:30,  1.98s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:07<02:28,  1.98s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:09<02:28,  1.98s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:09<02:26,  1.98s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:11<02:26,  1.98s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:11<02:24,  1.98s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:13<02:24,  1.98s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:13<02:21,  1.97s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:15<02:21,  1.97s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:15<02:19,  1.97s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:17<02:19,  1.97s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:17<02:17,  1.97s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:19<02:17,  1.97s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:19<02:15,  1.97s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:21<02:15,  1.97s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:21<02:13,  1.96s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:23<02:13,  1.96s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:23<02:13,  1.99s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:25<02:13,  1.99s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:25<02:10,  1.98s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:27<02:10,  1.98s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:27<02:08,  1.98s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:29<02:08,  1.98s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:29<02:06,  1.97s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:31<02:06,  1.97s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:31<02:04,  1.97s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:33<02:04,  1.97s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:33<02:02,  1.97s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:35<02:02,  1.97s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:35<01:59,  1.97s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:37<01:59,  1.97s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:37<01:57,  1.97s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:39<01:57,  1.97s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:39<01:55,  1.96s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:41<01:55,  1.96s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:41<01:53,  1.96s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:43<01:53,  1.96s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:43<01:51,  1.96s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:45<01:51,  1.96s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:45<01:49,  1.96s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:47<01:49,  1.96s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:47<01:47,  1.96s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:49<01:47,  1.96s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:49<01:46,  1.96s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:51<01:46,  1.96s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:51<01:44,  1.96s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:53<01:44,  1.96s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:53<01:42,  1.96s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:55<01:42,  1.96s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:55<01:40,  1.96s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:57<01:40,  1.96s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:57<01:38,  1.96s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:59<01:38,  1.96s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [00:59<01:36,  1.97s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [01:01<01:36,  1.97s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:01<01:34,  1.97s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:03<01:34,  1.97s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:03<01:32,  1.97s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:04<01:32,  1.97s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:04<01:30,  1.97s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:06<01:30,  1.97s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:06<01:28,  1.96s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:08<01:28,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:08<01:26,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:10<01:26,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:10<01:24,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:12<01:24,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:12<01:22,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:14<01:22,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:14<01:20,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:16<01:20,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:16<01:18,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:18<01:18,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:18<01:16,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:20<01:16,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:20<01:14,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:22<01:14,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:22<01:12,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:24<01:12,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:24<01:10,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:26<01:10,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:26<01:08,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:28<01:08,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:28<01:06,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:30<01:06,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:30<01:04,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:32<01:04,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:32<01:02,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:34<01:02,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:34<01:00,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:36<01:00,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:36<00:58,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:38<00:58,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:38<00:56,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:40<00:56,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:40<00:54,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:42<00:54,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:42<00:53,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:44<00:53,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:44<00:51,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:46<00:51,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:46<00:49,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:48<00:49,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:48<00:47,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:50<00:47,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:50<00:45,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:52<00:45,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:52<00:43,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:54<00:43,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:54<00:41,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:56<00:41,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:56<00:39,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:58<00:39,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:58<00:37,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:59<00:37,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [01:59<00:35,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [02:01<00:35,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:01<00:33,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:03<00:33,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:03<00:31,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:05<00:31,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:05<00:29,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:07<00:29,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:07<00:27,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:09<00:27,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:09<00:25,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:11<00:25,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:11<00:23,  1.97s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:13<00:23,  1.97s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:13<00:21,  1.97s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:15<00:21,  1.97s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:15<00:19,  1.97s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:17<00:19,  1.97s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:17<00:17,  1.96s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:19<00:17,  1.96s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:19<00:15,  1.96s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:21<00:15,  1.96s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:21<00:13,  1.96s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:23<00:13,  1.96s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:23<00:11,  1.97s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:25<00:11,  1.97s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:25<00:09,  1.97s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:27<00:09,  1.97s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:27<00:07,  1.97s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:29<00:07,  1.97s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:29<00:05,  1.97s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:31<00:05,  1.97s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:31<00:03,  1.97s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:33<00:03,  1.97s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:33<00:01,  1.97s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:33<00:01,  1.97s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.46s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.95s/it, acc=0.80%]
+ABLATION_RESULT case=measured_activation_only trial_index=1 accuracy=0.80000000
+Test Accuracy at noise level 0.0 thermal noise eps None: 0.80%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260723, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260723}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': True, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'activation_normalize_positive_endpoint': True, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:02<?, ?it/s, acc=1.56%]
+  1%|▏         | 1/79 [00:02<02:38,  2.03s/it, acc=1.56%]
+  1%|▏         | 1/79 [00:04<02:38,  2.03s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:04<02:35,  2.03s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:06<02:35,  2.03s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:06<02:31,  1.99s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:07<02:31,  1.99s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:07<02:28,  1.98s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:09<02:28,  1.98s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:09<02:26,  1.97s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:11<02:26,  1.97s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:11<02:23,  1.97s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:13<02:23,  1.97s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:13<02:21,  1.97s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:15<02:21,  1.97s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:15<02:19,  1.97s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:17<02:19,  1.97s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:17<02:17,  1.97s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:19<02:17,  1.97s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:19<02:16,  1.97s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:21<02:16,  1.97s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:21<02:13,  1.97s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:23<02:13,  1.97s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:23<02:11,  1.97s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:25<02:11,  1.97s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:25<02:09,  1.97s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:27<02:09,  1.97s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:27<02:07,  1.97s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:29<02:07,  1.97s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:29<02:05,  1.96s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:31<02:05,  1.96s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:31<02:03,  1.96s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:33<02:03,  1.96s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:33<02:01,  1.96s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:35<02:01,  1.96s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:35<01:59,  1.96s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:37<01:59,  1.96s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:37<01:57,  1.96s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:39<01:57,  1.96s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:39<01:55,  1.96s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:41<01:55,  1.96s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:41<01:53,  1.96s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:43<01:53,  1.96s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:43<01:51,  1.96s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:45<01:51,  1.96s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:45<01:49,  1.96s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:47<01:49,  1.96s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:47<01:47,  1.96s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:49<01:47,  1.96s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:49<01:45,  1.96s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:51<01:45,  1.96s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:51<01:43,  1.96s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:53<01:43,  1.96s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:53<01:42,  1.96s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:55<01:42,  1.96s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:55<01:40,  1.96s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:57<01:40,  1.96s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:57<01:38,  1.96s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:59<01:38,  1.96s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [00:59<01:36,  1.96s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [01:00<01:36,  1.96s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:00<01:34,  1.96s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:02<01:34,  1.96s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:02<01:32,  1.96s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:04<01:32,  1.96s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:04<01:30,  1.96s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:06<01:30,  1.96s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:06<01:28,  1.96s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:08<01:28,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:08<01:26,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:10<01:26,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:10<01:24,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:12<01:24,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:12<01:22,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:14<01:22,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:14<01:20,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:16<01:20,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:16<01:18,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:18<01:18,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:18<01:16,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:20<01:16,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:20<01:14,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:22<01:14,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:22<01:12,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:24<01:12,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:24<01:10,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:26<01:10,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:26<01:08,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:28<01:08,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:28<01:06,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:30<01:06,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:30<01:04,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:32<01:04,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:32<01:02,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:34<01:02,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:34<01:00,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:36<01:00,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:36<00:58,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:38<00:58,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:38<00:56,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:40<00:56,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:40<00:54,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:42<00:54,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:42<00:52,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:44<00:52,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:44<00:51,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:46<00:51,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:46<00:49,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:48<00:49,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:48<00:47,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:50<00:47,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:50<00:45,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:51<00:45,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:51<00:43,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:53<00:43,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:53<00:41,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:55<00:41,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:55<00:39,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:57<00:39,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:57<00:37,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:59<00:37,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [01:59<00:35,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [02:01<00:35,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:01<00:33,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:03<00:33,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:03<00:31,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:05<00:31,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:05<00:29,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:07<00:29,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:07<00:27,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:09<00:27,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:09<00:25,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:11<00:25,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:11<00:23,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:13<00:23,  1.96s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:13<00:21,  1.96s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:15<00:21,  1.96s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:15<00:19,  1.96s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:17<00:19,  1.96s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:17<00:17,  1.96s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:19<00:17,  1.96s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:19<00:15,  1.97s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:21<00:15,  1.97s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:21<00:13,  1.97s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:23<00:13,  1.97s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:23<00:11,  1.97s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:25<00:11,  1.97s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:25<00:09,  1.96s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:27<00:09,  1.96s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:27<00:07,  1.96s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:29<00:07,  1.96s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:29<00:05,  1.96s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:31<00:05,  1.96s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:31<00:03,  1.96s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:33<00:03,  1.96s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:33<00:01,  1.96s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:33<00:01,  1.96s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.45s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.94s/it, acc=0.80%]
+ABLATION_RESULT case=measured_activation_only trial_index=2 accuracy=0.80000000
+Test Accuracy at noise level 0.0 thermal noise eps None: 0.80%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260724, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260724}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': True, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'activation_normalize_positive_endpoint': True, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:02<?, ?it/s, acc=1.56%]
+  1%|▏         | 1/79 [00:02<02:38,  2.03s/it, acc=1.56%]
+  1%|▏         | 1/79 [00:03<02:38,  2.03s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:03<02:32,  1.98s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:05<02:32,  1.98s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:05<02:29,  1.97s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:07<02:29,  1.97s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:07<02:27,  1.96s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:09<02:27,  1.96s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:09<02:25,  1.96s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:11<02:25,  1.96s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:11<02:22,  1.96s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:13<02:22,  1.96s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:13<02:20,  1.96s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:15<02:20,  1.96s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:15<02:19,  1.96s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:17<02:19,  1.96s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:17<02:17,  1.96s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:19<02:17,  1.96s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:19<02:15,  1.96s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:21<02:15,  1.96s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:21<02:13,  1.96s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:23<02:13,  1.96s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:23<02:11,  1.96s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:25<02:11,  1.96s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:25<02:09,  1.96s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:27<02:09,  1.96s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:27<02:07,  1.96s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:29<02:07,  1.96s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:29<02:05,  1.95s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:31<02:05,  1.95s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:31<02:03,  1.95s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:33<02:03,  1.95s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:33<02:01,  1.95s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:35<02:01,  1.95s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:35<01:59,  1.95s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:37<01:59,  1.95s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:37<01:57,  1.95s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:39<01:57,  1.95s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:39<01:55,  1.95s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:41<01:55,  1.95s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:41<01:53,  1.95s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:43<01:53,  1.95s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:43<01:51,  1.95s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:45<01:51,  1.95s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:45<01:49,  1.95s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:46<01:49,  1.95s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:46<01:47,  1.95s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:48<01:47,  1.95s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:48<01:45,  1.95s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:50<01:45,  1.95s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:50<01:43,  1.95s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:52<01:43,  1.95s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:52<01:41,  1.95s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:54<01:41,  1.95s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:54<01:39,  1.95s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:56<01:39,  1.95s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:56<01:37,  1.95s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:58<01:37,  1.95s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [00:58<01:35,  1.95s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [01:00<01:35,  1.95s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:00<01:33,  1.96s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:02<01:33,  1.96s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:02<01:31,  1.96s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:04<01:31,  1.96s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:04<01:30,  1.96s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:06<01:30,  1.96s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:06<01:28,  1.96s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:08<01:28,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:08<01:26,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:10<01:26,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:10<01:24,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:12<01:24,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:12<01:22,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:14<01:22,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:14<01:20,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:16<01:20,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:16<01:18,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:18<01:18,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:18<01:16,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:20<01:16,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:20<01:14,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:22<01:14,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:22<01:12,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:24<01:12,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:24<01:10,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:26<01:10,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:26<01:08,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:28<01:08,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:28<01:06,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:30<01:06,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:30<01:04,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:32<01:04,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:32<01:02,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:34<01:02,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:34<01:00,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:35<01:00,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:35<00:58,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:37<00:58,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:37<00:56,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:39<00:56,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:39<00:54,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:41<00:54,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:41<00:52,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:43<00:52,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:43<00:51,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:45<00:51,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:45<00:49,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:47<00:49,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:47<00:47,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:49<00:47,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:49<00:45,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:51<00:45,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:51<00:43,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:53<00:43,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:53<00:41,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:55<00:41,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:55<00:39,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:57<00:39,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:57<00:37,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:59<00:37,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [01:59<00:35,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [02:01<00:35,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:01<00:33,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:03<00:33,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:03<00:31,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:05<00:31,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:05<00:29,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:07<00:29,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:07<00:27,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:09<00:27,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:09<00:25,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:11<00:25,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:11<00:23,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:13<00:23,  1.96s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:13<00:21,  1.96s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:15<00:21,  1.96s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:15<00:19,  1.99s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:17<00:19,  1.99s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:17<00:17,  1.98s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:19<00:17,  1.98s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:19<00:15,  1.98s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:21<00:15,  1.98s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:21<00:13,  1.97s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:23<00:13,  1.97s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:23<00:11,  1.97s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:25<00:11,  1.97s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:25<00:09,  1.97s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:27<00:09,  1.97s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:27<00:07,  1.97s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:29<00:07,  1.97s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:29<00:05,  1.97s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:31<00:05,  1.97s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:31<00:03,  1.96s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:32<00:03,  1.96s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:32<00:01,  1.96s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:33<00:01,  1.96s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.45s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.94s/it, acc=0.80%]
+ABLATION_RESULT case=measured_activation_only trial_index=3 accuracy=0.80000000
+Test Accuracy at noise level 0.0 thermal noise eps None: 0.80%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260725, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260725}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': True, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'activation_normalize_positive_endpoint': True, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FF, clean params mean: 0.09723110496997833, median: 0.009855592623353004, min: -0.0008129092748276889, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.FS, clean params mean: 0.09770233184099197, median: 0.011479140259325504, min: -0.00025374192046001554, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SF, clean params mean: 0.10030587017536163, median: 0.01950349099934101, min: -4.608458039001562e-05, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.SS, clean params mean: 0.09995799511671066, median: 0.018940888345241547, min: 0.0005051438929513097, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.act_fn.coefficients.TT, clean params mean: 0.0987095758318901, median: 0.014178833924233913, min: 1.38574921493273e-06, max: 0.30000001192092896
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:02<?, ?it/s, acc=1.56%]
+  1%|▏         | 1/79 [00:02<02:37,  2.02s/it, acc=1.56%]
+  1%|▏         | 1/79 [00:03<02:37,  2.02s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:03<02:33,  1.99s/it, acc=1.17%]
+  3%|▎         | 2/79 [00:05<02:33,  1.99s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:05<02:30,  1.98s/it, acc=1.30%]
+  4%|▍         | 3/79 [00:07<02:30,  1.98s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:07<02:27,  1.97s/it, acc=0.98%]
+  5%|▌         | 4/79 [00:09<02:27,  1.97s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:09<02:25,  1.97s/it, acc=0.78%]
+  6%|▋         | 5/79 [00:11<02:25,  1.97s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:11<02:24,  1.99s/it, acc=1.04%]
+  8%|▊         | 6/79 [00:13<02:24,  1.99s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:13<02:22,  1.98s/it, acc=0.89%]
+  9%|▉         | 7/79 [00:15<02:22,  1.98s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:15<02:20,  1.97s/it, acc=0.78%]
+ 10%|█         | 8/79 [00:17<02:20,  1.97s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:17<02:17,  1.97s/it, acc=0.69%]
+ 11%|█▏        | 9/79 [00:19<02:17,  1.97s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:19<02:15,  1.97s/it, acc=0.86%]
+ 13%|█▎        | 10/79 [00:21<02:15,  1.97s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:21<02:13,  1.97s/it, acc=0.85%]
+ 14%|█▍        | 11/79 [00:23<02:13,  1.97s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:23<02:11,  1.97s/it, acc=0.78%]
+ 15%|█▌        | 12/79 [00:25<02:11,  1.97s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:25<02:09,  1.96s/it, acc=0.78%]
+ 16%|█▋        | 13/79 [00:27<02:09,  1.96s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:27<02:07,  1.96s/it, acc=0.78%]
+ 18%|█▊        | 14/79 [00:29<02:07,  1.96s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:29<02:05,  1.96s/it, acc=0.78%]
+ 19%|█▉        | 15/79 [00:31<02:05,  1.96s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:31<02:03,  1.96s/it, acc=0.78%]
+ 20%|██        | 16/79 [00:33<02:03,  1.96s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:33<02:01,  1.96s/it, acc=0.87%]
+ 22%|██▏       | 17/79 [00:35<02:01,  1.96s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:35<01:59,  1.96s/it, acc=0.82%]
+ 23%|██▎       | 18/79 [00:37<01:59,  1.96s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:37<01:57,  1.96s/it, acc=0.86%]
+ 24%|██▍       | 19/79 [00:39<01:57,  1.96s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:39<01:55,  1.96s/it, acc=0.82%]
+ 25%|██▌       | 20/79 [00:41<01:55,  1.96s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:41<01:53,  1.96s/it, acc=0.78%]
+ 27%|██▋       | 21/79 [00:43<01:53,  1.96s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:43<01:51,  1.96s/it, acc=0.82%]
+ 28%|██▊       | 22/79 [00:45<01:51,  1.96s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:45<01:49,  1.96s/it, acc=0.78%]
+ 29%|██▉       | 23/79 [00:47<01:49,  1.96s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:47<01:47,  1.96s/it, acc=0.78%]
+ 30%|███       | 24/79 [00:49<01:47,  1.96s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:49<01:45,  1.96s/it, acc=0.78%]
+ 32%|███▏      | 25/79 [00:51<01:45,  1.96s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:51<01:44,  1.96s/it, acc=0.84%]
+ 33%|███▎      | 26/79 [00:53<01:44,  1.96s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:53<01:42,  1.96s/it, acc=0.81%]
+ 34%|███▍      | 27/79 [00:55<01:42,  1.96s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:55<01:40,  1.96s/it, acc=0.84%]
+ 35%|███▌      | 28/79 [00:57<01:40,  1.96s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:57<01:38,  1.96s/it, acc=0.84%]
+ 37%|███▋      | 29/79 [00:59<01:38,  1.96s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [00:59<01:36,  1.96s/it, acc=0.81%]
+ 38%|███▊      | 30/79 [01:00<01:36,  1.96s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:00<01:34,  1.96s/it, acc=0.78%]
+ 39%|███▉      | 31/79 [01:02<01:34,  1.96s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:02<01:32,  1.96s/it, acc=0.78%]
+ 41%|████      | 32/79 [01:04<01:32,  1.96s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:04<01:30,  1.96s/it, acc=0.78%]
+ 42%|████▏     | 33/79 [01:06<01:30,  1.96s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:06<01:28,  1.96s/it, acc=0.78%]
+ 43%|████▎     | 34/79 [01:08<01:28,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:08<01:26,  1.96s/it, acc=0.80%]
+ 44%|████▍     | 35/79 [01:10<01:26,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:10<01:24,  1.96s/it, acc=0.80%]
+ 46%|████▌     | 36/79 [01:12<01:24,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:12<01:22,  1.96s/it, acc=0.84%]
+ 47%|████▋     | 37/79 [01:14<01:22,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:14<01:20,  1.96s/it, acc=0.84%]
+ 48%|████▊     | 38/79 [01:16<01:20,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:16<01:18,  1.96s/it, acc=0.82%]
+ 49%|████▉     | 39/79 [01:18<01:18,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:18<01:16,  1.96s/it, acc=0.80%]
+ 51%|█████     | 40/79 [01:20<01:16,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:20<01:14,  1.96s/it, acc=0.80%]
+ 52%|█████▏    | 41/79 [01:22<01:14,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:22<01:12,  1.96s/it, acc=0.80%]
+ 53%|█████▎    | 42/79 [01:24<01:12,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:24<01:10,  1.96s/it, acc=0.78%]
+ 54%|█████▍    | 43/79 [01:26<01:10,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:26<01:08,  1.96s/it, acc=0.76%]
+ 56%|█████▌    | 44/79 [01:28<01:08,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:28<01:06,  1.96s/it, acc=0.76%]
+ 57%|█████▋    | 45/79 [01:30<01:06,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:30<01:04,  1.96s/it, acc=0.76%]
+ 58%|█████▊    | 46/79 [01:32<01:04,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:32<01:02,  1.96s/it, acc=0.75%]
+ 59%|█████▉    | 47/79 [01:34<01:02,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:34<01:00,  1.96s/it, acc=0.75%]
+ 61%|██████    | 48/79 [01:36<01:00,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:36<00:58,  1.96s/it, acc=0.73%]
+ 62%|██████▏   | 49/79 [01:38<00:58,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:38<00:56,  1.96s/it, acc=0.73%]
+ 63%|██████▎   | 50/79 [01:40<00:56,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:40<00:54,  1.96s/it, acc=0.75%]
+ 65%|██████▍   | 51/79 [01:42<00:54,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:42<00:52,  1.96s/it, acc=0.75%]
+ 66%|██████▌   | 52/79 [01:44<00:52,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:44<00:51,  1.96s/it, acc=0.77%]
+ 67%|██████▋   | 53/79 [01:46<00:51,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:46<00:49,  1.96s/it, acc=0.80%]
+ 68%|██████▊   | 54/79 [01:48<00:49,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:48<00:47,  1.96s/it, acc=0.87%]
+ 70%|██████▉   | 55/79 [01:50<00:47,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:50<00:45,  1.96s/it, acc=0.85%]
+ 71%|███████   | 56/79 [01:51<00:45,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:51<00:43,  1.96s/it, acc=0.84%]
+ 72%|███████▏  | 57/79 [01:53<00:43,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:53<00:41,  1.96s/it, acc=0.84%]
+ 73%|███████▎  | 58/79 [01:55<00:41,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:55<00:39,  1.96s/it, acc=0.83%]
+ 75%|███████▍  | 59/79 [01:57<00:39,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:57<00:37,  1.96s/it, acc=0.85%]
+ 76%|███████▌  | 60/79 [01:59<00:37,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [01:59<00:35,  1.96s/it, acc=0.86%]
+ 77%|███████▋  | 61/79 [02:01<00:35,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:01<00:33,  1.96s/it, acc=0.87%]
+ 78%|███████▊  | 62/79 [02:03<00:33,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:03<00:31,  1.96s/it, acc=0.87%]
+ 80%|███████▉  | 63/79 [02:05<00:31,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:05<00:29,  1.96s/it, acc=0.85%]
+ 81%|████████  | 64/79 [02:07<00:29,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:07<00:27,  1.96s/it, acc=0.84%]
+ 82%|████████▏ | 65/79 [02:09<00:27,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:09<00:25,  1.96s/it, acc=0.84%]
+ 84%|████████▎ | 66/79 [02:11<00:25,  1.96s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:11<00:23,  1.99s/it, acc=0.84%]
+ 85%|████████▍ | 67/79 [02:13<00:23,  1.99s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:13<00:21,  1.98s/it, acc=0.83%]
+ 86%|████████▌ | 68/79 [02:15<00:21,  1.98s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:15<00:19,  1.97s/it, acc=0.82%]
+ 87%|████████▋ | 69/79 [02:17<00:19,  1.97s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:17<00:17,  1.97s/it, acc=0.81%]
+ 89%|████████▊ | 70/79 [02:19<00:17,  1.97s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:19<00:15,  1.97s/it, acc=0.80%]
+ 90%|████████▉ | 71/79 [02:21<00:15,  1.97s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:21<00:13,  1.97s/it, acc=0.80%]
+ 91%|█████████ | 72/79 [02:23<00:13,  1.97s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:23<00:11,  1.97s/it, acc=0.81%]
+ 92%|█████████▏| 73/79 [02:25<00:11,  1.97s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:25<00:09,  1.96s/it, acc=0.82%]
+ 94%|█████████▎| 74/79 [02:27<00:09,  1.96s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:27<00:07,  1.96s/it, acc=0.81%]
+ 95%|█████████▍| 75/79 [02:29<00:07,  1.96s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:29<00:05,  1.96s/it, acc=0.80%]
+ 96%|█████████▌| 76/79 [02:31<00:05,  1.96s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:31<00:03,  1.96s/it, acc=0.79%]
+ 97%|█████████▋| 77/79 [02:33<00:03,  1.96s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:33<00:01,  1.96s/it, acc=0.80%]
+ 99%|█████████▊| 78/79 [02:33<00:01,  1.96s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.45s/it, acc=0.80%]
+100%|██████████| 79/79 [02:33<00:00,  1.94s/it, acc=0.80%]
+ABLATION_RESULT case=measured_activation_only trial_index=4 accuracy=0.80000000
+Test Accuracy at noise level 0.0 thermal noise eps None: 0.80%
+Average test acc over 5 trials is 0.8
+-------- Final Result ODEBlock with t_end: 1.75, real_t_end: 1.75 --------
+-------- Model name: TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP --------
+wrapper params: {'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': True, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'activation_normalize_positive_endpoint': True, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+Thermal noise eps: Johnson
+t_end: 1.75, real_t_end: 1.75, Noise level: 0.0, Acc:0.80±0.00%

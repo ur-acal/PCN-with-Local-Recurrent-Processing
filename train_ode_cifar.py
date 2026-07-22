@@ -20,10 +20,25 @@ from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
 from inference_utils import load_and_prepare_model, test_once
+from measured_activation import MeasuredReLU6Activation
 
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
+
+
+def configure_unitless_measured_activation(model, curve_path, corner,
+                                           num_parameters,
+                                           normalize_positive_endpoint):
+    """Replace each ODE block activation with the ReLU6-scale measured curve."""
+    for block in model.PcConvs:
+        activation = MeasuredReLU6Activation(
+            curve_path=curve_path,
+            corner=corner,
+            num_parameters=num_parameters,
+            normalize_positive_endpoint=normalize_positive_endpoint)
+        block.act_fn = activation.to(device=block.FFconv.weight.device)
+
 
 def get_args():
     p = argparse.ArgumentParser(description="Train PCNet on CIFAR with neural ode")
@@ -111,6 +126,17 @@ def get_args():
                    help="Fraction of each t_end/N_cycles toggle cycle used by the z-stage.")
     p.add_argument("--toggle_fast_path", type=str2bool, default=True,
                    help="Use direct constant-RHS updates inside Level 3 pulse slices.")
+    p.add_argument("--enable_measured_activation", type=str2bool, default=False,
+                   help="Use the ReLU6-scale measured curve when unwrapped and the "
+                        "runtime-v_dd measured curve when wrapped.")
+    p.add_argument(
+        "--activation_curve_path", type=str,
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "hardware_data", "relu_0p3mV.csv"))
+    p.add_argument("--activation_corner", type=str, default="TT")
+    p.add_argument("--activation_spline_parameters", type=int, default=10)
+    p.add_argument("--activation_normalize_positive_endpoint", type=str2bool, default=False,
+                   help="Scale the entire fitted curve so its positive endpoint reaches full scale.")
     # Noise-inject training related args
     p.add_argument('--noise_level', default=None, type=float,
                         help='noise level in noise inject training. None means normal training without noise injection')
@@ -619,6 +645,16 @@ def main():
     model = make_ode_block(
         pc_net=model, ode_block=ode_block, noise_level=0.0, method=args.method, t_end=args.t_end,
         tol=args.tol, n_steps=args.n_steps, **ode_kwargs)
+    if args.enable_measured_activation and args.ode_wrapper is None:
+        configure_unitless_measured_activation(
+            model=model,
+            curve_path=args.activation_curve_path,
+            corner=args.activation_corner,
+            num_parameters=args.activation_spline_parameters,
+            normalize_positive_endpoint=args.activation_normalize_positive_endpoint)
+        logging.warning(
+            "Using unitless measured activation: corner=%s, endpoint_normalized=%s",
+            args.activation_corner, args.activation_normalize_positive_endpoint)
     logging.warning("PcConv converted to ODEBlock: {}".format(ode_block.__name__))
     logging.warning("t_end: {}".format(args.t_end))
     logging.warning("method: {}".format(args.method))
@@ -636,7 +672,13 @@ def main():
                           "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
-                          "tie_cap": args.tie_cap, "one_over_q": args.one_over_q}
+                          "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                          "enable_measured_activation": args.enable_measured_activation,
+                          "activation_curve_path": args.activation_curve_path,
+                          "activation_corner": args.activation_corner,
+                          "activation_spline_parameters": args.activation_spline_parameters,
+                          "activation_normalize_positive_endpoint":
+                              args.activation_normalize_positive_endpoint}
         model, _ = wrap_ode_block(model, **wrapper_params)
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
 

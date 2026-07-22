@@ -20,6 +20,8 @@ from pc_conv import ReLUX, HardTanhByX
 from utils import expand_weights_to_matrix, load_res_vs_vin
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
+from hardware_nonlinearity import interpolate_R_eff
+from measured_activation import CubicBSplineActivation
 # from TorchDiffEqPack.odesolver_mem import odesolve_adjoint as aca_ode_solve
 
 import logging
@@ -736,6 +738,72 @@ class ToggleODEXInitKeep(ToggleODEXInitFFFB):
 
 
 class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
+    def __init__(self, enable_spin_variation=False, sigma_spin=0.10, spin_variation_seed=None,
+                 enable_summing_current_noise=False, summing_current_p=12.73e-12,
+                 summing_noise_seed=None, **kwargs):
+        super().__init__(**kwargs)
+        self.enable_spin_variation = bool(enable_spin_variation)
+        self.sigma_spin = float(sigma_spin)
+        self.spin_variation_seed = spin_variation_seed
+        self.enable_summing_current_noise = bool(enable_summing_current_noise)
+        self.summing_current_p = float(summing_current_p)
+        self.summing_noise_seed = summing_noise_seed
+        self.register_buffer("_spin_factor_y", None, persistent=False)
+        self.register_buffer("_spin_factor_z", None, persistent=False)
+        self._summing_noise_generators = {}
+
+    def _layer_seed_offset(self):
+        try:
+            return 1009 * int(self.layer_idx)
+        except (TypeError, ValueError):
+            return 0
+
+    def _spin_factor(self, stage, summed_rhs):
+        if not self.enable_spin_variation:
+            return summed_rhs.new_tensor(1.0)
+        name = "_spin_factor_{}".format(stage)
+        factor = getattr(self, name)
+        expected_shape = (1,) + tuple(summed_rhs.shape[1:])
+        if factor is None:
+            generator = None
+            if self.spin_variation_seed is not None:
+                generator = torch.Generator(device=summed_rhs.device)
+                stage_offset = 0 if stage == "z" else 1
+                generator.manual_seed(int(self.spin_variation_seed) + self._layer_seed_offset() + stage_offset)
+            sample = torch.randn(
+                expected_shape, device=summed_rhs.device, dtype=summed_rhs.dtype, generator=generator)
+            factor = 1.0 + self.sigma_spin * sample
+            setattr(self, name, factor)
+        elif tuple(factor.shape) != expected_shape:
+            raise RuntimeError(
+                "Cached {}-spin factor has shape {}, but this hardware run requested {}.".format(
+                    stage, tuple(factor.shape), expected_shape))
+        return factor.to(device=summed_rhs.device, dtype=summed_rhs.dtype)
+
+    def _stage_capacitance(self, stage):
+        return self.C_fb if stage == "z" else self.C_ff
+
+    def _stage_eps(self, stage):
+        return self.summing_current_p / self._stage_capacitance(stage)
+
+    def _summing_noise_generator(self, state):
+        if self.summing_noise_seed is None:
+            return None
+        key = str(state.device)
+        generator = self._summing_noise_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=state.device)
+            generator.manual_seed(int(self.summing_noise_seed) + self._layer_seed_offset())
+            self._summing_noise_generators[key] = generator
+        return generator
+
+    def _brownian_increment(self, state, duration, stage):
+        generator = self._summing_noise_generator(state)
+        normal = torch.randn(
+            state.shape, device=state.device, dtype=state.dtype, generator=generator)
+        duration = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
+        return self._stage_eps(stage) * duration.sqrt() * normal
+
     @torch.no_grad()
     def add_noise(self):
         self._pulse_on_values = {}
@@ -823,7 +891,8 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         key, clean_weight = self._clean_weight(module)
         if hasattr(module, "mat"):
             clean_values = clean_weight
-            noisy_values = module.mat.values()
+            noisy_values = getattr(module, "pulse_noisy_values", None)
+            noisy_values = module.mat.values() if noisy_values is None else noisy_values
             values = self._pulse_values(
                 clean_values, self._on_values(clean_values, noisy_values, key), slice_idx)
             assert getattr(module.mat, "is_sparse_csr", False)
@@ -836,8 +905,8 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
             clean_weight, self._on_values(clean_weight, module.weight, key), slice_idx)
 
     def _apply_sparse_pulse_module(self, module, x, pulse_weight):
-        assert not getattr(module, "csv_enabled", False), \
-            "Pulse-level toggle does not support nonlinear_R CSV MVMConv yet."
+        if hasattr(module, "forward_pulse"):
+            return module.forward_pulse(x, pulse_weight, nominal_R=self.R)
         batch_size, _, input_h, input_w = x.shape
         padding = int(module.meta["padding"])
         stride = int(module.meta["stride"])
@@ -849,40 +918,60 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         y = torch.sparse.mm(pulse_weight, x_flat)
         return y.t().reshape(batch_size, module.meta["out_chan"], output_h, output_w)
 
+    def _pulse_nonlinear_source(self, x):
+        package = getattr(self, "_nonlinear_R_pkg", None)
+        if package is None:
+            return x
+        nominal_idx = (package["R_codes"] - self.R).abs().argmin()
+        R_eff = interpolate_R_eff(
+            x, package["v_grid"], package["R_codes"], package["R_left"],
+            package["R_slope"], nominal_idx, proj_fn=package.get("proj_fn"))
+        return x * self.R / R_eff
+
     def _apply_pulse_module(self, module, x, pulse_weight):
         if isinstance(module, nn.Conv2d):
+            x = self._pulse_nonlinear_source(x)
             return F.conv2d(x, pulse_weight, None, module.stride, module.padding, module.dilation, module.groups)
         if isinstance(module, nn.ConvTranspose2d):
+            x = self._pulse_nonlinear_source(x)
             return F.conv_transpose2d(x, pulse_weight, None, module.stride, module.padding,
                                       module.output_padding, module.groups, module.dilation)
         if hasattr(module, "mat") and (getattr(pulse_weight, "is_sparse", False) or
                                        getattr(pulse_weight, "is_sparse_csr", False)):
             return self._apply_sparse_pulse_module(module, x, pulse_weight)
-        raise TypeError("Pulse-level toggle supports Conv2d, ConvTranspose2d, and non-CSV MVMConv modules.")
+        raise TypeError("Pulse-level toggle supports Conv2d, ConvTranspose2d, and MVMConv modules.")
 
     def z_stage_rhs(self, t, z, y_hold, pulse_weight):
-        rhs = self._apply_pulse_module(self.FBconv, y_hold, pulse_weight)
-        return rhs / (self.R * self.C_fb)
+        summed_rhs = self._apply_pulse_module(self.FBconv, y_hold, pulse_weight)
+        summed_rhs = self._spin_factor("z", summed_rhs) * summed_rhs
+        return summed_rhs / (self.R * self.C_fb)
 
     def y_stage_rhs(self, t, y, h_hold, pulse_weight):
-        rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
-        return rhs / (self.R * self.C_ff)
+        summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
+        summed_rhs = self._spin_factor("y", summed_rhs) * summed_rhs
+        return summed_rhs / (self.R * self.C_ff)
 
-    def _make_slice_options(self, duration, state):
+    def _make_slice_options(self, duration, state, stage):
         opts = deepcopy(self.option_aca)
         opts["t0"] = state.new_tensor(0.0)
-        opts["t1"] = duration.to(device=state.device, dtype=state.dtype)
+        opts["t1"] = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
         opts["t_eval"] = [opts["t0"], opts["t1"]]
         opts["h"] = opts["t1"] if opts.get("h", None) is not None else None
+        if self.enable_summing_current_noise:
+            opts["eps"] = self._stage_eps(stage)
+            opts["noise_type"] = "add"
+            opts["noise_generator"] = self._summing_noise_generator(state)
         return opts
 
     def integrate_pulse_slice(self, state, duration, rhs_fn, stage, slice_idx, constant_rhs=None):
         if self.toggle_fast_path and constant_rhs is not None:
             updated = state + duration * constant_rhs
+            if self.enable_summing_current_noise:
+                updated = updated + self._brownian_increment(state, duration, stage)
         else:
             updated = aca_ode_solve(
                 lambda t, y: rhs_fn(t, y), state,
-                self._make_slice_options(duration, state))[-1]
+                self._make_slice_options(duration, state, stage))[-1]
         return self.project_state(updated)
 
     def run_z_stage(self, y_hold, z, T_z):
@@ -946,8 +1035,12 @@ class TogglePulseODEXInitFFFB(TogglePulseFFFB):
         return T_z, T_y
 
     def y_stage_rhs(self, t, y, h_hold, pulse_weight):
-        rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
-        return rhs / (self.R * self.C)
+        summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
+        summed_rhs = self._spin_factor("y", summed_rhs) * summed_rhs
+        return summed_rhs / (self.R * self.C)
+
+    def _stage_capacitance(self, stage):
+        return self.C_fb if stage == "z" else self.C
 
 
 class TogglePulseODEXInitKeep(TogglePulseODEXInitFFFB):
@@ -2046,6 +2139,14 @@ class WrapQuantizeW(ODEWrapperRC):
         self.mul_mismatch_mode = kwargs.pop("mul_mismatch_mode", "scale_mismatch")
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
 
+        self.enable_measured_activation = kwargs.pop("enable_measured_activation", False)
+        self.activation_curve_path = kwargs.pop("activation_curve_path", None)
+        self.activation_corner = kwargs.pop("activation_corner", "TT")
+        self.activation_spline_parameters = kwargs.pop("activation_spline_parameters", 10)
+        self.activation_normalize_positive_endpoint = kwargs.pop(
+            "activation_normalize_positive_endpoint", False)
+        self.compile_measured_activation = kwargs.pop("compile_measured_activation", False)
+
         self.v_grid, self.R_codes, self.R_table = None, None, None
         self.R_left, self.R_slope = None, None # Use piecewise-linear function as interpolant
 
@@ -2069,6 +2170,23 @@ class WrapQuantizeW(ODEWrapperRC):
         # patch for the child method
         if patch:
             self._patch()
+
+    def _configure_measured_activation(self):
+        if not self.enable_measured_activation:
+            return
+        if isinstance(self.ode_block.act_fn, CubicBSplineActivation):
+            return
+        curve_path = self.activation_curve_path
+        if curve_path is None:
+            curve_path = os.path.join(
+                os.path.dirname(__file__), "hardware_data", "relu_0p3mV.csv")
+        activation = CubicBSplineActivation(
+            curve_path=curve_path, v_dd=self.v_dd, corner=self.activation_corner,
+            num_parameters=self.activation_spline_parameters,
+            normalize_positive_endpoint=self.activation_normalize_positive_endpoint,
+            compile_evaluator=self.compile_measured_activation)
+        device = self.ode_block.FFconv.weight.device
+        self.ode_block.act_fn = activation.to(device=device)
 
     def set_quantized_params(self):
         # loaded weights are already quantized
@@ -2721,7 +2839,12 @@ class QATWrapper1State(ODEWrapper1State):
                                                 max_val=min(self.beta_c, self.v_dd))
 
 
-class ToggleWrapper1State(ODEWrapper1State):
+class _ToggleMeasuredActivationMixin:
+    def _configure_measured_activation(self):
+        return super()._configure_measured_activation()
+
+
+class ToggleWrapper1State(_ToggleMeasuredActivationMixin, ODEWrapper1State):
     """
     Quantizing wrapper for ToggleAveragedPhysical* and TogglePulse* blocks.
     It keeps the existing weight/input/output quantization path, but does not
@@ -2783,6 +2906,7 @@ class ToggleWrapper1State(ODEWrapper1State):
         self.time_scaler = self.R * self.C / self.alpha
         self._ship_toggle_params()
         self._scale_act_fn()
+        self._configure_measured_activation()
         self._patch_forward()
         self._patch_init_y()
         self._ship_nonlinear_R_pkg()
@@ -2794,7 +2918,7 @@ class ToggleQATTester1State(ToggleWrapper1State):
         super().__init__(**kwargs)
 
 
-class ToggleQATWrapper1State(QATWrapper1State):
+class ToggleQATWrapper1State(_ToggleMeasuredActivationMixin, QATWrapper1State):
     """
     QAT wrapper for trainable averaged toggle hardware models. It updates fake
     quantization scales before each forward pass, but does not rescale the
@@ -2855,6 +2979,7 @@ class ToggleQATWrapper1State(QATWrapper1State):
         self.time_scaler = self.R * self.C / self.alpha
         self._ship_toggle_params()
         self._scale_act_fn()
+        self._configure_measured_activation()
         self._patch_forward()
         self._patch_init_y()
         self._ship_nonlinear_R_pkg()
@@ -3063,6 +3188,8 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         else:
             ode_wrapper_ins = ode_wrapper(ode_block=pc_net.PcConvs[i], state_bound=calib_res[i],
                                           R=R, C=C, v_dd=v_dd, is_first=False, is_last=False, **kwargs)
+        if getattr(ode_wrapper_ins, "enable_measured_activation", False):
+            ode_wrapper_ins._configure_measured_activation()
         ode_wrapper_ins.to(pc_net.device)
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
         wrappers.append(ode_wrapper_ins)

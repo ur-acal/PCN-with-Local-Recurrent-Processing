@@ -1,0 +1,1112 @@
+COMMAND: /home/rongzeng/anaconda3/envs/scanbase/bin/python -u ode_inference.py --model_name TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP --ckpt best --model_dir saved_ckpt --task cifar100 --img_type scanGFI --test_bs 128 --pc_conv PCConvReLU6Noisy --ode_block TogglePulseODEXInitFFFB --ode_wrapper ToggleQATTester1State --method dopri5 --tol 1e-6 --n_steps 100 --ts_scale 1 --d_start 0 --d_end 1 --n_sweep_left 0 --n_sweep_right 1 --noise_level_list 0.0 --noisy_trials 5 --thermal_noise false --sde_noise_type mul --mismatch_type mul --sweep_eps false --R 10e3 --R_max 150e3 --C 49e-15 --k 1e3 --v_dd 0.1 --enob 8 --w_bits 5 --patch_node 8 --patch_stride 8 --patch_cycle 1 --patch_pad 0 --fold_scalar 1 --tie_cap false --one_over_q 1 --toggle_n_cycles 5 --toggle_time_split 0.5 --toggle_fast_path true --conv_only true --test_expanded true --expanded_w_dir expanded_weights --diff_mismatch true --nonlinear_R false --mul_mismatch_mode static_mismatch --enable_spin_variation false --sigma_spin 0.10 --spin_variation_seed 20260721 --enable_measured_activation false --activation_curve_path /home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv --activation_corner TT --activation_spline_parameters 10 --compile_measured_activation true --enable_summing_current_noise false --summing_current_p 12.73e-12 --summing_noise_seed 20260721 --return_init 0 --test_only false --ablation_single_case true --ablation_case_name coupler_only --hardware_seed 20260721 --data_seed 20260721
+WARNING:root:----- Using PC Conv layer: PCConvReLU6Noisy -----
+Configuration saved to: /tmp/tmpd4rcvn2a/config.json
+Edit the file to customize generation parameters
+WARNING:root:Running ODE pcn inference, method: dopri5, tol: 1e-06
+WARNING:root:Current t_end: 1.75, ground truth t_end: 1.75
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260721, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260721}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': False, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:10<?, ?it/s, acc=71.88%]
+  1%|▏         | 1/79 [00:10<13:54, 10.70s/it, acc=71.88%]
+  1%|▏         | 1/79 [00:22<13:54, 10.70s/it, acc=67.19%]
+  3%|▎         | 2/79 [00:22<14:15, 11.11s/it, acc=67.19%]
+  3%|▎         | 2/79 [00:33<14:15, 11.11s/it, acc=65.62%]
+  4%|▍         | 3/79 [00:33<14:16, 11.27s/it, acc=65.62%]
+  4%|▍         | 3/79 [00:44<14:16, 11.27s/it, acc=65.43%]
+  5%|▌         | 4/79 [00:44<14:10, 11.34s/it, acc=65.43%]
+  5%|▌         | 4/79 [00:56<14:10, 11.34s/it, acc=63.75%]
+  6%|▋         | 5/79 [00:56<14:01, 11.38s/it, acc=63.75%]
+  6%|▋         | 5/79 [01:07<14:01, 11.38s/it, acc=64.06%]
+  8%|▊         | 6/79 [01:07<13:52, 11.40s/it, acc=64.06%]
+  8%|▊         | 6/79 [01:19<13:52, 11.40s/it, acc=63.95%]
+  9%|▉         | 7/79 [01:19<13:42, 11.42s/it, acc=63.95%]
+  9%|▉         | 7/79 [01:30<13:42, 11.42s/it, acc=62.99%]
+ 10%|█         | 8/79 [01:30<13:32, 11.44s/it, acc=62.99%]
+ 10%|█         | 8/79 [01:42<13:32, 11.44s/it, acc=63.80%]
+ 11%|█▏        | 9/79 [01:42<13:21, 11.45s/it, acc=63.80%]
+ 11%|█▏        | 9/79 [01:53<13:21, 11.45s/it, acc=64.06%]
+ 13%|█▎        | 10/79 [01:53<13:10, 11.46s/it, acc=64.06%]
+ 13%|█▎        | 10/79 [02:05<13:10, 11.46s/it, acc=63.64%]
+ 14%|█▍        | 11/79 [02:05<12:59, 11.47s/it, acc=63.64%]
+ 14%|█▍        | 11/79 [02:16<12:59, 11.47s/it, acc=64.06%]
+ 15%|█▌        | 12/79 [02:16<12:48, 11.48s/it, acc=64.06%]
+ 15%|█▌        | 12/79 [02:28<12:48, 11.48s/it, acc=64.18%]
+ 16%|█▋        | 13/79 [02:28<12:37, 11.48s/it, acc=64.18%]
+ 16%|█▋        | 13/79 [02:39<12:37, 11.48s/it, acc=63.95%]
+ 18%|█▊        | 14/79 [02:39<12:26, 11.48s/it, acc=63.95%]
+ 18%|█▊        | 14/79 [02:51<12:26, 11.48s/it, acc=64.17%]
+ 19%|█▉        | 15/79 [02:51<12:14, 11.48s/it, acc=64.17%]
+ 19%|█▉        | 15/79 [03:02<12:14, 11.48s/it, acc=64.50%]
+ 20%|██        | 16/79 [03:02<12:03, 11.48s/it, acc=64.50%]
+ 20%|██        | 16/79 [03:14<12:03, 11.48s/it, acc=64.57%]
+ 22%|██▏       | 17/79 [03:14<11:51, 11.48s/it, acc=64.57%]
+ 22%|██▏       | 17/79 [03:25<11:51, 11.48s/it, acc=64.32%]
+ 23%|██▎       | 18/79 [03:25<11:39, 11.47s/it, acc=64.32%]
+ 23%|██▎       | 18/79 [03:37<11:39, 11.47s/it, acc=64.10%]
+ 24%|██▍       | 19/79 [03:37<11:28, 11.48s/it, acc=64.10%]
+ 24%|██▍       | 19/79 [03:48<11:28, 11.48s/it, acc=64.65%]
+ 25%|██▌       | 20/79 [03:48<11:16, 11.47s/it, acc=64.65%]
+ 25%|██▌       | 20/79 [04:00<11:16, 11.47s/it, acc=64.58%]
+ 27%|██▋       | 21/79 [04:00<11:05, 11.48s/it, acc=64.58%]
+ 27%|██▋       | 21/79 [04:11<11:05, 11.48s/it, acc=64.74%]
+ 28%|██▊       | 22/79 [04:11<10:54, 11.48s/it, acc=64.74%]
+ 28%|██▊       | 22/79 [04:23<10:54, 11.48s/it, acc=64.61%]
+ 29%|██▉       | 23/79 [04:23<10:43, 11.48s/it, acc=64.61%]
+ 29%|██▉       | 23/79 [04:34<10:43, 11.48s/it, acc=64.19%]
+ 30%|███       | 24/79 [04:34<10:31, 11.48s/it, acc=64.19%]
+ 30%|███       | 24/79 [04:45<10:31, 11.48s/it, acc=64.41%]
+ 32%|███▏      | 25/79 [04:45<10:19, 11.48s/it, acc=64.41%]
+ 32%|███▏      | 25/79 [04:57<10:19, 11.48s/it, acc=64.24%]
+ 33%|███▎      | 26/79 [04:57<10:08, 11.48s/it, acc=64.24%]
+ 33%|███▎      | 26/79 [05:08<10:08, 11.48s/it, acc=64.09%]
+ 34%|███▍      | 27/79 [05:08<09:56, 11.48s/it, acc=64.09%]
+ 34%|███▍      | 27/79 [05:20<09:56, 11.48s/it, acc=64.03%]
+ 35%|███▌      | 28/79 [05:20<09:45, 11.48s/it, acc=64.03%]
+ 35%|███▌      | 28/79 [05:31<09:45, 11.48s/it, acc=63.85%]
+ 37%|███▋      | 29/79 [05:31<09:33, 11.48s/it, acc=63.85%]
+ 37%|███▋      | 29/79 [05:42<09:33, 11.48s/it, acc=64.27%]
+ 38%|███▊      | 30/79 [05:42<09:07, 11.17s/it, acc=64.27%]
+ 38%|███▊      | 30/79 [05:53<09:07, 11.17s/it, acc=64.29%]
+ 39%|███▉      | 31/79 [05:53<08:56, 11.18s/it, acc=64.29%]
+ 39%|███▉      | 31/79 [06:05<08:56, 11.18s/it, acc=64.28%]
+ 41%|████      | 32/79 [06:05<08:49, 11.27s/it, acc=64.28%]
+ 41%|████      | 32/79 [06:16<08:49, 11.27s/it, acc=64.16%]
+ 42%|████▏     | 33/79 [06:16<08:41, 11.34s/it, acc=64.16%]
+ 42%|████▏     | 33/79 [06:28<08:41, 11.34s/it, acc=64.11%]
+ 43%|████▎     | 34/79 [06:28<08:32, 11.38s/it, acc=64.11%]
+ 43%|████▎     | 34/79 [06:39<08:32, 11.38s/it, acc=64.26%]
+ 44%|████▍     | 35/79 [06:39<08:22, 11.41s/it, acc=64.26%]
+ 44%|████▍     | 35/79 [06:50<08:22, 11.41s/it, acc=64.37%]
+ 46%|████▌     | 36/79 [06:50<08:11, 11.43s/it, acc=64.37%]
+ 46%|████▌     | 36/79 [07:02<08:11, 11.43s/it, acc=64.27%]
+ 47%|████▋     | 37/79 [07:02<08:00, 11.45s/it, acc=64.27%]
+ 47%|████▋     | 37/79 [07:13<08:00, 11.45s/it, acc=64.23%]
+ 48%|████▊     | 38/79 [07:13<07:49, 11.46s/it, acc=64.23%]
+ 48%|████▊     | 38/79 [07:25<07:49, 11.46s/it, acc=64.28%]
+ 49%|████▉     | 39/79 [07:25<07:38, 11.47s/it, acc=64.28%]
+ 49%|████▉     | 39/79 [07:36<07:38, 11.47s/it, acc=64.32%]
+ 51%|█████     | 40/79 [07:36<07:27, 11.47s/it, acc=64.32%]
+ 51%|█████     | 40/79 [07:48<07:27, 11.47s/it, acc=64.44%]
+ 52%|█████▏    | 41/79 [07:48<07:16, 11.48s/it, acc=64.44%]
+ 52%|█████▏    | 41/79 [07:59<07:16, 11.48s/it, acc=64.36%]
+ 53%|█████▎    | 42/79 [07:59<07:04, 11.48s/it, acc=64.36%]
+ 53%|█████▎    | 42/79 [08:11<07:04, 11.48s/it, acc=64.28%]
+ 54%|█████▍    | 43/79 [08:11<06:53, 11.47s/it, acc=64.28%]
+ 54%|█████▍    | 43/79 [08:22<06:53, 11.47s/it, acc=64.33%]
+ 56%|█████▌    | 44/79 [08:22<06:41, 11.48s/it, acc=64.33%]
+ 56%|█████▌    | 44/79 [08:34<06:41, 11.48s/it, acc=64.39%]
+ 57%|█████▋    | 45/79 [08:34<06:30, 11.48s/it, acc=64.39%]
+ 57%|█████▋    | 45/79 [08:45<06:30, 11.48s/it, acc=64.57%]
+ 58%|█████▊    | 46/79 [08:45<06:18, 11.48s/it, acc=64.57%]
+ 58%|█████▊    | 46/79 [08:57<06:18, 11.48s/it, acc=64.36%]
+ 59%|█████▉    | 47/79 [08:57<06:07, 11.48s/it, acc=64.36%]
+ 59%|█████▉    | 47/79 [09:08<06:07, 11.48s/it, acc=64.27%]
+ 61%|██████    | 48/79 [09:08<05:55, 11.48s/it, acc=64.27%]
+ 61%|██████    | 48/79 [09:20<05:55, 11.48s/it, acc=64.21%]
+ 62%|██████▏   | 49/79 [09:20<05:44, 11.48s/it, acc=64.21%]
+ 62%|██████▏   | 49/79 [09:31<05:44, 11.48s/it, acc=64.25%]
+ 63%|██████▎   | 50/79 [09:31<05:33, 11.48s/it, acc=64.25%]
+ 63%|██████▎   | 50/79 [09:43<05:33, 11.48s/it, acc=64.14%]
+ 65%|██████▍   | 51/79 [09:43<05:21, 11.48s/it, acc=64.14%]
+ 65%|██████▍   | 51/79 [09:54<05:21, 11.48s/it, acc=64.14%]
+ 66%|██████▌   | 52/79 [09:54<05:09, 11.48s/it, acc=64.14%]
+ 66%|██████▌   | 52/79 [10:06<05:09, 11.48s/it, acc=64.21%]
+ 67%|██████▋   | 53/79 [10:06<04:58, 11.49s/it, acc=64.21%]
+ 67%|██████▋   | 53/79 [10:17<04:58, 11.49s/it, acc=64.31%]
+ 68%|██████▊   | 54/79 [10:17<04:47, 11.48s/it, acc=64.31%]
+ 68%|██████▊   | 54/79 [10:29<04:47, 11.48s/it, acc=64.32%]
+ 70%|██████▉   | 55/79 [10:29<04:35, 11.49s/it, acc=64.32%]
+ 70%|██████▉   | 55/79 [10:40<04:35, 11.49s/it, acc=64.20%]
+ 71%|███████   | 56/79 [10:40<04:24, 11.49s/it, acc=64.20%]
+ 71%|███████   | 56/79 [10:52<04:24, 11.49s/it, acc=64.21%]
+ 72%|███████▏  | 57/79 [10:52<04:12, 11.49s/it, acc=64.21%]
+ 72%|███████▏  | 57/79 [11:03<04:12, 11.49s/it, acc=64.17%]
+ 73%|███████▎  | 58/79 [11:03<04:01, 11.49s/it, acc=64.17%]
+ 73%|███████▎  | 58/79 [11:15<04:01, 11.49s/it, acc=64.18%]
+ 75%|███████▍  | 59/79 [11:15<03:49, 11.48s/it, acc=64.18%]
+ 75%|███████▍  | 59/79 [11:26<03:49, 11.48s/it, acc=64.09%]
+ 76%|███████▌  | 60/79 [11:26<03:38, 11.48s/it, acc=64.09%]
+ 76%|███████▌  | 60/79 [11:36<03:38, 11.48s/it, acc=64.01%]
+ 77%|███████▋  | 61/79 [11:36<03:20, 11.13s/it, acc=64.01%]
+ 77%|███████▋  | 61/79 [11:48<03:20, 11.13s/it, acc=63.97%]
+ 78%|███████▊  | 62/79 [11:48<03:10, 11.20s/it, acc=63.97%]
+ 78%|███████▊  | 62/79 [11:59<03:10, 11.20s/it, acc=63.96%]
+ 80%|███████▉  | 63/79 [11:59<03:00, 11.28s/it, acc=63.96%]
+ 80%|███████▉  | 63/79 [12:11<03:00, 11.28s/it, acc=63.94%]
+ 81%|████████  | 64/79 [12:11<02:50, 11.34s/it, acc=63.94%]
+ 81%|████████  | 64/79 [12:22<02:50, 11.34s/it, acc=63.98%]
+ 82%|████████▏ | 65/79 [12:22<02:39, 11.39s/it, acc=63.98%]
+ 82%|████████▏ | 65/79 [12:34<02:39, 11.39s/it, acc=63.92%]
+ 84%|████████▎ | 66/79 [12:34<02:28, 11.42s/it, acc=63.92%]
+ 84%|████████▎ | 66/79 [12:45<02:28, 11.42s/it, acc=64.03%]
+ 85%|████████▍ | 67/79 [12:45<02:17, 11.44s/it, acc=64.03%]
+ 85%|████████▍ | 67/79 [12:57<02:17, 11.44s/it, acc=63.99%]
+ 86%|████████▌ | 68/79 [12:57<02:05, 11.45s/it, acc=63.99%]
+ 86%|████████▌ | 68/79 [13:08<02:05, 11.45s/it, acc=63.97%]
+ 87%|████████▋ | 69/79 [13:08<01:54, 11.47s/it, acc=63.97%]
+ 87%|████████▋ | 69/79 [13:20<01:54, 11.47s/it, acc=64.03%]
+ 89%|████████▊ | 70/79 [13:20<01:43, 11.47s/it, acc=64.03%]
+ 89%|████████▊ | 70/79 [13:31<01:43, 11.47s/it, acc=63.92%]
+ 90%|████████▉ | 71/79 [13:31<01:31, 11.48s/it, acc=63.92%]
+ 90%|████████▉ | 71/79 [13:43<01:31, 11.48s/it, acc=63.98%]
+ 91%|█████████ | 72/79 [13:43<01:20, 11.48s/it, acc=63.98%]
+ 91%|█████████ | 72/79 [13:54<01:20, 11.48s/it, acc=64.01%]
+ 92%|█████████▏| 73/79 [13:54<01:08, 11.48s/it, acc=64.01%]
+ 92%|█████████▏| 73/79 [14:06<01:08, 11.48s/it, acc=64.01%]
+ 94%|█████████▎| 74/79 [14:06<00:57, 11.48s/it, acc=64.01%]
+ 94%|█████████▎| 74/79 [14:17<00:57, 11.48s/it, acc=64.03%]
+ 95%|█████████▍| 75/79 [14:17<00:45, 11.48s/it, acc=64.03%]
+ 95%|█████████▍| 75/79 [14:29<00:45, 11.48s/it, acc=64.07%]
+ 96%|█████████▌| 76/79 [14:29<00:34, 11.49s/it, acc=64.07%]
+ 96%|█████████▌| 76/79 [14:40<00:34, 11.49s/it, acc=64.05%]
+ 97%|█████████▋| 77/79 [14:40<00:22, 11.48s/it, acc=64.05%]
+ 97%|█████████▋| 77/79 [14:51<00:22, 11.48s/it, acc=64.03%]
+ 99%|█████████▊| 78/79 [14:51<00:11, 11.46s/it, acc=64.03%]
+ 99%|█████████▊| 78/79 [14:59<00:11, 11.46s/it, acc=64.04%]
+100%|██████████| 79/79 [14:59<00:00, 10.23s/it, acc=64.04%]
+100%|██████████| 79/79 [14:59<00:00, 11.38s/it, acc=64.04%]
+ABLATION_RESULT case=coupler_only trial_index=0 accuracy=64.04000000
+Test Accuracy at noise level {0: 0.0, 15: 0.181, 14: 0.179, 13: 0.177, 12: 0.175, 11: 0.172, 10: 0.169, 9: 0.165, 8: 0.16, 7: 0.153, 6: 0.142, 5: 0.125, 4: 0.1, 3: 0.072, 2: 0.105, 1: 0.342} thermal noise eps None: 64.04%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260722, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260722}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': False, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:10<?, ?it/s, acc=71.09%]
+  1%|▏         | 1/79 [00:10<13:43, 10.56s/it, acc=71.09%]
+  1%|▏         | 1/79 [00:21<13:43, 10.56s/it, acc=66.80%]
+  3%|▎         | 2/79 [00:21<14:12, 11.07s/it, acc=66.80%]
+  3%|▎         | 2/79 [00:33<14:12, 11.07s/it, acc=65.10%]
+  4%|▍         | 3/79 [00:33<14:15, 11.26s/it, acc=65.10%]
+  4%|▍         | 3/79 [00:44<14:15, 11.26s/it, acc=63.87%]
+  5%|▌         | 4/79 [00:44<14:11, 11.35s/it, acc=63.87%]
+  5%|▌         | 4/79 [00:56<14:11, 11.35s/it, acc=62.66%]
+  6%|▋         | 5/79 [00:56<14:03, 11.40s/it, acc=62.66%]
+  6%|▋         | 5/79 [01:07<14:03, 11.40s/it, acc=63.02%]
+  8%|▊         | 6/79 [01:07<13:54, 11.43s/it, acc=63.02%]
+  8%|▊         | 6/79 [01:19<13:54, 11.43s/it, acc=63.39%]
+  9%|▉         | 7/79 [01:19<13:44, 11.45s/it, acc=63.39%]
+  9%|▉         | 7/79 [01:30<13:44, 11.45s/it, acc=62.70%]
+ 10%|█         | 8/79 [01:30<13:33, 11.46s/it, acc=62.70%]
+ 10%|█         | 8/79 [01:42<13:33, 11.46s/it, acc=63.19%]
+ 11%|█▏        | 9/79 [01:42<13:22, 11.47s/it, acc=63.19%]
+ 11%|█▏        | 9/79 [01:53<13:22, 11.47s/it, acc=63.83%]
+ 13%|█▎        | 10/79 [01:53<13:11, 11.48s/it, acc=63.83%]
+ 13%|█▎        | 10/79 [02:05<13:11, 11.48s/it, acc=63.35%]
+ 14%|█▍        | 11/79 [02:05<13:00, 11.48s/it, acc=63.35%]
+ 14%|█▍        | 11/79 [02:15<13:00, 11.48s/it, acc=63.93%]
+ 15%|█▌        | 12/79 [02:15<12:22, 11.08s/it, acc=63.93%]
+ 15%|█▌        | 12/79 [02:27<12:22, 11.08s/it, acc=64.06%]
+ 16%|█▋        | 13/79 [02:27<12:19, 11.21s/it, acc=64.06%]
+ 16%|█▋        | 13/79 [02:38<12:19, 11.21s/it, acc=63.95%]
+ 18%|█▊        | 14/79 [02:38<12:13, 11.29s/it, acc=63.95%]
+ 18%|█▊        | 14/79 [02:50<12:13, 11.29s/it, acc=64.43%]
+ 19%|█▉        | 15/79 [02:50<12:06, 11.35s/it, acc=64.43%]
+ 19%|█▉        | 15/79 [03:01<12:06, 11.35s/it, acc=64.75%]
+ 20%|██        | 16/79 [03:01<11:57, 11.40s/it, acc=64.75%]
+ 20%|██        | 16/79 [03:13<11:57, 11.40s/it, acc=64.71%]
+ 22%|██▏       | 17/79 [03:13<11:48, 11.42s/it, acc=64.71%]
+ 22%|██▏       | 17/79 [03:24<11:48, 11.42s/it, acc=64.67%]
+ 23%|██▎       | 18/79 [03:24<11:38, 11.45s/it, acc=64.67%]
+ 23%|██▎       | 18/79 [03:36<11:38, 11.45s/it, acc=64.64%]
+ 24%|██▍       | 19/79 [03:36<11:27, 11.46s/it, acc=64.64%]
+ 24%|██▍       | 19/79 [03:47<11:27, 11.46s/it, acc=64.77%]
+ 25%|██▌       | 20/79 [03:47<11:16, 11.47s/it, acc=64.77%]
+ 25%|██▌       | 20/79 [03:58<11:16, 11.47s/it, acc=64.69%]
+ 27%|██▋       | 21/79 [03:58<11:05, 11.47s/it, acc=64.69%]
+ 27%|██▋       | 21/79 [04:10<11:05, 11.47s/it, acc=64.67%]
+ 28%|██▊       | 22/79 [04:10<10:54, 11.48s/it, acc=64.67%]
+ 28%|██▊       | 22/79 [04:21<10:54, 11.48s/it, acc=64.40%]
+ 29%|██▉       | 23/79 [04:21<10:42, 11.48s/it, acc=64.40%]
+ 29%|██▉       | 23/79 [04:33<10:42, 11.48s/it, acc=63.96%]
+ 30%|███       | 24/79 [04:33<10:31, 11.48s/it, acc=63.96%]
+ 30%|███       | 24/79 [04:44<10:31, 11.48s/it, acc=64.00%]
+ 32%|███▏      | 25/79 [04:44<10:20, 11.49s/it, acc=64.00%]
+ 32%|███▏      | 25/79 [04:56<10:20, 11.49s/it, acc=63.85%]
+ 33%|███▎      | 26/79 [04:56<10:08, 11.49s/it, acc=63.85%]
+ 33%|███▎      | 26/79 [05:07<10:08, 11.49s/it, acc=63.80%]
+ 34%|███▍      | 27/79 [05:07<09:57, 11.49s/it, acc=63.80%]
+ 34%|███▍      | 27/79 [05:19<09:57, 11.49s/it, acc=63.73%]
+ 35%|███▌      | 28/79 [05:19<09:45, 11.49s/it, acc=63.73%]
+ 35%|███▌      | 28/79 [05:30<09:45, 11.49s/it, acc=63.55%]
+ 37%|███▋      | 29/79 [05:30<09:34, 11.49s/it, acc=63.55%]
+ 37%|███▋      | 29/79 [05:42<09:34, 11.49s/it, acc=64.01%]
+ 38%|███▊      | 30/79 [05:42<09:23, 11.49s/it, acc=64.01%]
+ 38%|███▊      | 30/79 [05:53<09:23, 11.49s/it, acc=63.94%]
+ 39%|███▉      | 31/79 [05:53<09:11, 11.49s/it, acc=63.94%]
+ 39%|███▉      | 31/79 [06:05<09:11, 11.49s/it, acc=64.06%]
+ 41%|████      | 32/79 [06:05<09:00, 11.49s/it, acc=64.06%]
+ 41%|████      | 32/79 [06:16<09:00, 11.49s/it, acc=63.90%]
+ 42%|████▏     | 33/79 [06:16<08:48, 11.49s/it, acc=63.90%]
+ 42%|████▏     | 33/79 [06:28<08:48, 11.49s/it, acc=63.92%]
+ 43%|████▎     | 34/79 [06:28<08:37, 11.49s/it, acc=63.92%]
+ 43%|████▎     | 34/79 [06:39<08:37, 11.49s/it, acc=63.93%]
+ 44%|████▍     | 35/79 [06:39<08:25, 11.49s/it, acc=63.93%]
+ 44%|████▍     | 35/79 [06:51<08:25, 11.49s/it, acc=63.95%]
+ 46%|████▌     | 36/79 [06:51<08:14, 11.49s/it, acc=63.95%]
+ 46%|████▌     | 36/79 [07:02<08:14, 11.49s/it, acc=63.87%]
+ 47%|████▋     | 37/79 [07:02<08:02, 11.49s/it, acc=63.87%]
+ 47%|████▋     | 37/79 [07:14<08:02, 11.49s/it, acc=63.84%]
+ 48%|████▊     | 38/79 [07:14<07:51, 11.49s/it, acc=63.84%]
+ 48%|████▊     | 38/79 [07:25<07:51, 11.49s/it, acc=63.94%]
+ 49%|████▉     | 39/79 [07:25<07:39, 11.49s/it, acc=63.94%]
+ 49%|████▉     | 39/79 [07:37<07:39, 11.49s/it, acc=63.89%]
+ 51%|█████     | 40/79 [07:37<07:28, 11.49s/it, acc=63.89%]
+ 51%|█████     | 40/79 [07:48<07:28, 11.49s/it, acc=64.06%]
+ 52%|█████▏    | 41/79 [07:48<07:16, 11.49s/it, acc=64.06%]
+ 52%|█████▏    | 41/79 [08:00<07:16, 11.49s/it, acc=64.10%]
+ 53%|█████▎    | 42/79 [08:00<07:05, 11.49s/it, acc=64.10%]
+ 53%|█████▎    | 42/79 [08:10<07:05, 11.49s/it, acc=64.19%]
+ 54%|█████▍    | 43/79 [08:10<06:40, 11.11s/it, acc=64.19%]
+ 54%|█████▍    | 43/79 [08:22<06:40, 11.11s/it, acc=64.19%]
+ 56%|█████▌    | 44/79 [08:22<06:32, 11.23s/it, acc=64.19%]
+ 56%|█████▌    | 44/79 [08:33<06:32, 11.23s/it, acc=64.15%]
+ 57%|█████▋    | 45/79 [08:33<06:24, 11.31s/it, acc=64.15%]
+ 57%|█████▋    | 45/79 [08:45<06:24, 11.31s/it, acc=64.27%]
+ 58%|█████▊    | 46/79 [08:45<06:14, 11.36s/it, acc=64.27%]
+ 58%|█████▊    | 46/79 [08:56<06:14, 11.36s/it, acc=64.20%]
+ 59%|█████▉    | 47/79 [08:56<06:04, 11.40s/it, acc=64.20%]
+ 59%|█████▉    | 47/79 [09:08<06:04, 11.40s/it, acc=64.10%]
+ 61%|██████    | 48/79 [09:08<05:54, 11.43s/it, acc=64.10%]
+ 61%|██████    | 48/79 [09:19<05:54, 11.43s/it, acc=63.98%]
+ 62%|██████▏   | 49/79 [09:19<05:43, 11.44s/it, acc=63.98%]
+ 62%|██████▏   | 49/79 [09:30<05:43, 11.44s/it, acc=64.00%]
+ 63%|██████▎   | 50/79 [09:30<05:32, 11.46s/it, acc=64.00%]
+ 63%|██████▎   | 50/79 [09:42<05:32, 11.46s/it, acc=64.00%]
+ 65%|██████▍   | 51/79 [09:42<05:21, 11.47s/it, acc=64.00%]
+ 65%|██████▍   | 51/79 [09:53<05:21, 11.47s/it, acc=63.94%]
+ 66%|██████▌   | 52/79 [09:53<05:09, 11.48s/it, acc=63.94%]
+ 66%|██████▌   | 52/79 [10:05<05:09, 11.48s/it, acc=63.97%]
+ 67%|██████▋   | 53/79 [10:05<04:58, 11.48s/it, acc=63.97%]
+ 67%|██████▋   | 53/79 [10:16<04:58, 11.48s/it, acc=64.08%]
+ 68%|██████▊   | 54/79 [10:16<04:47, 11.49s/it, acc=64.08%]
+ 68%|██████▊   | 54/79 [10:28<04:47, 11.49s/it, acc=64.12%]
+ 70%|██████▉   | 55/79 [10:28<04:35, 11.49s/it, acc=64.12%]
+ 70%|██████▉   | 55/79 [10:39<04:35, 11.49s/it, acc=64.02%]
+ 71%|███████   | 56/79 [10:39<04:24, 11.49s/it, acc=64.02%]
+ 71%|███████   | 56/79 [10:51<04:24, 11.49s/it, acc=64.09%]
+ 72%|███████▏  | 57/79 [10:51<04:12, 11.49s/it, acc=64.09%]
+ 72%|███████▏  | 57/79 [11:02<04:12, 11.49s/it, acc=63.98%]
+ 73%|███████▎  | 58/79 [11:02<04:01, 11.49s/it, acc=63.98%]
+ 73%|███████▎  | 58/79 [11:14<04:01, 11.49s/it, acc=64.02%]
+ 75%|███████▍  | 59/79 [11:14<03:49, 11.49s/it, acc=64.02%]
+ 75%|███████▍  | 59/79 [11:25<03:49, 11.49s/it, acc=63.88%]
+ 76%|███████▌  | 60/79 [11:25<03:38, 11.49s/it, acc=63.88%]
+ 76%|███████▌  | 60/79 [11:37<03:38, 11.49s/it, acc=63.83%]
+ 77%|███████▋  | 61/79 [11:37<03:26, 11.49s/it, acc=63.83%]
+ 77%|███████▋  | 61/79 [11:48<03:26, 11.49s/it, acc=63.80%]
+ 78%|███████▊  | 62/79 [11:48<03:15, 11.49s/it, acc=63.80%]
+ 78%|███████▊  | 62/79 [12:00<03:15, 11.49s/it, acc=63.75%]
+ 80%|███████▉  | 63/79 [12:00<03:03, 11.50s/it, acc=63.75%]
+ 80%|███████▉  | 63/79 [12:11<03:03, 11.50s/it, acc=63.77%]
+ 81%|████████  | 64/79 [12:11<02:52, 11.49s/it, acc=63.77%]
+ 81%|████████  | 64/79 [12:23<02:52, 11.49s/it, acc=63.77%]
+ 82%|████████▏ | 65/79 [12:23<02:40, 11.49s/it, acc=63.77%]
+ 82%|████████▏ | 65/79 [12:34<02:40, 11.49s/it, acc=63.75%]
+ 84%|████████▎ | 66/79 [12:34<02:29, 11.49s/it, acc=63.75%]
+ 84%|████████▎ | 66/79 [12:46<02:29, 11.49s/it, acc=63.90%]
+ 85%|████████▍ | 67/79 [12:46<02:17, 11.49s/it, acc=63.90%]
+ 85%|████████▍ | 67/79 [12:57<02:17, 11.49s/it, acc=63.87%]
+ 86%|████████▌ | 68/79 [12:57<02:06, 11.49s/it, acc=63.87%]
+ 86%|████████▌ | 68/79 [13:09<02:06, 11.49s/it, acc=63.86%]
+ 87%|████████▋ | 69/79 [13:09<01:54, 11.49s/it, acc=63.86%]
+ 87%|████████▋ | 69/79 [13:20<01:54, 11.49s/it, acc=63.92%]
+ 89%|████████▊ | 70/79 [13:20<01:43, 11.49s/it, acc=63.92%]
+ 89%|████████▊ | 70/79 [13:32<01:43, 11.49s/it, acc=63.88%]
+ 90%|████████▉ | 71/79 [13:32<01:31, 11.49s/it, acc=63.88%]
+ 90%|████████▉ | 71/79 [13:43<01:31, 11.49s/it, acc=63.91%]
+ 91%|█████████ | 72/79 [13:43<01:20, 11.49s/it, acc=63.91%]
+ 91%|█████████ | 72/79 [13:54<01:20, 11.49s/it, acc=63.89%]
+ 92%|█████████▏| 73/79 [13:54<01:08, 11.34s/it, acc=63.89%]
+ 92%|█████████▏| 73/79 [14:01<01:08, 11.34s/it, acc=63.87%]
+ 94%|█████████▎| 74/79 [14:01<00:49,  9.82s/it, acc=63.87%]
+ 94%|█████████▎| 74/79 [14:07<00:49,  9.82s/it, acc=63.89%]
+ 95%|█████████▍| 75/79 [14:07<00:35,  8.80s/it, acc=63.89%]
+ 95%|█████████▍| 75/79 [14:14<00:35,  8.80s/it, acc=63.89%]
+ 96%|█████████▌| 76/79 [14:14<00:24,  8.14s/it, acc=63.89%]
+ 96%|█████████▌| 76/79 [14:21<00:24,  8.14s/it, acc=63.88%]
+ 97%|█████████▋| 77/79 [14:21<00:15,  7.90s/it, acc=63.88%]
+ 97%|█████████▋| 77/79 [14:28<00:15,  7.90s/it, acc=63.93%]
+ 99%|█████████▊| 78/79 [14:28<00:07,  7.65s/it, acc=63.93%]
+ 99%|█████████▊| 78/79 [14:31<00:07,  7.65s/it, acc=63.94%]
+100%|██████████| 79/79 [14:31<00:00,  6.38s/it, acc=63.94%]
+100%|██████████| 79/79 [14:31<00:00, 11.04s/it, acc=63.94%]
+ABLATION_RESULT case=coupler_only trial_index=1 accuracy=63.94000000
+Test Accuracy at noise level {0: 0.0, 15: 0.181, 14: 0.179, 13: 0.177, 12: 0.175, 11: 0.172, 10: 0.169, 9: 0.165, 8: 0.16, 7: 0.153, 6: 0.142, 5: 0.125, 4: 0.1, 3: 0.072, 2: 0.105, 1: 0.342} thermal noise eps None: 63.94%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260723, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260723}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': False, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:05<?, ?it/s, acc=71.09%]
+  1%|▏         | 1/79 [00:05<07:44,  5.95s/it, acc=71.09%]
+  1%|▏         | 1/79 [00:13<07:44,  5.95s/it, acc=66.80%]
+  3%|▎         | 2/79 [00:13<08:37,  6.72s/it, acc=66.80%]
+  3%|▎         | 2/79 [00:20<08:37,  6.72s/it, acc=64.58%]
+  4%|▍         | 3/79 [00:20<08:55,  7.05s/it, acc=64.58%]
+  4%|▍         | 3/79 [00:27<08:55,  7.05s/it, acc=64.45%]
+  5%|▌         | 4/79 [00:27<08:57,  7.16s/it, acc=64.45%]
+  5%|▌         | 4/79 [00:35<08:57,  7.16s/it, acc=62.97%]
+  6%|▋         | 5/79 [00:35<08:57,  7.26s/it, acc=62.97%]
+  6%|▋         | 5/79 [00:42<08:57,  7.26s/it, acc=63.28%]
+  8%|▊         | 6/79 [00:42<08:51,  7.28s/it, acc=63.28%]
+  8%|▊         | 6/79 [00:50<08:51,  7.28s/it, acc=63.28%]
+  9%|▉         | 7/79 [00:50<08:48,  7.33s/it, acc=63.28%]
+  9%|▉         | 7/79 [00:57<08:48,  7.33s/it, acc=62.50%]
+ 10%|█         | 8/79 [00:57<08:40,  7.33s/it, acc=62.50%]
+ 10%|█         | 8/79 [01:04<08:40,  7.33s/it, acc=63.19%]
+ 11%|█▏        | 9/79 [01:04<08:35,  7.37s/it, acc=63.19%]
+ 11%|█▏        | 9/79 [01:12<08:35,  7.37s/it, acc=63.44%]
+ 13%|█▎        | 10/79 [01:12<08:27,  7.35s/it, acc=63.44%]
+ 13%|█▎        | 10/79 [01:19<08:27,  7.35s/it, acc=63.28%]
+ 14%|█▍        | 11/79 [01:19<08:21,  7.38s/it, acc=63.28%]
+ 14%|█▍        | 11/79 [01:27<08:21,  7.38s/it, acc=63.48%]
+ 15%|█▌        | 12/79 [01:27<08:13,  7.36s/it, acc=63.48%]
+ 15%|█▌        | 12/79 [01:34<08:13,  7.36s/it, acc=63.76%]
+ 16%|█▋        | 13/79 [01:34<08:07,  7.39s/it, acc=63.76%]
+ 16%|█▋        | 13/79 [01:41<08:07,  7.39s/it, acc=63.62%]
+ 18%|█▊        | 14/79 [01:41<07:58,  7.37s/it, acc=63.62%]
+ 18%|█▊        | 14/79 [01:49<07:58,  7.37s/it, acc=64.06%]
+ 19%|█▉        | 15/79 [01:49<07:53,  7.39s/it, acc=64.06%]
+ 19%|█▉        | 15/79 [01:56<07:53,  7.39s/it, acc=64.31%]
+ 20%|██        | 16/79 [01:56<07:44,  7.37s/it, acc=64.31%]
+ 20%|██        | 16/79 [02:04<07:44,  7.37s/it, acc=64.34%]
+ 22%|██▏       | 17/79 [02:04<07:38,  7.39s/it, acc=64.34%]
+ 22%|██▏       | 17/79 [02:11<07:38,  7.39s/it, acc=64.32%]
+ 23%|██▎       | 18/79 [02:11<07:29,  7.37s/it, acc=64.32%]
+ 23%|██▎       | 18/79 [02:18<07:29,  7.37s/it, acc=64.35%]
+ 24%|██▍       | 19/79 [02:18<07:23,  7.39s/it, acc=64.35%]
+ 24%|██▍       | 19/79 [02:26<07:23,  7.39s/it, acc=64.61%]
+ 25%|██▌       | 20/79 [02:26<07:14,  7.37s/it, acc=64.61%]
+ 25%|██▌       | 20/79 [02:33<07:14,  7.37s/it, acc=64.66%]
+ 27%|██▋       | 21/79 [02:33<07:09,  7.40s/it, acc=64.66%]
+ 27%|██▋       | 21/79 [02:40<07:09,  7.40s/it, acc=64.63%]
+ 28%|██▊       | 22/79 [02:40<07:00,  7.37s/it, acc=64.63%]
+ 28%|██▊       | 22/79 [02:48<07:00,  7.37s/it, acc=64.47%]
+ 29%|██▉       | 23/79 [02:48<06:54,  7.40s/it, acc=64.47%]
+ 29%|██▉       | 23/79 [02:55<06:54,  7.40s/it, acc=64.26%]
+ 30%|███       | 24/79 [02:55<06:45,  7.37s/it, acc=64.26%]
+ 30%|███       | 24/79 [03:03<06:45,  7.37s/it, acc=64.38%]
+ 32%|███▏      | 25/79 [03:03<06:39,  7.39s/it, acc=64.38%]
+ 32%|███▏      | 25/79 [03:10<06:39,  7.39s/it, acc=64.27%]
+ 33%|███▎      | 26/79 [03:10<06:30,  7.37s/it, acc=64.27%]
+ 33%|███▎      | 26/79 [03:17<06:30,  7.37s/it, acc=64.21%]
+ 34%|███▍      | 27/79 [03:17<06:24,  7.40s/it, acc=64.21%]
+ 34%|███▍      | 27/79 [03:25<06:24,  7.40s/it, acc=64.06%]
+ 35%|███▌      | 28/79 [03:25<06:15,  7.37s/it, acc=64.06%]
+ 35%|███▌      | 28/79 [03:32<06:15,  7.37s/it, acc=63.90%]
+ 37%|███▋      | 29/79 [03:32<06:10,  7.40s/it, acc=63.90%]
+ 37%|███▋      | 29/79 [03:39<06:10,  7.40s/it, acc=64.19%]
+ 38%|███▊      | 30/79 [03:39<06:01,  7.37s/it, acc=64.19%]
+ 38%|███▊      | 30/79 [03:47<06:01,  7.37s/it, acc=64.06%]
+ 39%|███▉      | 31/79 [03:47<05:55,  7.40s/it, acc=64.06%]
+ 39%|███▉      | 31/79 [03:54<05:55,  7.40s/it, acc=64.16%]
+ 41%|████      | 32/79 [03:54<05:46,  7.37s/it, acc=64.16%]
+ 41%|████      | 32/79 [04:02<05:46,  7.37s/it, acc=63.97%]
+ 42%|████▏     | 33/79 [04:02<05:40,  7.40s/it, acc=63.97%]
+ 42%|████▏     | 33/79 [04:09<05:40,  7.40s/it, acc=64.02%]
+ 43%|████▎     | 34/79 [04:09<05:31,  7.37s/it, acc=64.02%]
+ 43%|████▎     | 34/79 [04:16<05:31,  7.37s/it, acc=64.06%]
+ 44%|████▍     | 35/79 [04:16<05:25,  7.40s/it, acc=64.06%]
+ 44%|████▍     | 35/79 [04:24<05:25,  7.40s/it, acc=64.08%]
+ 46%|████▌     | 36/79 [04:24<05:16,  7.37s/it, acc=64.08%]
+ 46%|████▌     | 36/79 [04:31<05:16,  7.37s/it, acc=64.06%]
+ 47%|████▋     | 37/79 [04:31<05:10,  7.40s/it, acc=64.06%]
+ 47%|████▋     | 37/79 [04:38<05:10,  7.40s/it, acc=64.12%]
+ 48%|████▊     | 38/79 [04:38<05:01,  7.36s/it, acc=64.12%]
+ 48%|████▊     | 38/79 [04:46<05:01,  7.36s/it, acc=64.16%]
+ 49%|████▉     | 39/79 [04:46<04:56,  7.40s/it, acc=64.16%]
+ 49%|████▉     | 39/79 [04:53<04:56,  7.40s/it, acc=64.22%]
+ 51%|█████     | 40/79 [04:53<04:47,  7.36s/it, acc=64.22%]
+ 51%|█████     | 40/79 [05:01<04:47,  7.36s/it, acc=64.42%]
+ 52%|█████▏    | 41/79 [05:01<04:41,  7.40s/it, acc=64.42%]
+ 52%|█████▏    | 41/79 [05:08<04:41,  7.40s/it, acc=64.40%]
+ 53%|█████▎    | 42/79 [05:08<04:32,  7.36s/it, acc=64.40%]
+ 53%|█████▎    | 42/79 [05:16<04:32,  7.36s/it, acc=64.37%]
+ 54%|█████▍    | 43/79 [05:16<04:26,  7.40s/it, acc=64.37%]
+ 54%|█████▍    | 43/79 [05:23<04:26,  7.40s/it, acc=64.42%]
+ 56%|█████▌    | 44/79 [05:23<04:17,  7.36s/it, acc=64.42%]
+ 56%|█████▌    | 44/79 [05:30<04:17,  7.36s/it, acc=64.39%]
+ 57%|█████▋    | 45/79 [05:30<04:11,  7.40s/it, acc=64.39%]
+ 57%|█████▋    | 45/79 [05:38<04:11,  7.40s/it, acc=64.50%]
+ 58%|█████▊    | 46/79 [05:38<04:02,  7.36s/it, acc=64.50%]
+ 58%|█████▊    | 46/79 [05:45<04:02,  7.36s/it, acc=64.28%]
+ 59%|█████▉    | 47/79 [05:45<03:57,  7.41s/it, acc=64.28%]
+ 59%|█████▉    | 47/79 [05:52<03:57,  7.41s/it, acc=64.23%]
+ 61%|██████    | 48/79 [05:52<03:48,  7.36s/it, acc=64.23%]
+ 61%|██████    | 48/79 [06:00<03:48,  7.36s/it, acc=64.16%]
+ 62%|██████▏   | 49/79 [06:00<03:42,  7.40s/it, acc=64.16%]
+ 62%|██████▏   | 49/79 [06:07<03:42,  7.40s/it, acc=64.19%]
+ 63%|██████▎   | 50/79 [06:07<03:33,  7.36s/it, acc=64.19%]
+ 63%|██████▎   | 50/79 [06:15<03:33,  7.36s/it, acc=64.08%]
+ 65%|██████▍   | 51/79 [06:15<03:27,  7.40s/it, acc=64.08%]
+ 65%|██████▍   | 51/79 [06:22<03:27,  7.40s/it, acc=64.03%]
+ 66%|██████▌   | 52/79 [06:22<03:18,  7.36s/it, acc=64.03%]
+ 66%|██████▌   | 52/79 [06:29<03:18,  7.36s/it, acc=64.06%]
+ 67%|██████▋   | 53/79 [06:29<03:12,  7.41s/it, acc=64.06%]
+ 67%|██████▋   | 53/79 [06:37<03:12,  7.41s/it, acc=64.12%]
+ 68%|██████▊   | 54/79 [06:37<03:03,  7.36s/it, acc=64.12%]
+ 68%|██████▊   | 54/79 [06:44<03:03,  7.36s/it, acc=64.16%]
+ 70%|██████▉   | 55/79 [06:44<02:57,  7.41s/it, acc=64.16%]
+ 70%|██████▉   | 55/79 [06:51<02:57,  7.41s/it, acc=64.09%]
+ 71%|███████   | 56/79 [06:51<02:49,  7.36s/it, acc=64.09%]
+ 71%|███████   | 56/79 [06:59<02:49,  7.36s/it, acc=64.21%]
+ 72%|███████▏  | 57/79 [06:59<02:42,  7.41s/it, acc=64.21%]
+ 72%|███████▏  | 57/79 [07:06<02:42,  7.41s/it, acc=64.16%]
+ 73%|███████▎  | 58/79 [07:06<02:34,  7.36s/it, acc=64.16%]
+ 73%|███████▎  | 58/79 [07:14<02:34,  7.36s/it, acc=64.18%]
+ 75%|███████▍  | 59/79 [07:14<02:28,  7.41s/it, acc=64.18%]
+ 75%|███████▍  | 59/79 [07:21<02:28,  7.41s/it, acc=64.09%]
+ 76%|███████▌  | 60/79 [07:21<02:19,  7.36s/it, acc=64.09%]
+ 76%|███████▌  | 60/79 [07:28<02:19,  7.36s/it, acc=64.04%]
+ 77%|███████▋  | 61/79 [07:28<02:13,  7.41s/it, acc=64.04%]
+ 77%|███████▋  | 61/79 [07:36<02:13,  7.41s/it, acc=63.97%]
+ 78%|███████▊  | 62/79 [07:36<02:05,  7.36s/it, acc=63.97%]
+ 78%|███████▊  | 62/79 [07:43<02:05,  7.36s/it, acc=63.96%]
+ 80%|███████▉  | 63/79 [07:43<01:58,  7.42s/it, acc=63.96%]
+ 80%|███████▉  | 63/79 [07:50<01:58,  7.42s/it, acc=63.92%]
+ 81%|████████  | 64/79 [07:50<01:50,  7.35s/it, acc=63.92%]
+ 81%|████████  | 64/79 [07:58<01:50,  7.35s/it, acc=63.86%]
+ 82%|████████▏ | 65/79 [07:58<01:43,  7.41s/it, acc=63.86%]
+ 82%|████████▏ | 65/79 [08:05<01:43,  7.41s/it, acc=63.93%]
+ 84%|████████▎ | 66/79 [08:05<01:35,  7.35s/it, acc=63.93%]
+ 84%|████████▎ | 66/79 [08:13<01:35,  7.35s/it, acc=64.04%]
+ 85%|████████▍ | 67/79 [08:13<01:28,  7.41s/it, acc=64.04%]
+ 85%|████████▍ | 67/79 [08:20<01:28,  7.41s/it, acc=64.01%]
+ 86%|████████▌ | 68/79 [08:20<01:20,  7.36s/it, acc=64.01%]
+ 86%|████████▌ | 68/79 [08:28<01:20,  7.36s/it, acc=63.95%]
+ 87%|████████▋ | 69/79 [08:28<01:14,  7.42s/it, acc=63.95%]
+ 87%|████████▋ | 69/79 [08:35<01:14,  7.42s/it, acc=63.98%]
+ 89%|████████▊ | 70/79 [08:35<01:06,  7.36s/it, acc=63.98%]
+ 89%|████████▊ | 70/79 [08:42<01:06,  7.36s/it, acc=63.94%]
+ 90%|████████▉ | 71/79 [08:42<00:59,  7.41s/it, acc=63.94%]
+ 90%|████████▉ | 71/79 [08:50<00:59,  7.41s/it, acc=63.98%]
+ 91%|█████████ | 72/79 [08:50<00:51,  7.35s/it, acc=63.98%]
+ 91%|█████████ | 72/79 [08:57<00:51,  7.35s/it, acc=63.90%]
+ 92%|█████████▏| 73/79 [08:57<00:44,  7.41s/it, acc=63.90%]
+ 92%|█████████▏| 73/79 [09:04<00:44,  7.41s/it, acc=63.87%]
+ 94%|█████████▎| 74/79 [09:04<00:36,  7.35s/it, acc=63.87%]
+ 94%|█████████▎| 74/79 [09:12<00:36,  7.35s/it, acc=63.91%]
+ 95%|█████████▍| 75/79 [09:12<00:29,  7.41s/it, acc=63.91%]
+ 95%|█████████▍| 75/79 [09:19<00:29,  7.41s/it, acc=63.94%]
+ 96%|█████████▌| 76/79 [09:19<00:22,  7.35s/it, acc=63.94%]
+ 96%|█████████▌| 76/79 [09:27<00:22,  7.35s/it, acc=63.99%]
+ 97%|█████████▋| 77/79 [09:27<00:14,  7.41s/it, acc=63.99%]
+ 97%|█████████▋| 77/79 [09:34<00:14,  7.41s/it, acc=63.96%]
+ 99%|█████████▊| 78/79 [09:34<00:07,  7.34s/it, acc=63.96%]
+ 99%|█████████▊| 78/79 [09:38<00:07,  7.34s/it, acc=63.96%]
+100%|██████████| 79/79 [09:38<00:00,  6.35s/it, acc=63.96%]
+100%|██████████| 79/79 [09:38<00:00,  7.32s/it, acc=63.96%]
+ABLATION_RESULT case=coupler_only trial_index=2 accuracy=63.96000000
+Test Accuracy at noise level {0: 0.0, 15: 0.181, 14: 0.179, 13: 0.177, 12: 0.175, 11: 0.172, 10: 0.169, 9: 0.165, 8: 0.16, 7: 0.153, 6: 0.142, 5: 0.125, 4: 0.1, 3: 0.072, 2: 0.105, 1: 0.342} thermal noise eps None: 63.96%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260724, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260724}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': False, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:05<?, ?it/s, acc=70.31%]
+  1%|▏         | 1/79 [00:05<07:25,  5.71s/it, acc=70.31%]
+  1%|▏         | 1/79 [00:12<07:25,  5.71s/it, acc=66.41%]
+  3%|▎         | 2/79 [00:12<08:20,  6.50s/it, acc=66.41%]
+  3%|▎         | 2/79 [00:20<08:20,  6.50s/it, acc=64.58%]
+  4%|▍         | 3/79 [00:20<08:44,  6.90s/it, acc=64.58%]
+  4%|▍         | 3/79 [00:27<08:44,  6.90s/it, acc=64.06%]
+  5%|▌         | 4/79 [00:27<08:51,  7.09s/it, acc=64.06%]
+  5%|▌         | 4/79 [00:34<08:51,  7.09s/it, acc=62.50%]
+  6%|▋         | 5/79 [00:34<08:52,  7.19s/it, acc=62.50%]
+  6%|▋         | 5/79 [00:42<08:52,  7.19s/it, acc=63.41%]
+  8%|▊         | 6/79 [00:42<08:50,  7.26s/it, acc=63.41%]
+  8%|▊         | 6/79 [00:49<08:50,  7.26s/it, acc=63.50%]
+  9%|▉         | 7/79 [00:49<08:45,  7.30s/it, acc=63.50%]
+  9%|▉         | 7/79 [00:57<08:45,  7.30s/it, acc=62.30%]
+ 10%|█         | 8/79 [00:57<08:40,  7.33s/it, acc=62.30%]
+ 10%|█         | 8/79 [01:04<08:40,  7.33s/it, acc=63.02%]
+ 11%|█▏        | 9/79 [01:04<08:33,  7.34s/it, acc=63.02%]
+ 11%|█▏        | 9/79 [01:11<08:33,  7.34s/it, acc=63.75%]
+ 13%|█▎        | 10/79 [01:11<08:27,  7.36s/it, acc=63.75%]
+ 13%|█▎        | 10/79 [01:19<08:27,  7.36s/it, acc=63.64%]
+ 14%|█▍        | 11/79 [01:19<08:20,  7.36s/it, acc=63.64%]
+ 14%|█▍        | 11/79 [01:26<08:20,  7.36s/it, acc=63.87%]
+ 15%|█▌        | 12/79 [01:26<08:13,  7.37s/it, acc=63.87%]
+ 15%|█▌        | 12/79 [01:33<08:13,  7.37s/it, acc=63.76%]
+ 16%|█▋        | 13/79 [01:33<08:06,  7.37s/it, acc=63.76%]
+ 16%|█▋        | 13/79 [01:41<08:06,  7.37s/it, acc=63.50%]
+ 18%|█▊        | 14/79 [01:41<07:59,  7.38s/it, acc=63.50%]
+ 18%|█▊        | 14/79 [01:48<07:59,  7.38s/it, acc=63.80%]
+ 19%|█▉        | 15/79 [01:48<07:51,  7.37s/it, acc=63.80%]
+ 19%|█▉        | 15/79 [01:56<07:51,  7.37s/it, acc=64.06%]
+ 20%|██        | 16/79 [01:56<07:45,  7.38s/it, acc=64.06%]
+ 20%|██        | 16/79 [02:03<07:45,  7.38s/it, acc=64.43%]
+ 22%|██▏       | 17/79 [02:03<07:37,  7.38s/it, acc=64.43%]
+ 22%|██▏       | 17/79 [02:10<07:37,  7.38s/it, acc=64.32%]
+ 23%|██▎       | 18/79 [02:10<07:30,  7.38s/it, acc=64.32%]
+ 23%|██▎       | 18/79 [02:18<07:30,  7.38s/it, acc=64.10%]
+ 24%|██▍       | 19/79 [02:18<07:22,  7.38s/it, acc=64.10%]
+ 24%|██▍       | 19/79 [02:25<07:22,  7.38s/it, acc=64.45%]
+ 25%|██▌       | 20/79 [02:25<07:15,  7.39s/it, acc=64.45%]
+ 25%|██▌       | 20/79 [02:33<07:15,  7.39s/it, acc=64.32%]
+ 27%|██▋       | 21/79 [02:33<07:07,  7.38s/it, acc=64.32%]
+ 27%|██▋       | 21/79 [02:40<07:07,  7.38s/it, acc=64.38%]
+ 28%|██▊       | 22/79 [02:40<07:01,  7.39s/it, acc=64.38%]
+ 28%|██▊       | 22/79 [02:47<07:01,  7.39s/it, acc=64.20%]
+ 29%|██▉       | 23/79 [02:47<06:53,  7.38s/it, acc=64.20%]
+ 29%|██▉       | 23/79 [02:55<06:53,  7.38s/it, acc=63.77%]
+ 30%|███       | 24/79 [02:55<06:46,  7.39s/it, acc=63.77%]
+ 30%|███       | 24/79 [03:02<06:46,  7.39s/it, acc=63.97%]
+ 32%|███▏      | 25/79 [03:02<06:38,  7.38s/it, acc=63.97%]
+ 32%|███▏      | 25/79 [03:09<06:38,  7.38s/it, acc=63.85%]
+ 33%|███▎      | 26/79 [03:09<06:31,  7.38s/it, acc=63.85%]
+ 33%|███▎      | 26/79 [03:17<06:31,  7.38s/it, acc=63.77%]
+ 34%|███▍      | 27/79 [03:17<06:23,  7.38s/it, acc=63.77%]
+ 34%|███▍      | 27/79 [03:24<06:23,  7.38s/it, acc=63.67%]
+ 35%|███▌      | 28/79 [03:24<06:16,  7.39s/it, acc=63.67%]
+ 35%|███▌      | 28/79 [03:32<06:16,  7.39s/it, acc=63.42%]
+ 37%|███▋      | 29/79 [03:32<06:08,  7.37s/it, acc=63.42%]
+ 37%|███▋      | 29/79 [03:39<06:08,  7.37s/it, acc=63.85%]
+ 38%|███▊      | 30/79 [03:39<06:01,  7.39s/it, acc=63.85%]
+ 38%|███▊      | 30/79 [03:46<06:01,  7.39s/it, acc=63.81%]
+ 39%|███▉      | 31/79 [03:46<05:53,  7.37s/it, acc=63.81%]
+ 39%|███▉      | 31/79 [03:54<05:53,  7.37s/it, acc=63.87%]
+ 41%|████      | 32/79 [03:54<05:47,  7.38s/it, acc=63.87%]
+ 41%|████      | 32/79 [04:01<05:47,  7.38s/it, acc=63.64%]
+ 42%|████▏     | 33/79 [04:01<05:39,  7.37s/it, acc=63.64%]
+ 42%|████▏     | 33/79 [04:08<05:39,  7.37s/it, acc=63.67%]
+ 43%|████▎     | 34/79 [04:08<05:32,  7.38s/it, acc=63.67%]
+ 43%|████▎     | 34/79 [04:16<05:32,  7.38s/it, acc=63.75%]
+ 44%|████▍     | 35/79 [04:16<05:24,  7.37s/it, acc=63.75%]
+ 44%|████▍     | 35/79 [04:23<05:24,  7.37s/it, acc=63.80%]
+ 46%|████▌     | 36/79 [04:23<05:17,  7.38s/it, acc=63.80%]
+ 46%|████▌     | 36/79 [04:31<05:17,  7.38s/it, acc=63.75%]
+ 47%|████▋     | 37/79 [04:31<05:09,  7.37s/it, acc=63.75%]
+ 47%|████▋     | 37/79 [04:38<05:09,  7.37s/it, acc=63.71%]
+ 48%|████▊     | 38/79 [04:38<05:02,  7.38s/it, acc=63.71%]
+ 48%|████▊     | 38/79 [04:45<05:02,  7.38s/it, acc=63.72%]
+ 49%|████▉     | 39/79 [04:45<04:54,  7.37s/it, acc=63.72%]
+ 49%|████▉     | 39/79 [04:53<04:54,  7.37s/it, acc=63.77%]
+ 51%|█████     | 40/79 [04:53<04:47,  7.38s/it, acc=63.77%]
+ 51%|█████     | 40/79 [05:00<04:47,  7.38s/it, acc=63.91%]
+ 52%|█████▏    | 41/79 [05:00<04:40,  7.37s/it, acc=63.91%]
+ 52%|█████▏    | 41/79 [05:07<04:40,  7.37s/it, acc=63.88%]
+ 53%|█████▎    | 42/79 [05:07<04:33,  7.38s/it, acc=63.88%]
+ 53%|█████▎    | 42/79 [05:15<04:33,  7.38s/it, acc=63.90%]
+ 54%|█████▍    | 43/79 [05:15<04:25,  7.37s/it, acc=63.90%]
+ 54%|█████▍    | 43/79 [05:22<04:25,  7.37s/it, acc=63.97%]
+ 56%|█████▌    | 44/79 [05:22<04:18,  7.38s/it, acc=63.97%]
+ 56%|█████▌    | 44/79 [05:30<04:18,  7.38s/it, acc=64.01%]
+ 57%|█████▋    | 45/79 [05:30<04:10,  7.37s/it, acc=64.01%]
+ 57%|█████▋    | 45/79 [05:37<04:10,  7.37s/it, acc=64.16%]
+ 58%|█████▊    | 46/79 [05:37<04:03,  7.38s/it, acc=64.16%]
+ 58%|█████▊    | 46/79 [05:44<04:03,  7.38s/it, acc=63.91%]
+ 59%|█████▉    | 47/79 [05:44<03:55,  7.37s/it, acc=63.91%]
+ 59%|█████▉    | 47/79 [05:52<03:55,  7.37s/it, acc=63.88%]
+ 61%|██████    | 48/79 [05:52<03:48,  7.38s/it, acc=63.88%]
+ 61%|██████    | 48/79 [05:59<03:48,  7.38s/it, acc=63.79%]
+ 62%|██████▏   | 49/79 [05:59<03:41,  7.37s/it, acc=63.79%]
+ 62%|██████▏   | 49/79 [06:06<03:41,  7.37s/it, acc=63.88%]
+ 63%|██████▎   | 50/79 [06:06<03:33,  7.38s/it, acc=63.88%]
+ 63%|██████▎   | 50/79 [06:14<03:33,  7.38s/it, acc=63.77%]
+ 65%|██████▍   | 51/79 [06:14<03:26,  7.37s/it, acc=63.77%]
+ 65%|██████▍   | 51/79 [06:21<03:26,  7.37s/it, acc=63.81%]
+ 66%|██████▌   | 52/79 [06:21<03:19,  7.38s/it, acc=63.81%]
+ 66%|██████▌   | 52/79 [06:29<03:19,  7.38s/it, acc=63.81%]
+ 67%|██████▋   | 53/79 [06:29<03:11,  7.38s/it, acc=63.81%]
+ 67%|██████▋   | 53/79 [06:36<03:11,  7.38s/it, acc=63.92%]
+ 68%|██████▊   | 54/79 [06:36<03:04,  7.38s/it, acc=63.92%]
+ 68%|██████▊   | 54/79 [06:43<03:04,  7.38s/it, acc=63.93%]
+ 70%|██████▉   | 55/79 [06:43<02:57,  7.38s/it, acc=63.93%]
+ 70%|██████▉   | 55/79 [06:51<02:57,  7.38s/it, acc=63.91%]
+ 71%|███████   | 56/79 [06:51<02:49,  7.38s/it, acc=63.91%]
+ 71%|███████   | 56/79 [06:58<02:49,  7.38s/it, acc=63.97%]
+ 72%|███████▏  | 57/79 [06:58<02:42,  7.38s/it, acc=63.97%]
+ 72%|███████▏  | 57/79 [07:06<02:42,  7.38s/it, acc=63.89%]
+ 73%|███████▎  | 58/79 [07:06<02:35,  7.39s/it, acc=63.89%]
+ 73%|███████▎  | 58/79 [07:13<02:35,  7.39s/it, acc=63.93%]
+ 75%|███████▍  | 59/79 [07:13<02:27,  7.38s/it, acc=63.93%]
+ 75%|███████▍  | 59/79 [07:20<02:27,  7.38s/it, acc=63.79%]
+ 76%|███████▌  | 60/79 [07:20<02:20,  7.39s/it, acc=63.79%]
+ 76%|███████▌  | 60/79 [07:28<02:20,  7.39s/it, acc=63.73%]
+ 77%|███████▋  | 61/79 [07:28<02:12,  7.38s/it, acc=63.73%]
+ 77%|███████▋  | 61/79 [07:35<02:12,  7.38s/it, acc=63.72%]
+ 78%|███████▊  | 62/79 [07:35<02:05,  7.39s/it, acc=63.72%]
+ 78%|███████▊  | 62/79 [07:42<02:05,  7.39s/it, acc=63.65%]
+ 80%|███████▉  | 63/79 [07:42<01:58,  7.39s/it, acc=63.65%]
+ 80%|███████▉  | 63/79 [07:50<01:58,  7.39s/it, acc=63.67%]
+ 81%|████████  | 64/79 [07:50<01:50,  7.38s/it, acc=63.67%]
+ 81%|████████  | 64/79 [07:57<01:50,  7.38s/it, acc=63.73%]
+ 82%|████████▏ | 65/79 [07:57<01:43,  7.38s/it, acc=63.73%]
+ 82%|████████▏ | 65/79 [08:05<01:43,  7.38s/it, acc=63.79%]
+ 84%|████████▎ | 66/79 [08:05<01:35,  7.38s/it, acc=63.79%]
+ 84%|████████▎ | 66/79 [08:12<01:35,  7.38s/it, acc=63.98%]
+ 85%|████████▍ | 67/79 [08:12<01:28,  7.38s/it, acc=63.98%]
+ 85%|████████▍ | 67/79 [08:19<01:28,  7.38s/it, acc=63.95%]
+ 86%|████████▌ | 68/79 [08:19<01:21,  7.38s/it, acc=63.95%]
+ 86%|████████▌ | 68/79 [08:27<01:21,  7.38s/it, acc=63.95%]
+ 87%|████████▋ | 69/79 [08:27<01:13,  7.39s/it, acc=63.95%]
+ 87%|████████▋ | 69/79 [08:34<01:13,  7.39s/it, acc=64.03%]
+ 89%|████████▊ | 70/79 [08:34<01:06,  7.39s/it, acc=64.03%]
+ 89%|████████▊ | 70/79 [08:42<01:06,  7.39s/it, acc=64.00%]
+ 90%|████████▉ | 71/79 [08:42<00:59,  7.38s/it, acc=64.00%]
+ 90%|████████▉ | 71/79 [08:48<00:59,  7.38s/it, acc=64.03%]
+ 91%|█████████ | 72/79 [08:48<00:50,  7.16s/it, acc=64.03%]
+ 91%|█████████ | 72/79 [08:55<00:50,  7.16s/it, acc=64.02%]
+ 92%|█████████▏| 73/79 [08:55<00:41,  6.95s/it, acc=64.02%]
+ 92%|█████████▏| 73/79 [09:01<00:41,  6.95s/it, acc=63.99%]
+ 94%|█████████▎| 74/79 [09:01<00:33,  6.79s/it, acc=63.99%]
+ 94%|█████████▎| 74/79 [09:07<00:33,  6.79s/it, acc=64.02%]
+ 95%|█████████▍| 75/79 [09:07<00:26,  6.68s/it, acc=64.02%]
+ 95%|█████████▍| 75/79 [09:14<00:26,  6.68s/it, acc=63.95%]
+ 96%|█████████▌| 76/79 [09:14<00:20,  6.73s/it, acc=63.95%]
+ 96%|█████████▌| 76/79 [09:22<00:20,  6.73s/it, acc=63.98%]
+ 97%|█████████▋| 77/79 [09:22<00:13,  6.90s/it, acc=63.98%]
+ 97%|█████████▋| 77/79 [09:29<00:13,  6.90s/it, acc=63.94%]
+ 99%|█████████▊| 78/79 [09:29<00:06,  6.96s/it, acc=63.94%]
+ 99%|█████████▊| 78/79 [09:33<00:06,  6.96s/it, acc=63.95%]
+100%|██████████| 79/79 [09:33<00:00,  6.04s/it, acc=63.95%]
+100%|██████████| 79/79 [09:33<00:00,  7.25s/it, acc=63.95%]
+ABLATION_RESULT case=coupler_only trial_index=3 accuracy=63.95000000
+Test Accuracy at noise level {0: 0.0, 15: 0.181, 14: 0.179, 13: 0.177, 12: 0.175, 11: 0.172, 10: 0.169, 9: 0.165, 8: 0.16, 7: 0.153, 6: 0.142, 5: 0.125, 4: 0.1, 3: 0.072, 2: 0.105, 1: 0.342} thermal noise eps None: 63.95%
+----- Using :PCNetNoBatchNorm model -----
+WARNING:root:Drop the first BN layer
+Replacing all transposed conv with conv
+WARNING:root:PcConv converted to ODEBlock, ode_params={'ode_block': <class 'ode_pc.TogglePulseODEXInitFFFB'>, 't_end': 1.75, 'method': 'dopri5', 'tol': 1e-06, 'ts_scale': 1, 'n_steps': 100.0, 'return_init': [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 'switch_period': 7e-08, 'n_iters': 2, 'i_leak': 1e-09, 'sde_noise_type': 'mul', 'mismatch_type': 'mul', 'patch_node': 8, 'patch_stride': 8, 'patch_cycle': 1, 'patch_pad': 0, 'fold_scalar': 1, 'toggle_n_cycles': 5, 'toggle_time_split': 0.5, 'toggle_fast_path': True, 'enable_spin_variation': False, 'sigma_spin': 0.1, 'spin_variation_seed': 20260725, 'enable_summing_current_noise': False, 'summing_current_p': 1.273e-11, 'summing_noise_seed': 20260725}
+WARNING:root:ODEBlock in network wrapped, ode_wrapper_params={'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': False, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+WARNING:root:name: PcConvs.0.FFconv.weight, clean params mean: -0.09537037461996078, median: -0.06666667014360428, min: -1.0, max: 0.2666666805744171
+WARNING:root:name: PcConvs.0.FBconv.weight, clean params mean: -0.0431327149271965, median: -0.06666667014360428, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.0.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.1.FFconv.weight, clean params mean: -0.019868826493620872, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.1.FBconv.weight, clean params mean: -0.008551955223083496, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.1.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.2.FFconv.weight, clean params mean: -0.00765174999833107, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.FBconv.weight, clean params mean: 0.0006301437388174236, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.2.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.3.FFconv.weight, clean params mean: -0.005426954943686724, median: 0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.3.FBconv.weight, clean params mean: 0.007201645988970995, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.3.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.4.FFconv.weight, clean params mean: -0.0029706794302910566, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.4.FBconv.weight, clean params mean: 0.008461934514343739, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.4.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.5.FFconv.weight, clean params mean: 0.001015946501865983, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.5.FBconv.weight, clean params mean: 0.0060056583024561405, median: -0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.5.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.6.FFconv.weight, clean params mean: 0.0006140687619335949, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.6.FBconv.weight, clean params mean: 0.004793595522642136, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.6.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.7.FFconv.weight, clean params mean: 0.002716692630201578, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.7.FBconv.weight, clean params mean: 0.003954474814236164, median: 0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.7.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.8.FFconv.weight, clean params mean: -0.004128086380660534, median: -0.0, min: -0.800000011920929, max: 1.0
+WARNING:root:name: PcConvs.8.FBconv.weight, clean params mean: 0.012638244777917862, median: 0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.8.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.9.FFconv.weight, clean params mean: -0.007172711193561554, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.9.FBconv.weight, clean params mean: 0.010873199440538883, median: -0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.9.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.10.FFconv.weight, clean params mean: -0.00072980992263183, median: -0.0, min: -1.0, max: 0.7333333492279053
+WARNING:root:name: PcConvs.10.FBconv.weight, clean params mean: 0.010927855037152767, median: 0.0, min: -0.7333333492279053, max: 1.0
+WARNING:root:name: PcConvs.10.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.11.FFconv.weight, clean params mean: 0.003681198228150606, median: -0.0, min: -0.8666666746139526, max: 1.0
+WARNING:root:name: PcConvs.11.FBconv.weight, clean params mean: 0.005353009328246117, median: 0.0, min: -1.0, max: 0.9333333373069763
+WARNING:root:name: PcConvs.11.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.12.FFconv.weight, clean params mean: -0.00041634502122178674, median: 0.0, min: -1.0, max: 0.8666666746139526
+WARNING:root:name: PcConvs.12.FBconv.weight, clean params mean: 0.0049913194961845875, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.12.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.13.FFconv.weight, clean params mean: -0.009022955782711506, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.13.FBconv.weight, clean params mean: 0.015862109139561653, median: 0.0, min: -1.0, max: 1.0
+WARNING:root:name: PcConvs.13.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.14.FFconv.weight, clean params mean: -0.003322723787277937, median: 0.0, min: -1.0, max: 0.800000011920929
+WARNING:root:name: PcConvs.14.FBconv.weight, clean params mean: 0.02038162387907505, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.14.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: PcConvs.15.FFconv.weight, clean params mean: 0.008640368469059467, median: -0.0, min: -1.0, max: 0.6000000238418579
+WARNING:root:name: PcConvs.15.FBconv.weight, clean params mean: -0.002095390111207962, median: -0.0, min: -0.9333333373069763, max: 1.0
+WARNING:root:name: PcConvs.15.b0.0, clean params mean: 0.0, median: 0.0, min: 0.0, max: 0.0
+WARNING:root:name: linear.weight, clean params mean: -0.0070163109339773655, median: -0.08245333284139633, min: -0.4270583391189575, max: 0.8377830982208252
+WARNING:root:name: linear.bias, clean params mean: -0.002159359399229288, median: -0.011764620430767536, min: -0.23566970229148865, max: 0.19391556084156036
+WARNING:root:----- Model loaded -----
+WARNING:root:Unroll or load expanded weights finished
+
+  0%|          | 0/79 [00:00<?, ?it/s]
+  0%|          | 0/79 [00:05<?, ?it/s, acc=73.44%]
+  1%|▏         | 1/79 [00:05<07:30,  5.78s/it, acc=73.44%]
+  1%|▏         | 1/79 [00:12<07:30,  5.78s/it, acc=68.75%]
+  3%|▎         | 2/79 [00:12<08:08,  6.35s/it, acc=68.75%]
+  3%|▎         | 2/79 [00:20<08:08,  6.35s/it, acc=65.62%]
+  4%|▍         | 3/79 [00:20<08:41,  6.86s/it, acc=65.62%]
+  4%|▍         | 3/79 [00:27<08:41,  6.86s/it, acc=65.04%]
+  5%|▌         | 4/79 [00:27<08:46,  7.02s/it, acc=65.04%]
+  5%|▌         | 4/79 [00:34<08:46,  7.02s/it, acc=63.59%]
+  6%|▋         | 5/79 [00:34<08:52,  7.20s/it, acc=63.59%]
+  6%|▋         | 5/79 [00:42<08:52,  7.20s/it, acc=63.93%]
+  8%|▊         | 6/79 [00:42<08:47,  7.22s/it, acc=63.93%]
+  8%|▊         | 6/79 [00:49<08:47,  7.22s/it, acc=64.17%]
+  9%|▉         | 7/79 [00:49<08:45,  7.30s/it, acc=64.17%]
+  9%|▉         | 7/79 [00:56<08:45,  7.30s/it, acc=63.28%]
+ 10%|█         | 8/79 [00:56<08:38,  7.30s/it, acc=63.28%]
+ 10%|█         | 8/79 [01:04<08:38,  7.30s/it, acc=63.54%]
+ 11%|█▏        | 9/79 [01:04<08:35,  7.36s/it, acc=63.54%]
+ 11%|█▏        | 9/79 [01:11<08:35,  7.36s/it, acc=64.30%]
+ 13%|█▎        | 10/79 [01:11<08:26,  7.34s/it, acc=64.30%]
+ 13%|█▎        | 10/79 [01:19<08:26,  7.34s/it, acc=63.99%]
+ 14%|█▍        | 11/79 [01:19<08:21,  7.37s/it, acc=63.99%]
+ 14%|█▍        | 11/79 [01:26<08:21,  7.37s/it, acc=64.39%]
+ 15%|█▌        | 12/79 [01:26<08:12,  7.35s/it, acc=64.39%]
+ 15%|█▌        | 12/79 [01:33<08:12,  7.35s/it, acc=64.60%]
+ 16%|█▋        | 13/79 [01:33<08:07,  7.38s/it, acc=64.60%]
+ 16%|█▋        | 13/79 [01:41<08:07,  7.38s/it, acc=64.34%]
+ 18%|█▊        | 14/79 [01:41<07:58,  7.36s/it, acc=64.34%]
+ 18%|█▊        | 14/79 [01:48<07:58,  7.36s/it, acc=64.74%]
+ 19%|█▉        | 15/79 [01:48<07:52,  7.38s/it, acc=64.74%]
+ 19%|█▉        | 15/79 [01:55<07:52,  7.38s/it, acc=64.94%]
+ 20%|██        | 16/79 [01:55<07:43,  7.36s/it, acc=64.94%]
+ 20%|██        | 16/79 [02:03<07:43,  7.36s/it, acc=65.12%]
+ 22%|██▏       | 17/79 [02:03<07:37,  7.38s/it, acc=65.12%]
+ 22%|██▏       | 17/79 [02:10<07:37,  7.38s/it, acc=64.93%]
+ 23%|██▎       | 18/79 [02:10<07:29,  7.37s/it, acc=64.93%]
+ 23%|██▎       | 18/79 [02:18<07:29,  7.37s/it, acc=64.72%]
+ 24%|██▍       | 19/79 [02:18<07:23,  7.39s/it, acc=64.72%]
+ 24%|██▍       | 19/79 [02:25<07:23,  7.39s/it, acc=64.84%]
+ 25%|██▌       | 20/79 [02:25<07:14,  7.37s/it, acc=64.84%]
+ 25%|██▌       | 20/79 [02:32<07:14,  7.37s/it, acc=64.88%]
+ 27%|██▋       | 21/79 [02:32<07:08,  7.38s/it, acc=64.88%]
+ 27%|██▋       | 21/79 [02:40<07:08,  7.38s/it, acc=64.91%]
+ 28%|██▊       | 22/79 [02:40<07:00,  7.37s/it, acc=64.91%]
+ 28%|██▊       | 22/79 [02:47<07:00,  7.37s/it, acc=64.64%]
+ 29%|██▉       | 23/79 [02:47<06:53,  7.39s/it, acc=64.64%]
+ 29%|██▉       | 23/79 [02:54<06:53,  7.39s/it, acc=64.29%]
+ 30%|███       | 24/79 [02:54<06:45,  7.37s/it, acc=64.29%]
+ 30%|███       | 24/79 [03:02<06:45,  7.37s/it, acc=64.41%]
+ 32%|███▏      | 25/79 [03:02<06:39,  7.39s/it, acc=64.41%]
+ 32%|███▏      | 25/79 [03:09<06:39,  7.39s/it, acc=64.27%]
+ 33%|███▎      | 26/79 [03:09<06:30,  7.38s/it, acc=64.27%]
+ 33%|███▎      | 26/79 [03:17<06:30,  7.38s/it, acc=64.27%]
+ 34%|███▍      | 27/79 [03:17<06:23,  7.38s/it, acc=64.27%]
+ 34%|███▍      | 27/79 [03:24<06:23,  7.38s/it, acc=64.17%]
+ 35%|███▌      | 28/79 [03:24<06:16,  7.37s/it, acc=64.17%]
+ 35%|███▌      | 28/79 [03:31<06:16,  7.37s/it, acc=64.01%]
+ 37%|███▋      | 29/79 [03:31<06:09,  7.39s/it, acc=64.01%]
+ 37%|███▋      | 29/79 [03:39<06:09,  7.39s/it, acc=64.32%]
+ 38%|███▊      | 30/79 [03:39<06:01,  7.38s/it, acc=64.32%]
+ 38%|███▊      | 30/79 [03:46<06:01,  7.38s/it, acc=64.34%]
+ 39%|███▉      | 31/79 [03:46<05:54,  7.38s/it, acc=64.34%]
+ 39%|███▉      | 31/79 [03:53<05:54,  7.38s/it, acc=64.48%]
+ 41%|████      | 32/79 [03:53<05:46,  7.38s/it, acc=64.48%]
+ 41%|████      | 32/79 [04:01<05:46,  7.38s/it, acc=64.25%]
+ 42%|████▏     | 33/79 [04:01<05:39,  7.38s/it, acc=64.25%]
+ 42%|████▏     | 33/79 [04:08<05:39,  7.38s/it, acc=64.27%]
+ 43%|████▎     | 34/79 [04:08<05:31,  7.38s/it, acc=64.27%]
+ 43%|████▎     | 34/79 [04:16<05:31,  7.38s/it, acc=64.49%]
+ 44%|████▍     | 35/79 [04:16<05:24,  7.39s/it, acc=64.49%]
+ 44%|████▍     | 35/79 [04:23<05:24,  7.39s/it, acc=64.54%]
+ 46%|████▌     | 36/79 [04:23<05:17,  7.38s/it, acc=64.54%]
+ 46%|████▌     | 36/79 [04:30<05:17,  7.38s/it, acc=64.55%]
+ 47%|████▋     | 37/79 [04:30<05:10,  7.39s/it, acc=64.55%]
+ 47%|████▋     | 37/79 [04:38<05:10,  7.39s/it, acc=64.60%]
+ 48%|████▊     | 38/79 [04:38<05:02,  7.38s/it, acc=64.60%]
+ 48%|████▊     | 38/79 [04:45<05:02,  7.38s/it, acc=64.66%]
+ 49%|████▉     | 39/79 [04:45<04:55,  7.38s/it, acc=64.66%]
+ 49%|████▉     | 39/79 [04:52<04:55,  7.38s/it, acc=64.77%]
+ 51%|█████     | 40/79 [04:52<04:47,  7.37s/it, acc=64.77%]
+ 51%|█████     | 40/79 [05:00<04:47,  7.37s/it, acc=64.90%]
+ 52%|█████▏    | 41/79 [05:00<04:40,  7.38s/it, acc=64.90%]
+ 52%|█████▏    | 41/79 [05:07<04:40,  7.38s/it, acc=64.81%]
+ 53%|█████▎    | 42/79 [05:07<04:32,  7.38s/it, acc=64.81%]
+ 53%|█████▎    | 42/79 [05:15<04:32,  7.38s/it, acc=64.90%]
+ 54%|█████▍    | 43/79 [05:15<04:25,  7.37s/it, acc=64.90%]
+ 54%|█████▍    | 43/79 [05:22<04:25,  7.37s/it, acc=64.86%]
+ 56%|█████▌    | 44/79 [05:22<04:18,  7.37s/it, acc=64.86%]
+ 56%|█████▌    | 44/79 [05:29<04:18,  7.37s/it, acc=64.93%]
+ 57%|█████▋    | 45/79 [05:29<04:10,  7.38s/it, acc=64.93%]
+ 57%|█████▋    | 45/79 [05:37<04:10,  7.38s/it, acc=65.05%]
+ 58%|█████▊    | 46/79 [05:37<04:03,  7.38s/it, acc=65.05%]
+ 58%|█████▊    | 46/79 [05:44<04:03,  7.38s/it, acc=64.88%]
+ 59%|█████▉    | 47/79 [05:44<03:56,  7.38s/it, acc=64.88%]
+ 59%|█████▉    | 47/79 [05:52<03:56,  7.38s/it, acc=64.79%]
+ 61%|██████    | 48/79 [05:52<03:48,  7.38s/it, acc=64.79%]
+ 61%|██████    | 48/79 [05:59<03:48,  7.38s/it, acc=64.70%]
+ 62%|██████▏   | 49/79 [05:59<03:41,  7.38s/it, acc=64.70%]
+ 62%|██████▏   | 49/79 [06:06<03:41,  7.38s/it, acc=64.77%]
+ 63%|██████▎   | 50/79 [06:06<03:33,  7.38s/it, acc=64.77%]
+ 63%|██████▎   | 50/79 [06:14<03:33,  7.38s/it, acc=64.72%]
+ 65%|██████▍   | 51/79 [06:14<03:26,  7.38s/it, acc=64.72%]
+ 65%|██████▍   | 51/79 [06:21<03:26,  7.38s/it, acc=64.65%]
+ 66%|██████▌   | 52/79 [06:21<03:19,  7.37s/it, acc=64.65%]
+ 66%|██████▌   | 52/79 [06:28<03:19,  7.37s/it, acc=64.64%]
+ 67%|██████▋   | 53/79 [06:28<03:11,  7.38s/it, acc=64.64%]
+ 67%|██████▋   | 53/79 [06:36<03:11,  7.38s/it, acc=64.66%]
+ 68%|██████▊   | 54/79 [06:36<03:04,  7.38s/it, acc=64.66%]
+ 68%|██████▊   | 54/79 [06:43<03:04,  7.38s/it, acc=64.67%]
+ 70%|██████▉   | 55/79 [06:43<02:57,  7.39s/it, acc=64.67%]
+ 70%|██████▉   | 55/79 [06:51<02:57,  7.39s/it, acc=64.61%]
+ 71%|███████   | 56/79 [06:51<02:49,  7.38s/it, acc=64.61%]
+ 71%|███████   | 56/79 [06:58<02:49,  7.38s/it, acc=64.68%]
+ 72%|███████▏  | 57/79 [06:58<02:42,  7.39s/it, acc=64.68%]
+ 72%|███████▏  | 57/79 [07:05<02:42,  7.39s/it, acc=64.60%]
+ 73%|███████▎  | 58/79 [07:05<02:35,  7.38s/it, acc=64.60%]
+ 73%|███████▎  | 58/79 [07:13<02:35,  7.38s/it, acc=64.65%]
+ 75%|███████▍  | 59/79 [07:13<02:27,  7.39s/it, acc=64.65%]
+ 75%|███████▍  | 59/79 [07:20<02:27,  7.39s/it, acc=64.58%]
+ 76%|███████▌  | 60/79 [07:20<02:20,  7.38s/it, acc=64.58%]
+ 76%|███████▌  | 60/79 [07:27<02:20,  7.38s/it, acc=64.54%]
+ 77%|███████▋  | 61/79 [07:27<02:12,  7.38s/it, acc=64.54%]
+ 77%|███████▋  | 61/79 [07:35<02:12,  7.38s/it, acc=64.49%]
+ 78%|███████▊  | 62/79 [07:35<02:05,  7.38s/it, acc=64.49%]
+ 78%|███████▊  | 62/79 [07:42<02:05,  7.38s/it, acc=64.47%]
+ 80%|███████▉  | 63/79 [07:42<01:58,  7.39s/it, acc=64.47%]
+ 80%|███████▉  | 63/79 [07:50<01:58,  7.39s/it, acc=64.45%]
+ 81%|████████  | 64/79 [07:50<01:50,  7.38s/it, acc=64.45%]
+ 81%|████████  | 64/79 [07:57<01:50,  7.38s/it, acc=64.42%]
+ 82%|████████▏ | 65/79 [07:57<01:43,  7.39s/it, acc=64.42%]
+ 82%|████████▏ | 65/79 [08:04<01:43,  7.39s/it, acc=64.48%]
+ 84%|████████▎ | 66/79 [08:04<01:35,  7.38s/it, acc=64.48%]
+ 84%|████████▎ | 66/79 [08:12<01:35,  7.38s/it, acc=64.55%]
+ 85%|████████▍ | 67/79 [08:12<01:28,  7.39s/it, acc=64.55%]
+ 85%|████████▍ | 67/79 [08:19<01:28,  7.39s/it, acc=64.51%]
+ 86%|████████▌ | 68/79 [08:19<01:21,  7.38s/it, acc=64.51%]
+ 86%|████████▌ | 68/79 [08:27<01:21,  7.38s/it, acc=64.52%]
+ 87%|████████▋ | 69/79 [08:27<01:13,  7.39s/it, acc=64.52%]
+ 87%|████████▋ | 69/79 [08:34<01:13,  7.39s/it, acc=64.55%]
+ 89%|████████▊ | 70/79 [08:34<01:06,  7.38s/it, acc=64.55%]
+ 89%|████████▊ | 70/79 [08:41<01:06,  7.38s/it, acc=64.48%]
+ 90%|████████▉ | 71/79 [08:41<00:59,  7.39s/it, acc=64.48%]
+ 90%|████████▉ | 71/79 [08:49<00:59,  7.39s/it, acc=64.55%]
+ 91%|█████████ | 72/79 [08:49<00:51,  7.38s/it, acc=64.55%]
+ 91%|█████████ | 72/79 [08:56<00:51,  7.38s/it, acc=64.61%]
+ 92%|█████████▏| 73/79 [08:56<00:44,  7.38s/it, acc=64.61%]
+ 92%|█████████▏| 73/79 [09:03<00:44,  7.38s/it, acc=64.55%]
+ 94%|█████████▎| 74/79 [09:03<00:36,  7.38s/it, acc=64.55%]
+ 94%|█████████▎| 74/79 [09:11<00:36,  7.38s/it, acc=64.58%]
+ 95%|█████████▍| 75/79 [09:11<00:29,  7.38s/it, acc=64.58%]
+ 95%|█████████▍| 75/79 [09:18<00:29,  7.38s/it, acc=64.57%]
+ 96%|█████████▌| 76/79 [09:18<00:22,  7.38s/it, acc=64.57%]
+ 96%|█████████▌| 76/79 [09:26<00:22,  7.38s/it, acc=64.60%]
+ 97%|█████████▋| 77/79 [09:26<00:14,  7.38s/it, acc=64.60%]
+ 97%|█████████▋| 77/79 [09:33<00:14,  7.38s/it, acc=64.57%]
+ 99%|█████████▊| 78/79 [09:33<00:07,  7.37s/it, acc=64.57%]
+ 99%|█████████▊| 78/79 [09:37<00:07,  7.37s/it, acc=64.58%]
+100%|██████████| 79/79 [09:37<00:00,  6.33s/it, acc=64.58%]
+100%|██████████| 79/79 [09:37<00:00,  7.31s/it, acc=64.58%]
+ABLATION_RESULT case=coupler_only trial_index=4 accuracy=64.58000000
+Test Accuracy at noise level {0: 0.0, 15: 0.181, 14: 0.179, 13: 0.177, 12: 0.175, 11: 0.172, 10: 0.169, 9: 0.165, 8: 0.16, 7: 0.153, 6: 0.142, 5: 0.125, 4: 0.1, 3: 0.072, 2: 0.105, 1: 0.342} thermal noise eps None: 64.58%
+Average test acc over 5 trials is 64.09400000000001
+-------- Final Result ODEBlock with t_end: 1.75, real_t_end: 1.75 --------
+-------- Model name: TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP --------
+wrapper params: {'ode_wrapper': <class 'ode_pc.ToggleQATTester1State'>, 'calib_path': None, 'R': 10000.0, 'R_max': 150000.0, 'C': 4.9e-14, 'k': 1000.0, 'v_dd': 0.1, 'w_bits': 5, 'enob': 8, 'tie_cap': False, 'one_over_q': 1.0, 'nonlinear_R': False, 'mul_mismatch_mode': 'static_mismatch', 'enable_measured_activation': False, 'activation_curve_path': '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/relu_0p3mV.csv', 'activation_corner': 'TT', 'activation_spline_parameters': 10, 'compile_measured_activation': True, 'w_quant_mode': 'min_max', 'thermal_noise': False, 'w_perc': 0.99999, 'offset_eps': None}
+Thermal noise eps: Johnson
+t_end: 1.75, real_t_end: 1.75, Noise level: 0.151, Acc:64.09±0.25%

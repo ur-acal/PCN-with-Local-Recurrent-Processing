@@ -51,6 +51,11 @@ DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
 DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 IS_TIMM="${IS_TIMM:-true}"
 RGGB_TO_RGB="${RGGB_TO_RGB:-false}"
+ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-false}"
+SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
+ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_0p3mV.csv}"
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
+ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
 
 # Change exp name here
 EXP_SUFFIX="16L96C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
@@ -110,6 +115,11 @@ python train_ode_cifar.py \
   --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
   --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
   --toggle_fast_path "${TOGGLE_FAST_PATH}" \
+  --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}" \
+  --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
+  --activation_corner "${ACTIVATION_CORNER}" \
+  --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS}" \
+  --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION}" \
   --teacher_ckpt "${TEACHER_CKPT}" \
   --teacher_arch "${TEACHER_ARCH}" \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \

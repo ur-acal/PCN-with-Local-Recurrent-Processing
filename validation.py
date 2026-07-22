@@ -16,6 +16,7 @@ from copy import deepcopy
 from tqdm import tqdm
 
 from pc_model import PCNet
+from hardware_nonlinearity import interpolate_R_eff
 
 
 def mask_set_val(dst_mat, src_val):
@@ -245,6 +246,7 @@ class MVMConv(nn.Module):
         self.R = None
 
         self.mismatch_mat = None
+        self.pulse_noisy_values = None
         self.mismatch_type = "mul"
         self.mul_mismatch_mode = None
 
@@ -394,6 +396,7 @@ class MVMConv(nn.Module):
 
         if mismatch_type == "mul":
             noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * sigma_
+            self.pulse_noisy_values = vals * (1 + noise_)
 
             # In this case we sample a fixed val_sign_and_noise, the actual mismatch scales
             # with the input dependent resistance value.
@@ -441,6 +444,7 @@ class MVMConv(nn.Module):
         else:
             max_abs = vals.abs().max()
             noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * (sigma_ * max_abs)
+            self.pulse_noisy_values = vals + noise_
 
             # Keep nonlinear-R nominal path unchanged.
             self.code_idx_mat = self._build_code_idx_mat()
@@ -456,37 +460,25 @@ class MVMConv(nn.Module):
             ).coalesce().to_sparse_csr()
 
     def _get_R_eff(self, v, code_idx):
-        # Performs interpolation based on current input value and weight value.
-        # v is the current spin state.
-        # i,j is to pick a correct interpolant.
-        if getattr(self, "proj_fn", None) is not None:
-            v = self.proj_fn(v)
+        return interpolate_R_eff(
+            v, self.v_grid, self.R_codes, self.R_left, self.R_slope,
+            code_idx, proj_fn=getattr(self, "proj_fn", None))
 
-        _i = torch.bucketize(v, self.v_grid) - 1
-        _i = _i.clamp(min=0, max=self.v_grid.numel() - 2)
+    def forward_pulse(self, x, pulse_weight, nominal_R=None):
+        """Apply an externally generated pulse matrix with one nominal R(v) curve."""
+        batch_size, _, input_h, input_w = x.shape
+        output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
+        output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
+        x_flat = x.reshape(batch_size, -1).t()
 
-        M = self.R_codes.numel()
-        v_flat, i_flat = v.reshape(-1), _i.reshape(-1)
+        if self.csv_enabled:
+            nominal_R = self.R if nominal_R is None else nominal_R
+            nominal_idx = (self.R_codes - nominal_R).abs().argmin()
+            R_eff = self._get_R_eff(x_flat, nominal_idx)
+            x_flat = x_flat * nominal_R / R_eff
 
-        if torch.is_tensor(code_idx):
-            if code_idx.numel() == 1:
-                j = int(code_idx.item())
-                j = min(max(j, 0), M - 1)
-                pos = i_flat * M + j
-            else:
-                j_flat = code_idx.to(torch.long).reshape(-1).clamp(0, M - 1)
-                pos = i_flat * M + j_flat
-        else:
-            j = int(code_idx)
-            j = min(max(j, 0), M - 1)
-            pos = i_flat * M + j
-
-        R_left_sel = self.R_left.reshape(-1)[pos]
-        R_slope_sel = self.R_slope.reshape(-1)[pos]
-        v_sel = self.v_grid[i_flat]
-
-        R_eff_flat = R_left_sel + R_slope_sel * (v_flat - v_sel)
-        return R_eff_flat.reshape_as(v)
+        out = torch.sparse.mm(pulse_weight, x_flat)
+        return out.t().reshape(batch_size, self.meta["out_chan"], output_h, output_w)
 
     def forward(self, x):
         batch_size, input_channels, input_h, input_w = x.shape

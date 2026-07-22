@@ -1,0 +1,6 @@
+case,trial_index,accuracy
+measured_activation_only,0,0.8
+measured_activation_only,1,0.8
+measured_activation_only,2,0.8
+measured_activation_only,3,0.8
+measured_activation_only,4,0.8

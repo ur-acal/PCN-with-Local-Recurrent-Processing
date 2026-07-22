@@ -115,6 +115,11 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --C             "49e-15" \
             --k             "${K_VAL}" \
             --v_dd          "0.1" \
+            --enable_measured_activation "true" \
+            --activation_curve_path "./hardware_data/relu_0p3mV.csv" \
+            --activation_corner "TT" \
+            --activation_spline_parameters "10" \
+            --activation_normalize_positive_endpoint "false" \
             --enob          "${ENOB}" \
             --w_bits        "${n_bits}" \
             --patch_node    "8" \

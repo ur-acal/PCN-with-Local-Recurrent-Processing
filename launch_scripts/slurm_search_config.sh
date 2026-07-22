@@ -21,7 +21,12 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
-TOGGLE_MODE="${TOGGLE_MODE:-none}"       # none, reset, or persistent
+TOGGLE_MODE="${TOGGLE_MODE:-none}"       # none, reset, persistent, or odexinit
+ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-false}"
+SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
+ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_0p3mV.csv}"
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
+ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
 
 ##############################################################################################
@@ -33,7 +38,8 @@ case "${TOGGLE_MODE}" in
   none) ;;
   reset) ODE_BLOCK="ToggleResetZ" ;;
   persistent) ODE_BLOCK="ToggleKeepZ" ;;
-  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+  odexinit) ODE_BLOCK="ToggleODEXInitFFFB" ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
 esac
 
 # 2. SWITCH_INF mode. This is for the time-interleaved model.
@@ -453,7 +459,7 @@ submit_chunk() {
     BLOCKS_LIST="${BLOCKS_LIST}" \
     sbatch --parsable \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",SWITCH_INF="${SWITCH_INF}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",TOGGLE_MODE="${TOGGLE_MODE}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
+      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",SWITCH_INF="${SWITCH_INF}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",TOGGLE_MODE="${TOGGLE_MODE}",ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION}",SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION}",ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH}",ACTIVATION_CORNER="${ACTIVATION_CORNER}",ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
       "${SBATCH_SCRIPT}"
   )
   echo "  -> job ${jid}"

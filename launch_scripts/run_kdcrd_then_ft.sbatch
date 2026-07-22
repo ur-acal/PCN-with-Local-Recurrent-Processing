@@ -40,6 +40,18 @@ TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
 TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
 TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
 TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
+ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-false}"
+SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
+ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_0p3mV.csv}"
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
+ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
+MEASURED_ACTIVATION_ARGS=(
+  --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}"
+  --activation_curve_path "${ACTIVATION_CURVE_PATH}"
+  --activation_corner "${ACTIVATION_CORNER}"
+  --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS}"
+  --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION}"
+)
 CHAN_0=${CHAN_0:-}
 NUM_LAYERS=${NUM_LAYERS:-}
 CHUNK_ID="${CHUNK_ID:-0}"
@@ -110,7 +122,12 @@ case "${TOGGLE_MODE}" in
     FT_ODE_BLOCK="ToggleKeepZ"
     INF_ODE_BLOCK="TogglePulseKeepZ"
     ;;
-  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+  odexinit)
+    TRAIN_ODE_BLOCK="ToggleODEXInitFFFB"
+    FT_ODE_BLOCK="ToggleODEXInitFFFB"
+    INF_ODE_BLOCK="TogglePulseODEXInitFFFB"
+    ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
 esac
 if [[ "${TOGGLE_MODE}" != "none" ]]; then
   TOGGLE_ARGS=(
@@ -246,6 +263,7 @@ run_one_combo () {
     --pc_conv       "PCConvReLU6" \
     --ode_block     "${block}" \
     "${TOGGLE_ARGS[@]}" \
+    "${MEASURED_ACTIVATION_ARGS[@]}" \
     --teacher_ckpt  "${TEACHER_CKPT}" \
     --teacher_arch  "${TEACHER_ARCH}" \
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
@@ -350,6 +368,7 @@ eval_one_combo_model() {
     --tie_cap         "false" \
     --one_over_q      "${ONE_OVER_Q}" \
     "${TOGGLE_ARGS[@]}" \
+    "${MEASURED_ACTIVATION_ARGS[@]}" \
     --pc_conv         "${pc_conv}Noisy" \
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
@@ -434,6 +453,7 @@ finetune_one_combo_model() {
     --tie_cap       "false" \
     --one_over_q    "${ONE_OVER_Q}" \
     "${TOGGLE_ARGS[@]}" \
+    "${MEASURED_ACTIVATION_ARGS[@]}" \
     --qat_cls       "SymQuantizeWeight" \
     --pcn           "${PCN}" \
     --ode_wrapper   "${qat_wrapper}" \
