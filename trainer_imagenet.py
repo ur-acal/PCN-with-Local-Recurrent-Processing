@@ -674,6 +674,7 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         pred_list, label_list = [], []
 
         self.model.eval()
+        self.reset_spin_variation_for_inference()
         with torch.no_grad():
             for data in dataloader:
                 inputs, labels = data[0], data[1]

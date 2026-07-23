@@ -22,8 +22,8 @@ CAP_VALS=("49e-15")
 
 export BASE_LOGDIR="${BASE_LOGDIR:-./logs/test_toggle_ode_noisy}"
 export K_VAL="${K_VAL:-1e3}"
-export RESET_MODE="${RESET_MODE:-reset}" # reset, persistent, odexinit, or odexinit_keep
-export TOGGLE_LEVEL="${TOGGLE_LEVEL:-2}" # 1, 2, or 3
+export RESET_MODE="${RESET_MODE:-odexinit}" # reset, persistent, odexinit, or odexinit_keep
+export TOGGLE_LEVEL="${TOGGLE_LEVEL:-3}" # 1, 2, or 3
 export TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-${N_STEPS:-5}}"
 export TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
 export TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
@@ -48,13 +48,13 @@ esac
 MODEL_NAMES=(
   # The same 16L baseline; trained with srrl + timm augs; ft with srrl + QAT + MT.
 #  "TIMMQAT5bNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_11REP" # srrl + timm trained model, then QAT + MT
-  "TIMMQAT5b2aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP" # same, but 10e3 - 150e3 Ohm
-  "TIMMQAT5b3aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b4aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b5aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b6aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b7aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+#  "TIMMQAT5b2aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP" # same, but 10e3 - 150e3 Ohm
+#  "TIMMQAT5b3aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+#  "TIMMQAT5b4aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+#  "TIMMQAT5b5aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+#  "TIMMQAT5b6aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+#  "TIMMQAT5b7aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+#  "TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
 
   # "TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP" # The model used as ft base for the model below.
   "TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP" # ft with ToggleODEXInitFFFB 5-steps based on a pretrained model on dopri45
@@ -129,7 +129,7 @@ run_model(){
 
   local test_bs=128
   if [[ "${_ode_block}" == *Circ* ]]; then test_bs=128; fi
-  local test_expanded="${TEST_EXPANDED:-false}"
+  local test_expanded="${TEST_EXPANDED:-true}"
   local nonlinear_r="${NONLINEAR_R:-false}"
   ########################################
   # only fuse_bn when noise is added to bn
@@ -170,11 +170,21 @@ run_model(){
     --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
     --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
     --toggle_fast_path "${TOGGLE_FAST_PATH}" \
+    --enable_spin_variation "${ENABLE_SPIN_VARIATION:-false}" \
+    --sigma_spin "${SIGMA_SPIN:-0.10}" \
+    --spin_variation_seed "${SPIN_VARIATION_SEED:-none}" \
+    --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-false}" \
+    --activation_curve_path "${ACTIVATION_CURVE_PATH:-${PWD}/hardware_data/relu_0p3mV.csv}" \
+    --activation_corner "${ACTIVATION_CORNER:-TT}" \
+    --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS:-10}" \
+    --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE:-false}" \
+    --summing_current_p "${SUMMING_CURRENT_P:-18.5e-12}" \
+    --summing_noise_seed "${SUMMING_NOISE_SEED:-none}" \
     --pc_conv         "${_pc_conv}Noisy" \
     --ode_block       "${_ode_block}" \
     --ode_wrapper     "${_ode_wrapper}" \
     --img_type        "${_img_type}" \
-    --noisy_trials    "${NOISY_TRIALS:-10}" \
+    --noisy_trials    "${NOISY_TRIALS:-2}" \
     --conv_only       "true" \
     --test_expanded   "${test_expanded}" \
     --diff_mismatch   "${DIFF_MISMATCH:-true}" \

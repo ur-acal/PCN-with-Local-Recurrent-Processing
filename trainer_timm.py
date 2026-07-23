@@ -712,7 +712,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         Same structure as parent train(), but timm scheduler uses:
             self.scheduler.step(epoch + 1)
 
-        Parent train() calls scheduler.step() with no epoch argument. :contentReference[oaicite:2]{index=2}
+        Parent train() calls scheduler.step() with no epoch argument.
         """
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0

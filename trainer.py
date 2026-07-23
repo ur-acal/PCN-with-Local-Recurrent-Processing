@@ -684,6 +684,13 @@ class TrainerCiFar(object):
         running_loss /= n_samples
         return running_loss
 
+    def reset_spin_variation_for_inference(self):
+        """Clear cached spin factors once before a full-dataset evaluation."""
+        for module in self.model.modules():
+            reset = getattr(module, "reset_spin_variation", None)
+            if callable(reset):
+                reset()
+
     def evaluate(self, dataloader):
         correct = 0
         correct_top5 = 0
@@ -693,6 +700,7 @@ class TrainerCiFar(object):
         compute_top5 = self.dataset_name == "cifar100"
         with torch.no_grad():
             self.model.eval()
+            self.reset_spin_variation_for_inference()
             for data in dataloader:
                 if isinstance(data, (list, tuple)):
                     if self.orig_t_inp:

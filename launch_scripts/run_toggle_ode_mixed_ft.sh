@@ -6,7 +6,7 @@
 #######################################################
 
 declare -A NOISE_LEVELS=(
-  [mul]="0.25"
+  [mul]="0.25 0.2 0.15"
   [add]="0.05 0.08 0.1 0.15 0.2"
 )
 NOISE_TYPES=(
@@ -26,6 +26,16 @@ SWITCH_INF=${SWITCH_INF:-false} # Change depending on model name; true if using 
 TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
 ENOB="${ENOB:-8}"
 K_VAL="${K_VAL:-1e3}"
+ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
+SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
+ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-true}"
+SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
+VARIATION_AWARE_ARGS=(
+  --enable_spin_variation "${ENABLE_SPIN_VARIATION}"
+  --sigma_spin "${SIGMA_SPIN}"
+  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE}"
+  --summing_current_p "${SUMMING_CURRENT_P}"
+)
 ODE_BLOCK_OVERRIDE="${ODE_BLOCK_OVERRIDE:-ToggleODEXInitFFFB}"
 TOGGLE_ARGS=()
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
@@ -33,6 +43,7 @@ if [[ -n "${TOGGLE_N_CYCLES:-}" ]]; then TOGGLE_ARGS+=(--toggle_n_cycles "${TOGG
 if [[ -n "${TOGGLE_TIME_SPLIT:-}" ]]; then TOGGLE_ARGS+=(--toggle_time_split "${TOGGLE_TIME_SPLIT}"); fi
 if [[ -n "${TOGGLE_FAST_PATH:-}" ]]; then TOGGLE_ARGS+=(--toggle_fast_path "${TOGGLE_FAST_PATH}"); fi
 echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL}, SWITCH_INF: ${SWITCH_INF}, ENOB: ${ENOB}, ODE_BLOCK_OVERRIDE: ${ODE_BLOCK_OVERRIDE} ==========="
+echo "=========== FT spin variation: ${ENABLE_SPIN_VARIATION} (sigma=${SIGMA_SPIN}); summing-current noise: ${ENABLE_SUMMING_CURRENT_NOISE} (p=${SUMMING_CURRENT_P}) ==========="
 
 #######################################################################################################################
 # For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
@@ -115,6 +126,11 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --C             "49e-15" \
             --k             "${K_VAL}" \
             --v_dd          "0.1" \
+            --enable_measured_activation "true" \
+            --activation_curve_path "./hardware_data/relu_0p3mV.csv" \
+            --activation_corner "TT" \
+            --activation_spline_parameters "10" \
+            --activation_normalize_positive_endpoint "false" \
             --enob          "${ENOB}" \
             --w_bits        "${n_bits}" \
             --patch_node    "8" \
@@ -125,6 +141,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --tie_cap       "false" \
             --one_over_q    "${one_over_q}" \
             "${TOGGLE_ARGS[@]}" \
+            "${VARIATION_AWARE_ARGS[@]}" \
             --qat_cls       "SymQuantizeWeight" \
             --ode_wrapper   "$QAT_WRAPPER" \
             --pc_conv       "PCConvReLU6" \
