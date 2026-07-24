@@ -16,16 +16,30 @@ NOISE_TYPES=(
 NBITS=(5)
 R_MAX_LIST=("150e3")
 ONE_OVER_Q_LIST=("1")
-EXP="NODE_0602_QAT_with_noise_inject_kd_crd_training_C100"
+EXP="${EXP_OVERRIDE:-NODE_0602_QAT_with_noise_inject_kd_crd_training_C100}"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP}"
+RUN_TAG="${RUN_TAG:-}"
+RUN_TAG_ARGS=()
+if [[ -n "${RUN_TAG}" ]]; then RUN_TAG_ARGS+=(--run_tag "${RUN_TAG}"); fi
 #MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
 
 SWITCH_INF=${SWITCH_INF:-false} # Change depending on model name; true if using Euler solver.
 TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
 ENOB="${ENOB:-8}"
 K_VAL="${K_VAL:-1e3}"
+ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
+SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
+ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
+PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-pre_quant_weight}" # post_quant_amplitude and pre_quant_weight (this is same as before, add mismatch and then quantize.)
+VARIATION_AWARE_ARGS=(
+  --enable_spin_variation "${ENABLE_SPIN_VARIATION}"
+  --sigma_spin "${SIGMA_SPIN}"
+  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE}"
+  --summing_current_p "${SUMMING_CURRENT_P}"
+)
 ODE_BLOCK_OVERRIDE="${ODE_BLOCK_OVERRIDE:-ToggleODEXInitFFFB}"
 TOGGLE_ARGS=()
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
@@ -33,6 +47,7 @@ if [[ -n "${TOGGLE_N_CYCLES:-}" ]]; then TOGGLE_ARGS+=(--toggle_n_cycles "${TOGG
 if [[ -n "${TOGGLE_TIME_SPLIT:-}" ]]; then TOGGLE_ARGS+=(--toggle_time_split "${TOGGLE_TIME_SPLIT}"); fi
 if [[ -n "${TOGGLE_FAST_PATH:-}" ]]; then TOGGLE_ARGS+=(--toggle_fast_path "${TOGGLE_FAST_PATH}"); fi
 echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL}, SWITCH_INF: ${SWITCH_INF}, ENOB: ${ENOB}, ODE_BLOCK_OVERRIDE: ${ODE_BLOCK_OVERRIDE} ==========="
+echo "=========== FT spin variation: ${ENABLE_SPIN_VARIATION} (sigma=${SIGMA_SPIN}); summing-current noise: ${ENABLE_SUMMING_CURRENT_NOISE} (p=${SUMMING_CURRENT_P}) ==========="
 
 #######################################################################################################################
 # For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
@@ -60,7 +75,9 @@ ODE_BLK="${parts[3]}"
 if [[ -n "${ODE_BLOCK_OVERRIDE}" ]]; then
   ODE_BLK="${ODE_BLOCK_OVERRIDE}"
 fi
-if [[ "${ODE_BLK}" == "ToggleResetZ" || "${ODE_BLK}" == "ToggleKeepZ" || "${ODE_BLK}" == ToggleODEXInit* || "${ODE_BLK}" == TogglePulse* ]]; then
+if [[ "${ODE_BLK}" == TogglePulseBlk* ]]; then
+  QAT_WRAPPER="TogglePulseQATWrapper1State"
+elif [[ "${ODE_BLK}" == "ToggleResetZ" || "${ODE_BLK}" == "ToggleKeepZ" || "${ODE_BLK}" == ToggleODEXInit* || "${ODE_BLK}" == TogglePulse* ]]; then
   QAT_WRAPPER="ToggleQATWrapper1State"
 fi
 # Teacher model setting
@@ -99,6 +116,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --num_epochs    "${NUM_EPOCHS:-140}" \
             --img_type      "scanGFI" \
             --model_name    "${MODEL_NAME}" \
+            "${RUN_TAG_ARGS[@]}" \
             --offset_eps    0.0 \
             --dropout       0.25 \
             --avg_pooling   "true" \
@@ -115,6 +133,11 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --C             "49e-15" \
             --k             "${K_VAL}" \
             --v_dd          "0.1" \
+            --enable_measured_activation "true" \
+            --activation_curve_path "./hardware_data/relu_0p3mV.csv" \
+            --activation_corner "TT" \
+            --activation_spline_parameters "10" \
+            --activation_normalize_positive_endpoint "false" \
             --enob          "${ENOB}" \
             --w_bits        "${n_bits}" \
             --patch_node    "8" \
@@ -125,12 +148,14 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --tie_cap       "false" \
             --one_over_q    "${one_over_q}" \
             "${TOGGLE_ARGS[@]}" \
+            "${VARIATION_AWARE_ARGS[@]}" \
             --qat_cls       "SymQuantizeWeight" \
             --ode_wrapper   "$QAT_WRAPPER" \
             --pc_conv       "PCConvReLU6" \
             --ode_block     "$ODE_BLK" \
             --noise_level   "${nl}" \
             --noise_type    "${nt}" \
+            --pulse_mismatch_training_mode "${PULSE_MISMATCH_TRAINING_MODE}" \
             --teacher_ckpt  "${TEACHER_CKPT}" \
             --teacher_arch  "${TEACHER_ARCH}" \
             --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \

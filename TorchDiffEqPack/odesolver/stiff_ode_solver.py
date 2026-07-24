@@ -15,12 +15,13 @@ class ODE23s(AdaptiveGridSolver):
     def __init__(self, func, t0, y0, t1=1.0, h=0.1, rtol=1e-3, atol=1e-6, neval_max=500000,
                  print_neval=False, print_direction=False, step_dif_ratio=1e-3, safety=SAFETY,
                  regenerate_graph=False, dense_output=True, interpolation_method = 'cubic',
-                 print_time = False, end_point_mode = False):
+                 print_time=False, end_point_mode=False, eps=None, noise_type="mul", noise_generator=None):
         super(ODE23s, self).__init__(func=func, t0=t0, y0=y0, t1=t1, h=h, rtol=rtol,
                                               atol=atol, neval_max=neval_max,
                  print_neval=print_neval, print_direction=print_direction, step_dif_ratio=step_dif_ratio, safety=safety,
                  regenerate_graph=regenerate_graph, dense_output=dense_output, interpolation_method = interpolation_method,
-                                     print_time = print_time, end_point_mode = end_point_mode)
+                                     print_time=print_time, end_point_mode=end_point_mode, eps=eps,
+                                     noise_type=noise_type, noise_generator=noise_generator)
         self.order = 2
 
         # constants

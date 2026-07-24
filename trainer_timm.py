@@ -712,7 +712,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         Same structure as parent train(), but timm scheduler uses:
             self.scheduler.step(epoch + 1)
 
-        Parent train() calls scheduler.step() with no epoch argument. :contentReference[oaicite:2]{index=2}
+        Parent train() calls scheduler.step() with no epoch argument.
         """
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0
@@ -1195,13 +1195,16 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
             [feat1, feat2, feat3, feat4], out
         """
         if self.noisy_model is not None and self.model.training:
-            noisy_params = self.noisy_model.gen_noisy_params()
-            result = torch.func.functional_call(
-                self.model,
-                noisy_params,
-                (inputs,),
-                {"is_feat": True},
-            )
+            if hasattr(self.noisy_model, "forward_with_kwargs"):
+                result = self.noisy_model.forward_with_kwargs(inputs, is_feat=True)
+            else:
+                noisy_params = self.noisy_model.gen_noisy_params()
+                result = torch.func.functional_call(
+                    self.model,
+                    noisy_params,
+                    (inputs,),
+                    {"is_feat": True},
+                )
         else:
             result = self.model(inputs, is_feat=True)
 

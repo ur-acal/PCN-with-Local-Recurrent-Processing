@@ -12,6 +12,13 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 #  > ./logs/scheduler_slurm/search_scheduler.log 2>&1 < /dev/null &
 # Or with TOGGLE:
 # ( export TOGGLE_MODE=persistent; source ./launch_scripts/slurm_search_config.sh ) > ./logs/scheduler_slurm/search_scheduler_persistent.log 2>&1 < /dev/null &
+#(
+#  export TOGGLE_MODE=odexinit \
+#         ENABLE_MEASURED_ACTIVATION=true \
+#         SCALE_MEASURED_ACTIVATION=false
+#
+#  source ./launch_scripts/slurm_search_config.sh
+#) > ./logs/scheduler_slurm/search_scheduler_odexinit.log 2>&1 < /dev/null &
 #
 # sched_pid=$!
 # disown -h "$sched_pid"
@@ -21,7 +28,21 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
-TOGGLE_MODE="${TOGGLE_MODE:-none}"       # none, reset, or persistent
+TOGGLE_MODE="${TOGGLE_MODE:-none}"       # none, reset, persistent, odexinit, or pulse_odexinit
+ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-false}"
+SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
+ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_0p3mV.csv}"
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
+ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
+ENABLE_UNITLESS_MEASURED_PULLBACK="${ENABLE_UNITLESS_MEASURED_PULLBACK:-false}"
+UNITLESS_PULLBACK_Q="${UNITLESS_PULLBACK_Q:-none}"
+UNITLESS_PULLBACK_K="${UNITLESS_PULLBACK_K:-1e3}"
+UNITLESS_PULLBACK_R="${UNITLESS_PULLBACK_R:-10e3}"
+ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-false}"
+SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
+ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
+PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitude}" # post_quant_amplitude and pre_quant_weight (this is same as before, add mismatch and then quantize.)
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
 
 ##############################################################################################
@@ -33,7 +54,9 @@ case "${TOGGLE_MODE}" in
   none) ;;
   reset) ODE_BLOCK="ToggleResetZ" ;;
   persistent) ODE_BLOCK="ToggleKeepZ" ;;
-  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+  odexinit) ODE_BLOCK="ToggleODEXInitFFFB" ;;
+  pulse_odexinit) ODE_BLOCK="ToggleODEXInitFFFB" ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit/pulse_odexinit, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
 esac
 
 # 2. SWITCH_INF mode. This is for the time-interleaved model.
@@ -447,13 +470,31 @@ submit_chunk() {
 
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"
+  local sbatch_exports="ALL"
+  sbatch_exports+=",PCN=${pcn},IMG_TYPE=${img_type},SWITCH_INF=${SWITCH_INF}"
+  sbatch_exports+=",EXP=${EXP},CIRC_CONF=${circ_conf},TASK=${TASK}"
+  sbatch_exports+=",ODE_BLOCK=${ODE_BLOCK},TOGGLE_MODE=${TOGGLE_MODE}"
+  sbatch_exports+=",ENABLE_MEASURED_ACTIVATION=${ENABLE_MEASURED_ACTIVATION}"
+  sbatch_exports+=",SCALE_MEASURED_ACTIVATION=${SCALE_MEASURED_ACTIVATION}"
+  sbatch_exports+=",ACTIVATION_CURVE_PATH=${ACTIVATION_CURVE_PATH}"
+  sbatch_exports+=",ACTIVATION_CORNER=${ACTIVATION_CORNER}"
+  sbatch_exports+=",ACTIVATION_SPLINE_PARAMETERS=${ACTIVATION_SPLINE_PARAMETERS}"
+  sbatch_exports+=",ENABLE_UNITLESS_MEASURED_PULLBACK=${ENABLE_UNITLESS_MEASURED_PULLBACK}"
+  sbatch_exports+=",UNITLESS_PULLBACK_Q=${UNITLESS_PULLBACK_Q}"
+  sbatch_exports+=",UNITLESS_PULLBACK_K=${UNITLESS_PULLBACK_K},UNITLESS_PULLBACK_R=${UNITLESS_PULLBACK_R}"
+  sbatch_exports+=",ENABLE_SPIN_VARIATION=${ENABLE_SPIN_VARIATION},SIGMA_SPIN=${SIGMA_SPIN}"
+  sbatch_exports+=",ENABLE_SUMMING_CURRENT_NOISE=${ENABLE_SUMMING_CURRENT_NOISE}"
+  sbatch_exports+=",SUMMING_CURRENT_P=${SUMMING_CURRENT_P}"
+  sbatch_exports+=",PULSE_MISMATCH_TRAINING_MODE=${PULSE_MISMATCH_TRAINING_MODE}"
+  sbatch_exports+=",CHAN_0=${chan0},NUM_LAYERS=${num_layers}"
+  sbatch_exports+=",CHUNK_ID=${chunk_id},CHUNK_TAG=${chunk_tag},COMB_LIST=${comb_list}"
 
   echo "Submitting: C${chan0} N${num_layers} chunk=${chunk_id} tag=${chunk_tag} combos_in_job=${MAX_TASKS_PER_GPU}"
   jid=$(
     BLOCKS_LIST="${BLOCKS_LIST}" \
     sbatch --parsable \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",SWITCH_INF="${SWITCH_INF}",EXP="${EXP}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",TOGGLE_MODE="${TOGGLE_MODE}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
+      --export="${sbatch_exports}" \
       "${SBATCH_SCRIPT}"
   )
   echo "  -> job ${jid}"

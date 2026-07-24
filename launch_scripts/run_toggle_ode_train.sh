@@ -51,6 +51,19 @@ DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
 DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 IS_TIMM="${IS_TIMM:-true}"
 RGGB_TO_RGB="${RGGB_TO_RGB:-false}"
+ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-false}"
+SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
+ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_0p3mV.csv}"
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
+ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
+ENABLE_UNITLESS_MEASURED_PULLBACK="${ENABLE_UNITLESS_MEASURED_PULLBACK:-false}"
+UNITLESS_PULLBACK_Q="${UNITLESS_PULLBACK_Q:-none}"
+UNITLESS_PULLBACK_K="${UNITLESS_PULLBACK_K:-1e3}"
+UNITLESS_PULLBACK_R="${UNITLESS_PULLBACK_R:-10e3}"
+V_DD="${V_DD:-0.1}"
+ONE_OVER_Q="${ONE_OVER_Q:-1}"
+ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-false}"
+SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
 
 # Change exp name here
 EXP_SUFFIX="16L96C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
@@ -110,6 +123,19 @@ python train_ode_cifar.py \
   --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
   --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
   --toggle_fast_path "${TOGGLE_FAST_PATH}" \
+  --enable_unitless_measured_pullback "${ENABLE_UNITLESS_MEASURED_PULLBACK}" \
+  --unitless_pullback_q "${UNITLESS_PULLBACK_Q}" \
+  --unitless_pullback_k "${UNITLESS_PULLBACK_K}" \
+  --unitless_pullback_R "${UNITLESS_PULLBACK_R}" \
+  --v_dd "${V_DD}" \
+  --one_over_q "${ONE_OVER_Q}" \
+  --enable_spin_variation "${ENABLE_SPIN_VARIATION}" \
+  --sigma_spin "${SIGMA_SPIN}" \
+  --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}" \
+  --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
+  --activation_corner "${ACTIVATION_CORNER}" \
+  --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS}" \
+  --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION}" \
   --teacher_ckpt "${TEACHER_CKPT}" \
   --teacher_arch "${TEACHER_ARCH}" \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
