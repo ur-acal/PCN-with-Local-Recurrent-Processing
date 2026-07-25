@@ -25,6 +25,7 @@ TOL="${TOL:-0.0001}"
 T_END="${T_END:-1.0}"
 N_STEPS="${N_STEPS:-10}"
 TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
+ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-approx}"
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-${N_STEPS}}"
 SAVE_PATH="${SAVE_PATH:-saved_ckpt}"
 LOGDIR="${LOGDIR:-logs/toggle_ptq_check}"
@@ -75,6 +76,7 @@ cmd=(python train_ode_cifar.py
   --toggle_n_cycles "${TOGGLE_N_CYCLES}"
   --toggle_time_split "${TOGGLE_TIME_SPLIT}"
   --toggle_fast_path "${TOGGLE_FAST_PATH:-true}"
+  --odexinit_scaling_mode "${ODEXINIT_SCALING_MODE}"
   --distill_method "none"
   --distill_alpha "0.0")
 

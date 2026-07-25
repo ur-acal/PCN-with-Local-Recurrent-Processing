@@ -16,6 +16,7 @@ from copy import deepcopy
 from tqdm import tqdm
 
 from pc_model import PCNet
+from utils import interpolate_R_eff
 
 
 def mask_set_val(dst_mat, src_val):
@@ -171,6 +172,49 @@ def conv2d_to_matrix_fixed_padding(input_shape, kernel, stride=1, padding=0, *,
 
     return kernel_matrix, base_matrix, B_labeled
 
+
+def build_unrolled_dtc_metadata(mat, input_shape, meta):
+    """Map each expanded CSR value back to its original convolution kernel output."""
+    inp_chan, inp_h, inp_w = (int(v) for v in input_shape)
+    out_chan = int(meta["out_chan"])
+    ker_h, ker_w = int(meta["ker_h"]), int(meta["ker_w"])
+    stride, padding = int(meta["stride"]), int(meta["padding"])
+    out_h = (inp_h + 2 * padding - ker_h) // stride + 1
+    out_w = (inp_w + 2 * padding - ker_w) // stride + 1
+    spatial_rows = out_h * out_w
+
+    crow = mat.crow_indices()
+    row_ids = torch.arange(
+        mat.shape[0], device=crow.device, dtype=torch.int64).repeat_interleave(
+            crow[1:] - crow[:-1])
+    cols = mat.col_indices()
+
+    output_channel = torch.div(row_ids, spatial_rows, rounding_mode="floor")
+    output_spatial = row_ids.remainder(spatial_rows)
+    output_row = torch.div(output_spatial, out_w, rounding_mode="floor")
+    output_col = output_spatial.remainder(out_w)
+
+    input_channel = torch.div(cols, inp_h * inp_w, rounding_mode="floor")
+    input_spatial = cols.remainder(inp_h * inp_w)
+    input_row = torch.div(input_spatial, inp_w, rounding_mode="floor")
+    input_col = input_spatial.remainder(inp_w)
+
+    kernel_row = input_row + padding - output_row * stride
+    kernel_col = input_col + padding - output_col * stride
+    valid = (
+        (output_channel >= 0) & (output_channel < out_chan) &
+        (input_channel >= 0) & (input_channel < inp_chan) &
+        (kernel_row >= 0) & (kernel_row < ker_h) &
+        (kernel_col >= 0) & (kernel_col < ker_w)
+    )
+    if not bool(valid.all()):
+        raise RuntimeError("Could not map every expanded CSR value to a DTC output.")
+
+    dtc_block_ids = output_channel * inp_chan + input_channel
+    dtc_output_ids = kernel_row * ker_w + kernel_col
+    return dtc_block_ids, dtc_output_ids
+
+
 def snapshot_clean_mvm_mat_values(net):
     clean_vals = OrderedDict()
     for mod_name, m in net.named_modules():
@@ -245,8 +289,19 @@ class MVMConv(nn.Module):
         self.R = None
 
         self.mismatch_mat = None
+        self.pulse_noisy_values = None
         self.mismatch_type = "mul"
         self.mul_mismatch_mode = None
+
+    def set_dtc_metadata(self, dtc_block_ids, dtc_output_ids):
+        if dtc_block_ids.numel() != self.mat.values().numel():
+            raise ValueError("DTC block metadata must align with every CSR value.")
+        if dtc_output_ids.numel() != self.mat.values().numel():
+            raise ValueError("DTC output metadata must align with every CSR value.")
+        self.register_buffer(
+            "dtc_block_ids", dtc_block_ids.to(dtype=torch.int64), persistent=False)
+        self.register_buffer(
+            "dtc_output_ids", dtc_output_ids.to(dtype=torch.int64), persistent=False)
 
     def enable_csv(self, v_grid, R_codes, R_left, R_slope, proj_fn, R,
                    mul_mismatch_mode="scale_mismatch"):
@@ -394,6 +449,7 @@ class MVMConv(nn.Module):
 
         if mismatch_type == "mul":
             noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * sigma_
+            self.pulse_noisy_values = vals * (1 + noise_)
 
             # In this case we sample a fixed val_sign_and_noise, the actual mismatch scales
             # with the input dependent resistance value.
@@ -441,6 +497,7 @@ class MVMConv(nn.Module):
         else:
             max_abs = vals.abs().max()
             noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * (sigma_ * max_abs)
+            self.pulse_noisy_values = vals + noise_
 
             # Keep nonlinear-R nominal path unchanged.
             self.code_idx_mat = self._build_code_idx_mat()
@@ -456,37 +513,25 @@ class MVMConv(nn.Module):
             ).coalesce().to_sparse_csr()
 
     def _get_R_eff(self, v, code_idx):
-        # Performs interpolation based on current input value and weight value.
-        # v is the current spin state.
-        # i,j is to pick a correct interpolant.
-        if getattr(self, "proj_fn", None) is not None:
-            v = self.proj_fn(v)
+        return interpolate_R_eff(
+            v, self.v_grid, self.R_codes, self.R_left, self.R_slope,
+            code_idx, proj_fn=getattr(self, "proj_fn", None))
 
-        _i = torch.bucketize(v, self.v_grid) - 1
-        _i = _i.clamp(min=0, max=self.v_grid.numel() - 2)
+    def forward_pulse(self, x, pulse_weight, nominal_R=None):
+        """Apply an externally generated pulse matrix with one nominal R(v) curve."""
+        batch_size, _, input_h, input_w = x.shape
+        output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
+        output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
+        x_flat = x.reshape(batch_size, -1).t()
 
-        M = self.R_codes.numel()
-        v_flat, i_flat = v.reshape(-1), _i.reshape(-1)
+        if self.csv_enabled:
+            nominal_R = self.R if nominal_R is None else nominal_R
+            nominal_idx = (self.R_codes - nominal_R).abs().argmin()
+            R_eff = self._get_R_eff(x_flat, nominal_idx)
+            x_flat = x_flat * nominal_R / R_eff
 
-        if torch.is_tensor(code_idx):
-            if code_idx.numel() == 1:
-                j = int(code_idx.item())
-                j = min(max(j, 0), M - 1)
-                pos = i_flat * M + j
-            else:
-                j_flat = code_idx.to(torch.long).reshape(-1).clamp(0, M - 1)
-                pos = i_flat * M + j_flat
-        else:
-            j = int(code_idx)
-            j = min(max(j, 0), M - 1)
-            pos = i_flat * M + j
-
-        R_left_sel = self.R_left.reshape(-1)[pos]
-        R_slope_sel = self.R_slope.reshape(-1)[pos]
-        v_sel = self.v_grid[i_flat]
-
-        R_eff_flat = R_left_sel + R_slope_sel * (v_flat - v_sel)
-        return R_eff_flat.reshape_as(v)
+        out = torch.sparse.mm(pulse_weight, x_flat)
+        return out.t().reshape(batch_size, self.meta["out_chan"], output_h, output_w)
 
     def forward(self, x):
         batch_size, input_channels, input_h, input_w = x.shape
@@ -601,6 +646,9 @@ class Validator(nn.Module):
                 # Replace plain conv with unrolled weights
                 unrolled, meta = stored[mod_name]["weight"], stored[mod_name]["meta"]
                 mvm_conv = MVMConv(unrolled, meta)
+                dtc_block_ids, dtc_output_ids = build_unrolled_dtc_metadata(
+                    unrolled, inputs[0].shape[1:], meta)
+                mvm_conv.set_dtc_metadata(dtc_block_ids, dtc_output_ids)
                 mvm_conv.clean_mat_values = mvm_conv.mat.values().detach().clone()
                 if hasattr(parent, "_nonlinear_R_pkg"):
                     mvm_conv.enable_csv(**parent._nonlinear_R_pkg)

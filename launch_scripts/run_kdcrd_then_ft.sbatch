@@ -39,7 +39,74 @@ TOGGLE_MODE="${TOGGLE_MODE:-none}"
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
 TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
 TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
+ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-direct}"
 TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
+ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
+ENABLE_PRETRAIN_MEASURED_ACTIVATION="${ENABLE_PRETRAIN_MEASURED_ACTIVATION:-false}"
+SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
+ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
+if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+  ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
+else
+  ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_finer.csv}"
+fi
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
+ACTIVATION_INTERPOLATION="${ACTIVATION_INTERPOLATION:-piecewise_linear}"
+ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
+ACTIVATION_FIT_CONSTRAINT="${ACTIVATION_FIT_CONSTRAINT:-auto}"
+MEASURED_ACTIVATION_CONFIG_ARGS=(
+  --activation_curve_path "${ACTIVATION_CURVE_PATH}"
+  --activation_corner "${ACTIVATION_CORNER}"
+  --activation_corner_mode "${ACTIVATION_CORNER_MODE}"
+  --activation_interpolation "${ACTIVATION_INTERPOLATION}"
+  --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS}"
+  --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT}"
+  --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION}"
+)
+MEASURED_ACTIVATION_ARGS=(
+  --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}"
+  "${MEASURED_ACTIVATION_CONFIG_ARGS[@]}"
+)
+UNITLESS_MEASURED_PULLBACK_MODE="${UNITLESS_MEASURED_PULLBACK_MODE:-none}"
+PRETRAIN_UNITLESS_MEASURED_PULLBACK_MODE="${UNITLESS_MEASURED_PULLBACK_MODE}"
+if [[ "${PRETRAIN_UNITLESS_MEASURED_PULLBACK_MODE}" == "none" ]]; then
+  ENABLE_PRETRAIN_MEASURED_ACTIVATION="false"
+else
+  ENABLE_PRETRAIN_MEASURED_ACTIVATION="true"
+fi
+PRETRAIN_MEASURED_ACTIVATION_ARGS=(
+  --enable_measured_activation "${ENABLE_PRETRAIN_MEASURED_ACTIVATION}"
+  "${MEASURED_ACTIVATION_CONFIG_ARGS[@]}"
+)
+UNITLESS_PULLBACK_Q="${UNITLESS_PULLBACK_Q:-none}"
+UNITLESS_PULLBACK_K="${UNITLESS_PULLBACK_K:-1e3}"
+UNITLESS_PULLBACK_R="${UNITLESS_PULLBACK_R:-10e3}"
+UNITLESS_MEASURED_PULLBACK_ARGS=(
+  --unitless_measured_pullback_mode "${PRETRAIN_UNITLESS_MEASURED_PULLBACK_MODE}"
+  --unitless_pullback_q "${UNITLESS_PULLBACK_Q}"
+  --unitless_pullback_k "${UNITLESS_PULLBACK_K}"
+  --unitless_pullback_R "${UNITLESS_PULLBACK_R}"
+)
+echo "Measured activation: pretrain=${ENABLE_PRETRAIN_MEASURED_ACTIVATION}, ft/inference=${ENABLE_MEASURED_ACTIVATION}, interpolation=${ACTIVATION_INTERPOLATION}, endpoint_scaled=${SCALE_MEASURED_ACTIVATION}"
+ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
+SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
+ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
+ENABLE_COUPLER_NOISE="${ENABLE_COUPLER_NOISE:-true}"
+COUPLER_NOISE_P="${COUPLER_NOISE_P:-0.6e-12}"
+PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitude}"
+FT_SPIN_VARIATION_ARGS=(
+  --enable_spin_variation "${ENABLE_SPIN_VARIATION}"
+  --sigma_spin "${SIGMA_SPIN}"
+)
+FT_SUMMING_CURRENT_NOISE_ARGS=(
+  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE}"
+  --summing_current_p "${SUMMING_CURRENT_P}"
+)
+FT_COUPLER_NOISE_ARGS=(
+  --enable_coupler_noise "${ENABLE_COUPLER_NOISE}"
+  --coupler_noise_p "${COUPLER_NOISE_P}"
+)
 CHAN_0=${CHAN_0:-}
 NUM_LAYERS=${NUM_LAYERS:-}
 CHUNK_ID="${CHUNK_ID:-0}"
@@ -110,16 +177,28 @@ case "${TOGGLE_MODE}" in
     FT_ODE_BLOCK="ToggleKeepZ"
     INF_ODE_BLOCK="TogglePulseKeepZ"
     ;;
-  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+  odexinit)
+    TRAIN_ODE_BLOCK="ToggleODEXInitFFFB"
+    FT_ODE_BLOCK="ToggleODEXInitFFFB"
+    INF_ODE_BLOCK="TogglePulseODEXInitFFFB"
+    ;;
+  pulse_odexinit)
+    TRAIN_ODE_BLOCK="ToggleODEXInitFFFB"
+    FT_ODE_BLOCK="TogglePulseBlkXInitFFFB"
+    INF_ODE_BLOCK="TogglePulseBlkXInitFFFB"
+    ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit/pulse_odexinit, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
 esac
 if [[ "${TOGGLE_MODE}" != "none" ]]; then
   TOGGLE_ARGS=(
     --toggle_n_cycles "${TOGGLE_N_CYCLES}"
     --toggle_time_split "${TOGGLE_TIME_SPLIT}"
     --toggle_fast_path "${TOGGLE_FAST_PATH}"
+    --odexinit_scaling_mode "${ODEXINIT_SCALING_MODE}"
   )
 fi
 echo "Toggle mode=${TOGGLE_MODE}: train=${TRAIN_ODE_BLOCK}, ft=${FT_ODE_BLOCK}, inference=${INF_ODE_BLOCK}"
+echo "FT spin variation=${ENABLE_SPIN_VARIATION} (sigma=${SIGMA_SPIN}); summing-current noise=${ENABLE_SUMMING_CURRENT_NOISE} (p=${SUMMING_CURRENT_P})"
 ##########################################################################
 
 ##########################################################################
@@ -246,6 +325,10 @@ run_one_combo () {
     --pc_conv       "PCConvReLU6" \
     --ode_block     "${block}" \
     "${TOGGLE_ARGS[@]}" \
+    "${PRETRAIN_MEASURED_ACTIVATION_ARGS[@]}" \
+    "${UNITLESS_MEASURED_PULLBACK_ARGS[@]}" \
+    --v_dd          "${V_DD}" \
+    --one_over_q    "${ONE_OVER_Q}" \
     --teacher_ckpt  "${TEACHER_CKPT}" \
     --teacher_arch  "${TEACHER_ARCH}" \
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
@@ -306,7 +389,9 @@ eval_one_combo_model() {
       wrapper="QATTester1State"
     fi
   fi
-  if [[ "${TOGGLE_MODE}" != "none" ]]; then
+  if [[ "${test_block}" == TogglePulseBlk* ]]; then
+    wrapper="TogglePulseQATTester1State"
+  elif [[ "${TOGGLE_MODE}" != "none" ]]; then
     wrapper="ToggleQATTester1State"
   fi
 
@@ -350,6 +435,10 @@ eval_one_combo_model() {
     --tie_cap         "false" \
     --one_over_q      "${ONE_OVER_Q}" \
     "${TOGGLE_ARGS[@]}" \
+    "${MEASURED_ACTIVATION_ARGS[@]}" \
+    "${FT_SPIN_VARIATION_ARGS[@]}" \
+    "${FT_SUMMING_CURRENT_NOISE_ARGS[@]}" \
+    "${FT_COUPLER_NOISE_ARGS[@]}" \
     --pc_conv         "${pc_conv}Noisy" \
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
@@ -383,7 +472,9 @@ finetune_one_combo_model() {
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
     qat_wrapper="QATWrapper2State"
   fi
-  if [[ "${TOGGLE_MODE}" != "none" ]]; then
+  if [[ "${train_block}" == TogglePulseBlk* ]]; then
+    qat_wrapper="TogglePulseQATWrapper1State"
+  elif [[ "${TOGGLE_MODE}" != "none" ]]; then
     qat_wrapper="ToggleQATWrapper1State"
   fi
 
@@ -434,6 +525,10 @@ finetune_one_combo_model() {
     --tie_cap       "false" \
     --one_over_q    "${ONE_OVER_Q}" \
     "${TOGGLE_ARGS[@]}" \
+    "${MEASURED_ACTIVATION_ARGS[@]}" \
+    "${FT_SPIN_VARIATION_ARGS[@]}" \
+    "${FT_SUMMING_CURRENT_NOISE_ARGS[@]}" \
+    "${FT_COUPLER_NOISE_ARGS[@]}" \
     --qat_cls       "SymQuantizeWeight" \
     --pcn           "${PCN}" \
     --ode_wrapper   "${qat_wrapper}" \
@@ -441,6 +536,7 @@ finetune_one_combo_model() {
     --ode_block     "${train_block}" \
     --noise_level   "${nl}" \
     --noise_type    "${nt}" \
+    --pulse_mismatch_training_mode "${PULSE_MISMATCH_TRAINING_MODE}" \
     --teacher_ckpt  "${TEACHER_CKPT}" \
     --teacher_arch  "${TEACHER_ARCH}" \
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \

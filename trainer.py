@@ -314,7 +314,8 @@ class TrainerCiFar(object):
                  distill_alpha=0.0, distill_temperature=1.0, teacher_model=None,
                  distill_method="kd", crd_feat_dim=128, crd_k=16384,
                  crd_temperature=0.07, crd_momentum=0.5, crd_beta=0.8,
-                 teacher_input_size=224, teacher_center_crop=True):
+                 teacher_input_size=224, teacher_center_crop=True,
+                 pulse_mismatch_training_mode="post_quant_amplitude"):
         self.skip_eval_epochs = skip_eval_epochs
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
@@ -392,6 +393,12 @@ class TrainerCiFar(object):
         self.noisy_model = None
         self.noise_schedule = None
         effective_noise_type = (noise_type or "mul")
+        pulse_training = any(
+            getattr(module, "supports_pulse_training", False)
+            for module in self.model.modules())
+        post_quant_mismatch_training = any(
+            getattr(module, "supports_post_quant_mismatch", False)
+            for module in self.model.modules())
         if mismatch_levels is not None or noise_level is not None:
             levels = []
             if mismatch_levels:
@@ -403,10 +410,17 @@ class TrainerCiFar(object):
                 # Preserve order while removing duplicates
                 unique_levels = list(dict.fromkeys(levels))
                 self.noise_schedule = unique_levels
-                self.noisy_model = WrappedNoisyModel(
-                    model=self.model,
-                    noise_levels=self.noise_schedule,
-                    noise_type=effective_noise_type,
+                self.noisy_model = (
+                    WrappedNoisyPulseModel(
+                        model=self.model,
+                        noise_levels=self.noise_schedule,
+                        noise_type=effective_noise_type,
+                        mismatch_mode=pulse_mismatch_training_mode,
+                    ) if pulse_training or post_quant_mismatch_training else WrappedNoisyModel(
+                        model=self.model,
+                        noise_levels=self.noise_schedule,
+                        noise_type=effective_noise_type,
+                    )
                 )
                 logging.warning(
                     "Mismatch-aware training enabled with noise levels %s (%s noise).",
@@ -684,6 +698,13 @@ class TrainerCiFar(object):
         running_loss /= n_samples
         return running_loss
 
+    def reset_spin_variation_for_inference(self):
+        """Clear cached spin factors once before a full-dataset evaluation."""
+        for module in self.model.modules():
+            reset = getattr(module, "reset_spin_variation", None)
+            if callable(reset):
+                reset()
+
     def evaluate(self, dataloader):
         correct = 0
         correct_top5 = 0
@@ -693,6 +714,7 @@ class TrainerCiFar(object):
         compute_top5 = self.dataset_name == "cifar100"
         with torch.no_grad():
             self.model.eval()
+            self.reset_spin_variation_for_inference()
             for data in dataloader:
                 if isinstance(data, (list, tuple)):
                     if self.orig_t_inp:
@@ -1071,3 +1093,76 @@ class WrappedNoisyModel(nn.Module):
             return self.model(x)
         noisy_params = self.gen_noisy_params()
         return torch.func.functional_call(self.model, noisy_params, (x,))
+
+
+class WrappedNoisyPulseModel(WrappedNoisyModel):
+    """Mismatch-aware wrapper for pulse and averaged post-quantization blocks."""
+
+    MODES = {"post_quant_amplitude", "pre_quant_weight"}
+
+    def __init__(self, model, noise_levels, noise_type="mul",
+                 mismatch_mode="post_quant_amplitude"):
+        super().__init__(model=model, noise_levels=noise_levels, noise_type=noise_type)
+        if mismatch_mode not in self.MODES:
+            raise ValueError(
+                "Unsupported mismatch mode={}. Expected one of {}.".format(
+                    mismatch_mode, sorted(self.MODES)))
+        self.mismatch_mode = mismatch_mode
+        self.pulse_blocks = [
+            module for module in self.model.modules()
+            if (getattr(module, "supports_pulse_training", False) or
+                getattr(module, "supports_post_quant_mismatch", False))]
+        if not self.pulse_blocks:
+            raise ValueError(
+                "WrappedNoisyPulseModel requires a pulse-training or "
+                "post-quantization-mismatch block.")
+        self.pulse_parameter_ids = set()
+        for block in self.pulse_blocks:
+            for module in (block.FFconv, block.FBconv):
+                if P.is_parametrized(module, "weight"):
+                    parameter = module.parametrizations.weight.original
+                else:
+                    parameter = module.weight
+                self.pulse_parameter_ids.add(id(parameter))
+
+    def _gen_noisy_params_at_level(self, noise_std, skip_pulse_weights):
+        noisy_params = {}
+        for name, parameter in self.model.named_parameters():
+            if (self._check_noise_free(name) or noise_std == 0.0 or
+                    (skip_pulse_weights and id(parameter) in self.pulse_parameter_ids)):
+                noisy_params[name] = parameter
+            elif self.noise_type == "mul":
+                noisy_params[name] = self._apply_noise_mul(parameter, noise_std)
+            else:
+                noisy_params[name] = self._apply_noise_add(parameter, noise_std)
+        return noisy_params
+
+    def gen_noisy_params(self):
+        noise_std = self._sample_noise_level()
+        return self._gen_noisy_params_at_level(
+            noise_std, self.mismatch_mode == "post_quant_amplitude")
+
+    def forward_with_kwargs(self, x, **kwargs):
+        if not self.model.training:
+            return self.model(x, **kwargs)
+
+        noise_std = self._sample_noise_level()
+        if self.mismatch_mode == "pre_quant_weight":
+            noisy_params = self._gen_noisy_params_at_level(
+                noise_std, skip_pulse_weights=False)
+            return torch.func.functional_call(
+                self.model, noisy_params, (x,), kwargs)
+
+        for block in self.pulse_blocks:
+            block.begin_training_pulse_mismatch(noise_std, self.noise_type)
+        try:
+            noisy_params = self._gen_noisy_params_at_level(
+                noise_std, skip_pulse_weights=True)
+            return torch.func.functional_call(
+                self.model, noisy_params, (x,), kwargs)
+        finally:
+            for block in self.pulse_blocks:
+                block.end_training_pulse_mismatch()
+
+    def forward(self, x):
+        return self.forward_with_kwargs(x)

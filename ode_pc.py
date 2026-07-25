@@ -17,13 +17,22 @@ from functools import wraps
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from pc_conv import ReLUX, HardTanhByX
-from utils import expand_weights_to_matrix, load_res_vs_vin
+from utils import expand_weights_to_matrix, load_res_vs_vin, interpolate_R_eff
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
+from measured_activation import (
+    CubicBSplineActivation, MEASURED_ACTIVATION_TYPES,
+    PiecewiseLinearActivation)
 # from TorchDiffEqPack.odesolver_mem import odesolve_adjoint as aca_ode_solve
 
 import logging
 log = logging.getLogger(__name__)
+
+
+def _symmetric_qat_weight_scale(layer_weight):
+    """Return the detached s_w used by SymQuantizeWeight.compute_s()."""
+    with torch.no_grad():
+        return 1 / layer_weight.detach().abs().max()
 
 
 def is_adaptive(method):
@@ -597,11 +606,12 @@ class ToggleBaseFFFB(ODEXInitFFFB):
     reset_z = None
 
     def __init__(self, toggle_n_cycles=None, toggle_time_split=0.5,
-                 toggle_fast_path=True, **kwargs):
+                 toggle_fast_path=True, odexinit_scaling_mode="approx", **kwargs):
         super().__init__(**kwargs)
         self.toggle_n_cycles = toggle_n_cycles
         self.toggle_time_split = toggle_time_split
         self.toggle_fast_path = toggle_fast_path
+        self.odexinit_scaling_mode = str(odexinit_scaling_mode).lower()
 
         if self.reset_z is None:
             raise ValueError("ToggleBaseFFFB subclasses must set reset_z.")
@@ -609,6 +619,9 @@ class ToggleBaseFFFB(ODEXInitFFFB):
             raise ValueError("toggle_n_cycles must be positive when provided.")
         if not 0.0 < self.toggle_time_split < 1.0:
             raise ValueError("toggle_time_split must be between 0 and 1.")
+        if self.odexinit_scaling_mode not in {"approx", "direct"}:
+            raise ValueError(
+                "odexinit_scaling_mode must be 'approx' or 'direct'.")
 
     def _integration_end_like(self, ref):
         return self.integration_time[-1].to(device=ref.device, dtype=ref.dtype)
@@ -641,6 +654,218 @@ class ToggleBaseFFFB(ODEXInitFFFB):
 
 
 class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
+    supports_post_quant_mismatch = True
+
+    def __init__(self, enable_spin_variation=False, sigma_spin=0.10, spin_variation_seed=None,
+                 enable_summing_current_noise=False, summing_current_p=12.73e-12,
+                 summing_noise_seed=None, enable_coupler_noise=False,
+                 coupler_noise_p=0.6e-12, coupler_noise_seed=None, **kwargs):
+        super().__init__(**kwargs)
+        self.enable_spin_variation = bool(enable_spin_variation)
+        self.sigma_spin = float(sigma_spin)
+        self.spin_variation_seed = spin_variation_seed
+        self.enable_summing_current_noise = bool(enable_summing_current_noise)
+        self.summing_current_p = float(summing_current_p)
+        self.summing_noise_seed = summing_noise_seed
+        self.enable_coupler_noise = bool(enable_coupler_noise)
+        self.coupler_noise_p = float(coupler_noise_p)
+        self.coupler_noise_seed = coupler_noise_seed
+        self.register_buffer("_spin_factor_y", None, persistent=False)
+        self.register_buffer("_spin_factor_z", None, persistent=False)
+        self._spin_variation_generators = {}
+        self._summing_noise_generators = {}
+        self._coupler_noise_generators = {}
+        self._active_coupler_count_cache = {}
+        self._training_pulse_mismatch = None
+
+    def begin_training_pulse_mismatch(self, noise_level, mismatch_type):
+        """Sample one post-quantization coupler-amplitude mismatch for this forward."""
+        noise_level = float(noise_level)
+        mismatch = {"type": mismatch_type}
+        for key, module in (("FFconv", self.FFconv), ("FBconv", self.FBconv)):
+            if key == "FBconv" and self.tie_weights:
+                mismatch[key] = mismatch["FFconv"]
+                continue
+            noise = torch.randn_like(module.weight, requires_grad=False) * noise_level
+            mismatch[key] = 1.0 + noise if mismatch_type == "mul" else noise
+        self._training_pulse_mismatch = mismatch
+
+    def end_training_pulse_mismatch(self):
+        self._training_pulse_mismatch = None
+
+    def _apply_averaged_module(self, module, source):
+        mismatch = self._training_pulse_mismatch
+        if mismatch is None:
+            return module(source)
+
+        key = "FBconv" if module is self.FBconv else "FFconv"
+        weight = module.weight
+        if mismatch["type"] == "mul":
+            weight = weight * mismatch[key]
+        else:
+            weight = weight + weight.abs() * mismatch[key]
+
+        if isinstance(module, nn.Conv2d):
+            return F.conv2d(
+                source, weight, module.bias, module.stride, module.padding,
+                module.dilation, module.groups)
+        if isinstance(module, nn.ConvTranspose2d):
+            return F.conv_transpose2d(
+                source, weight, module.bias, module.stride, module.padding,
+                module.output_padding, module.groups, module.dilation)
+        raise TypeError(
+            "Level-2 post-quantization mismatch supports Conv2d and ConvTranspose2d modules.")
+
+    def reset_spin_variation(self):
+        self._spin_factor_y = None
+        self._spin_factor_z = None
+
+    def forward(self, x, layer_idx=None):
+        # Training samples one hardware realization per forward. Evaluation
+        # keeps the lazily sampled factors fixed for this model/trial.
+        if self.training and self.enable_spin_variation:
+            self.reset_spin_variation()
+        return super().forward(x, layer_idx=layer_idx)
+
+    def _layer_seed_offset(self):
+        try:
+            return 1009 * int(self.layer_idx)
+        except (TypeError, ValueError):
+            return 0
+
+    def _spin_variation_generator(self, ref, stage):
+        if self.spin_variation_seed is None:
+            return None
+        key = (str(ref.device), stage)
+        generator = self._spin_variation_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=ref.device)
+            stage_offset = 0 if stage == "z" else 1
+            generator.manual_seed(
+                int(self.spin_variation_seed) + self._layer_seed_offset() + stage_offset)
+            self._spin_variation_generators[key] = generator
+        return generator
+
+    def _spin_factor(self, stage, summed_rhs):
+        if not self.enable_spin_variation:
+            return None
+        name = "_spin_factor_{}".format(stage)
+        factor = getattr(self, name)
+        expected_shape = (1,) + tuple(summed_rhs.shape[1:])
+        if factor is None:
+            factor = 1.0 + self.sigma_spin * torch.randn(
+                expected_shape, device=summed_rhs.device, dtype=summed_rhs.dtype,
+                generator=self._spin_variation_generator(summed_rhs, stage))
+            setattr(self, name, factor)
+        elif tuple(factor.shape) != expected_shape:
+            raise RuntimeError(
+                "Cached {}-spin factor has shape {}, but this hardware run requested {}.".format(
+                    stage, tuple(factor.shape), expected_shape))
+        return factor.to(device=summed_rhs.device, dtype=summed_rhs.dtype)
+
+    def _apply_spin_variation(self, stage, summed_rhs):
+        factor = self._spin_factor(stage, summed_rhs)
+        return summed_rhs if factor is None else factor * summed_rhs
+
+    def _stage_capacitance(self, stage):
+        return self.C_fb if stage == "z" else self.C_ff
+
+    def _stage_eps(self, stage):
+        return self.summing_current_p / self._stage_capacitance(stage)
+
+    def _summing_noise_generator(self, state):
+        if self.summing_noise_seed is None:
+            return None
+        key = str(state.device)
+        generator = self._summing_noise_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=state.device)
+            generator.manual_seed(int(self.summing_noise_seed) + self._layer_seed_offset())
+            self._summing_noise_generators[key] = generator
+        return generator
+
+    def _coupler_noise_generator(self, state):
+        if self.coupler_noise_seed is None:
+            return None
+        key = str(state.device)
+        generator = self._coupler_noise_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=state.device)
+            generator.manual_seed(int(self.coupler_noise_seed) + self._layer_seed_offset())
+            self._coupler_noise_generators[key] = generator
+        return generator
+
+    def _brownian_increment(self, state, duration, stage):
+        normal = torch.randn(
+            state.shape, device=state.device, dtype=state.dtype,
+            generator=self._summing_noise_generator(state))
+        duration = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
+        return self._stage_eps(stage) * duration.sqrt() * normal
+
+    def _averaged_coupler_level_sum(self, module, source, state):
+        """Sum quantized pulse levels feeding each destination spin."""
+        if not getattr(self, "physical", False):
+            raise ValueError(
+                "Physical coupler noise requires a hardware wrapper with stage capacitances.")
+        if not hasattr(self, "q_hi") or self.q_hi <= 0:
+            raise ValueError("Level-2 coupler noise requires a positive quantization maximum.")
+
+        with torch.no_grad():
+            levels = self._values_to_level_idx(module.weight.detach()).to(
+                device=state.device, dtype=state.dtype)
+            source_ones = source.new_ones((1,) + tuple(source.shape[1:]))
+            if isinstance(module, nn.Conv2d):
+                level_sum = F.conv2d(
+                    source_ones, levels, None, module.stride, module.padding,
+                    module.dilation, module.groups)
+            elif isinstance(module, nn.ConvTranspose2d):
+                level_sum = F.conv_transpose2d(
+                    source_ones, levels, None, module.stride, module.padding,
+                    module.output_padding, module.groups, module.dilation)
+            else:
+                raise TypeError(
+                    "Level-2 coupler noise supports Conv2d and ConvTranspose2d modules.")
+
+            if tuple(level_sum.shape[1:]) != tuple(state.shape[1:]):
+                raise RuntimeError(
+                    "Coupler-level sum shape {} does not match destination state {}.".format(
+                        tuple(level_sum.shape), tuple(state.shape)))
+            return level_sum
+
+    def _averaged_coupler_brownian_increment(
+            self, state, duration, stage, coupler_level_sum):
+        # A level-l coupler is active for l of q_hi equal pulse slices.
+        # Summing their independent variances gives:
+        # (p/C)^2 * duration/q_hi * sum_c(level_c).
+        normal = torch.randn(
+            state.shape, device=state.device, dtype=state.dtype,
+            generator=self._coupler_noise_generator(state))
+        duration = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
+        level_sum = coupler_level_sum.to(device=state.device, dtype=state.dtype)
+        scale = self.coupler_noise_p / self._stage_capacitance(stage)
+        return scale * (duration * level_sum / float(self.q_hi)).sqrt() * normal
+
+    def _averaged_stage_update(
+            self, state, summed_rhs, duration, stage, coupler_level_sum=None):
+        summed_rhs = self._apply_spin_variation(stage, summed_rhs)
+
+        if not getattr(self, "physical", False):
+            if self.enable_summing_current_noise or self.enable_coupler_noise:
+                raise ValueError(
+                    "Physical current noise requires a hardware wrapper with stage capacitances.")
+            return state + duration * summed_rhs
+
+        updated = state + (duration / (self.R * self._stage_capacitance(stage))) * summed_rhs
+        if self.enable_summing_current_noise:
+            updated = updated + self._brownian_increment(state, duration, stage)
+        if self.enable_coupler_noise:
+            if coupler_level_sum is None:
+                raise ValueError(
+                    "Level-2 coupler noise requires the summed incoming pulse levels.")
+            updated = updated + self._averaged_coupler_brownian_increment(
+                state, duration, stage, coupler_level_sum)
+        return updated
+
     def project_state(self, state):
         if not hasattr(self, "v_dd"):
             raise ValueError("Physical toggle blocks require wrapper-provided v_dd.")
@@ -673,26 +898,34 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         return T_z, T_y
 
     def z_stage_update(self, z, y_hold, T_z):
-        return z + (T_z / (self.R * self.C_fb)) * self.FBconv(y_hold)
+        level_sum = None
+        if self.enable_coupler_noise:
+            level_sum = self._averaged_coupler_level_sum(self.FBconv, y_hold, z)
+        return self._averaged_stage_update(
+            z, self._apply_averaged_module(self.FBconv, y_hold), T_z, "z",
+            coupler_level_sum=level_sum)
 
     def y_stage_update(self, y, h_hold, T_y):
-        return y + (T_y / (self.R * self.C_ff)) * self.FFconv(h_hold)
+        level_sum = None
+        if self.enable_coupler_noise:
+            level_sum = self._averaged_coupler_level_sum(self.FFconv, h_hold, y)
+        return self._averaged_stage_update(
+            y, self._apply_averaged_module(self.FFconv, h_hold), T_y, "y",
+            coupler_level_sum=level_sum)
 
     def run_one_cycle(self, y, z, cycle_params):
         # cycle_params is generated by resolve_cycle_params
         # if in physical model: scale the time accordingly.
         # otherwise in unitless mode.
         T_z, T_y = cycle_params
-        if not getattr(self, "physical", False):
-            # Unitless mode.
-            z = z + T_z * self.FBconv(y)
-            h = self.act_fn(z)
-            y = y + T_y * self.FFconv(h)
-            return y, z
-
-        z = self.project_state(self.z_stage_update(z, y, T_z))
+        physical = getattr(self, "physical", False)
+        z = self.z_stage_update(z, y, T_z)
+        if physical:
+            z = self.project_state(z)
         h = self.act_fn(z)
-        y = self.project_state(self.y_stage_update(y, h, T_y))
+        y = self.y_stage_update(y, h, T_y)
+        if physical:
+            y = self.project_state(y)
         return y, z
 
 
@@ -707,28 +940,96 @@ class ToggleKeepZ(ToggleAveragedPhysicalFFFB):
 class ToggleODEXInitFFFB(ToggleAveragedPhysicalFFFB):
     reset_z = True
 
+    def __init__(self, unitless_measured_pullback_mode=None,
+                 enable_unitless_measured_pullback=None,
+                 unitless_pullback_q=None, unitless_pullback_k=1e3,
+                 unitless_pullback_R=10e3, **kwargs):
+        super().__init__(**kwargs)
+        if unitless_measured_pullback_mode is None:
+            unitless_measured_pullback_mode = (
+                "approx" if bool(enable_unitless_measured_pullback) else "none")
+        self.unitless_measured_pullback_mode = str(
+            unitless_measured_pullback_mode).lower()
+        if self.unitless_measured_pullback_mode not in {
+                "approx", "direct", "none"}:
+            raise ValueError(
+                "unitless_measured_pullback_mode must be "
+                "'approx', 'direct', or 'none'.")
+        self.enable_unitless_measured_pullback = (
+            self.unitless_measured_pullback_mode != "none")
+        self.unitless_pullback_q = (
+            None if unitless_pullback_q is None else float(unitless_pullback_q))
+        self.unitless_pullback_k = float(unitless_pullback_k)
+        self.unitless_pullback_R = float(unitless_pullback_R)
+        self._active_unitless_pullback_beta_c = None
+
+        if self.enable_unitless_measured_pullback:
+            if self.unitless_pullback_q is None or self.unitless_pullback_q <= 0:
+                raise ValueError("unitless_pullback_q must be positive when pullback is enabled.")
+            if (self.unitless_measured_pullback_mode == "approx" and
+                    (self.unitless_pullback_k <= 0 or self.unitless_pullback_R <= 0)):
+                raise ValueError(
+                    "unitless pullback k and R must be positive in approx mode.")
+
+    def prospective_unitless_pullback_scales(self):
+        """Return detached prospective (s_fb, beta, beta_c) for current FB weights."""
+        s_fb = _symmetric_qat_weight_scale(self.FBconv.weight)
+        beta = s_fb * self.unitless_pullback_q
+        beta_c = beta * self.unitless_pullback_k / self.unitless_pullback_R
+        return s_fb, beta, beta_c
+
+    def forward(self, x, layer_idx=None):
+        if (not self.enable_unitless_measured_pullback or
+                getattr(self, "physical", False)):
+            return super().forward(x, layer_idx=layer_idx)
+        if not isinstance(self.act_fn, MEASURED_ACTIVATION_TYPES):
+            raise TypeError(
+                "Unitless measured pullback requires a measured activation.")
+
+        _, beta, beta_c = self.prospective_unitless_pullback_scales()
+        pullback_scale = (
+            beta_c if self.unitless_measured_pullback_mode == "approx"
+            else beta.new_tensor(self.unitless_pullback_q))
+        previous_scale = self.act_fn._coordinate_pullback_scale
+        self._active_unitless_pullback_beta_c = pullback_scale
+        self.act_fn.set_coordinate_pullback_scale(pullback_scale)
+        try:
+            return super().forward(x, layer_idx=layer_idx)
+        finally:
+            self.act_fn.set_coordinate_pullback_scale(previous_scale)
+            self._active_unitless_pullback_beta_c = None
+
     def resolve_cycle_params(self, ref):
         n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
         cycle_t = self._integration_end_like(ref) / float(n_cycles)
         if not getattr(self, "physical", False):
             return torch.ones_like(cycle_t), cycle_t
 
-        missing = [name for name in ("R", "C", "C_fb", "k", "alpha_1state", "w_bits") if not hasattr(self, name)]
+        required = ["R", "C", "C_fb", "w_bits"]
+        if self.odexinit_scaling_mode == "direct":
+            required.extend(["s_ff", "s_fb"])
+        else:
+            required.extend(["k", "alpha_1state"])
+        missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError("ToggleODEXInitFFFB requires wrapper-provided " + ", ".join(missing))
         R = self.R
         C = self.C
         C_fb = self.C_fb
-        k = self.k
-        alpha_1state = self.alpha_1state
-        T_z = k * C_fb
-        T_y = cycle_t * R * R * C / (k * alpha_1state)
+        if self.odexinit_scaling_mode == "direct":
+            T_z = R * C_fb / self.s_fb
+            T_y = cycle_t * R * C / self.s_ff
+        else:
+            k = self.k
+            alpha_1state = self.alpha_1state
+            T_z = k * C_fb
+            T_y = cycle_t * R * R * C / (k * alpha_1state)
         if T_z <= 0 or T_y <= 0:
-            raise ValueError("ODEXInit-approx toggle stage durations must be positive.")
+            raise ValueError("ODEXInit toggle stage durations must be positive.")
         return T_z, T_y
 
-    def y_stage_update(self, y, h_hold, T_y):
-        return y + (T_y / (self.R * self.C)) * self.FFconv(h_hold)
+    def _stage_capacitance(self, stage):
+        return self.C_fb if stage == "z" else self.C
 
 
 class ToggleODEXInitKeep(ToggleODEXInitFFFB):
@@ -736,6 +1037,30 @@ class ToggleODEXInitKeep(ToggleODEXInitFFFB):
 
 
 class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
+    supports_post_quant_mismatch = False
+
+    def __init__(self, enable_dtc_timing=False,
+                 dtc_leading_edge_variation_std=0.0,
+                 dtc_width_variation_std=0.018,
+                 dtc_leading_edge_jitter_std=0.005,
+                 dtc_falling_edge_jitter_std=0.005,
+                 dtc_timing_seed=None, **kwargs):
+        super().__init__(**kwargs)
+        self.enable_dtc_timing = bool(enable_dtc_timing)
+        self.dtc_leading_edge_variation_std = float(dtc_leading_edge_variation_std)
+        self.dtc_width_variation_std = float(dtc_width_variation_std)
+        self.dtc_leading_edge_jitter_std = float(dtc_leading_edge_jitter_std)
+        self.dtc_falling_edge_jitter_std = float(dtc_falling_edge_jitter_std)
+        self.dtc_timing_seed = dtc_timing_seed
+        for name in (
+                "dtc_leading_edge_variation_std", "dtc_width_variation_std",
+                "dtc_leading_edge_jitter_std", "dtc_falling_edge_jitter_std"):
+            if getattr(self, name) < 0.0:
+                raise ValueError("{} must be nonnegative.".format(name))
+        self._dtc_fixed_variation = {}
+        self._dtc_timing_generators = {}
+        self._last_dtc_window = {}
+
     @torch.no_grad()
     def add_noise(self):
         self._pulse_on_values = {}
@@ -776,6 +1101,110 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         assert self.q_hi > 0
         return self.q_hi
 
+    def reset_dtc_variation(self):
+        self._dtc_fixed_variation.clear()
+
+    def _dtc_timing_generator(self, ref, stage):
+        if self.dtc_timing_seed is None:
+            return None
+        key = (str(ref.device), stage)
+        generator = self._dtc_timing_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=ref.device)
+            stage_offset = 0 if stage == "z" else 104729
+            generator.manual_seed(
+                int(self.dtc_timing_seed) + self._layer_seed_offset() + stage_offset)
+            self._dtc_timing_generators[key] = generator
+        return generator
+
+    @staticmethod
+    def _dtc_num_outputs(module):
+        if hasattr(module, "mat"):
+            return (int(module.meta["out_chan"]) * int(module.meta["inp_chan"]) *
+                    int(module.meta["ker_h"]) * int(module.meta["ker_w"]))
+        return module.weight.numel()
+
+    def _dtc_output_index(self, module, ref):
+        if not hasattr(module, "mat"):
+            return torch.arange(ref.numel(), device=ref.device, dtype=torch.int64).reshape_as(ref)
+        if not hasattr(module, "dtc_block_ids") or not hasattr(module, "dtc_output_ids"):
+            raise ValueError("Expanded pulse modules require Validator DTC metadata.")
+        outputs_per_block = int(module.meta["ker_h"]) * int(module.meta["ker_w"])
+        return module.dtc_block_ids * outputs_per_block + module.dtc_output_ids
+
+    def _sample_dtc_window(self, module, stage):
+        # sample the variation and jitter of the DTC pulses
+        # each individual param from dense kernel have its own variation and jitter
+        # The values in unrolled matrix from the same param in the dense kernel shares
+        # the same variation and jitter.
+        if not self.enable_dtc_timing:
+            return None
+        _, clean_values = self._clean_weight(module)
+        # num parameters in this module = num of independent variation and jitter to sample.
+        num_outputs = self._dtc_num_outputs(module)
+        fixed = self._dtc_fixed_variation.get(stage)
+        if fixed is None:
+            generator = self._dtc_timing_generator(clean_values, stage)
+            fixed = {
+                "leading_edge": self.dtc_leading_edge_variation_std * torch.randn(
+                    num_outputs, device=clean_values.device, dtype=clean_values.dtype,
+                    generator=generator),
+                "width": self.dtc_width_variation_std * torch.randn(
+                    num_outputs, device=clean_values.device, dtype=clean_values.dtype,
+                    generator=generator),
+            }
+            self._dtc_fixed_variation[stage] = fixed
+        generator = self._dtc_timing_generator(clean_values, stage)
+        leading_jitter = self.dtc_leading_edge_jitter_std * torch.randn(
+            num_outputs, device=clean_values.device, dtype=clean_values.dtype,
+            generator=generator)
+        falling_jitter = self.dtc_falling_edge_jitter_std * torch.randn(
+            num_outputs, device=clean_values.device, dtype=clean_values.dtype,
+            generator=generator)
+        window = {
+            "start_offset": fixed["leading_edge"] + leading_jitter,
+            "end_offset": fixed["leading_edge"] + fixed["width"] + falling_jitter,
+        }
+        self._last_dtc_window[stage] = window
+        return window
+
+    def _dtc_slice_duty(self, module, clean_values, slice_idx, dtc_window):
+        # Calculates the overlap between the true pulse window (with variation and jitter)
+        # and the current slice.
+        if dtc_window is None:
+            return None
+        if getattr(self, "pulse_weight_encoding", None) == "integer_level":
+            pulse_count = clean_values.abs()
+        else:
+            pulse_count = torch.round(clean_values.abs() * self.q_hi)
+        pulse_count = pulse_count.clamp(min=0, max=self.q_hi)
+        output_index = self._dtc_output_index(module, clean_values)
+        # Firstly get unitless pulse width. The smallest is 1, then 2, ..., self.q_hi.
+        start = dtc_window["start_offset"][output_index]
+        end = pulse_count + dtc_window["end_offset"][output_index]
+        slice_start = clean_values.new_tensor(float(slice_idx))
+        slice_end = slice_start + 1.0
+        overlap = torch.minimum(end, slice_end) - torch.maximum(start, slice_start)
+        duty = overlap.clamp(min=0.0, max=1.0)
+        return duty * (pulse_count > 0).to(dtype=clean_values.dtype)
+
+    def _timed_pulse_values(self, clean_values, on_values, slice_idx, duty):
+        return on_values * duty
+
+    def _pulse_values_for_slice(
+            self, module, clean_values, on_values, slice_idx, dtc_window):
+        # on_values = sign(W) * W'/W
+        if dtc_window is None:
+            # No DTC variation and jitter, perfect pulses
+            return self._pulse_values(clean_values, on_values, slice_idx)
+        # With DTC variation and jitter, now each slice is not perfect 1 or 0.
+        # We need to calculate the "duty" within each slice, which is the
+        # overlap between the real pulse width (with variation and jitter)
+        # and the slice width.
+        duty = self._dtc_slice_duty(module, clean_values, slice_idx, dtc_window)
+        return self._timed_pulse_values(
+            clean_values, on_values, slice_idx, duty)
+
     def _clean_weight(self, module):
         # get clean weights based on if we are in test_expanded mode
         key = "FBconv" if module is self.FBconv else "FFconv"
@@ -788,7 +1217,7 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         return key, module.clean_mat_values
 
     def _on_values(self, clean_values, noisy_values, key):
-        # To get mismatch
+        # To get mismatch and sign
         if not hasattr(self, "_pulse_on_values"):
             self._pulse_on_values = {}
         cached = self._pulse_on_values.get(key)
@@ -818,26 +1247,36 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         active = pulse_count > slice_idx
         return on_values * active.to(dtype=clean_values.dtype)
 
-    def get_pulse_matrix(self, module, slice_idx, num_slices):
+    def get_pulse_matrix(self, module, slice_idx, num_slices, dtc_window=None):
         assert num_slices == self.q_hi
         key, clean_weight = self._clean_weight(module)
         if hasattr(module, "mat"):
             clean_values = clean_weight
-            noisy_values = module.mat.values()
-            values = self._pulse_values(
-                clean_values, self._on_values(clean_values, noisy_values, key), slice_idx)
+            noisy_values = getattr(module, "pulse_noisy_values", None)
+            noisy_values = module.mat.values() if noisy_values is None else noisy_values
+            # clean_values are to get quantization levels.
+            # clean_values + slice_idx determines if the coupler is on for this slice.
+            # _on_values merges the sign + mismatch
+            # Perfect pulse: values = mask_if_on * (sign(W) * W'/W) = mask_if_on * on_values
+            # DTC non-ideality: duty * weight_non_zero * (sign(W) * W'/W)
+            values = self._pulse_values_for_slice(
+                module, clean_values,
+                self._on_values(clean_values, noisy_values, key), slice_idx,
+                dtc_window)
             assert getattr(module.mat, "is_sparse_csr", False)
             # Reconstruct the sparse tensor based on current slice_idx and quant level of each weight.
             return torch.sparse_csr_tensor(
                 module.mat.crow_indices(), module.mat.col_indices(), values,
                 size=module.mat.shape, dtype=module.mat.dtype,
                 device=module.mat.device)
-        return self._pulse_values(
-            clean_weight, self._on_values(clean_weight, module.weight, key), slice_idx)
+        return self._pulse_values_for_slice(
+            module, clean_weight,
+            self._on_values(clean_weight, module.weight, key), slice_idx,
+            dtc_window)
 
     def _apply_sparse_pulse_module(self, module, x, pulse_weight):
-        assert not getattr(module, "csv_enabled", False), \
-            "Pulse-level toggle does not support nonlinear_R CSV MVMConv yet."
+        if hasattr(module, "forward_pulse"):
+            return module.forward_pulse(x, pulse_weight, nominal_R=self.R)
         batch_size, _, input_h, input_w = x.shape
         padding = int(module.meta["padding"])
         stride = int(module.meta["stride"])
@@ -849,40 +1288,149 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         y = torch.sparse.mm(pulse_weight, x_flat)
         return y.t().reshape(batch_size, module.meta["out_chan"], output_h, output_w)
 
+    def _pulse_nonlinear_source(self, x):
+        package = getattr(self, "_nonlinear_R_pkg", None)
+        if package is None:
+            return x
+        nominal_idx = (package["R_codes"] - self.R).abs().argmin()
+        R_eff = interpolate_R_eff(
+            x, package["v_grid"], package["R_codes"], package["R_left"],
+            package["R_slope"], nominal_idx, proj_fn=package.get("proj_fn"))
+        return x * self.R / R_eff
+
     def _apply_pulse_module(self, module, x, pulse_weight):
+        # Calculate MVM. Incorporate nonlinear effect of R changing with input x if any.
+        # The nonlinear interpolated effective R is merged into x.
+        # Calculating the MVM between x and pulse_weight.
         if isinstance(module, nn.Conv2d):
+            x = self._pulse_nonlinear_source(x)
             return F.conv2d(x, pulse_weight, None, module.stride, module.padding, module.dilation, module.groups)
         if isinstance(module, nn.ConvTranspose2d):
+            x = self._pulse_nonlinear_source(x)
             return F.conv_transpose2d(x, pulse_weight, None, module.stride, module.padding,
                                       module.output_padding, module.groups, module.dilation)
         if hasattr(module, "mat") and (getattr(pulse_weight, "is_sparse", False) or
                                        getattr(pulse_weight, "is_sparse_csr", False)):
             return self._apply_sparse_pulse_module(module, x, pulse_weight)
-        raise TypeError("Pulse-level toggle supports Conv2d, ConvTranspose2d, and non-CSV MVMConv modules.")
+        raise TypeError("Pulse-level toggle supports Conv2d, ConvTranspose2d, and MVMConv modules.")
 
     def z_stage_rhs(self, t, z, y_hold, pulse_weight):
-        rhs = self._apply_pulse_module(self.FBconv, y_hold, pulse_weight)
-        return rhs / (self.R * self.C_fb)
+        summed_rhs = self._apply_pulse_module(self.FBconv, y_hold, pulse_weight)
+        summed_rhs = self._apply_spin_variation("z", summed_rhs)
+        return summed_rhs / (self.R * self.C_fb)
 
     def y_stage_rhs(self, t, y, h_hold, pulse_weight):
-        rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
-        return rhs / (self.R * self.C_ff)
+        summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
+        summed_rhs = self._apply_spin_variation("y", summed_rhs)
+        return summed_rhs / (self.R * self.C_ff)
 
-    def _make_slice_options(self, duration, state):
+    def _active_pulse_mask(self, module, slice_idx):
+        _, clean_weight = self._clean_weight(module)
+        clean_magnitude = clean_weight.detach().abs()
+        if getattr(self, "pulse_weight_encoding", None) == "integer_level":
+            pulse_count = clean_magnitude
+        else:
+            pulse_count = torch.round(clean_magnitude * self.q_hi)
+        return pulse_count > int(slice_idx)
+
+    def _active_coupler_count(self, module, source, active_mask, state, slice_idx=None):
+        # Calculate the MVM between on-mask and all-one tensor to tell how many couplers
+        # are on in a single row. This is to calculate the overall noise spectral density
+        # for a single spin.
+        cache = getattr(self, "_active_coupler_count_cache", None)
+        cache_key = None
+        # With DTC non-idealities, the cache look up is skipped. Because the
+        # active coupler count will change even for the same slice_idx and param.
+        if (cache is not None and slice_idx is not None and
+                not getattr(self, "supports_pulse_training", False)):
+            cache_key = (id(module), int(slice_idx), tuple(source.shape[1:]),
+                         str(state.device), state.dtype)
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return cached
+        with torch.no_grad():
+            active = active_mask.to(device=state.device, dtype=state.dtype)
+            source_ones = source.new_ones((1,) + tuple(source.shape[1:]))
+            if isinstance(module, nn.Conv2d):
+                count = F.conv2d(
+                    source_ones, active, None, module.stride, module.padding,
+                    module.dilation, module.groups)
+            elif isinstance(module, nn.ConvTranspose2d):
+                count = F.conv_transpose2d(
+                    source_ones, active, None, module.stride, module.padding,
+                    module.output_padding, module.groups, module.dilation)
+            elif hasattr(module, "mat"):
+                mat = module.mat
+                active_mat = torch.sparse_csr_tensor(
+                    mat.crow_indices(), mat.col_indices(), active, size=mat.shape,
+                    dtype=state.dtype, device=state.device)
+                source_ones_flat = state.new_ones((mat.shape[1], 1))
+                count = torch.sparse.mm(active_mat, source_ones_flat).t().reshape(
+                    (1,) + tuple(state.shape[1:]))
+            else:
+                raise TypeError(
+                    "Coupler noise supports Conv2d, ConvTranspose2d, and MVMConv modules.")
+            if tuple(count.shape[1:]) != tuple(state.shape[1:]):
+                raise RuntimeError(
+                    "Active-coupler count shape {} does not match destination state {}.".format(
+                        tuple(count.shape), tuple(state.shape)))
+            if cache_key is not None:
+                cache[cache_key] = count
+            return count
+
+    def _coupler_stage_eps(self, stage, active_coupler_count):
+        # Fractional DTC duty factors are nonnegative, but convolution can
+        # produce tiny negative roundoff at locations whose exact count is zero.
+        active_coupler_count = active_coupler_count.clamp_min(0.0)
+        return (self.coupler_noise_p / self._stage_capacitance(stage)) * (
+            active_coupler_count.sqrt())
+
+    def _coupler_brownian_increment(self, state, duration, stage, active_coupler_count):
+        normal = torch.randn(
+            state.shape, device=state.device, dtype=state.dtype,
+            generator=self._coupler_noise_generator(state))
+        duration = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
+        return (self._coupler_stage_eps(stage, active_coupler_count) *
+                duration.sqrt() * normal)
+
+    def _make_slice_options(self, duration, state, stage, active_coupler_count=None):
         opts = deepcopy(self.option_aca)
         opts["t0"] = state.new_tensor(0.0)
-        opts["t1"] = duration.to(device=state.device, dtype=state.dtype)
+        opts["t1"] = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
         opts["t_eval"] = [opts["t0"], opts["t1"]]
         opts["h"] = opts["t1"] if opts.get("h", None) is not None else None
+        if self.enable_summing_current_noise:
+            opts["eps"] = self._stage_eps(stage)
+            opts["noise_type"] = "add"
+            opts["noise_generator"] = self._summing_noise_generator(state)
+        if self.enable_coupler_noise:
+            if active_coupler_count is None:
+                raise ValueError("Coupler noise requires an active-coupler count for each pulse slice.")
+            coupler_eps = self._coupler_stage_eps(stage, active_coupler_count)
+            if opts.get("eps") is None:
+                opts["eps"] = coupler_eps
+            else:
+                summing_eps = torch.as_tensor(
+                    opts["eps"], device=state.device, dtype=state.dtype)
+                opts["eps"] = (summing_eps.square() + coupler_eps.square()).sqrt()
+            opts["noise_type"] = "add"
+            opts["noise_generator"] = self._coupler_noise_generator(state)
         return opts
 
-    def integrate_pulse_slice(self, state, duration, rhs_fn, stage, slice_idx, constant_rhs=None):
+    def integrate_pulse_slice(self, state, duration, rhs_fn, stage, slice_idx, constant_rhs=None,
+                              active_coupler_count=None):
         if self.toggle_fast_path and constant_rhs is not None:
             updated = state + duration * constant_rhs
+            if self.enable_summing_current_noise:
+                updated = updated + self._brownian_increment(state, duration, stage)
+            if self.enable_coupler_noise:
+                updated = updated + self._coupler_brownian_increment(
+                    state, duration, stage, active_coupler_count)
         else:
             updated = aca_ode_solve(
                 lambda t, y: rhs_fn(t, y), state,
-                self._make_slice_options(duration, state))[-1]
+                self._make_slice_options(
+                    duration, state, stage, active_coupler_count=active_coupler_count))[-1]
         return self.project_state(updated)
 
     def run_z_stage(self, y_hold, z, T_z):
@@ -890,21 +1438,60 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         # split the full pulse width into number of quant levels
         num_slices = self._num_slices("z")
         dt = T_z / float(num_slices)
+        # sample possible pulse non-idealities.
+        dtc_window = self._sample_dtc_window(self.FBconv, "z")
         for slice_idx in range(num_slices):
-            pulse_weight = self.get_pulse_matrix(self.FBconv, slice_idx, num_slices)
+            # Perfect pulse: mask_if_on * (sign(W) * W'/W)
+            # DTC non-ideality: duty * weight_non_zero * (sign(W) * W'/W)
+            pulse_weight = self.get_pulse_matrix(
+                self.FBconv, slice_idx, num_slices, dtc_window=dtc_window)
+            active_coupler_count = None
+            if self.enable_coupler_noise:
+                if dtc_window is None:
+                    # Perfect pulse, determined by quant level and slice_idx
+                    active_mask = self._active_pulse_mask(self.FBconv, slice_idx)
+                else:
+                    _, clean_weight = self._clean_weight(self.FBconv)
+                    # Calculates the overlap of the real pulse window with the current slice
+                    active_mask = self._dtc_slice_duty(
+                        self.FBconv, clean_weight, slice_idx, dtc_window)
+                # Calculate how many couplers are on in a single row via MVM.
+                active_coupler_count = self._active_coupler_count(
+                    self.FBconv, y_hold, active_mask, z,
+                    slice_idx=slice_idx if dtc_window is None else None)
+            # Calculate the core MVM between the weight and the input.
+            # Multiply the whole RHS but spin/current summing variation if any.
             constant_rhs = self.z_stage_rhs(None, z, y_hold, pulse_weight) if self.toggle_fast_path else None
             rhs_fn = lambda t, cur_z, pw=pulse_weight: self.z_stage_rhs(t, cur_z, y_hold, pw)
-            z = self.integrate_pulse_slice(z, dt, rhs_fn, "z", slice_idx, constant_rhs=constant_rhs)
+            # Perform spin update, add brownian noise if any with correct scale.
+            z = self.integrate_pulse_slice(
+                z, dt, rhs_fn, "z", slice_idx, constant_rhs=constant_rhs,
+                active_coupler_count=active_coupler_count)
         return z
 
     def run_y_stage(self, y, h_hold, T_y):
         num_slices = self._num_slices("y")
         dt = T_y / float(num_slices)
+        dtc_window = self._sample_dtc_window(self.FFconv, "y")
         for slice_idx in range(num_slices):
-            pulse_weight = self.get_pulse_matrix(self.FFconv, slice_idx, num_slices)
+            pulse_weight = self.get_pulse_matrix(
+                self.FFconv, slice_idx, num_slices, dtc_window=dtc_window)
+            active_coupler_count = None
+            if self.enable_coupler_noise:
+                if dtc_window is None:
+                    active_mask = self._active_pulse_mask(self.FFconv, slice_idx)
+                else:
+                    _, clean_weight = self._clean_weight(self.FFconv)
+                    active_mask = self._dtc_slice_duty(
+                        self.FFconv, clean_weight, slice_idx, dtc_window)
+                active_coupler_count = self._active_coupler_count(
+                    self.FFconv, h_hold, active_mask, y,
+                    slice_idx=slice_idx if dtc_window is None else None)
             constant_rhs = self.y_stage_rhs(None, y, h_hold, pulse_weight) if self.toggle_fast_path else None
             rhs_fn = lambda t, cur_y, pw=pulse_weight: self.y_stage_rhs(t, cur_y, h_hold, pw)
-            y = self.integrate_pulse_slice(y, dt, rhs_fn, "y", slice_idx, constant_rhs=constant_rhs)
+            y = self.integrate_pulse_slice(
+                y, dt, rhs_fn, "y", slice_idx, constant_rhs=constant_rhs,
+                active_coupler_count=active_coupler_count)
         return y
 
     def run_one_cycle(self, y, z, cycle_params):
@@ -929,7 +1516,12 @@ class TogglePulseODEXInitFFFB(TogglePulseFFFB):
     reset_z = True
 
     def resolve_cycle_params(self, ref):
-        missing = [name for name in ("R", "C", "C_fb", "k", "alpha_1state", "w_bits") if not hasattr(self, name)]
+        required = ["R", "C", "C_fb", "w_bits"]
+        if self.odexinit_scaling_mode == "direct":
+            required.extend(["s_ff", "s_fb"])
+        else:
+            required.extend(["k", "alpha_1state"])
+        missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError("TogglePulseODEXInitFFFB requires wrapper-provided " + ", ".join(missing))
         n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
@@ -937,21 +1529,141 @@ class TogglePulseODEXInitFFFB(TogglePulseFFFB):
         R = self.R
         C = self.C
         C_fb = self.C_fb
-        k = self.k
-        alpha_1state = self.alpha_1state
-        T_z = k * C_fb
-        T_y = cycle_t * R * R * C / (k * alpha_1state)
+        if self.odexinit_scaling_mode == "direct":
+            T_z = R * C_fb / self.s_fb
+            T_y = cycle_t * R * C / self.s_ff
+        else:
+            k = self.k
+            alpha_1state = self.alpha_1state
+            T_z = k * C_fb
+            T_y = cycle_t * R * R * C / (k * alpha_1state)
         if T_z <= 0 or T_y <= 0:
-            raise ValueError("ODEXInit-approx pulse stage durations must be positive.")
+            raise ValueError("ODEXInit pulse stage durations must be positive.")
         return T_z, T_y
 
     def y_stage_rhs(self, t, y, h_hold, pulse_weight):
-        rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
-        return rhs / (self.R * self.C)
+        summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
+        summed_rhs = self._apply_spin_variation("y", summed_rhs)
+        return summed_rhs / (self.R * self.C)
+
+    def _stage_capacitance(self, stage):
+        return self.C_fb if stage == "z" else self.C
 
 
 class TogglePulseODEXInitKeep(TogglePulseODEXInitFFFB):
     reset_z = False
+
+
+class TogglePulseBlk(TogglePulseFFFB):
+    """Trainable dense/expanded pulse block using signed integer pulse levels."""
+    reset_z = True
+    supports_pulse_training = True
+    pulse_weight_encoding = "integer_level"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._training_pulse_mismatch = None
+
+    def begin_training_pulse_mismatch(self, noise_level, mismatch_type):
+        """Sample one post-quantization pulse-amplitude mismatch for this forward."""
+        noise_level = float(noise_level)
+        mismatch = {"type": mismatch_type}
+        for key, module in (("FFconv", self.FFconv), ("FBconv", self.FBconv)):
+            if key == "FBconv" and self.tie_weights:
+                mismatch[key] = mismatch["FFconv"]
+                continue
+            ref = module.weight
+            noise = torch.randn_like(ref, requires_grad=False) * noise_level
+            mismatch[key] = 1.0 + noise if mismatch_type == "mul" else noise
+        self._training_pulse_mismatch = mismatch
+
+    def end_training_pulse_mismatch(self):
+        self._training_pulse_mismatch = None
+
+    def _clean_weight(self, module):
+        key = "FBconv" if module is self.FBconv else "FFconv"
+        if not hasattr(module, "mat") and P.is_parametrized(module, "weight"):
+            # Pulse QAT exposes the live signed integer level through module.weight.
+            return key, module.weight
+        return super()._clean_weight(module)
+
+    def _on_values(self, clean_values, noisy_values, key):
+        mismatch = self._training_pulse_mismatch
+        if mismatch is not None:
+            if mismatch["type"] == "mul":
+                return clean_values.sign() * mismatch[key]
+            return clean_values.sign() + mismatch[key]
+
+        if clean_values is noisy_values:
+            return clean_values.sign()
+        if self.mismatch_type == "mul":
+            scale = torch.ones_like(clean_values)
+            nonzero = clean_values != 0
+            scale[nonzero] = noisy_values[nonzero] / clean_values[nonzero]
+            return clean_values.sign() * scale
+        return clean_values.sign() + noisy_values - clean_values
+
+    def _pulse_values(self, clean_values, on_values, slice_idx):
+        signed_mask = PulseLevelMaskImpl.apply(
+            clean_values, int(slice_idx), int(self.q_hi))
+        if self.mismatch_type == "mul":
+            clean_sign = clean_values.sign()
+            amplitude_scale = torch.ones_like(clean_values)
+            nonzero = clean_sign != 0
+            amplitude_scale[nonzero] = on_values[nonzero] / clean_sign[nonzero]
+            return signed_mask * amplitude_scale
+
+        active = (signed_mask != 0).to(dtype=clean_values.dtype)
+        return signed_mask + (on_values - clean_values.sign()) * active
+
+    def _timed_pulse_values(self, clean_values, on_values, slice_idx, duty):
+        signed_mask = PulseLevelMaskImpl.apply(
+            clean_values, int(slice_idx), int(self.q_hi))
+        timed_signed = clean_values.sign() * duty
+        # Preserve the existing pulse-mask surrogate gradient while replacing
+        # its forward value with the DTC duty-weighted pulse.
+        timed_signed = signed_mask + (timed_signed - signed_mask).detach()
+        if self.mismatch_type == "mul":
+            clean_sign = clean_values.sign()
+            amplitude_scale = torch.ones_like(clean_values)
+            nonzero = clean_sign != 0
+            amplitude_scale[nonzero] = on_values[nonzero] / clean_sign[nonzero]
+            return timed_signed * amplitude_scale
+        return timed_signed + (on_values - clean_values.sign()) * duty
+
+
+class TogglePulseBlkXInitFFFB(TogglePulseBlk):
+    """Integer-level pulse block with the ODEXInitFFFB physical timing."""
+
+    def resolve_cycle_params(self, ref):
+        required = ["R", "C", "C_fb", "w_bits"]
+        if self.odexinit_scaling_mode == "direct":
+            required.extend(["s_ff", "s_fb"])
+        else:
+            required.extend(["k", "alpha_1state"])
+        missing = [name for name in required if not hasattr(self, name)]
+        if missing:
+            raise ValueError(
+                "TogglePulseBlkXInitFFFB requires wrapper-provided " + ", ".join(missing))
+        n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
+        cycle_t = self._integration_end_like(ref) / float(n_cycles)
+        if self.odexinit_scaling_mode == "direct":
+            T_z = self.R * self.C_fb / self.s_fb
+            T_y = cycle_t * self.R * self.C / self.s_ff
+        else:
+            T_z = self.k * self.C_fb
+            T_y = cycle_t * self.R * self.R * self.C / (self.k * self.alpha_1state)
+        if T_z <= 0 or T_y <= 0:
+            raise ValueError("ODEXInit pulse stage durations must be positive.")
+        return T_z, T_y
+
+    def y_stage_rhs(self, t, y, h_hold, pulse_weight):
+        summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
+        summed_rhs = self._apply_spin_variation("y", summed_rhs)
+        return summed_rhs / (self.R * self.C)
+
+    def _stage_capacitance(self, stage):
+        return self.C_fb if stage == "z" else self.C
 
 
 class ODEFixNoiseXInitFFFB(ODEFixNoiseOffset):
@@ -1832,6 +2544,41 @@ class OutputQuantImpl(torch.autograd.Function):
 
         return grad_x, None, None
 
+class PulseLevelMaskImpl(torch.autograd.Function):
+    """Exact integer-level pulse mask with an explicit boundary subgradient."""
+
+    @staticmethod
+    def forward(ctx, level, slice_idx, q_hi):
+        slice_level = level.new_tensor(float(slice_idx))
+        positive = (level - slice_level).clamp(min=0.0, max=1.0)
+        negative = (-level - slice_level).clamp(min=0.0, max=1.0)
+        ctx.save_for_backward(level)
+        ctx.slice_idx = int(slice_idx)
+        ctx.q_hi = int(q_hi)
+        return positive - negative
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (level,) = ctx.saved_tensors
+        slice_level = level.new_tensor(float(ctx.slice_idx))
+        u_positive = level - slice_level
+        u_negative = -level - slice_level
+
+        def clamp_grad(u):
+            inside = ((u > 0.0) & (u < 1.0)).to(dtype=level.dtype)
+            boundary = ((u == 0.0) | (u == 1.0)).to(dtype=level.dtype)
+            return inside + 0.5 * boundary
+
+        grad_level = clamp_grad(u_positive) + clamp_grad(u_negative)
+        if ctx.slice_idx == ctx.q_hi - 1:
+            at_positive_limit = level == float(ctx.q_hi)
+            at_negative_limit = level == -float(ctx.q_hi)
+            grad_level = torch.where(
+                at_positive_limit | at_negative_limit,
+                torch.ones_like(grad_level), grad_level)
+        return grad_output * grad_level, None, None
+
+
 class QuantizationImpl(torch.autograd.Function):
     @staticmethod
     def forward(ctx, weight, s, q_min, q_max, w_scalar=1.0):
@@ -1889,9 +2636,37 @@ class SymQuantizeWeight(nn.Module):
         return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper, self.w_scalar)
 
     def compute_s(self, layer_weight: nn.Parameter):
-        with torch.no_grad():
-            s_w = 1 / layer_weight.data.abs().max()
-            self.s_w.copy_(s_w)
+        self.s_w.copy_(_symmetric_qat_weight_scale(layer_weight))
+
+
+class PulseQuantizationImpl(torch.autograd.Function):
+    """Symmetric integer-level quantization with a straight-through backward."""
+
+    @staticmethod
+    def forward(ctx, weight, s, q_min, q_max):
+        scaled = weight * s * q_max
+        q_mask = (scaled >= q_min) & (scaled <= q_max)
+        level = scaled.round().clamp(min=q_min, max=q_max)
+        ctx.save_for_backward(q_mask, s, q_max)
+        return level
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        q_mask, s, q_max = ctx.saved_tensors
+        return s * q_max * grad_output * q_mask, None, None, None
+
+
+class PulseSymQuantizeWeight(SymQuantizeWeight):
+    """Default symmetric QAT quantizer returning signed pulse levels."""
+
+    def __init__(self, w_scalar=1.0, **kwargs):
+        if not np.allclose(float(w_scalar), 1.0):
+            raise ValueError("Pulse QAT requires uniform integer levels and w_scalar=1.")
+        super().__init__(w_scalar=w_scalar, **kwargs)
+
+    def forward(self, layer_weight: nn.Parameter):
+        return PulseQuantizationImpl.apply(
+            layer_weight, self.s_w, self.lower, self.upper)
 
 
 class LSQImpl(torch.autograd.Function):
@@ -2046,6 +2821,20 @@ class WrapQuantizeW(ODEWrapperRC):
         self.mul_mismatch_mode = kwargs.pop("mul_mismatch_mode", "scale_mismatch")
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
 
+        self.enable_measured_activation = kwargs.pop("enable_measured_activation", False)
+        self.activation_curve_path = kwargs.pop("activation_curve_path", None)
+        self.activation_corner = kwargs.pop("activation_corner", "TT")
+        self.activation_interpolation = str(kwargs.pop(
+            "activation_interpolation", "piecewise_linear")).lower()
+        if self.activation_interpolation not in {"cubic_bspline", "piecewise_linear"}:
+            raise ValueError(
+                "activation_interpolation must be cubic_bspline or piecewise_linear.")
+        self.activation_spline_parameters = kwargs.pop("activation_spline_parameters", 10)
+        self.activation_fit_constraint = kwargs.pop("activation_fit_constraint", "auto")
+        self.activation_normalize_positive_endpoint = kwargs.pop(
+            "activation_normalize_positive_endpoint", False)
+        self.compile_measured_activation = kwargs.pop("compile_measured_activation", False)
+
         self.v_grid, self.R_codes, self.R_table = None, None, None
         self.R_left, self.R_slope = None, None # Use piecewise-linear function as interpolant
 
@@ -2069,6 +2858,31 @@ class WrapQuantizeW(ODEWrapperRC):
         # patch for the child method
         if patch:
             self._patch()
+
+    def _configure_measured_activation(self):
+        if not self.enable_measured_activation:
+            return
+        activation_cls = (
+            CubicBSplineActivation
+            if self.activation_interpolation == "cubic_bspline"
+            else PiecewiseLinearActivation)
+        if isinstance(self.ode_block.act_fn, activation_cls):
+            return
+        curve_path = self.activation_curve_path
+        if curve_path is None:
+            curve_path = os.path.join(
+                os.path.dirname(__file__), "hardware_data", "relu_current_0p2uA_finer.csv")
+        activation_kwargs = dict(
+            curve_path=curve_path, v_dd=self.v_dd, corner=self.activation_corner,
+            normalize_positive_endpoint=self.activation_normalize_positive_endpoint)
+        if activation_cls is CubicBSplineActivation:
+            activation_kwargs.update(
+                num_parameters=self.activation_spline_parameters,
+                compile_evaluator=self.compile_measured_activation,
+                fit_constraint=self.activation_fit_constraint)
+        activation = activation_cls(**activation_kwargs)
+        device = self.ode_block.FFconv.weight.device
+        self.ode_block.act_fn = activation.to(device=device)
 
     def set_quantized_params(self):
         # loaded weights are already quantized
@@ -2756,9 +3570,15 @@ class ToggleWrapper1State(ODEWrapper1State):
         setattr(module, "beta_c", self.beta_c)
 
     def _scale_act_fn(self):
+        if self.enable_measured_activation:
+            self._configure_measured_activation()
+            return
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
-                upper = self.v_dd
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+                if self.ode_block.odexinit_scaling_mode == "direct":
+                    upper = min(6 * self.q, self.v_dd)
+                else:
+                    upper = self.v_dd
             else:
                 upper = min(6 * self.q, self.v_dd)
             self.ode_block.act_fn = ReLUX(upper)
@@ -2767,10 +3587,15 @@ class ToggleWrapper1State(ODEWrapper1State):
             self.ode_block.act_fn = nn.Hardtanh(min_val=-bound, max_val=bound)
 
     def _scale_act_fn_dynamically(self):
+        if self.enable_measured_activation:
+            return
         act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
         if "relu6" in act_fn_cls or "relux" in act_fn_cls:
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
-                upper = self.v_dd
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+                if self.ode_block.odexinit_scaling_mode == "direct":
+                    upper = min(6 * self.q, self.v_dd)
+                else:
+                    upper = self.v_dd
             else:
                 upper = min(6 * self.q, self.v_dd)
             self.ode_block.act_fn.set_scale(upper)
@@ -2828,9 +3653,15 @@ class ToggleQATWrapper1State(QATWrapper1State):
         setattr(module, "beta_c", self.beta_c)
 
     def _scale_act_fn(self):
+        if self.enable_measured_activation:
+            self._configure_measured_activation()
+            return
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
-                upper = self.v_dd
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+                if self.ode_block.odexinit_scaling_mode == "direct":
+                    upper = min(6 * self.q, self.v_dd)
+                else:
+                    upper = self.v_dd
             else:
                 upper = min(6 * self.q, self.v_dd)
             self.ode_block.act_fn = ReLUX(upper)
@@ -2839,10 +3670,15 @@ class ToggleQATWrapper1State(QATWrapper1State):
             self.ode_block.act_fn = nn.Hardtanh(min_val=-bound, max_val=bound)
 
     def _scale_act_fn_dynamically(self):
+        if self.enable_measured_activation:
+            return
         act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
         if "relu6" in act_fn_cls or "relux" in act_fn_cls:
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB)):
-                upper = self.v_dd
+            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+                if self.ode_block.odexinit_scaling_mode == "direct":
+                    upper = min(6 * self.q, self.v_dd)
+                else:
+                    upper = self.v_dd
             else:
                 upper = min(6 * self.q, self.v_dd)
             self.ode_block.act_fn.set_scale(upper)
@@ -2872,6 +3708,40 @@ class ToggleQATWrapper1State(QATWrapper1State):
         self._ship_toggle_params(module)
         self._scale_act_fn_dynamically()
         return None
+
+
+class TogglePulseWrapper1State(ToggleWrapper1State):
+    """Physical wrapper for integer-level pulse weights."""
+
+    def __init__(self, **kwargs):
+        q_hi = (1 << (int(kwargs.get("w_bits", 8)) - 1)) - 1
+        kwargs["R_max"] = float(kwargs.get("R", 1e5)) * q_hi
+        super().__init__(**kwargs)
+
+    @staticmethod
+    def cal_quant_factor_and_set(q_hi, p: nn.Parameter):
+        with torch.no_grad():
+            abs_max = p.data.abs().max()
+            if torch.allclose(abs_max, torch.zeros_like(abs_max)):
+                return p.new_tensor(1.0)
+            s = 1.0 / abs_max
+            torch.clamp((s * q_hi * p).round(), min=-q_hi, max=q_hi, out=p)
+            return s
+
+
+class TogglePulseQATTester1State(TogglePulseWrapper1State):
+    def __init__(self, **kwargs):
+        kwargs.update({"patch": True, "quantize": False})
+        super().__init__(**kwargs)
+
+
+class TogglePulseQATWrapper1State(ToggleQATWrapper1State):
+    """QAT wrapper exposing live signed integer levels to TogglePulseBlk."""
+
+    def __init__(self, qat_cls=PulseSymQuantizeWeight, **kwargs):
+        q_hi = (1 << (int(kwargs.get("w_bits", 8)) - 1)) - 1
+        kwargs["R_max"] = float(kwargs.get("R", 1e5)) * q_hi
+        super().__init__(qat_cls=PulseSymQuantizeWeight, **kwargs)
 
 
 class ODEWrapper1StateWithX(ODEWrapper1State):
@@ -3049,7 +3919,9 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
     else:
         pass
         # calib_res = np.load(calib_path)
-    toggle_wrappers = (ToggleWrapper1State, ToggleQATTester1State, ToggleQATWrapper1State)
+    toggle_wrappers = (ToggleWrapper1State, ToggleQATTester1State, ToggleQATWrapper1State,
+                       TogglePulseWrapper1State, TogglePulseQATTester1State,
+                       TogglePulseQATWrapper1State)
     for i in range(pc_net.num_layers):
         if isinstance(pc_net.PcConvs[i], (ToggleAveragedPhysicalFFFB, TogglePulseFFFB)) and \
                 not issubclass(ode_wrapper, toggle_wrappers):
@@ -3106,6 +3978,8 @@ ODEBLOCK_CLASSES = {
     "TogglePulseKeepZ": TogglePulseKeepZ,
     "TogglePulseODEXInitFFFB": TogglePulseODEXInitFFFB,
     "TogglePulseODEXInitKeep": TogglePulseODEXInitKeep,
+    "TogglePulseBlk": TogglePulseBlk,
+    "TogglePulseBlkXInitFFFB": TogglePulseBlkXInitFFFB,
     "ODEFixNoise0InitExpand": ODEFixNoise0InitExpand,
     "ODEFixNoise0InitFFFB": ODEFixNoise0InitFFFB,
     "ODESumAsBInitYAs0": ODESumAsBInitYAs0,
@@ -3151,6 +4025,9 @@ ODEWrapper_CLASSES = {
     "ToggleWrapper1State": ToggleWrapper1State,
     "ToggleQATTester1State": ToggleQATTester1State,
     "ToggleQATWrapper1State": ToggleQATWrapper1State,
+    "TogglePulseWrapper1State": TogglePulseWrapper1State,
+    "TogglePulseQATTester1State": TogglePulseQATTester1State,
+    "TogglePulseQATWrapper1State": TogglePulseQATWrapper1State,
     "ODEWrapper1StateWithX": ODEWrapper1StateWithX,
     "QATTester1StateWithX": QATTester1StateWithX,
     "QATWrapper1StateWithX": QATWrapper1StateWithX,
@@ -3158,6 +4035,7 @@ ODEWrapper_CLASSES = {
 
 QUANTIZER_CLASSES = {
     "SymQuantizeWeight": SymQuantizeWeight,
+    "PulseSymQuantizeWeight": PulseSymQuantizeWeight,
     "LSQWeight": LSQWeight,
     None: SymQuantizeWeight,
 }

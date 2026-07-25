@@ -41,7 +41,7 @@ class ODESolver(nn.Module):
     def __init__(self, func, t0, y0, t1=1.0, h=0.1, rtol=1e-3, atol=1e-6, neval_max=500000,
                  print_neval=False, print_direction=False, step_dif_ratio=1e-3, safety=0.9,
                  regenerate_graph=False, dense_output=True, interpolation_method = 'cubic',
-                 print_time = False, end_point_mode = False, eps=None, noise_type="mul"):
+                 print_time = False, end_point_mode = False, eps=None, noise_type="mul", noise_generator=None):
         super(ODESolver, self).__init__()
         """
         ----------------
@@ -120,6 +120,7 @@ class ODESolver(nn.Module):
         self.end_point_mode = end_point_mode
         self.eps = eps
         self.noise_type = noise_type
+        self.noise_generator = noise_generator
 
     def check_t(self, t_eval):
         if t_eval is  None:
@@ -335,16 +336,23 @@ class ODESolver(nn.Module):
             return torch.count_nonzero(_sigma) == 0
         return _sigma == 0.0
 
+    def _randn_like(self, ref):
+        if self.noise_generator is None:
+            return torch.randn_like(ref, requires_grad=False, device=ref.device)
+        return torch.randn(
+            ref.shape, dtype=ref.dtype, device=ref.device,
+            generator=self.noise_generator, requires_grad=False)
+
     def addi_noisy_update_and_proj(self, h, y_current):
         if self.eps is not None:
             if isinstance(self.eps, tuple):
                 _std = tuple((h ** 0.5) * _eps for _eps in self.eps)
                 y_current = tuple(_y if self._all_zero(_sigma)
-                                  else _y + _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                  else _y + _sigma * self._randn_like(_y)
                                   for _y, _sigma in zip(y_current, _std))
             elif not self._all_zero(self.eps):
                 _std = (h ** 0.5) * self.eps
-                y_current = tuple(_y + _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                y_current = tuple(_y + _std * self._randn_like(_y)
                                   for _y in y_current)
         if hasattr(self, "proj_fn"):
             y_current = tuple(self.proj_fn(_y) for _y in y_current)
@@ -355,11 +363,11 @@ class ODESolver(nn.Module):
             if isinstance(self.eps, tuple):
                 _std = tuple((h ** 0.5) * _eps for _eps in self.eps)
                 y_current = tuple(_y if self._all_zero(_sigma)
-                                  else _y + _y * _sigma * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                                  else _y + _y * _sigma * self._randn_like(_y)
                                   for _y, _sigma in zip(y_current, _std))
             elif not self._all_zero(self.eps):
                 _std = (h ** 0.5) * self.eps
-                y_current = tuple(_y + _y * _std * torch.randn_like(_y, requires_grad=False, device=_y.device)
+                y_current = tuple(_y + _y * _std * self._randn_like(_y)
                                   for _y in y_current)
         if hasattr(self, "proj_fn"):
             # print("------------------------------------")
