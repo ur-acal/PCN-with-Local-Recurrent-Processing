@@ -14,7 +14,7 @@ NOISE_TYPES=(
 #  "add"
 )
 NBITS=(5)
-R_MAX_LIST=("150e3")
+R_MAX_LIST=("")
 ONE_OVER_Q_LIST=("1")
 EXP="${EXP_OVERRIDE:-NODE_0602_QAT_with_noise_inject_kd_crd_training_C100}"
 LOGDIR="./logs/${EXP}"
