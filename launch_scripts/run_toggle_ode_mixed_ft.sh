@@ -16,23 +16,43 @@ NOISE_TYPES=(
 NBITS=(5)
 R_MAX_LIST=("150e3")
 ONE_OVER_Q_LIST=("1")
-EXP="NODE_0602_QAT_with_noise_inject_kd_crd_training_C100"
+EXP="${EXP_OVERRIDE:-NODE_0602_QAT_with_noise_inject_kd_crd_training_C100}"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
 MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP}"
+#MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP}"
 #MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
 
 SWITCH_INF=${SWITCH_INF:-false} # Change depending on model name; true if using Euler solver.
 TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
 ENOB="${ENOB:-8}"
 K_VAL="${K_VAL:-1e3}"
+PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitude}"
+# This controls if we are using different measure activation curves per forward pass in training.
+ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
+if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+  ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
+else
+  ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_finer.csv}"
+fi
+VARIATION_AWARE_ARGS=(
+  --enable_spin_variation "${ENABLE_SPIN_VARIATION:-true}"
+  --sigma_spin "${SIGMA_SPIN:-0.10}"
+  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+  --summing_current_p "${SUMMING_CURRENT_P:-18.5e-12}"
+  --enable_coupler_noise "${ENABLE_COUPLER_NOISE:-true}"
+  --coupler_noise_p "${COUPLER_NOISE_P:-0.6e-12}"
+)
 ODE_BLOCK_OVERRIDE="${ODE_BLOCK_OVERRIDE:-ToggleODEXInitFFFB}"
-TOGGLE_ARGS=()
+# This controls the scaling for the toggle class. approximating the old 1state or directly scale.
+ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-direct}" # "approx", "direct"
+TOGGLE_ARGS=(--odexinit_scaling_mode "${ODEXINIT_SCALING_MODE}")
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
 if [[ -n "${TOGGLE_N_CYCLES:-}" ]]; then TOGGLE_ARGS+=(--toggle_n_cycles "${TOGGLE_N_CYCLES}"); fi
 if [[ -n "${TOGGLE_TIME_SPLIT:-}" ]]; then TOGGLE_ARGS+=(--toggle_time_split "${TOGGLE_TIME_SPLIT}"); fi
 if [[ -n "${TOGGLE_FAST_PATH:-}" ]]; then TOGGLE_ARGS+=(--toggle_fast_path "${TOGGLE_FAST_PATH}"); fi
 echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL}, SWITCH_INF: ${SWITCH_INF}, ENOB: ${ENOB}, ODE_BLOCK_OVERRIDE: ${ODE_BLOCK_OVERRIDE} ==========="
+echo "=========== FT spin variation: ${ENABLE_SPIN_VARIATION:-true} (sigma=${SIGMA_SPIN:-0.10}); summing-current noise: ${ENABLE_SUMMING_CURRENT_NOISE:-false} (p=${SUMMING_CURRENT_P:-18.5e-12}); coupler noise: ${ENABLE_COUPLER_NOISE:-true} (p=${COUPLER_NOISE_P:-0.6e-12}) ==========="
 
 #######################################################################################################################
 # For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
@@ -60,7 +80,9 @@ ODE_BLK="${parts[3]}"
 if [[ -n "${ODE_BLOCK_OVERRIDE}" ]]; then
   ODE_BLK="${ODE_BLOCK_OVERRIDE}"
 fi
-if [[ "${ODE_BLK}" == "ToggleResetZ" || "${ODE_BLK}" == "ToggleKeepZ" || "${ODE_BLK}" == ToggleODEXInit* || "${ODE_BLK}" == TogglePulse* ]]; then
+if [[ "${ODE_BLK}" == TogglePulseBlk* ]]; then
+  QAT_WRAPPER="TogglePulseQATWrapper1State"
+elif [[ "${ODE_BLK}" == "ToggleResetZ" || "${ODE_BLK}" == "ToggleKeepZ" || "${ODE_BLK}" == ToggleODEXInit* || "${ODE_BLK}" == TogglePulse* ]]; then
   QAT_WRAPPER="ToggleQATWrapper1State"
 fi
 # Teacher model setting
@@ -99,6 +121,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --num_epochs    "${NUM_EPOCHS:-140}" \
             --img_type      "scanGFI" \
             --model_name    "${MODEL_NAME}" \
+            --output_save_path "${OUTPUT_SAVE_PATH:-./saved_ckpt}" \
             --offset_eps    0.0 \
             --dropout       0.25 \
             --avg_pooling   "true" \
@@ -110,11 +133,19 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --n_steps       5 \
             --tol           "1e-6" \
             --t_end         "1.75" \
-            --R             "10e3" \
+            --R             "27.8e3" \
             --R_max         "${R_max}" \
-            --C             "49e-15" \
+            --C             "282e-15" \
             --k             "${K_VAL}" \
             --v_dd          "0.1" \
+            --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}" \
+            --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
+            --activation_corner "${ACTIVATION_CORNER:-TT}" \
+            --activation_corner_mode "${ACTIVATION_CORNER_MODE}" \
+            --activation_interpolation "${ACTIVATION_INTERPOLATION:-piecewise_linear}" \
+            --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS:-10}" \
+            --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT:-auto}" \
+            --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION:-false}" \
             --enob          "${ENOB}" \
             --w_bits        "${n_bits}" \
             --patch_node    "8" \
@@ -125,12 +156,14 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --tie_cap       "false" \
             --one_over_q    "${one_over_q}" \
             "${TOGGLE_ARGS[@]}" \
+            "${VARIATION_AWARE_ARGS[@]}" \
             --qat_cls       "SymQuantizeWeight" \
             --ode_wrapper   "$QAT_WRAPPER" \
             --pc_conv       "PCConvReLU6" \
             --ode_block     "$ODE_BLK" \
             --noise_level   "${nl}" \
             --noise_type    "${nt}" \
+            --pulse_mismatch_training_mode "${PULSE_MISMATCH_TRAINING_MODE}" \
             --teacher_ckpt  "${TEACHER_CKPT}" \
             --teacher_arch  "${TEACHER_ARCH}" \
             --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \

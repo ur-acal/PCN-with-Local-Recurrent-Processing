@@ -50,5 +50,7 @@ def extract_keys(options):
         hyperparams.update({'eps': options['eps']})
     if 'noise_type' in options.keys():
         hyperparams.update({'noise_type': options['noise_type']})
+    if 'noise_generator' in options.keys():
+        hyperparams.update({'noise_generator': options['noise_generator']})
 
     return hyperparams

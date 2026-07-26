@@ -51,6 +51,31 @@ DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
 DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 IS_TIMM="${IS_TIMM:-true}"
 RGGB_TO_RGB="${RGGB_TO_RGB:-false}"
+ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-false}"
+SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
+ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
+if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+  ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
+else
+  ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_finer.csv}"
+fi
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
+ACTIVATION_INTERPOLATION="${ACTIVATION_INTERPOLATION:-piecewise_linear}"
+ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
+ACTIVATION_FIT_CONSTRAINT="${ACTIVATION_FIT_CONSTRAINT:-auto}"
+UNITLESS_MEASURED_PULLBACK_MODE="${UNITLESS_MEASURED_PULLBACK_MODE:-none}"
+if [[ "${UNITLESS_MEASURED_PULLBACK_MODE}" == "none" ]]; then
+  ENABLE_MEASURED_ACTIVATION="false"
+else
+  ENABLE_MEASURED_ACTIVATION="true"
+fi
+UNITLESS_PULLBACK_Q="${UNITLESS_PULLBACK_Q:-none}"
+UNITLESS_PULLBACK_K="${UNITLESS_PULLBACK_K:-1e3}"
+UNITLESS_PULLBACK_R="${UNITLESS_PULLBACK_R:-10e3}"
+V_DD="${V_DD:-0.1}"
+ONE_OVER_Q="${ONE_OVER_Q:-1}"
+ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-false}"
+SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
 
 # Change exp name here
 EXP_SUFFIX="16L96C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}"
@@ -73,6 +98,7 @@ esac
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-${N_STEPS:-5}}"
 TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
 TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
+ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-approx}"
 if [[ "${RGGB_TO_RGB}" == "true" ]]; then
   INP[0]=3
 fi
@@ -110,6 +136,23 @@ python train_ode_cifar.py \
   --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
   --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
   --toggle_fast_path "${TOGGLE_FAST_PATH}" \
+  --odexinit_scaling_mode "${ODEXINIT_SCALING_MODE}" \
+  --unitless_measured_pullback_mode "${UNITLESS_MEASURED_PULLBACK_MODE}" \
+  --unitless_pullback_q "${UNITLESS_PULLBACK_Q}" \
+  --unitless_pullback_k "${UNITLESS_PULLBACK_K}" \
+  --unitless_pullback_R "${UNITLESS_PULLBACK_R}" \
+  --v_dd "${V_DD}" \
+  --one_over_q "${ONE_OVER_Q}" \
+  --enable_spin_variation "${ENABLE_SPIN_VARIATION}" \
+  --sigma_spin "${SIGMA_SPIN}" \
+  --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}" \
+  --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
+  --activation_corner "${ACTIVATION_CORNER}" \
+  --activation_corner_mode "${ACTIVATION_CORNER_MODE}" \
+  --activation_interpolation "${ACTIVATION_INTERPOLATION}" \
+  --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS}" \
+  --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT}" \
+  --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION}" \
   --teacher_ckpt "${TEACHER_CKPT}" \
   --teacher_arch "${TEACHER_ARCH}" \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \

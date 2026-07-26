@@ -2,7 +2,7 @@
 *.pyc
 
 # Byte-compiled
-_pycache__/
+__pycache__/
 .cache/
 
 # Python egg metadata, regenerated from source files by setuptools.
@@ -17,16 +17,25 @@ dist/
 *.sublime-project
 *.sublime-workspace
 
-# Tests
+# Test and coverage artifacts
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Other
 *.DS_Store
 .idea/
 
+# Generated evaluation and ablation outputs
+results/
 loss_plot/
 expanded_weights/
 saved_ckpt/
+saved_ckpt_runs/
 checkpoint/
 logs/
 hw_validation_data/
@@ -41,9 +50,16 @@ cross_sim/models/
 cross_sim/calibrated_config/
 launch_scripts/run_2*
 launch_scripts/run_slurm*
+!launch_scripts/run_slurm_toggle_ode_mixed_ft.sh
 check_cifar_h5_order.py
 debug*
 
 *.pth
+*.pt
 *.png
 *.pdf
+# Scheduler and profiler output
+slurm-*.out
+slurm_*.out
+*.prof
+*.trace

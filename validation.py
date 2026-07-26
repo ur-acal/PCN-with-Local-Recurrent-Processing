@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import pickle
 import types
@@ -16,6 +17,7 @@ from copy import deepcopy
 from tqdm import tqdm
 
 from pc_model import PCNet
+from utils import interpolate_R_eff
 
 
 def mask_set_val(dst_mat, src_val):
@@ -171,6 +173,141 @@ def conv2d_to_matrix_fixed_padding(input_shape, kernel, stride=1, padding=0, *,
 
     return kernel_matrix, base_matrix, B_labeled
 
+
+def build_unrolled_dtc_metadata(mat, input_shape, meta):
+    """Map each expanded CSR value back to its original convolution kernel output."""
+    inp_chan, inp_h, inp_w = (int(v) for v in input_shape)
+    out_chan = int(meta["out_chan"])
+    ker_h, ker_w = int(meta["ker_h"]), int(meta["ker_w"])
+    stride, padding = int(meta["stride"]), int(meta["padding"])
+    out_h = (inp_h + 2 * padding - ker_h) // stride + 1
+    out_w = (inp_w + 2 * padding - ker_w) // stride + 1
+    spatial_rows = out_h * out_w
+
+    crow = mat.crow_indices()
+    row_ids = torch.arange(
+        mat.shape[0], device=crow.device, dtype=torch.int64).repeat_interleave(
+            crow[1:] - crow[:-1])
+    cols = mat.col_indices()
+
+    output_channel = torch.div(row_ids, spatial_rows, rounding_mode="floor")
+    output_spatial = row_ids.remainder(spatial_rows)
+    output_row = torch.div(output_spatial, out_w, rounding_mode="floor")
+    output_col = output_spatial.remainder(out_w)
+
+    input_channel = torch.div(cols, inp_h * inp_w, rounding_mode="floor")
+    input_spatial = cols.remainder(inp_h * inp_w)
+    input_row = torch.div(input_spatial, inp_w, rounding_mode="floor")
+    input_col = input_spatial.remainder(inp_w)
+
+    kernel_row = input_row + padding - output_row * stride
+    kernel_col = input_col + padding - output_col * stride
+    valid = (
+        (output_channel >= 0) & (output_channel < out_chan) &
+        (input_channel >= 0) & (input_channel < inp_chan) &
+        (kernel_row >= 0) & (kernel_row < ker_h) &
+        (kernel_col >= 0) & (kernel_col < ker_w)
+    )
+    if not bool(valid.all()):
+        raise RuntimeError("Could not map every expanded CSR value to a DTC output.")
+
+    dtc_block_ids = output_channel * inp_chan + input_channel
+    dtc_output_ids = kernel_row * ker_w + kernel_col
+    return dtc_block_ids, dtc_output_ids
+
+@torch.no_grad()
+def expanded_weight_cache_fingerprint(model, input_shape):
+    """Fingerprint the effective convolutions that Validator will expand."""
+    digest = hashlib.sha256()
+    digest.update(b"validator-expanded-weights-v1\0")
+    digest.update(repr(tuple(int(v) for v in input_shape)).encode("utf-8"))
+    digest.update(b"\0")
+    num_convs = 0
+    for layer_idx, layer in enumerate(model.PcConvs):
+        for module_name, module in layer.named_modules():
+            if not isinstance(module, nn.Conv2d):
+                continue
+            num_convs += 1
+            geometry = (
+                int(layer_idx), module_name, int(module.in_channels),
+                int(module.out_channels), tuple(module.kernel_size),
+                tuple(module.stride), tuple(module.padding),
+                tuple(module.dilation), int(module.groups),
+                str(module.padding_mode),
+            )
+            digest.update(repr(geometry).encode("utf-8"))
+            digest.update(b"\0")
+            weight = module.weight.detach().cpu().contiguous()
+            digest.update(str(weight.dtype).encode("utf-8"))
+            digest.update(repr(tuple(weight.shape)).encode("utf-8"))
+            digest.update(weight.view(torch.uint8).numpy().tobytes())
+            digest.update(b"\0")
+    if num_convs == 0:
+        raise ValueError("Validator could not find any Conv2d weights to expand.")
+    return digest.hexdigest()[:16]
+
+
+@torch.no_grad()
+def cached_unrolled_weight_matches(entry, conv, input_shape):
+    """Validate a legacy expanded entry against the current effective weight."""
+    if not isinstance(entry, dict) or "weight" not in entry or "meta" not in entry:
+        return False
+    mat, meta = entry["weight"], entry["meta"]
+    if not getattr(mat, "is_sparse_csr", False):
+        return False
+    if conv.groups != 1 or tuple(conv.dilation) != (1, 1):
+        return False
+
+    inp_chan, inp_h, inp_w = (int(v) for v in input_shape)
+    stride = conv.stride[0] if isinstance(conv.stride, tuple) else conv.stride
+    padding = conv.padding[0] if isinstance(conv.padding, tuple) else conv.padding
+    ker_h, ker_w = (
+        conv.kernel_size if isinstance(conv.kernel_size, tuple)
+        else (conv.kernel_size, conv.kernel_size))
+    expected_meta = {
+        "padding": int(padding),
+        "stride": int(stride),
+        "ker_h": int(ker_h),
+        "ker_w": int(ker_w),
+        "inp_chan": int(conv.in_channels),
+        "out_chan": int(conv.out_channels),
+    }
+    if any(int(meta.get(name, -1)) != value
+           for name, value in expected_meta.items()):
+        return False
+    if inp_chan != conv.in_channels:
+        return False
+
+    out_h = (inp_h + 2 * int(padding) - int(ker_h)) // int(stride) + 1
+    out_w = (inp_w + 2 * int(padding) - int(ker_w)) // int(stride) + 1
+    expected_shape = (
+        conv.out_channels * out_h * out_w,
+        conv.in_channels * inp_h * inp_w,
+    )
+    if tuple(mat.shape) != expected_shape:
+        return False
+
+    try:
+        block_ids, output_ids = build_unrolled_dtc_metadata(
+            mat, input_shape, meta)
+    except (RuntimeError, ValueError):
+        return False
+    input_channel = block_ids.remainder(conv.in_channels)
+    output_channel = torch.div(
+        block_ids, conv.in_channels, rounding_mode="floor")
+    kernel_row = torch.div(output_ids, int(ker_w), rounding_mode="floor")
+    kernel_col = output_ids.remainder(int(ker_w))
+    expected_values = conv.weight[
+        output_channel, input_channel, kernel_row, kernel_col]
+    return torch.equal(mat.values(), expected_values)
+
+
+def _save_expanded_weight_cache(stored, path):
+    temporary_path = "{}.tmp.{}".format(path, os.getpid())
+    torch.save(stored, temporary_path)
+    os.replace(temporary_path, path)
+
+
 def snapshot_clean_mvm_mat_values(net):
     clean_vals = OrderedDict()
     for mod_name, m in net.named_modules():
@@ -245,8 +382,19 @@ class MVMConv(nn.Module):
         self.R = None
 
         self.mismatch_mat = None
+        self.pulse_noisy_values = None
         self.mismatch_type = "mul"
         self.mul_mismatch_mode = None
+
+    def set_dtc_metadata(self, dtc_block_ids, dtc_output_ids):
+        if dtc_block_ids.numel() != self.mat.values().numel():
+            raise ValueError("DTC block metadata must align with every CSR value.")
+        if dtc_output_ids.numel() != self.mat.values().numel():
+            raise ValueError("DTC output metadata must align with every CSR value.")
+        self.register_buffer(
+            "dtc_block_ids", dtc_block_ids.to(dtype=torch.int64), persistent=False)
+        self.register_buffer(
+            "dtc_output_ids", dtc_output_ids.to(dtype=torch.int64), persistent=False)
 
     def enable_csv(self, v_grid, R_codes, R_left, R_slope, proj_fn, R,
                    mul_mismatch_mode="scale_mismatch"):
@@ -394,6 +542,7 @@ class MVMConv(nn.Module):
 
         if mismatch_type == "mul":
             noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * sigma_
+            self.pulse_noisy_values = vals * (1 + noise_)
 
             # In this case we sample a fixed val_sign_and_noise, the actual mismatch scales
             # with the input dependent resistance value.
@@ -441,6 +590,7 @@ class MVMConv(nn.Module):
         else:
             max_abs = vals.abs().max()
             noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * (sigma_ * max_abs)
+            self.pulse_noisy_values = vals + noise_
 
             # Keep nonlinear-R nominal path unchanged.
             self.code_idx_mat = self._build_code_idx_mat()
@@ -456,37 +606,25 @@ class MVMConv(nn.Module):
             ).coalesce().to_sparse_csr()
 
     def _get_R_eff(self, v, code_idx):
-        # Performs interpolation based on current input value and weight value.
-        # v is the current spin state.
-        # i,j is to pick a correct interpolant.
-        if getattr(self, "proj_fn", None) is not None:
-            v = self.proj_fn(v)
+        return interpolate_R_eff(
+            v, self.v_grid, self.R_codes, self.R_left, self.R_slope,
+            code_idx, proj_fn=getattr(self, "proj_fn", None))
 
-        _i = torch.bucketize(v, self.v_grid) - 1
-        _i = _i.clamp(min=0, max=self.v_grid.numel() - 2)
+    def forward_pulse(self, x, pulse_weight, nominal_R=None):
+        """Apply an externally generated pulse matrix with one nominal R(v) curve."""
+        batch_size, _, input_h, input_w = x.shape
+        output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
+        output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
+        x_flat = x.reshape(batch_size, -1).t()
 
-        M = self.R_codes.numel()
-        v_flat, i_flat = v.reshape(-1), _i.reshape(-1)
+        if self.csv_enabled:
+            nominal_R = self.R if nominal_R is None else nominal_R
+            nominal_idx = (self.R_codes - nominal_R).abs().argmin()
+            R_eff = self._get_R_eff(x_flat, nominal_idx)
+            x_flat = x_flat * nominal_R / R_eff
 
-        if torch.is_tensor(code_idx):
-            if code_idx.numel() == 1:
-                j = int(code_idx.item())
-                j = min(max(j, 0), M - 1)
-                pos = i_flat * M + j
-            else:
-                j_flat = code_idx.to(torch.long).reshape(-1).clamp(0, M - 1)
-                pos = i_flat * M + j_flat
-        else:
-            j = int(code_idx)
-            j = min(max(j, 0), M - 1)
-            pos = i_flat * M + j
-
-        R_left_sel = self.R_left.reshape(-1)[pos]
-        R_slope_sel = self.R_slope.reshape(-1)[pos]
-        v_sel = self.v_grid[i_flat]
-
-        R_eff_flat = R_left_sel + R_slope_sel * (v_flat - v_sel)
-        return R_eff_flat.reshape_as(v)
+        out = torch.sparse.mm(pulse_weight, x_flat)
+        return out.t().reshape(batch_size, self.meta["out_chan"], output_h, output_w)
 
     def forward(self, x):
         batch_size, input_channels, input_h, input_w = x.shape
@@ -550,9 +688,23 @@ class Validator(nn.Module):
         self.model = model
         self.model.eval()
         self.device = device
-        self.exp_w_path = os.path.join(expanded_weight_dir, "expanded_weights_{}.pth")
-        os.makedirs(expanded_weight_dir, exist_ok=True)
         self.dataloader = test_dataloader
+        self._unroll_sample_inputs = next(iter(self.dataloader))[0][:2].to(
+            self.device)
+        self.expanded_weight_cache_fingerprint = (
+            expanded_weight_cache_fingerprint(
+                self.model, self._unroll_sample_inputs.shape[1:]))
+        self.legacy_exp_w_path = os.path.join(
+            expanded_weight_dir, "expanded_weights_{}.pth")
+        expanded_weight_dir = os.path.join(
+            expanded_weight_dir,
+            "cache_{}".format(self.expanded_weight_cache_fingerprint))
+        self.exp_w_path = os.path.join(
+            expanded_weight_dir, "expanded_weights_{}.pth")
+        os.makedirs(expanded_weight_dir, exist_ok=True)
+        logging.warning(
+            "Expanded-weight cache fingerprint: %s (%s)",
+            self.expanded_weight_cache_fingerprint, expanded_weight_dir)
         self.wrappers = wrapper
         self.record_full_traj = record_full_traj
         self.t_end_sf = t_end_sf
@@ -563,12 +715,17 @@ class Validator(nn.Module):
     @torch.no_grad()
     def _register_hook_for_unroll(self, layer_idx, layer):
         exp_w_path = self.exp_w_path.format(layer_idx)
+        legacy_exp_w_path = self.legacy_exp_w_path.format(layer_idx)
         if os.path.exists(exp_w_path):
             stored = torch.load(exp_w_path, map_location=self.device)
             # logging.warning("Found existing expanded weights. Load directly.")
         else:
             stored = {}
             # logging.warning("Needs unrolling...")
+        legacy_stored = {}
+        if not stored and os.path.exists(legacy_exp_w_path):
+            legacy_stored = torch.load(
+                legacy_exp_w_path, map_location=self.device)
 
         def make_hook(parent, mod_name, m):
             hook_handlers = {}
@@ -577,6 +734,17 @@ class Validator(nn.Module):
                 # If the unrolled weights are already stored, load it
                 # Otherwise perform unrolling
                 if mod_name in stored:
+                    return
+                legacy_entry = legacy_stored.get(mod_name)
+                if legacy_entry is not None and cached_unrolled_weight_matches(
+                        legacy_entry, mod, inputs[0].shape[1:]):
+                    stored[mod_name] = legacy_entry
+                    _save_expanded_weight_cache(stored, exp_w_path)
+                    logging.warning(
+                        "Migrated matching legacy expanded weights for "
+                        "layer %s module %s into cache %s.",
+                        layer_idx, mod_name,
+                        self.expanded_weight_cache_fingerprint)
                     return
                 _, inp_channels, inp_h, inp_w = inputs[0].shape
                 stride = mod.stride[0] if isinstance(mod.stride, tuple) else mod.stride
@@ -595,12 +763,15 @@ class Validator(nn.Module):
                         "out_chan": int(mod.out_channels),
                     }
                 }
-                torch.save(stored, exp_w_path)
+                _save_expanded_weight_cache(stored, exp_w_path)
 
             def post_hook(mod, inputs, output):
                 # Replace plain conv with unrolled weights
                 unrolled, meta = stored[mod_name]["weight"], stored[mod_name]["meta"]
                 mvm_conv = MVMConv(unrolled, meta)
+                dtc_block_ids, dtc_output_ids = build_unrolled_dtc_metadata(
+                    unrolled, inputs[0].shape[1:], meta)
+                mvm_conv.set_dtc_metadata(dtc_block_ids, dtc_output_ids)
                 mvm_conv.clean_mat_values = mvm_conv.mat.values().detach().clone()
                 if hasattr(parent, "_nonlinear_R_pkg"):
                     mvm_conv.enable_csv(**parent._nonlinear_R_pkg)
@@ -629,7 +800,8 @@ class Validator(nn.Module):
             self._register_hook_for_unroll(_idx, _layer)
 
         # One forward pass to trigger the hooks and unroll the weights
-        _ = self.model(next(iter(self.dataloader))[0][:2].to(self.device))
+        _ = self.model(self._unroll_sample_inputs)
+        self._unroll_sample_inputs = None
 
         # If record full trajectory, use forward_full_steps of odeblocks.
         if self.record_full_traj:

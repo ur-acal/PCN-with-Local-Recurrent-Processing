@@ -21,6 +21,10 @@ TASK="${TASK:-cifar10}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
 FT_MODEL=0
+ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-false}"
+SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
+ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
 
 PCNS=( "PCNetNoBatchNorm" "PCNetWith1stConv" )
 IMG_TYPES=( "rgb" )
@@ -341,7 +345,7 @@ submit_chunk() {
     BLOCKS_LIST="${BLOCKS_LIST}" \
     sbatch --parsable \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}",FT_MODEL="${FT_MODEL}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
+      --export=ALL,PCN="${pcn}",IMG_TYPE="${img_type}",EXP="${EXP}",FT_MODEL="${FT_MODEL}",CIRC_CONF="${circ_conf}",TASK="${TASK}",ODE_BLOCK="${ODE_BLOCK}",ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION}",SIGMA_SPIN="${SIGMA_SPIN}",ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE}",SUMMING_CURRENT_P="${SUMMING_CURRENT_P}",CHAN_0="${chan0}",NUM_LAYERS="${num_layers}",CHUNK_ID="${chunk_id}",CHUNK_TAG="${chunk_tag}",COMB_LIST="${comb_list}" \
       "${SBATCH_SCRIPT}"
   )
   echo "  -> job ${jid}"
@@ -512,4 +516,3 @@ if ((${#CSV_PATHS[@]} > 0)); then
 else
   echo "[SUMMARY] No merged CSVs found; skip pickle summary."
 fi
-
