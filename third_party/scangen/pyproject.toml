@@ -1,0 +1,102 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scangen"
+version = "0.3.0"
+description = "Generate noisy RAW data from RGB inputs for neural network training"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "scikit-image>=0.19.0",
+    "matplotlib>=3.5.0",
+    "pillow>=8.0.0",
+    "pydantic>=2.0.0",
+    "tqdm>=4.64.0",
+    "typer>=0.9.0",
+    "pooch>=1.7.0",
+    "pydantic>=2.11.7",
+    "h5py>=3.14.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "furo>=2025.7",
+    "mock>=5.2.0",
+    "mypy>=1.17.1",
+    "pydeps>=3.0.1",
+    "pytest>=6.0.0",
+    "pytest-cov>=3.0.0",
+    "pytest-mock>=3.14.1",
+    "pytest-mypy>=1.0.1",
+    "ruff>=0.1.0",
+]
+docs = [
+    "sphinx>=5.0.0",
+    "sphinxcontrib-mermaid>=1.0.0",
+]
+
+[project.scripts]
+scangen = "scangen.cli:app"
+
+[tool.setuptools]
+packages = ["scangen"]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.package-data]
+scangen = ["data/*.toml"]
+
+[tool.mypy]
+
+[[tool.mypy.overrides]]
+module = ["torchvision.*", "tqdm.*", "pydeps.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "ANN", "BLE", "FBT", "B", "A", "COM", "C4", "DTZ", "T10", "EM", "EXE", "FA", "ISC", "ICN", "G", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SLOT", "SIM", "TID", "TCH", "INT", "ARG", "PTH", "TD", "FIX", "ERA", "PD", "PGH", "PL", "TRY", "FLY", "NPY", "AIR", "PERF", "FURB", "LOG", "RUF"]
+ignore = ["A001", "ANN201", "ANN001", "ANN003", "B008", "BLE001", "COM812", "DTZ005", "EM101", "EM102", "FBT001", "FBT002", "FBT003", "FIX002", "G004", "ISC001", "N806", "N812", "NPY002", "PLC0415", "PLR0911", "PLR0913", "PLR2004", "PT018", "ANN204", "PLR0915", "ANN202", "RUF002", "RUF100", "TD002", "TD003", "TRY003", "TRY300", "TRY301"]
+# Global ignores:
+#   - A001: Variable shadowing Python builtin (like copyright in Sphinx config)
+#   - ANN001, ANN201, ANN003, ANN204, ANN202: Missing type annotations (architectural choice)
+#   - B008: Function calls in argument defaults (design pattern in PyTorch)
+#   - BLE001: Broad exception catching (appropriate for CLI error handling)
+#   - COM812, ISC001: Comma and string concatenation rules (formatting preference)
+#   - DTZ005: Missing timezone in datetime (not needed for local timestamps)
+#   - EM101, EM102: Exception message rules (string literal preference)
+#   - FBT001, FBT002, FBT003: Boolean flag arguments (common in config APIs)
+#   - FIX002: TODO comments (development artifacts)
+#   - G004: f-string in logging (performance preference)
+#   - N806, N812: Naming conventions (H/W variables, F import alias)
+#   - NPY002: Legacy numpy random (multiprocessing compatibility)
+#   - PLC0415: Imports in functions (conditional imports for optional dependencies)
+#   - PLR0911, PLR0913, PLR0915: Too many returns/arguments/statements (design choices)
+#   - PLR2004: Magic values (common constants like RGB channel count)
+#   - PT018: Pytest assertion style (preference)
+#   - RUF002, RUF100: Ruff-specific rules
+#   - TD002, TD003: TODO format requirements (not enforced)
+#   - TRY003, TRY300, TRY301: Exception handling patterns (readability preference)
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "PLR2004", "PLW2901", "PT012", "PTH123", "SIM117", "SLF001", "PT011", "PT018"]
+"docs/*" = ["INP001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = "--cov=scangen --cov-report=html --cov-report=term --mypy"
+mock_use_standalone_module = true

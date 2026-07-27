@@ -1,0 +1,14 @@
+{
+  "dataset": "cifar100",
+  "input": "data/cifar100_raw.h5",
+  "split": "test",
+  "noise_source": "scangen 0.3.0 D300 pointwise model",
+  "noise": {
+    "type": "pointwise",
+    "min_shot_noise": 0.0001,
+    "max_shot_noise": 0.012,
+    "read_noise_offset_width": 0.26,
+    "read_noise_offset": 1.2,
+    "read_noise_slope": 2.18
+  }
+}

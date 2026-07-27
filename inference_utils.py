@@ -6,23 +6,21 @@ import os
 import inspect
 import sys
 import pickle
-import subprocess
-import json
 import time
-import tempfile
-import matplotlib.pyplot as plt
+import json
 
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 from tqdm import tqdm
 from copy import deepcopy
+from pathlib import Path
 
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES
 from pc_conv import PCConv, PCConvNoisy, PartialTiedPCConv
 from bn_fuse import fuse_bn_recursively
 from ode_pc import make_ode_block, wrap_ode_block
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_quant_model, _CIFAR_STATS
-from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
+from scangen.data import MyNoiseCIFARDataset
 from quant_helper import QUANT_HELPER_CLS, replace_with_quant_layers, QUANT_SCHEME_PC
 
 import logging
@@ -33,6 +31,25 @@ log.propagate = False
 handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
+
+
+def _get_scangfi_dataset(task, train):
+    if task != "cifar100":
+        raise ValueError("The packaged scanGFI dataset supports CIFAR-100 only.")
+    repo_root = Path(__file__).resolve().parent
+    data_path = Path(os.environ.get(
+        "SCAN_TEST_DATA",
+        repo_root / "data" / "cifar100_raw.h5"))
+    with (repo_root / "data" / "scangen_cifar100_noise.json").open() as handle:
+        noise_config = json.load(handle)["noise"]
+    return MyNoiseCIFARDataset(
+        root=data_path.parent,
+        input_name=data_path.stem,
+        train=train,
+        noise_config=noise_config,
+        device=torch.device("cpu"),
+    )
+
 
 def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
     if img_type in {"rgb", "rggb"}:
@@ -48,19 +65,7 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
         dataset_cls = torchvision.datasets.CIFAR100 if task == "cifar100" else torchvision.datasets.CIFAR10
         test_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
     elif img_type == "scanGFI":
-        with tempfile.TemporaryDirectory() as tmpdir:
-            conf_file = os.path.join(tmpdir, "config.json")
-            subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
-            with open("{}".format(conf_file)) as fp:
-                scangen_config = json.load(fp)
-            test_set = MyNoiseCIFARDataset(
-                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                  "cifar-10-data", img_type),
-                input_name=task + "_raw",
-                train=False,
-                noise_config=scangen_config["noise"],
-                device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
-            )
+        test_set = _get_scangfi_dataset(task, train=False)
     else:
         transform_test = transforms.Compose([
             transforms.ToTensor(),
@@ -89,19 +94,7 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb", task="cifar10"):
             ])
         train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
     elif img_type == "scanGFI":
-        with tempfile.TemporaryDirectory() as tmpdir:
-            conf_file = os.path.join(tmpdir, "config.json")
-            subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
-            with open("{}".format(conf_file)) as fp:
-                scangen_config = json.load(fp)
-            train_set = MyNoiseCIFARDataset(
-                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                  "cifar-10-data", img_type),
-                input_name=task + "_raw",
-                train=True,
-                noise_config=scangen_config["noise"],
-                device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
-            )
+        train_set = _get_scangfi_dataset(task, train=True)
     else:
         transform_train = transforms.Compose([
             transforms.ToTensor(),

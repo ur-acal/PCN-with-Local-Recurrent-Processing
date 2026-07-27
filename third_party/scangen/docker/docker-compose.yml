@@ -1,0 +1,32 @@
+# docker-compose.yml
+services:
+  scangen:
+    build: .
+    image: 7528s01_scangen:latest
+    volumes:
+      - ..:/mnt/work/src
+      - 7528s01_photos:/mnt/work/data
+    environment:
+      - UV_CACHE_DIR=/mnt/work/data/uv-cache
+      - UV_PYTHON_INSTALL_DIR=/mnt/work/data/uv-cache/python
+    stdin_open: true  # -i
+    tty: true         # -t
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+
+  # One-off helper for initializing the volume
+  init-volume:
+    image: alpine
+    volumes:
+      - 7528s01_photos:/data
+      - ../../data:/source:ro
+    command: cp -a /source/. /data/
+    profiles: ["init"]  # only runs when explicitly requested
+
+volumes:
+  7528s01_photos:

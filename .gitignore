@@ -6,7 +6,7 @@ __pycache__/
 .cache/
 
 # Python egg metadata, regenerated from source files by setuptools.
-/*.egg-info
+*.egg-info/
 .eggs/
 
 # PyPI distribution artifacts.
@@ -35,6 +35,7 @@ results/
 loss_plot/
 expanded_weights/
 saved_ckpt/
+data/*.h5
 saved_ckpt_runs/
 checkpoint/
 logs/

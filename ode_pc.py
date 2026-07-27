@@ -1240,8 +1240,6 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         # on_values determine the sign and merging mismatch in (if any).
         # We have split a T_z/y into number of quant levels slices.
         # If the quantization level >= current pulse slice_idx, then this quantization level is on.
-        # Todo: Currently we are generating perfect pulse width based on clean weights.
-        #  The mismatch is added via on_values. We need to implement non-ideal width pulse.
         pulse_count = torch.round(clean_values.abs() * self.q_hi)
         pulse_count = pulse_count.clamp(min=0, max=self.q_hi)
         active = pulse_count > slice_idx
@@ -3944,100 +3942,14 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
 
 
 ODEBLOCK_CLASSES = {
-    "ODEBlockPC": ODEBlockPC,
-    "ODEBlockFFFB": ODEBlockFFFB,
-    "ODEBlockXInit": ODEBlockXInit,
-    "ODEBlockPCLimitDyn": ODEBlockPCLimitDyn,
-    "ODEBlockPCMinusY": ODEBlockPCMinusY,
-    "ODEBlk0Init": ODEBlk0Init,
-    "ODEBlkActInp": ODEBlkActInp,
-    "ODEBlkActDyn": ODEBlkActDyn,
-    "ODEActInpNoMinus": ODEActInpNoMinus,
-    "ODEActDynNoMinus": ODEActDynNoMinus,
-    "ODEBlkProj": ODEBlkProj,
-    "ODEBlkProjInitY": ODEBlkProjInitY,
-    "ODESelfCoupleInitY": ODESelfCoupleInitY,
-    "ODESumAsBInitY": ODESumAsBInitY,
-    "ODESumAsBInitYFFFB": ODESumAsBInitYFFFB,
-    "ODENoisyOffset": ODENoisyOffset,
-    "ODEFixNoiseOffset": ODEFixNoiseOffset,
-    "ODEFixNoiseFFFB": ODEFixNoiseFFFB,
-    "ODEFixNoise0Init": ODEFixNoise0Init,
-    "ODEActDynInitY": ODEActDynInitY,
-    "ODEFixNoiseXInit": ODEFixNoiseXInit,
-    "ODEFFFBConv": ODEFFFBConv,
-    "ODEFFConv": ODEFFConv,
-    "ODESumAsBInitYAsX": ODESumAsBInitYAsX,
-    "ODEFixNoiseXInitFFFB": ODEFixNoiseXInitFFFB,
-    "SumAsBInitYAsXFFFB": SumAsBInitYAsXFFFB,
-    "FixNoiseXInitFFFBNoExpand": FixNoiseXInitFFFBNoExpand,
-    "ODEXInitFFFB": ODEXInitFFFB,
-    "ToggleResetZ": ToggleResetZ,
-    "ToggleKeepZ": ToggleKeepZ,
-    "ToggleODEXInitFFFB": ToggleODEXInitFFFB,
-    "ToggleODEXInitKeep": ToggleODEXInitKeep,
-    "TogglePulseResetZ": TogglePulseResetZ,
-    "TogglePulseKeepZ": TogglePulseKeepZ,
     "TogglePulseODEXInitFFFB": TogglePulseODEXInitFFFB,
-    "TogglePulseODEXInitKeep": TogglePulseODEXInitKeep,
-    "TogglePulseBlk": TogglePulseBlk,
-    "TogglePulseBlkXInitFFFB": TogglePulseBlkXInitFFFB,
-    "ODEFixNoise0InitExpand": ODEFixNoise0InitExpand,
-    "ODEFixNoise0InitFFFB": ODEFixNoise0InitFFFB,
-    "ODESumAsBInitYAs0": ODESumAsBInitYAs0,
-    "SumAsBInitYAs0FFFB": SumAsBInitYAs0FFFB,
-    # Using 2 states
-    "ODEState2FFFB": ODEState2FFFB,
-    "State2InitYZ": State2InitYZ,
-    "State2InitYAsXZAs0": State2InitYAsXZAs0,
-    "State2InitYAs0ZAsX": State2InitYAs0ZAsX,
-    "State2InitYAsXZAsX": State2InitYAsXZAsX,
-    "State2NoMinusZ": State2NoMinusZ,
-    "State2NoMinusZYAsXZAs0": State2NoMinusZYAsXZAs0,
-    "State2NoMinusZYAs0ZAsX": State2NoMinusZYAs0ZAsX,
-    "State2NoMinusZYAsXZAsX": State2NoMinusZYAsXZAsX,
-    "S2NoMinusZChargeZ": S2NoMinusZChargeZ,
-    "S2NoMinusZChargeZMinus": S2NoMinusZChargeZMinus,
-    "S2NoMinusZChgZNoisyI": S2NoMinusZChgZNoisyI,
-    "S2NoMinusZChgZMinusNoisyI": S2NoMinusZChgZMinusNoisyI,
-    "S2NoisyIYAsXZAsX": S2NoisyIYAsXZAsX,
-    "S2NoisyIYAs0ZAsX": S2NoisyIYAs0ZAsX,
-    "S2NoisyIYAsXZAs0": S2NoisyIYAsXZAs0,
-    "S2Circ": S2Circ,
-    "S2CircYAsXZasX": S2CircYAsXZasX,
-    "S2CircYAs0ZasX": S2CircYAs0ZasX,
-    "S2CircYAsXZas0": S2CircYAsXZas0,
-    # Using summation of abs value
-    "SelfCUAbsSumFFFB": SelfCUAbsSumFFFB,
-    "SelfCUAbsSumFFFBInitB": SelfCUAbsSumFFFBInitB,
-    "SelfCUAbsSumFFFBFixNoise": SelfCUAbsSumFFFBFixNoise,
-    "SelfCUAbsSumFFFBNoisy": SelfCUAbsSumFFFBNoisy,
 }
 
 ODEWrapper_CLASSES = {
-    "ODEWrapperRC": ODEWrapperRC,
-    "WrapQuantizeW": WrapQuantizeW,
-    "WrapQuantizeWXInit": WrapQuantizeWXInit,
-    "ODEWrapper2State": ODEWrapper2State,
-    "QATTester2State": QATTester2State,
-    "QATWrapper2State": QATWrapper2State,
-    "ODEWrapper1State": ODEWrapper1State,
-    "QATTester1State": QATTester1State,
-    "QATWrapper1State": QATWrapper1State,
-    "ToggleWrapper1State": ToggleWrapper1State,
     "ToggleQATTester1State": ToggleQATTester1State,
-    "ToggleQATWrapper1State": ToggleQATWrapper1State,
-    "TogglePulseWrapper1State": TogglePulseWrapper1State,
-    "TogglePulseQATTester1State": TogglePulseQATTester1State,
-    "TogglePulseQATWrapper1State": TogglePulseQATWrapper1State,
-    "ODEWrapper1StateWithX": ODEWrapper1StateWithX,
-    "QATTester1StateWithX": QATTester1StateWithX,
-    "QATWrapper1StateWithX": QATWrapper1StateWithX,
 }
 
 QUANTIZER_CLASSES = {
     "SymQuantizeWeight": SymQuantizeWeight,
-    "PulseSymQuantizeWeight": PulseSymQuantizeWeight,
-    "LSQWeight": LSQWeight,
     None: SymQuantizeWeight,
 }

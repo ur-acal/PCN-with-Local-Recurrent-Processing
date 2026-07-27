@@ -7,7 +7,6 @@ import gc
 import pickle
 import argparse
 import json
-import torchinfo
 import logging
 import random
 
@@ -15,19 +14,14 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 from tqdm import tqdm
 from copy import deepcopy
-from thop import profile, clever_format
 
 from data_utils import MISMATCH_LEVELS_5b
 from pc_conv import PCConvNoisy, PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLASSES, wrap_ode_block
-from cross_sim_inference import calibrate_input
 from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised, MVMConv
-from switch import SWITCH_CLASSES
-from ode_mismatch_analyzer import ODEMismatchAnalyzer
 
-ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
 import logging
 log = logging.getLogger(__name__)
@@ -782,7 +776,10 @@ def run_ode_inference():
                     if args.ablation_single_case:
                         print("ABLATION_RESULT case={} trial_index={} accuracy={:.8f}".format(
                             args.ablation_case_name, t, accuracy), flush=True)
-                    log.warning(f'Test Accuracy at noise level {noise_level} thermal noise eps {offset_eps_}: {accuracy:.2f}%')
+                    if not args.ablation_single_case:
+                        log.warning(
+                            f'Test Accuracy: {accuracy:.2f}%'
+                        )
 
                     # Cross trial clean up code
                     if args.test_expanded:
@@ -830,18 +827,16 @@ def run_ode_inference():
                 noise_acc_spec[_nl_key] = acc_list
                 log.warning("Average test acc over {} trials is {}".format(trials, avg_acc))
             noise_acc_spec_all[offset_eps_ if offset_eps_ is not None else "Johnson"] = noise_acc_spec
-        ###################################################################################################
-        # Noisy Experiment finished for one t_end
-        ###################################################################################################
-        log.warning("-------- Final Result ODEBlock with t_end: {}, real_t_end: {} --------".format(t_end, real_t_end))
-        log.warning("-------- Model name: {} --------".format(args.model_name))
-        if args.ode_wrapper is not None:
-            log.warning("wrapper params: {}".format(wrapper_params))
-        for _eps, _noise_acc_spec in noise_acc_spec_all.items():
-            log.warning("Thermal noise eps: {}".format(_eps if _eps is not None else "Johnson"))
-            for _nl, _acc in _noise_acc_spec.items():
-                log.warning("t_end: {}, real_t_end: {}, Noise level: {}, Acc:{:.2f}±{:.2f}%".format(
-                    t_end, real_t_end, _nl, sum(_acc) / len(_acc), np.std(_acc)))
+        if not args.ablation_single_case:
+            log.warning("-------- Final Result ODEBlock with t_end: {}, real_t_end: {} --------".format(
+                t_end, real_t_end))
+            log.warning("-------- Model name: {} --------".format(args.model_name))
+            if args.ode_wrapper is not None:
+                log.warning("wrapper params: {}".format(wrapper_params))
+            for _eps, _noise_acc_spec in noise_acc_spec_all.items():
+                for _nl, _acc in _noise_acc_spec.items():
+                    log.warning("t_end: {}, real_t_end: {}, Acc:{:.2f}±{:.2f}%".format(
+                        t_end, real_t_end, sum(_acc) / len(_acc), np.std(_acc)))
 
         acc_dict[real_t_end] = {"noise_acc_spec": noise_acc_spec_all, "t": (t_end, real_t_end, min_real_t, max_real_t)}
 
