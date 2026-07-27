@@ -80,6 +80,12 @@ def parse_args():
                         choices=("approx", "direct"), default="approx")
     parser.add_argument("--summing_current_p", type=float, default=18.5e-12)
     parser.add_argument("--coupler_noise_p", type=float, default=0.6e-12)
+    parser.add_argument("--nonlinear_R_table", default=None)
+    parser.add_argument("--R", type=float, default=10e3)
+    parser.add_argument("--R_max", default="150e3")
+    parser.add_argument("--C", type=float, default=49e-15)
+    parser.add_argument("--k", type=float, default=1e3)
+    parser.add_argument("--v_dd", type=float, default=0.1)
     parser.add_argument("--dtc_leading_edge_variation_std", type=float, default=0.0)
     parser.add_argument("--dtc_width_variation_std", type=float, default=0.018)
     parser.add_argument("--dtc_leading_edge_jitter_std", type=float, default=0.005)
@@ -139,11 +145,11 @@ def build_command(args, case_name):
         "--sde_noise_type", "mul",
         "--mismatch_type", "mul",
         "--sweep_eps", "false",
-        "--R", "10e3",
-        "--R_max", "150e3",
-        "--C", "49e-15",
-        "--k", "1e3",
-        "--v_dd", "0.1",
+        "--R", str(args.R),
+        "--R_max", str(args.R_max),
+        "--C", str(args.C),
+        "--k", str(args.k),
+        "--v_dd", str(args.v_dd),
         "--enob", "8",
         "--w_bits", "5",
         "--patch_node", "8",
@@ -162,6 +168,7 @@ def build_command(args, case_name):
         "--expanded_w_dir", args.expanded_w_dir,
         "--diff_mismatch", bool_arg(enabled.get("coupler", False)),
         "--nonlinear_R", bool_arg(enabled.get("nonlinear_R", False)),
+        "--nonlinear_R_table", args.nonlinear_R_table or "none",
         "--mul_mismatch_mode", "static_mismatch",
         "--enable_spin_variation", bool_arg(enabled.get("spin", False)),
         "--sigma_spin", "0.10",

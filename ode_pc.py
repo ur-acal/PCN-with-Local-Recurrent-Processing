@@ -2817,6 +2817,7 @@ class WrapQuantizeW(ODEWrapperRC):
         kwargs.update({"patch": False})
 
         self.nonlinear_R = kwargs.pop("nonlinear_R", False)
+        self.nonlinear_R_table = kwargs.pop("nonlinear_R_table", None)
         self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
         self.mul_mismatch_mode = kwargs.pop("mul_mismatch_mode", "scale_mismatch")
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
@@ -2976,7 +2977,8 @@ class WrapQuantizeW(ODEWrapperRC):
             return False
 
         self.v_grid, self.R_codes, self.R_table = load_res_vs_vin(
-            R=self.R, R_max=self.R_max, device=self.ode_block.FFconv.weight.device)
+            R=self.R, R_max=self.R_max, device=self.ode_block.FFconv.weight.device,
+            nonlinear_R_table=self.nonlinear_R_table)
 
         v_sort_idx = torch.argsort(self.v_grid)
         self.v_grid = self.v_grid[v_sort_idx]

@@ -15,9 +15,25 @@ import torch.nn.init as init
 
 
 def load_res_vs_vin(dir_path=os.path.dirname(os.path.abspath(__file__)), R=50e3, R_max=180e3,
-                    dtype=torch.float32, device="cpu"):
-    data_dir = os.path.join(dir_path, "hardware_data", "res_vs_vin_{}k_{}k.csv".format(
-        str(int(R/1e3)), str(int(R_max/1e3))))
+                    dtype=torch.float32, device="cpu", nonlinear_R_table=None):
+    if nonlinear_R_table is None:
+        if R_max is None:
+            raise ValueError(
+                "R_max is required to infer the nonlinear-R table filename when "
+                "nonlinear_R_table is not provided.")
+        data_dir = os.path.join(dir_path, "hardware_data", "res_vs_vin_{}k_{}k.csv".format(
+            str(int(R/1e3)), str(int(R_max/1e3))))
+    else:
+        table_name = os.fspath(nonlinear_R_table)
+        candidates = [
+            table_name,
+            os.path.join(dir_path, table_name),
+            os.path.join(dir_path, "hardware_data", table_name),
+        ]
+        data_dir = next((path for path in candidates if os.path.exists(path)), None)
+        if data_dir is None:
+            raise FileNotFoundError(
+                "Nonlinear-R table not found: {}".format(nonlinear_R_table))
     if not os.path.exists(data_dir):
         return None, None, None
     df = pd.read_csv(data_dir)

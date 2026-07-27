@@ -214,6 +214,7 @@ run_model(){
     --test_expanded   "${test_expanded}" \
     --diff_mismatch   "${DIFF_MISMATCH:-true}" \
     --nonlinear_R     "${nonlinear_r}" \
+    --nonlinear_R_table "${NONLINEAR_R_TABLE:-none}" \
     --mul_mismatch_mode "${MUL_MISMATCH_MODE:-scale_mismatch}" \
     --test_only_nl    "0.0" \
     --return_init     "${RETURN_INIT:-0}" \

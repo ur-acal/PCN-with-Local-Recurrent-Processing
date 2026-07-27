@@ -80,6 +80,7 @@ run_eval() {
     --diff_mismatch "${DIFF_MISMATCH:-false}"
     --test_expanded "${TEST_EXPANDED:-false}"
     --nonlinear_R "${NONLINEAR_R:-false}"
+    --nonlinear_R_table "${NONLINEAR_R_TABLE:-none}"
     --mul_mismatch_mode "${MUL_MISMATCH_MODE:-static_mismatch}"
     --R "${R_VAL}"
     --R_max "${R_MAX}"

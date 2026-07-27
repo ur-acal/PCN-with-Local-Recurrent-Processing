@@ -314,6 +314,7 @@ run_model(){
     --test_expanded   "true" \
     --diff_mismatch   "true" \
     --nonlinear_R     "true" \
+    --nonlinear_R_table "${NONLINEAR_R_TABLE:-none}" \
     --mul_mismatch_mode "static_mismatch" \
     --test_only_nl    "0.0" \
     --return_init     "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" \

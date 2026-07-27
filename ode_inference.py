@@ -61,6 +61,11 @@ def parse_args():
                         default=None, help="Maximum meaningful Resistance")
     parser.add_argument("--nonlinear_R", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False, help="R change with v_in or not")
+    parser.add_argument(
+        "--nonlinear_R_table",
+        type=lambda s: None if s.lower() in {"none", ""} else str(s),
+        default=None,
+        help="Optional nonlinear-R CSV name or path; otherwise infer it from R and R_max.")
     parser.add_argument("--mul_mismatch_mode", type=str, default="scale_mismatch",
                         choices=["scale_mismatch", "static_mismatch"])
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
@@ -374,7 +379,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "enob": args.enob, "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
-                      "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
+                      "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
+                      "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                       "enable_measured_activation": args.enable_measured_activation,
                       "activation_curve_path": args.activation_curve_path,
                       "activation_corner": args.activation_corner,
@@ -483,7 +489,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
-                      "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
+                      "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
+                      "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                       "enable_measured_activation": args.enable_measured_activation,
                       "activation_curve_path": args.activation_curve_path,
                       "activation_corner": args.activation_corner,
@@ -646,7 +653,8 @@ def run_ode_inference():
                           "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
-                          "nonlinear_R": args.nonlinear_R, "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
+                          "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
+                          "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                           "enable_measured_activation": args.enable_measured_activation,
                           "activation_curve_path": args.activation_curve_path,
                           "activation_corner": args.activation_corner,
