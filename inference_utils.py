@@ -35,7 +35,7 @@ log.addHandler(handler)
 
 def _get_scangfi_dataset(task, train):
     if task != "cifar100":
-        raise ValueError("The packaged scanGFI dataset supports CIFAR-100 only.")
+        raise ValueError("The scanGFI dataset supports CIFAR-100 only.")
     repo_root = Path(__file__).resolve().parent
     data_path = Path(os.environ.get(
         "SCAN_TEST_DATA",
