@@ -1,6 +1,7 @@
 import csv
 import re
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -212,6 +213,32 @@ class CubicBSplineActivation(nn.Module):
 
     @classmethod
     def _load_csv(cls, path):
+        with open(path) as handle:
+            header = handle.readline()
+        if "mcparamset=" in header:
+            data = np.loadtxt(path, delimiter=",", skiprows=1)
+            if data.ndim != 2 or data.shape[1] % 2 != 0:
+                raise ValueError(
+                    "Measured-activation MC CSV must contain paired X/Y columns.")
+            vin = torch.tensor(data[:, 0], dtype=torch.float32)
+            curves = {}
+            column_names = {}
+            for index in range(data.shape[1] // 2):
+                curve_vin = data[:, 2 * index]
+                if not np.allclose(
+                        curve_vin, data[:, 0], rtol=1e-6, atol=1e-12):
+                    raise ValueError(
+                        "Measured-activation MC curves must share one Vin grid.")
+                name = "MC{}".format(index + 1)
+                curves[name] = torch.tensor(
+                    data[:, 2 * index + 1], dtype=torch.float32)
+                column_names[name] = name
+            order = torch.argsort(vin)
+            return (
+                vin[order],
+                {name: values[order] for name, values in curves.items()},
+                column_names)
+
         with open(path, newline="") as handle:
             reader = csv.DictReader(handle)
             rows = list(reader)
