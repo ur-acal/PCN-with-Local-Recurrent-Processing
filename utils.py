@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import math
+from functools import lru_cache
 import torch
 import pandas as pd
 import numpy as np
@@ -14,8 +15,230 @@ import torch.nn as nn
 import torch.nn.init as init
 
 
+@lru_cache(maxsize=256)
+def _load_mc_res_vs_vin(path, curve_index, quantity, nominal_R):
+    data = np.loadtxt(path, delimiter=",", skiprows=1)
+    if data.ndim != 2 or data.shape[1] % 2 != 0:
+        raise ValueError(
+            "MC nonlinear-R data must contain paired X/Y columns.")
+    curve_index = int(curve_index)
+    n_curves = data.shape[1] // 2
+    if curve_index < 0 or curve_index >= n_curves:
+        raise IndexError(
+            "MC nonlinear-R curve index {} is outside [0, {}).".format(
+                curve_index, n_curves))
+
+    v_grid = data[:, 2 * curve_index]
+    values = data[:, 2 * curve_index + 1]
+    valid = np.isfinite(v_grid) & np.isfinite(values)
+    v_grid, values = v_grid[valid], values[valid]
+    if v_grid.size < 2:
+        raise ValueError("Selected MC nonlinear-R curve has fewer than two points.")
+
+    quantity = str(quantity).lower()
+    if quantity == "conductance":
+        if np.any(values <= 0):
+            raise ValueError(
+                "Conductance MC curves must be strictly positive.")
+        values = 1.0 / values
+    elif quantity != "resistance":
+        raise ValueError(
+            "nonlinear_R_mc_quantity must be conductance or resistance.")
+
+    return v_grid, np.asarray([float(nominal_R)]), values[:, None]
+
+
+@lru_cache(maxsize=32)
+def _load_mc_res_curve_bank(path, quantity):
+    """Load all paired MC curves into a padded piecewise-linear curve bank."""
+    data = np.loadtxt(path, delimiter=",", skiprows=1)
+    if data.ndim != 2 or data.shape[1] % 2 != 0:
+        raise ValueError(
+            "MC nonlinear-R data must contain paired X/Y columns.")
+
+    quantity = str(quantity).lower()
+    if quantity not in {"conductance", "resistance"}:
+        raise ValueError(
+            "nonlinear_R_mc_quantity must be conductance or resistance.")
+
+    grids, values = [], []
+    for curve_index in range(data.shape[1] // 2):
+        grid = data[:, 2 * curve_index]
+        curve = data[:, 2 * curve_index + 1]
+        valid = np.isfinite(grid) & np.isfinite(curve)
+        grid, curve = grid[valid], curve[valid]
+        if grid.size < 2:
+            raise ValueError(
+                "MC nonlinear-R curve {} has fewer than two points.".format(
+                    curve_index))
+        order = np.argsort(grid)
+        grid, curve = grid[order], curve[order]
+        if np.any(np.diff(grid) <= 0):
+            raise ValueError(
+                "MC nonlinear-R curve {} must have a strictly increasing "
+                "input grid.".format(curve_index))
+        if quantity == "conductance":
+            if np.any(curve <= 0):
+                raise ValueError(
+                    "Conductance MC curves must be strictly positive.")
+            curve = 1.0 / curve
+        grids.append(grid)
+        values.append(curve)
+
+    max_points = max(grid.size for grid in grids)
+    n_curves = len(grids)
+    padded_grid = np.empty((n_curves, max_points), dtype=np.float64)
+    padded_left = np.empty((n_curves, max_points - 1), dtype=np.float64)
+    padded_slope = np.zeros((n_curves, max_points - 1), dtype=np.float64)
+    lengths = np.empty(n_curves, dtype=np.int64)
+    for index, (grid, curve) in enumerate(zip(grids, values)):
+        length = grid.size
+        lengths[index] = length
+        padded_grid[index, :length] = grid
+        padded_grid[index, length:] = grid[-1]
+        padded_left[index, :length - 1] = curve[:-1]
+        padded_left[index, length - 1:] = curve[-1]
+        padded_slope[index, :length - 1] = (
+            np.diff(curve) / np.diff(grid))
+
+    return padded_grid, padded_left, padded_slope, lengths
+
+
+def load_mc_res_curve_bank(path, quantity="conductance", curve_indices=None,
+                           dtype=torch.float32, device="cpu"):
+    """Return a curve bank independent of how curves are later assigned."""
+    grid, left, slope, lengths = _load_mc_res_curve_bank(
+        os.path.abspath(os.fspath(path)), quantity)
+    if curve_indices is not None:
+        curve_indices = np.asarray(curve_indices, dtype=np.int64).reshape(-1)
+        if curve_indices.size == 0:
+            raise ValueError("curve_indices must not be empty.")
+        if curve_indices.min() < 0 or curve_indices.max() >= grid.shape[0]:
+            raise IndexError("Curve-bank index is out of range.")
+        grid = grid[curve_indices]
+        left = left[curve_indices]
+        slope = slope[curve_indices]
+        lengths = lengths[curve_indices]
+    return {
+        "v_grid": torch.tensor(grid, dtype=dtype, device=device),
+        "R_left": torch.tensor(left, dtype=dtype, device=device),
+        "R_slope": torch.tensor(slope, dtype=dtype, device=device),
+        "lengths": torch.tensor(lengths, dtype=torch.int64, device=device),
+    }
+
+@lru_cache(maxsize=32)
+def _load_mc_curve_gaussian(path, quantity, curve_indices):
+    """Fit one full-covariance Gaussian to a selected bank of MC curves."""
+    data = np.loadtxt(path, delimiter=",", skiprows=1)
+    if data.ndim != 2 or data.shape[1] % 2 != 0:
+        raise ValueError(
+            "MC nonlinear-R data must contain paired X/Y columns.")
+
+    quantity = str(quantity).lower()
+    if quantity not in {"conductance", "resistance"}:
+        raise ValueError(
+            "nonlinear_R_mc_quantity must be conductance or resistance.")
+
+    n_curves = data.shape[1] // 2
+    if curve_indices:
+        selected = np.asarray(curve_indices, dtype=np.int64)
+    else:
+        selected = np.arange(n_curves, dtype=np.int64)
+    if selected.size < 2:
+        raise ValueError(
+            "Full-covariance curve fitting requires at least two MC curves.")
+    if selected.min() < 0 or selected.max() >= n_curves:
+        raise IndexError("Curve-bank index is out of range.")
+
+    grids, curves = [], []
+    for curve_index in selected:
+        grid = data[:, 2 * curve_index]
+        curve = data[:, 2 * curve_index + 1]
+        valid = np.isfinite(grid) & np.isfinite(curve)
+        grid, curve = grid[valid], curve[valid]
+        order = np.argsort(grid)
+        grid, curve = grid[order], curve[order]
+        if grid.size < 2 or np.any(np.diff(grid) <= 0):
+            raise ValueError(
+                "Each MC nonlinear-R curve must have a strictly increasing "
+                "input grid with at least two points.")
+        if np.any(curve <= 0):
+            raise ValueError(
+                "{} MC curves must be strictly positive.".format(
+                    quantity.capitalize()))
+        grids.append(grid)
+        curves.append(curve)
+
+    # A covariance matrix requires every sample to describe the same voltage
+    # coordinates. Preserve an already-common grid exactly; otherwise align
+    # the curves to the first grid over their common characterized range.
+    reference_grid = grids[0]
+    if not all(np.array_equal(grid, reference_grid) for grid in grids[1:]):
+        lower = max(grid[0] for grid in grids)
+        upper = min(grid[-1] for grid in grids)
+        reference_grid = reference_grid[
+            (reference_grid >= lower) & (reference_grid <= upper)]
+        if reference_grid.size < 2:
+            raise ValueError(
+                "MC nonlinear-R curves have no common voltage grid range.")
+        curves = [
+            np.interp(reference_grid, grid, curve)
+            for grid, curve in zip(grids, curves)
+        ]
+
+    samples = np.stack(curves, axis=0)
+    value_scale = float(np.mean(np.abs(samples)))
+    if not np.isfinite(value_scale) or value_scale <= 0:
+        raise ValueError("MC curve scale must be finite and positive.")
+    normalized = samples / value_scale
+    mean = normalized.mean(axis=0)
+    covariance = np.cov(normalized, rowvar=False, ddof=1)
+
+    # Add only the minimum numerical diagonal regularization needed by
+    # Cholesky; this is not a PCA or low-rank approximation.
+    try:
+        factor = np.linalg.cholesky(covariance)
+    except np.linalg.LinAlgError:
+        diagonal_scale = max(
+            float(np.max(np.diag(covariance))), np.finfo(np.float64).eps)
+        jitter = diagonal_scale * 1e-12
+        for _ in range(8):
+            try:
+                factor = np.linalg.cholesky(
+                    covariance + jitter * np.eye(covariance.shape[0]))
+                break
+            except np.linalg.LinAlgError:
+                jitter *= 10.0
+        else:
+            raise ValueError(
+                "MC curve covariance is not numerically positive semidefinite.")
+
+    return reference_grid, mean, factor, value_scale
+
+
+def load_mc_res_curve_gaussian(path, quantity="conductance",
+                               curve_indices=None, dtype=torch.float32,
+                               device="cpu"):
+    """Return a direct full-covariance Gaussian fit of measured MC curves."""
+    index_key = (
+        None if curve_indices is None
+        else tuple(int(index) for index in curve_indices)
+    )
+    grid, mean, factor, value_scale = _load_mc_curve_gaussian(
+        os.path.abspath(os.fspath(path)), str(quantity).lower(), index_key)
+    return {
+        "v_grid": torch.tensor(grid, dtype=dtype, device=device),
+        "mean": torch.tensor(mean, dtype=dtype, device=device),
+        "factor": torch.tensor(factor, dtype=dtype, device=device),
+        "value_scale": float(value_scale),
+        "quantity": str(quantity).lower(),
+    }
+
+
 def load_res_vs_vin(dir_path=os.path.dirname(os.path.abspath(__file__)), R=50e3, R_max=180e3,
-                    dtype=torch.float32, device="cpu", nonlinear_R_table=None):
+                    dtype=torch.float32, device="cpu", nonlinear_R_table=None,
+                    nonlinear_R_mc_curve_index=None,
+                    nonlinear_R_mc_quantity="conductance"):
     if nonlinear_R_table is None:
         if R_max is None:
             raise ValueError(
@@ -36,10 +259,15 @@ def load_res_vs_vin(dir_path=os.path.dirname(os.path.abspath(__file__)), R=50e3,
                 "Nonlinear-R table not found: {}".format(nonlinear_R_table))
     if not os.path.exists(data_dir):
         return None, None, None
-    df = pd.read_csv(data_dir)
-    v_grid = df[df.columns[0]].values
-    R_codes = [float(_) for _ in list(df.columns)[1:]]
-    R_table = df[list(df.columns)[1:]].values
+    if nonlinear_R_mc_curve_index is not None:
+        v_grid, R_codes, R_table = _load_mc_res_vs_vin(
+            data_dir, nonlinear_R_mc_curve_index,
+            nonlinear_R_mc_quantity, R)
+    else:
+        df = pd.read_csv(data_dir)
+        v_grid = df[df.columns[0]].values
+        R_codes = [float(_) for _ in list(df.columns)[1:]]
+        R_table = df[list(df.columns)[1:]].values
 
     return (
         torch.tensor(v_grid, dtype=dtype, device=device),
