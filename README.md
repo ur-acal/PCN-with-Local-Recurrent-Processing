@@ -1,165 +1,125 @@
-# ScAN-PCN 45-corner inference reproduction
+# ScAN-PCN empirical 45-corner inference reproduction
 
-This package reproduces the CIFAR-100 accuracy sweep over 45 characterized
-measured-activation corners.
+This package reproduces two all-on hardware-nonideality accuracy studies over 45 aligned process, voltage, and temperature corners.
 
-## Result summary
+This version uses aligned corner-specific characterization data for spin variation, coupler conductance variation and nonlinearity, measured ReLU behavior, and DTC pulse-width variation. Current-noise densities are scaled using the temperature of the selected corner.
 
-The reported 45-corner accuracy table is stored in [`summary.md`](summary.md)
-in Markdown format. A new sweep also writes a Markdown summary in its selected
-output directory and prints that table to the console.
+## Result summaries
 
-All corners use the same model and the same non-activation non-idealities:
+The headline results are in [`summary.md`](summary.md). Complete 45-corner tables are provided in:
 
-- spin variation with `sigma_spin=0.10`;
-- multiplicative coupler variation with `sigma=0.181` (18.1%);
-- input-dependent conductance from `hardware_data/res_vs_vin_10k_150k.csv`;
-- per-coupler current noise of `0.6 pA/sqrt(Hz)`;
-- DTC width variation of `1.8%` of the minimum pulse width;
-- DTC leading- and falling-edge jitter of `0.5%` of the minimum pulse width.
+- [`summary_cifar100_nonlinearR_exact_curve_noMT.md`](summary_cifar100_nonlinearR_exact_curve_noMT.md)
+- [`summary_cifar10_0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit.md`](summary_cifar10_0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit.md)
 
-The fixed piecewise-linear measured ReLU curve is the corner-dependent setting
-among the 45 process, voltage, and temperature corners in
-`hardware_data/relu_current_0p2uA_all.csv`.
+## Evaluated nonidealities
 
-## 1. Package contents
+For each full-dataset hardware trial, static hardware quantities are sampled once and retained across every input and batch. Dynamic noise is resampled during pulse execution.
 
-The ZIP is expected to contain:
+The evaluation includes:
 
-- this source tree;
-- `summary.md`, the previously recorded 45-corner table;
-- `data/scangen_cifar100_noise.json`, documenting the fixed input-noise path;
-- the required best checkpoint under `saved_ckpt/`;
-- `environment.yml`, which creates the tested `scan_test` environment;
-- `third_party/scangen`, the complete clean scangen 0.3.0 source tree.
+- corner-specific spin-gain mean and local-mismatch standard deviation from `PVT_Monte_Carlo_Results_SPIN.csv`;
+- one empirical conductance curve sampled with replacement per expanded physical coupler from the corresponding `coupler_monte` corner bank;
+- a measured piecewise-linear ReLU curve sampled from the 100 Monte Carlo curves for the selected corner;
+- input-dependent conductance evaluated from the sampled empirical coupler curve;
+- summing-current and per-coupler current-noise densities of `0.6 pA/sqrt(Hz)`, scaled by `sqrt(T_K / 298.15 K)`;
+- corner-specific DTC pulse-width mean and local-mismatch standard deviation, plus leading- and falling-edge jitter.
 
-The ZIP intentionally does not contain the test dataset. The required file is
-`cifar100_raw.h5`, which was shipped with scangen 0.3.0. Keep that file
-separately and pass its location through `SCAN_TEST_DATA`.
+The pulse model uses `R = 67 kOhm`, `C = 282 fF`, five toggle cycles, 5-bit weights, 8-bit output quantization, direct RC timing, and expanded convolution weights.
 
-## 2. Create the environment
+## Package contents
 
-An NVIDIA driver compatible with CUDA 12.8 and a Conda installation are
-required.
+The reproduction ZIP contains:
 
-Extract the package and enter its root directory:
+- the inference source and local MC45 launcher;
+- the complete characterized data under `hardware_data/mc_45_corners/`;
+- both recorded result summaries;
+- both required model checkpoints under `saved_ckpt_runs/`;
+- `environment.yml`;
+- the vendored scangen 0.3.0 source under `third_party/scangen/`.
+
+The ZIP intentionally excludes the test datasets.
+
+## External test data
+
+Two HDF5 files shipped with scangen 0.3.0 are used:
+
+- `cifar100_raw.h5` for the `nonlinearR_exact_curve_noMT` model;
+- `cifar10_raw.h5` for the `0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit` model.
+
+Pass their absolute paths with:
 
 ```bash
-unzip scan_test_45_corner_reproduction.zip -d scan_test_45_corner_reproduction
-cd scan_test_45_corner_reproduction
+export SCAN_TEST_CIFAR100_DATA=/absolute/path/to/cifar100_raw.h5
+export SCAN_TEST_CIFAR10_DATA=/absolute/path/to/cifar10_raw.h5
 ```
 
-Then create and activate the tested environment:
+`SCAN_TEST_DATA` remains a generic fallback when running only one dataset. If no environment variable is set, the loader checks `data/cifar100_raw.h5` or `data/cifar10_raw.h5` according to the selected model.
+
+## Environment
 
 ```bash
 conda env create -f environment.yml
 conda activate scan_test
 ```
 
-Set the path to the separately supplied test dataset:
+Check the installation and both datasets:
 
 ```bash
-export SCAN_TEST_DATA=/absolute/path/to/cifar100_raw.h5
-test -f "${SCAN_TEST_DATA}"
-```
-
-The environment pins the versions used for validation, including Python 3.13.7,
-PyTorch 2.9.0 with CUDA 12.8, torchvision 0.24.0, NumPy 2.2.6, h5py 3.14.0,
-and torchdiffeq 0.2.5.
-
-Check the installation:
-
-```bash
-python - <<'PY'
-import h5py
+python - <<PY
 import os
+import h5py
 import torch
-import torchvision
-import torchdiffeq
 from importlib.metadata import version
 
 print("torch:", torch.__version__)
-print("torchvision:", torchvision.__version__)
 print("CUDA available:", torch.cuda.is_available())
 print("scangen:", version("scangen"))
-with h5py.File(os.environ["SCAN_TEST_DATA"], "r") as handle:
-    print("images:", handle["images"].shape)
-    print("test samples:", int((~handle["train"][:]).sum()))
+for variable in ("SCAN_TEST_CIFAR100_DATA", "SCAN_TEST_CIFAR10_DATA"):
+    path = os.environ[variable]
+    with h5py.File(path, "r") as handle:
+        print(variable, path, handle["images"].shape,
+              int((~handle["train"][:]).sum()), "test samples")
 PY
 ```
 
-The expected dataset shape is `(60000, 4, 16, 16)`, with 10,000 test samples.
+## Run the CIFAR-100 study
 
-## 3. scangen modification
-
-The package includes the complete clean source tree for `scangen==0.3.0`.
-Compared with the original version, this copy contains the dataset-indexing edit
-that prevents training samples from being mixed into test evaluation.
-
-The required HDF5 file is `cifar100_raw.h5`, shipped with scangen 0.3.0 but not
-included in this ZIP. Set `SCAN_TEST_DATA` to its absolute path before running
-the sweep. If the variable is not set, the runner falls back to
-`data/cifar100_raw.h5`.
-
-## 4. Quick run
-
-Run two corners with one trial each:
+The launcher defaults to this study. `N_TRIALS` may be set to choose the number of independent hardware realizations evaluated per corner:
 
 ```bash
-N_TRIALS=1 \
-CORNERS="TT_VDD1_T25 SS_VDD0P9_TM20" \
-OUTPUT_DIR=results/two_corner_validation \
-SCAN_TEST_DATA=/absolute/path/to/cifar100_raw.h5 \
-./launch_scripts/run_activation_corner_sweep.sh
+SCAN_TEST_CIFAR100_DATA=/absolute/path/to/cifar100_raw.h5 \
+./launch_scripts/run_mc45_toggle_ablation.sh
 ```
 
-The launcher evaluates the complete CIFAR-100 test set for each selected corner,
-then prints a two-corner Markdown table. Expanded convolution weights are
-created automatically on first use and cached under `expanded_weights/`.
-
-## 5. Run the complete 45-corner sweep
-
-The launcher defaults to 10 trials per corner:
+Equivalent explicit configuration:
 
 ```bash
-./launch_scripts/run_activation_corner_sweep.sh
+OUTPUT_DIR=results/nonlinearR_exact_curve_noMT \
+MODEL_NAME=TIMMQAT5b8aNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP \
+MODEL_DIR=saved_ckpt_runs/nonlinearR_exact_curve_noMT \
+SCAN_TEST_CIFAR100_DATA=/absolute/path/to/cifar100_raw.h5 \
+./launch_scripts/run_mc45_toggle_ablation.sh
 ```
 
-Equivalent explicit form:
+## Run the CIFAR-10 study
 
 ```bash
-N_TRIALS=10 \
-OUTPUT_DIR=results/activation_corner_reproduction \
-SCAN_TEST_DATA=/absolute/path/to/cifar100_raw.h5 \
-./launch_scripts/run_activation_corner_sweep.sh
+OUTPUT_DIR=results/0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit \
+MODEL_NAME=TIMMQAT5b8aNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP \
+MODEL_DIR=saved_ckpt_runs/0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit \
+SCAN_TEST_CIFAR10_DATA=/absolute/path/to/cifar10_raw.h5 \
+./launch_scripts/run_mc45_toggle_ablation.sh
 ```
 
-The launch path is:
+## Quick selected-corner check
 
-1. `scripts/run_activation_corner_sweep.py` discovers all 45 activation curves;
-2. `scripts/run_toggle_nonideality_ablation.py` runs the full test dataset for
-   every requested trial and corner;
-3. `scripts/summarize_activation_corner_sweep.py` writes
-   `results/activation_corner_reproduction/summary.md`;
-4. the final Markdown table is printed to the console.
-
-Generated logs, raw per-trial CSV files, expanded weights, and new results are
-ignored by Git.
-
-## 6. Useful overrides
+Set `CORNER_IDS` to evaluate a selected subset without changing the hardware configuration:
 
 ```bash
-# Evaluate selected corners.
-CORNERS="FF_VDD0P9_T25 TT_VDD1_T25" \
-./launch_scripts/run_activation_corner_sweep.sh
-
-# Change test batch size if GPU memory is limited.
-TEST_BS=64 ./launch_scripts/run_activation_corner_sweep.sh
-
-# Use alternate locations without changing the package.
-SCAN_TEST_DATA=/absolute/path/to/cifar100_raw.h5 \
-MODEL_DIR=/absolute/path/to/saved_ckpt \
-EXPANDED_W_DIR=/absolute/path/to/expanded_weights \
-OUTPUT_DIR=/absolute/path/to/results \
-./launch_scripts/run_activation_corner_sweep.sh
+CORNER_IDS="FF_V0_T0 SF_V1_T0" \
+OUTPUT_DIR=results/quick_cifar100_check \
+SCAN_TEST_CIFAR100_DATA=/absolute/path/to/cifar100_raw.h5 \
+./launch_scripts/run_mc45_toggle_ablation.sh
 ```
+
+The launcher writes `corner_trials.csv`, `summary.md`, per-corner logs, and `run_config.txt` under `OUTPUT_DIR`. Expanded convolution weights are generated on first use and cached under `expanded_weights/`.

@@ -60,6 +60,32 @@ def parse_args():
         type=lambda s: None if s.lower() in {"none", ""} else str(s),
         default=None,
         help="Optional nonlinear-R CSV name or path; otherwise infer it from R and R_max.")
+    parser.add_argument("--nonlinear_R_mc_curve_indices", type=str, default=None)
+    parser.add_argument(
+        "--nonlinear_R_mc_quantity", choices=("conductance", "resistance"),
+        default="conductance")
+    parser.add_argument(
+        "--nonlinear_R_curve_sharing",
+        choices=("shared", "per_coupler", "per_input",
+                 "per_input_output"),
+        default="shared")
+    parser.add_argument(
+        "--nonlinear_R_curve_bank_indices", type=str, default=None)
+    parser.add_argument(
+        "--nonlinear_R_curve_sampling",
+        choices=("empirical_with_replacement", "multivariate_gaussian"),
+        default="empirical_with_replacement")
+    parser.add_argument(
+        "--nonlinear_R_curve_seed",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=None)
+    parser.add_argument(
+        "--nonlinear_R_curve_edge_chunk_size", type=int, default=65536)
+    parser.add_argument(
+        "--nonlinear_R_train_mode", choices=("none", "exact_curve", "mean"),
+        default="none")
+    parser.add_argument(
+        "--nonlinear_R_corner_range", type=str, default="all")
     parser.add_argument("--mul_mismatch_mode", type=str, default="scale_mismatch",
                         choices=["scale_mismatch", "static_mismatch"])
     parser.add_argument("--C", type=float, default=49e-15, help="Capacitance")
@@ -96,6 +122,7 @@ def parse_args():
     parser.add_argument("--enable_spin_variation", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--sigma_spin", type=float, default=0.10)
+    parser.add_argument("--spin_variation_mean", type=float, default=1.0)
     parser.add_argument("--spin_variation_seed",
                         type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
     parser.add_argument("--enable_measured_activation",
@@ -128,11 +155,16 @@ def parse_args():
     parser.add_argument("--enable_dtc_nonideality",
                         type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=False)
     parser.add_argument("--dtc_leading_edge_variation_std", type=float, default=0.0)
+    parser.add_argument("--dtc_width_variation_mean", type=float, default=0.0)
     parser.add_argument("--dtc_width_variation_std", type=float, default=0.018)
     parser.add_argument("--dtc_leading_edge_jitter_std", type=float, default=0.005)
     parser.add_argument("--dtc_falling_edge_jitter_std", type=float, default=0.005)
     parser.add_argument("--dtc_timing_seed",
                         type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    parser.add_argument("--activation_mc_curve_indices", type=str, default=None)
+    parser.add_argument("--full_45_corner_test",
+                        type=lambda v: v.lower() in ("yes", "true", "t", "1"),
+                        default=False)
     parser.add_argument("--ablation_single_case",
                         type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
     parser.add_argument("--ablation_case_name", type=str, default="")
@@ -169,9 +201,6 @@ def parse_args():
     parser.add_argument("--noisy_trials", type=int, default=20)
     parser.add_argument("--test_only_nl", type=float, default=0.15,
                         help="The noise level to use when test_only=True.")
-    parser.add_argument("--analyze_mm", type=float, default=0.25, help="Mismatch level for analysis.")
-    parser.add_argument("--analyze_mode", type=lambda s: None if s.lower() in {"none", ""} else str(s),
-                        default=None, choices=[None, "none", "", "real", "clean"])
     parser.add_argument("--count_mac", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--test_only", type=lambda v: v.lower() in ('yes','true','t','1'),
@@ -196,6 +225,12 @@ def parse_args():
     return parser.parse_args()
 
 
+def _parse_index_list(value):
+    if value is None:
+        return None
+    return [int(item.strip()) for item in value.split(",") if item.strip()]
+
+
 def get_t_end(args):
     if "TEnd" in args.model_name:
         return float(args.model_name.split("TEnd")[0].split("_")[-1])
@@ -207,125 +242,6 @@ def get_t_end(args):
         assert args.t_end is not None
         return args.t_end
 
-
-def _merge_metric_dicts(metric_dicts, weights=None):
-    """
-    Average metrics from multiple batches.
-    Scalars and tensors are averaged.
-    D_ratio is recomputed from averaged D_ode and D_one_step.
-    """
-    if weights is None:
-        weights = [1.0 for _ in metric_dicts]
-
-    total_w = sum(weights)
-    out = {}
-
-    keys = metric_dicts[0].keys()
-
-    for key in keys:
-        vals = [m[key] for m in metric_dicts]
-
-        # Do not average metadata strings.
-        if isinstance(vals[0], str):
-            out[key] = vals[0]
-            continue
-
-        # Average tensors.
-        if hasattr(vals[0], "shape"):
-            acc = None
-            for v, w in zip(vals, weights):
-                acc = v * w if acc is None else acc + v * w
-            out[key] = acc / total_w
-
-        # Average scalars.
-        elif isinstance(vals[0], (float, int)):
-            out[key] = sum(v * w for v, w in zip(vals, weights)) / total_w
-
-        else:
-            out[key] = vals[0]
-
-    # Recompute ratio from averaged values.
-    if "D_ode" in out and "D_one_step" in out:
-        out["D_ratio_ode_over_one_step"] = out["D_ode"] / max(out["D_one_step"], 1e-12)
-
-    return out
-
-
-def _print_metrics_for_block(layer_idx, metrics, skip_keys=None):
-    print(f"\nLayer {layer_idx}")
-    for key, value in metrics.items():
-        if skip_keys is not None and key in skip_keys:
-            continue
-        print(f"{key}: {value}")
-
-
-def run_ode_mismatch_analysis_multi_batch(model, test_loader, device="cuda", sigma=0.25, n_steps=50, n_seeds=10,
-                                          mismatch_type="mul", add_scale="max_abs", layer_idx=None, n_batches=3,
-                                          analyze_mode="clean"):
-    """
-    analyze_mode == "real" means that we are using propagated noisy output from previous layers as input to
-    each layer.
-    analyze_mode == "clean" means that we are using clean input for each layer to study the mismatch on each
-    layer only.
-    Structure:
-        for batch in selected_batches:
-            for mismatch_seed in seeds:
-                analyze same batch under different mismatch seeds
-        average over batch and seed
-
-    The inner seed loop is inside ODEMismatchAnalyzer.
-    This function adds the outer batch loop.
-    """
-    assert analyze_mode in ("real", "clean")
-    analyzer = ODEMismatchAnalyzer(
-        model=model, test_loader=test_loader, device=device, sigma=sigma, n_steps=n_steps,
-        n_seeds=n_seeds, mismatch_type=mismatch_type, add_scale=add_scale,
-    )
-
-    batch_metrics = []
-    batch_weights = []
-
-    data_iter = iter(test_loader)
-
-    for batch_idx in range(n_batches):
-        images, labels = next(data_iter)
-        images = images.to(device, non_blocking=True)
-
-        batch_size = images.shape[0]
-        batch_weights.append(float(batch_size))
-
-        if layer_idx is None:
-            if analyze_mode == "clean":
-                metrics = analyzer.analyze_all_blocks(images=images)
-            else:
-                metrics = analyzer.analyze_all_blocks_realistic(images=images)
-        else:
-            if analyze_mode == "clean":
-                metrics = analyzer.analyze_block(layer_idx=layer_idx, images=images)
-            else:
-                metrics = analyzer.analyze_block_realistic(layer_idx=layer_idx, images=images)
-
-        batch_metrics.append(metrics)
-
-    # Case 1: one selected layer
-    if layer_idx is not None:
-        merged = _merge_metric_dicts(batch_metrics, weights=batch_weights)
-        _print_metrics_for_block(layer_idx, merged, skip_keys={"H", "C_from_H", "C_avg_cos",
-                                                               "H_realistic", "C_from_H_realistic",
-                                                               "C_avg_cos_realistic"})
-        return merged
-
-    # Case 2: all layers
-    all_merged = {}
-
-    for i in range(model.num_layers):
-        layer_metrics_i = [bm[i] for bm in batch_metrics]
-        all_merged[i] = _merge_metric_dicts(layer_metrics_i, weights=batch_weights)
-        _print_metrics_for_block(i, all_merged[i], skip_keys={"H", "C_from_H", "C_avg_cos",
-                                                              "H_realistic", "C_from_H_realistic",
-                                                              "C_avg_cos_realistic"})
-
-    return all_merged
 
 
 def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
@@ -354,6 +270,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "toggle_fast_path": args.toggle_fast_path,
                   "odexinit_scaling_mode": args.odexinit_scaling_mode,
                   "enable_spin_variation": args.enable_spin_variation, "sigma_spin": args.sigma_spin,
+                  "spin_variation_mean": args.spin_variation_mean,
                   "spin_variation_seed": args.spin_variation_seed,
                   "enable_summing_current_noise": args.enable_summing_current_noise,
                   "summing_current_p": args.summing_current_p,
@@ -363,6 +280,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "coupler_noise_seed": args.coupler_noise_seed,
                   "enable_dtc_nonideality": args.enable_dtc_nonideality,
                   "dtc_leading_edge_variation_std": args.dtc_leading_edge_variation_std,
+                  "dtc_width_variation_mean": args.dtc_width_variation_mean,
                   "dtc_width_variation_std": args.dtc_width_variation_std,
                   "dtc_leading_edge_jitter_std": args.dtc_leading_edge_jitter_std,
                   "dtc_falling_edge_jitter_std": args.dtc_falling_edge_jitter_std,
@@ -374,6 +292,17 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
                       "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
+                      "nonlinear_R_mc_curve_index": None,
+                      "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
+                      "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
+                      "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
+                      "nonlinear_R_curve_bank_indices": (
+                          nonlinear_R_curve_bank_indices),
+                      "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
+                      "nonlinear_R_curve_edge_chunk_size": (
+                          args.nonlinear_R_curve_edge_chunk_size),
+                      "nonlinear_R_train_mode": args.nonlinear_R_train_mode,
+                      "nonlinear_R_corner_range": args.nonlinear_R_corner_range,
                       "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                       "enable_measured_activation": args.enable_measured_activation,
                       "activation_curve_path": args.activation_curve_path,
@@ -465,6 +394,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                   "toggle_fast_path": args.toggle_fast_path,
                   "odexinit_scaling_mode": args.odexinit_scaling_mode,
                   "enable_spin_variation": args.enable_spin_variation, "sigma_spin": args.sigma_spin,
+                  "spin_variation_mean": args.spin_variation_mean,
                   "spin_variation_seed": args.spin_variation_seed,
                   "enable_summing_current_noise": args.enable_summing_current_noise,
                   "summing_current_p": args.summing_current_p,
@@ -474,6 +404,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                   "coupler_noise_seed": args.coupler_noise_seed,
                   "enable_dtc_nonideality": args.enable_dtc_nonideality,
                   "dtc_leading_edge_variation_std": args.dtc_leading_edge_variation_std,
+                  "dtc_width_variation_mean": args.dtc_width_variation_mean,
                   "dtc_width_variation_std": args.dtc_width_variation_std,
                   "dtc_leading_edge_jitter_std": args.dtc_leading_edge_jitter_std,
                   "dtc_falling_edge_jitter_std": args.dtc_falling_edge_jitter_std,
@@ -484,6 +415,17 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
+                      "nonlinear_R_mc_curve_index": None,
+                      "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
+                      "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
+                      "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
+                      "nonlinear_R_curve_bank_indices": (
+                          nonlinear_R_curve_bank_indices),
+                      "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
+                      "nonlinear_R_curve_edge_chunk_size": (
+                          args.nonlinear_R_curve_edge_chunk_size),
+                      "nonlinear_R_train_mode": args.nonlinear_R_train_mode,
+                      "nonlinear_R_corner_range": args.nonlinear_R_corner_range,
                       "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                       "enable_measured_activation": args.enable_measured_activation,
                       "activation_curve_path": args.activation_curve_path,
@@ -548,6 +490,47 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
 
 def run_ode_inference():
     args = parse_args()
+    if args.nonlinear_R_corner_range.strip().lower() in {"", "none"}:
+        args.nonlinear_R_corner_range = "all"
+    if args.nonlinear_R_train_mode != "none":
+        args.nonlinear_R = True
+        if args.test_expanded:
+            raise ValueError(
+                "nonlinear_R_train_mode is for non-expanded Level-2 inference.")
+        if args.nonlinear_R_curve_sharing != "shared":
+            raise ValueError(
+                "Non-expanded Level-2 nonlinear-R inference requires "
+                "nonlinear_R_curve_sharing=shared.")
+    activation_mc_curve_indices = _parse_index_list(
+        args.activation_mc_curve_indices)
+    nonlinear_R_curve_bank_indices = _parse_index_list(
+        args.nonlinear_R_curve_bank_indices)
+    nonlinear_R_mc_curve_indices = _parse_index_list(
+        args.nonlinear_R_mc_curve_indices)
+    if (args.nonlinear_R_curve_sharing != "shared" and
+            not args.test_expanded):
+        raise ValueError(
+            "Non-shared nonlinear-R curve modes require test_expanded=true.")
+    if args.full_45_corner_test:
+        if not args.ablation_single_case:
+            raise ValueError(
+                "full_45_corner_test requires ablation_single_case=true.")
+        if activation_mc_curve_indices is None:
+            raise ValueError(
+                "full_45_corner_test requires activation MC curve indices.")
+        if (args.nonlinear_R_curve_sharing == "shared" and
+                nonlinear_R_mc_curve_indices is None and
+                nonlinear_R_curve_bank_indices is None):
+            raise ValueError(
+                "Shared-curve full_45_corner_test requires a nonlinear-R "
+                "curve bank or legacy per-trial curve indices.")
+    for name, indices in (
+            ("activation_mc_curve_indices", activation_mc_curve_indices),
+            ("nonlinear_R_mc_curve_indices", nonlinear_R_mc_curve_indices)):
+        if indices is not None and len(indices) != args.noisy_trials:
+            raise ValueError(
+                "{} must provide one index for each of {} trials.".format(
+                    name, args.noisy_trials))
     if args.test_only:
         # set level in the very beginning before calling logging.warning, otherwise the line below will not work
         logging.basicConfig(level=logging.INFO)
@@ -573,13 +556,6 @@ def run_ode_inference():
                                         test_bs=args.test_bs, img_type=args.img_type,
                                         task=args.task, shuffle=args.shuffle_test),
                                     ckpt_path, pc_conv, device)
-            exit(0)
-        elif args.analyze_mode is not None:
-            net_ = run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, True, 0.0)
-            run_ode_mismatch_analysis_multi_batch(model=net_, test_loader=test_dataloader,
-                                                  device=device, sigma=args.analyze_mm, n_steps=args.n_steps,
-                                                  n_seeds=args.noisy_trials, mismatch_type=args.mismatch_type,
-                                                  n_batches=args.noisy_trials, analyze_mode=args.analyze_mode)
             exit(0)
 
     # noise_level_list_ = [0, 0.05, 0.1, 0.15, .20, .25, .30, .35, .40] # mul
@@ -630,6 +606,7 @@ def run_ode_inference():
                       "toggle_fast_path": args.toggle_fast_path,
                       "odexinit_scaling_mode": args.odexinit_scaling_mode,
                       "enable_spin_variation": args.enable_spin_variation, "sigma_spin": args.sigma_spin,
+                      "spin_variation_mean": args.spin_variation_mean,
                       "spin_variation_seed": args.spin_variation_seed,
                       "enable_summing_current_noise": args.enable_summing_current_noise,
                       "summing_current_p": args.summing_current_p,
@@ -639,6 +616,7 @@ def run_ode_inference():
                       "coupler_noise_seed": args.coupler_noise_seed,
                   "enable_dtc_nonideality": args.enable_dtc_nonideality,
                   "dtc_leading_edge_variation_std": args.dtc_leading_edge_variation_std,
+                  "dtc_width_variation_mean": args.dtc_width_variation_mean,
                   "dtc_width_variation_std": args.dtc_width_variation_std,
                   "dtc_leading_edge_jitter_std": args.dtc_leading_edge_jitter_std,
                   "dtc_falling_edge_jitter_std": args.dtc_falling_edge_jitter_std,
@@ -648,6 +626,17 @@ def run_ode_inference():
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
+                          "nonlinear_R_mc_curve_index": None,
+                          "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
+                          "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
+                          "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
+                          "nonlinear_R_curve_bank_indices": (
+                              nonlinear_R_curve_bank_indices),
+                          "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
+                          "nonlinear_R_curve_edge_chunk_size": (
+                              args.nonlinear_R_curve_edge_chunk_size),
+                          "nonlinear_R_train_mode": args.nonlinear_R_train_mode,
+                          "nonlinear_R_corner_range": args.nonlinear_R_corner_range,
                           "mul_mismatch_mode": args.mul_mismatch_mode, # Only valid when wrapped with Validator
                           "enable_measured_activation": args.enable_measured_activation,
                           "activation_curve_path": args.activation_curve_path,
@@ -673,6 +662,7 @@ def run_ode_inference():
                     trials = min(5, trials) if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
                 for t in range(trials):
+                    trial_seed = None
                     noisy_params = {"noise_level": noise_level, "weight": None}
                     if args.test_expanded:
                         # Add non-ideality to expanded weights
@@ -692,13 +682,27 @@ def run_ode_inference():
                         ode_params["coupler_noise_seed"] = args.coupler_noise_seed + t
                     if args.dtc_timing_seed is not None:
                         ode_params["dtc_timing_seed"] = args.dtc_timing_seed + t
+                    trial_wrapper_params = wrapper_params
+                    if (activation_mc_curve_indices is not None or
+                            nonlinear_R_mc_curve_indices is not None or
+                            args.nonlinear_R_curve_seed is not None):
+                        trial_wrapper_params = dict(wrapper_params)
+                    if args.nonlinear_R_curve_seed is not None:
+                        trial_wrapper_params["nonlinear_R_curve_seed"] = (
+                            args.nonlinear_R_curve_seed + t)
+                    if activation_mc_curve_indices is not None:
+                        trial_wrapper_params["activation_corner"] = "MC{}".format(
+                            activation_mc_curve_indices[t] + 1)
+                    if nonlinear_R_mc_curve_indices is not None:
+                        trial_wrapper_params["nonlinear_R_mc_curve_index"] = (
+                            nonlinear_R_mc_curve_indices[t])
                     with torch.no_grad():
                         saved_wrappers = {}
                         net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                                       pc_conv_layer=pc_conv, data_parallel=False,
                                                       noise_to_bn=True, noise_to_linear=True,
                                                       fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
-                                                      ode_wrapper_params=wrapper_params, wrappers=saved_wrappers,
+                                                      ode_wrapper_params=trial_wrapper_params, wrappers=saved_wrappers,
                                                       **noisy_params)
                         if args.test_expanded:
                             # Use validator to expand the weights of the model

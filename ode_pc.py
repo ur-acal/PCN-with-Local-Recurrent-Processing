@@ -17,7 +17,9 @@ from functools import wraps
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from pc_conv import ReLUX, HardTanhByX
-from utils import expand_weights_to_matrix, load_res_vs_vin, interpolate_R_eff
+from utils import (expand_weights_to_matrix, interpolate_R_eff,
+                   load_mc_res_curve_bank, load_mc_res_curve_gaussian,
+                   load_mc_res_training_curve_bank, load_res_vs_vin)
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 from measured_activation import (
@@ -656,13 +658,15 @@ class ToggleBaseFFFB(ODEXInitFFFB):
 class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
     supports_post_quant_mismatch = True
 
-    def __init__(self, enable_spin_variation=False, sigma_spin=0.10, spin_variation_seed=None,
+    def __init__(self, enable_spin_variation=False, sigma_spin=0.10,
+                 spin_variation_mean=1.0, spin_variation_seed=None,
                  enable_summing_current_noise=False, summing_current_p=12.73e-12,
                  summing_noise_seed=None, enable_coupler_noise=False,
                  coupler_noise_p=0.6e-12, coupler_noise_seed=None, **kwargs):
         super().__init__(**kwargs)
         self.enable_spin_variation = bool(enable_spin_variation)
         self.sigma_spin = float(sigma_spin)
+        self.spin_variation_mean = float(spin_variation_mean)
         self.spin_variation_seed = spin_variation_seed
         self.enable_summing_current_noise = bool(enable_summing_current_noise)
         self.summing_current_p = float(summing_current_p)
@@ -677,6 +681,8 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         self._coupler_noise_generators = {}
         self._active_coupler_count_cache = {}
         self._training_pulse_mismatch = None
+        self._nonlinear_R_training_generators = {}
+        self._nonlinear_R_training_curve_indices = {}
 
     def begin_training_pulse_mismatch(self, noise_level, mismatch_type):
         """Sample one post-quantization coupler-amplitude mismatch for this forward."""
@@ -694,6 +700,9 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         self._training_pulse_mismatch = None
 
     def _apply_averaged_module(self, module, source):
+        if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
+            source = self._averaged_nonlinear_R_source(module, source)
+
         mismatch = self._training_pulse_mismatch
         if mismatch is None:
             return module(source)
@@ -720,11 +729,16 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         self._spin_factor_y = None
         self._spin_factor_z = None
 
+    def reset_nonlinear_R_variation(self):
+        self._nonlinear_R_training_curve_indices.clear()
+
     def forward(self, x, layer_idx=None):
         # Training samples one hardware realization per forward. Evaluation
         # keeps the lazily sampled factors fixed for this model/trial.
         if self.training and self.enable_spin_variation:
             self.reset_spin_variation()
+        if self.training and hasattr(self, "_nonlinear_R_training_pkg"):
+            self.reset_nonlinear_R_variation()
         return super().forward(x, layer_idx=layer_idx)
 
     def _layer_seed_offset(self):
@@ -732,6 +746,71 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
             return 1009 * int(self.layer_idx)
         except (TypeError, ValueError):
             return 0
+
+
+    def _nonlinear_R_training_module_key(self, module):
+        if module is self.FBconv:
+            return "FBconv"
+        if module is self.FFconv:
+            return "FFconv"
+        raise ValueError("Nonlinear-R training received an unknown convolution module.")
+
+    def _nonlinear_R_training_generator(self, ref):
+        package = getattr(self, "_nonlinear_R_training_pkg", None)
+        if package is None or package.get("nonlinear_R_curve_seed") is None:
+            return None
+        key = str(ref.device)
+        generator = self._nonlinear_R_training_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=ref.device)
+            generator.manual_seed(
+                int(package["nonlinear_R_curve_seed"]) +
+                self._layer_seed_offset())
+            self._nonlinear_R_training_generators[key] = generator
+        return generator
+
+    def _sample_nonlinear_R_training_curve(self, ref, module_key):
+        package = self._nonlinear_R_training_pkg
+        if not self._nonlinear_R_training_curve_indices:
+            n_curves = int(package["v_grid"].shape[0])
+            if n_curves < 2:
+                raise ValueError(
+                    "At least two nonlinear-R curves are required to sample "
+                    "different FF and FB curves without replacement.")
+            pair = torch.randperm(
+                n_curves, device=ref.device,
+                generator=self._nonlinear_R_training_generator(ref))[:2].tolist()
+            self._nonlinear_R_training_curve_indices.update(
+                FFconv=int(pair[0]), FBconv=int(pair[1]))
+        return self._nonlinear_R_training_curve_indices[module_key]
+
+    def _averaged_nonlinear_R_source(self, module, source):
+        package = getattr(self, "_nonlinear_R_training_pkg", None)
+        if package is None:
+            return source
+
+        module_key = self._nonlinear_R_training_module_key(module)
+        curve_index = self._sample_nonlinear_R_training_curve(
+            source, module_key)
+        length = int(package["lengths"][curve_index].item())
+        grid = package["v_grid"][curve_index, :length].to(
+            device=source.device, dtype=source.dtype)
+        left = package["R_left"][curve_index, :length - 1].to(
+            device=source.device, dtype=source.dtype)
+        slope = package["R_slope"][curve_index, :length - 1].to(
+            device=source.device, dtype=source.dtype)
+
+        query = source
+        proj_fn = package.get("proj_fn")
+        if proj_fn is not None:
+            query = proj_fn(query)
+        query = query.clamp(min=grid[0], max=grid[-1])
+        interval = torch.bucketize(query.contiguous(), grid.contiguous()) - 1
+        interval = interval.clamp(min=0, max=length - 2)
+        R_eff = (
+            left[interval] +
+            slope[interval] * (query - grid[interval]))
+        return source * source.new_tensor(package["R"]) / R_eff
 
     def _spin_variation_generator(self, ref, stage):
         if self.spin_variation_seed is None:
@@ -753,7 +832,7 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         factor = getattr(self, name)
         expected_shape = (1,) + tuple(summed_rhs.shape[1:])
         if factor is None:
-            factor = 1.0 + self.sigma_spin * torch.randn(
+            factor = self.spin_variation_mean + self.sigma_spin * torch.randn(
                 expected_shape, device=summed_rhs.device, dtype=summed_rhs.dtype,
                 generator=self._spin_variation_generator(summed_rhs, stage))
             setattr(self, name, factor)
@@ -1041,6 +1120,7 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
 
     def __init__(self, enable_dtc_nonideality=False,
                  dtc_leading_edge_variation_std=0.0,
+                 dtc_width_variation_mean=0.0,
                  dtc_width_variation_std=0.018,
                  dtc_leading_edge_jitter_std=0.005,
                  dtc_falling_edge_jitter_std=0.005,
@@ -1048,6 +1128,7 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         super().__init__(**kwargs)
         self.enable_dtc_nonideality = bool(enable_dtc_nonideality)
         self.dtc_leading_edge_variation_std = float(dtc_leading_edge_variation_std)
+        self.dtc_width_variation_mean = float(dtc_width_variation_mean)
         self.dtc_width_variation_std = float(dtc_width_variation_std)
         self.dtc_leading_edge_jitter_std = float(dtc_leading_edge_jitter_std)
         self.dtc_falling_edge_jitter_std = float(dtc_falling_edge_jitter_std)
@@ -1149,9 +1230,11 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
                 "leading_edge": self.dtc_leading_edge_variation_std * torch.randn(
                     num_outputs, device=clean_values.device, dtype=clean_values.dtype,
                     generator=generator),
-                "width": self.dtc_width_variation_std * torch.randn(
-                    num_outputs, device=clean_values.device, dtype=clean_values.dtype,
-                    generator=generator),
+                "width": (
+                    self.dtc_width_variation_mean +
+                    self.dtc_width_variation_std * torch.randn(
+                        num_outputs, device=clean_values.device,
+                        dtype=clean_values.dtype, generator=generator)),
             }
             self._dtc_fixed_variation[stage] = fixed
         generator = self._dtc_timing_generator(clean_values, stage)
@@ -2816,6 +2899,28 @@ class WrapQuantizeW(ODEWrapperRC):
 
         self.nonlinear_R = kwargs.pop("nonlinear_R", False)
         self.nonlinear_R_table = kwargs.pop("nonlinear_R_table", None)
+        self.nonlinear_R_mc_curve_index = kwargs.pop(
+            "nonlinear_R_mc_curve_index", None)
+        self.nonlinear_R_mc_quantity = kwargs.pop(
+            "nonlinear_R_mc_quantity", "conductance")
+        self.nonlinear_R_curve_sharing = kwargs.pop(
+            "nonlinear_R_curve_sharing", "shared")
+        self.nonlinear_R_curve_bank_indices = kwargs.pop(
+            "nonlinear_R_curve_bank_indices", None)
+        self.nonlinear_R_curve_seed = kwargs.pop(
+            "nonlinear_R_curve_seed", None)
+        self.nonlinear_R_curve_edge_chunk_size = kwargs.pop(
+            "nonlinear_R_curve_edge_chunk_size", 65536)
+        self.nonlinear_R_curve_sampling = kwargs.pop(
+            "nonlinear_R_curve_sampling", "empirical_with_replacement")
+        self.nonlinear_R_train_mode = str(kwargs.pop(
+            "nonlinear_R_train_mode", "none")).lower()
+        self.nonlinear_R_corner_range = kwargs.pop(
+            "nonlinear_R_corner_range", "all")
+        if self.nonlinear_R_train_mode not in {"none", "exact_curve", "mean"}:
+            raise ValueError("Unknown nonlinear_R_train_mode.")
+        self.nonlinear_R_curve_bank = None
+        self.nonlinear_R_curve_gaussian = None
         self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
         self.mul_mismatch_mode = kwargs.pop("mul_mismatch_mode", "scale_mismatch")
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
@@ -2974,9 +3079,34 @@ class WrapQuantizeW(ODEWrapperRC):
         if not self.nonlinear_R:
             return False
 
+        if (self.nonlinear_R_curve_sharing != "shared" or
+                self.nonlinear_R_curve_bank_indices is not None):
+            if self.nonlinear_R_table is None:
+                raise ValueError(
+                    "Sampled nonlinear-R curves require nonlinear_R_table.")
+            if self.nonlinear_R_curve_sampling == "multivariate_gaussian":
+                self.nonlinear_R_curve_gaussian = load_mc_res_curve_gaussian(
+                    self.nonlinear_R_table,
+                    quantity=self.nonlinear_R_mc_quantity,
+                    curve_indices=self.nonlinear_R_curve_bank_indices,
+                    device=self.ode_block.FFconv.weight.device)
+            else:
+                self.nonlinear_R_curve_bank = load_mc_res_curve_bank(
+                    self.nonlinear_R_table,
+                    quantity=self.nonlinear_R_mc_quantity,
+                    curve_indices=self.nonlinear_R_curve_bank_indices,
+                    device=self.ode_block.FFconv.weight.device)
+            shared_curve_index = (
+                0 if self.nonlinear_R_curve_bank_indices is None else
+                int(self.nonlinear_R_curve_bank_indices[0]))
+        else:
+            shared_curve_index = self.nonlinear_R_mc_curve_index
+
         self.v_grid, self.R_codes, self.R_table = load_res_vs_vin(
             R=self.R, R_max=self.R_max, device=self.ode_block.FFconv.weight.device,
-            nonlinear_R_table=self.nonlinear_R_table)
+            nonlinear_R_table=self.nonlinear_R_table,
+            nonlinear_R_mc_curve_index=shared_curve_index,
+            nonlinear_R_mc_quantity=self.nonlinear_R_mc_quantity)
 
         v_sort_idx = torch.argsort(self.v_grid)
         self.v_grid = self.v_grid[v_sort_idx]
@@ -2999,6 +3129,40 @@ class WrapQuantizeW(ODEWrapperRC):
 
     def _ship_nonlinear_R_pkg(self):
         if not self.nonlinear_R:
+            if self.nonlinear_R_train_mode != "none":
+                raise ValueError(
+                    "nonlinear_R_train_mode requires nonlinear_R=True.")
+            return
+
+        if self.nonlinear_R_train_mode != "none":
+            if not isinstance(self.ode_block, ToggleAveragedPhysicalFFFB):
+                raise TypeError(
+                    "Level-2 nonlinear-R training requires "
+                    "ToggleAveragedPhysicalFFFB or a derived Level-2 block.")
+            if isinstance(self.ode_block, TogglePulseFFFB):
+                raise TypeError(
+                    "nonlinear_R_train_mode is for non-expanded Level-2 blocks.")
+            if self.nonlinear_R_curve_sharing != "shared":
+                raise ValueError(
+                    "Level-2 nonlinear-R training supports shared curves only.")
+            if self.nonlinear_R_table is None:
+                raise ValueError(
+                    "nonlinear_R_table must point to the coupler MC source.")
+            bank = load_mc_res_training_curve_bank(
+                self.nonlinear_R_table,
+                mode=self.nonlinear_R_train_mode,
+                corner_range=self.nonlinear_R_corner_range,
+                quantity=self.nonlinear_R_mc_quantity,
+                dtype=self.ode_block.FFconv.weight.dtype,
+                device=self.ode_block.FFconv.weight.device)
+            self.ode_block._nonlinear_R_training_pkg = {
+                **bank,
+                "R": self.R,
+                "proj_fn": getattr(self, "proj_fn", None),
+                "nonlinear_R_train_mode": self.nonlinear_R_train_mode,
+                "nonlinear_R_corner_range": self.nonlinear_R_corner_range,
+                "nonlinear_R_curve_seed": self.nonlinear_R_curve_seed,
+            }
             return
 
         self._csv_prepare_table()
@@ -3016,6 +3180,13 @@ class WrapQuantizeW(ODEWrapperRC):
             "R_slope": self.R_slope,
             "proj_fn": getattr(self, "proj_fn", None),
             "mul_mismatch_mode": self.mul_mismatch_mode,
+            "curve_bank": self.nonlinear_R_curve_bank,
+            "curve_gaussian": self.nonlinear_R_curve_gaussian,
+            "nonlinear_R_curve_sampling": self.nonlinear_R_curve_sampling,
+            "nonlinear_R_curve_sharing": self.nonlinear_R_curve_sharing,
+            "nonlinear_R_curve_seed": self.nonlinear_R_curve_seed,
+            "nonlinear_R_curve_edge_chunk_size": (
+                self.nonlinear_R_curve_edge_chunk_size),
         }
 
 

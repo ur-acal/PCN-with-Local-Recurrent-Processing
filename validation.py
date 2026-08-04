@@ -383,8 +383,28 @@ class MVMConv(nn.Module):
 
         self.mismatch_mat = None
         self.pulse_noisy_values = None
+        self._shared_curve_noisy_mat = None
         self.mismatch_type = "mul"
         self.mul_mismatch_mode = None
+
+        self.nonlinear_R_curve_sharing = "shared"
+        self.nonlinear_R_curve_seed = None
+        self.nonlinear_R_curve_edge_chunk_size = 65536
+        self.nonlinear_R_curve_assignment = None
+        self.nonlinear_R_curve_group_ids = None
+        self.nonlinear_R_curve_row_ids = None
+        self.nonlinear_R_curve_group_count = 0
+        self.nonlinear_R_curve_bank_v_grid = None
+        self.nonlinear_R_curve_bank_R_left = None
+        self.nonlinear_R_curve_bank_R_slope = None
+        self.nonlinear_R_curve_bank_lengths = None
+        self.nonlinear_R_curve_sampling = "empirical_with_replacement"
+        self.nonlinear_R_curve_gaussian_v_grid = None
+        self.nonlinear_R_curve_gaussian_mean = None
+        self.nonlinear_R_curve_gaussian_factor = None
+        self.nonlinear_R_curve_gaussian_value_scale = None
+        self.nonlinear_R_curve_gaussian_quantity = None
+        self.nonlinear_R_curve_gaussian_R_normalized = None
 
     def set_dtc_metadata(self, dtc_block_ids, dtc_output_ids):
         if dtc_block_ids.numel() != self.mat.values().numel():
@@ -397,7 +417,13 @@ class MVMConv(nn.Module):
             "dtc_output_ids", dtc_output_ids.to(dtype=torch.int64), persistent=False)
 
     def enable_csv(self, v_grid, R_codes, R_left, R_slope, proj_fn, R,
-                   mul_mismatch_mode="scale_mismatch"):
+                   mul_mismatch_mode="scale_mismatch", curve_bank=None,
+                   nonlinear_R_curve_sharing="shared",
+                   nonlinear_R_curve_seed=None,
+                   nonlinear_R_curve_edge_chunk_size=65536,
+                   nonlinear_R_curve_assignment=None,
+                   nonlinear_R_curve_sampling="empirical_with_replacement",
+                   curve_gaussian=None):
         self.csv_enabled = True
 
         self.v_grid = v_grid
@@ -409,6 +435,219 @@ class MVMConv(nn.Module):
 
         self.mul_mismatch_mode = mul_mismatch_mode
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
+
+        sharing = str(nonlinear_R_curve_sharing).lower()
+        aliases = {
+            "per_input_element": "per_input",
+            "per_input_output_channel": "per_input_output",
+        }
+        sharing = aliases.get(sharing, sharing)
+        supported = {"shared", "per_coupler", "per_input", "per_input_output"}
+        if sharing not in supported:
+            raise ValueError(
+                "Unknown nonlinear-R curve sharing mode: {}.".format(sharing))
+        self.nonlinear_R_curve_sharing = sharing
+        self.nonlinear_R_curve_seed = nonlinear_R_curve_seed
+        self.nonlinear_R_curve_edge_chunk_size = int(
+            nonlinear_R_curve_edge_chunk_size)
+        if self.nonlinear_R_curve_edge_chunk_size <= 0:
+            raise ValueError(
+                "nonlinear_R_curve_edge_chunk_size must be positive.")
+        sampling = str(nonlinear_R_curve_sampling).lower()
+        aliases = {
+            "empirical": "empirical_with_replacement",
+            "gaussian": "multivariate_gaussian",
+        }
+        sampling = aliases.get(sampling, sampling)
+        supported_sampling = {
+            "empirical_with_replacement", "multivariate_gaussian"}
+        if sampling not in supported_sampling:
+            raise ValueError(
+                "Unknown nonlinear-R curve sampling mode: {}.".format(
+                    sampling))
+        self.nonlinear_R_curve_sampling = sampling
+        if (sharing != "shared" or curve_bank is not None or
+                curve_gaussian is not None):
+            if sharing == "shared":
+                self.nonlinear_R_curve_group_count = 1
+            else:
+                self._build_nonlinear_R_curve_groups()
+            if sampling == "multivariate_gaussian":
+                if curve_gaussian is None:
+                    raise ValueError(
+                        "A nonlinear-R Gaussian fit is required for "
+                        "multivariate_gaussian sampling.")
+                self.set_nonlinear_R_curve_gaussian(curve_gaussian)
+                self.sample_nonlinear_R_gaussian_curves()
+            else:
+                if curve_bank is None:
+                    raise ValueError(
+                        "A nonlinear-R curve bank is required for {} sharing."
+                        .format(sharing))
+                self.set_nonlinear_R_curve_bank(curve_bank)
+                if nonlinear_R_curve_assignment is None:
+                    self.sample_nonlinear_R_curve_assignment()
+                else:
+                    self.set_nonlinear_R_curve_assignment(
+                        nonlinear_R_curve_assignment)
+
+    def set_nonlinear_R_curve_gaussian(self, curve_gaussian):
+        """Install a direct full-covariance fit for static curve sampling."""
+        required = {"v_grid", "mean", "factor", "value_scale", "quantity"}
+        missing = required.difference(curve_gaussian)
+        if missing:
+            raise ValueError(
+                "Curve Gaussian fit is missing {}.".format(sorted(missing)))
+        device, dtype = self.mat.device, self.mat.dtype
+        self.nonlinear_R_curve_gaussian_v_grid = curve_gaussian["v_grid"].to(
+            device=device, dtype=dtype)
+        self.nonlinear_R_curve_gaussian_mean = curve_gaussian["mean"].to(
+            device=device, dtype=dtype)
+        self.nonlinear_R_curve_gaussian_factor = curve_gaussian["factor"].to(
+            device=device, dtype=dtype)
+        self.nonlinear_R_curve_gaussian_value_scale = float(
+            curve_gaussian["value_scale"])
+        self.nonlinear_R_curve_gaussian_quantity = str(
+            curve_gaussian["quantity"]).lower()
+        n_points = self.nonlinear_R_curve_gaussian_v_grid.numel()
+        if (self.nonlinear_R_curve_gaussian_v_grid.ndim != 1 or
+                self.nonlinear_R_curve_gaussian_mean.shape != (n_points,) or
+                self.nonlinear_R_curve_gaussian_factor.shape !=
+                (n_points, n_points)):
+            raise ValueError("Nonlinear-R Gaussian tensors do not align.")
+        if self.nonlinear_R_curve_gaussian_quantity not in {
+                "conductance", "resistance"}:
+            raise ValueError("Gaussian curve quantity is invalid.")
+
+    def sample_nonlinear_R_gaussian_curves(self):
+        """Sample one independent, fixed full curve for every sharing group."""
+        n_groups = self.nonlinear_R_curve_group_count
+        n_points = self.nonlinear_R_curve_gaussian_v_grid.numel()
+        generator = None
+        if self.nonlinear_R_curve_seed is not None:
+            generator = torch.Generator(device=self.mat.device)
+            generator.manual_seed(int(self.nonlinear_R_curve_seed))
+        sampled_R_normalized = torch.empty(
+            (n_groups, n_points), device=self.mat.device,
+            dtype=self.mat.dtype)
+        chunk_size = self.nonlinear_R_curve_edge_chunk_size
+        mean = self.nonlinear_R_curve_gaussian_mean
+        factor_t = self.nonlinear_R_curve_gaussian_factor.t()
+        value_scale = self.nonlinear_R_curve_gaussian_value_scale
+        quantity = self.nonlinear_R_curve_gaussian_quantity
+        positive_floor = torch.finfo(self.mat.dtype).eps * value_scale
+        with torch.no_grad():
+            for start in range(0, n_groups, chunk_size):
+                stop = min(start + chunk_size, n_groups)
+                eps = torch.randn(
+                    (stop - start, n_points), device=self.mat.device,
+                    dtype=self.mat.dtype, generator=generator)
+                sampled = (mean + eps @ factor_t) * value_scale
+                sampled.clamp_(min=positive_floor)
+                if quantity == "conductance":
+                    sampled_R_normalized[start:stop] = (
+                        sampled.reciprocal() / self.R)
+                else:
+                    sampled_R_normalized[start:stop] = sampled / self.R
+        self.nonlinear_R_curve_gaussian_R_normalized = sampled_R_normalized
+        return self.nonlinear_R_curve_gaussian_R_normalized
+
+
+    def set_nonlinear_R_curve_bank(self, curve_bank):
+        """Install evaluated curves without imposing a sampling model."""
+        required = {"v_grid", "R_left", "R_slope", "lengths"}
+        missing = required.difference(curve_bank)
+        if missing:
+            raise ValueError(
+                "Curve bank is missing {}.".format(sorted(missing)))
+        self.nonlinear_R_curve_bank_v_grid = curve_bank["v_grid"].to(
+            device=self.mat.device, dtype=self.mat.dtype)
+        self.nonlinear_R_curve_bank_R_left = curve_bank["R_left"].to(
+            device=self.mat.device, dtype=self.mat.dtype)
+        self.nonlinear_R_curve_bank_R_slope = curve_bank["R_slope"].to(
+            device=self.mat.device, dtype=self.mat.dtype)
+        self.nonlinear_R_curve_bank_lengths = curve_bank["lengths"].to(
+            device=self.mat.device, dtype=torch.int64)
+        if self.nonlinear_R_curve_bank_v_grid.ndim != 2:
+            raise ValueError("Nonlinear-R curve grids must be two-dimensional.")
+        n_curves = self.nonlinear_R_curve_bank_v_grid.shape[0]
+        if n_curves <= 0:
+            raise ValueError("The nonlinear-R curve bank is empty.")
+        expected_intervals = self.nonlinear_R_curve_bank_v_grid.shape[1] - 1
+        if (self.nonlinear_R_curve_bank_R_left.shape !=
+                (n_curves, expected_intervals) or
+                self.nonlinear_R_curve_bank_R_slope.shape !=
+                (n_curves, expected_intervals) or
+                self.nonlinear_R_curve_bank_lengths.numel() != n_curves):
+            raise ValueError("Nonlinear-R curve-bank tensors do not align.")
+        if bool((self.nonlinear_R_curve_bank_lengths < 2).any()) or bool(
+                (self.nonlinear_R_curve_bank_lengths >
+                 self.nonlinear_R_curve_bank_v_grid.shape[1]).any()):
+            raise ValueError("Nonlinear-R curve lengths are invalid.")
+
+    def _build_nonlinear_R_curve_groups(self):
+        nnz = self.mat.values().numel()
+        sharing = self.nonlinear_R_curve_sharing
+        if sharing == "per_input":
+            self.nonlinear_R_curve_group_ids = None
+            self.nonlinear_R_curve_row_ids = None
+            self.nonlinear_R_curve_group_count = int(self.mat.shape[1])
+            return
+
+        crow = self.mat.crow_indices()
+        row_ids = torch.arange(
+            self.mat.shape[0], device=crow.device,
+            dtype=torch.int64).repeat_interleave(crow[1:] - crow[:-1])
+        self.nonlinear_R_curve_row_ids = row_ids
+        if sharing == "per_coupler":
+            group_ids = None
+            group_count = nnz
+        elif sharing == "per_input_output":
+            cols = self.mat.col_indices()
+            spatial_rows = self.mat.shape[0] // int(self.meta["out_chan"])
+            output_channel = torch.div(
+                row_ids, spatial_rows, rounding_mode="floor")
+            raw_group_ids = output_channel * self.mat.shape[1] + cols
+            _, group_ids = torch.unique(
+                raw_group_ids, sorted=True, return_inverse=True)
+            group_count = int(group_ids.max().item()) + 1 if nnz else 0
+        else:
+            raise RuntimeError(
+                "Curve groups are only built for non-shared modes.")
+        self.nonlinear_R_curve_group_ids = group_ids
+        self.nonlinear_R_curve_group_count = int(group_count)
+
+    def set_nonlinear_R_curve_assignment(self, curve_indices):
+        """Set externally sampled group-to-curve indices for this hardware."""
+        indices = torch.as_tensor(
+            curve_indices, device=self.mat.device, dtype=torch.int64).reshape(-1)
+        if indices.numel() != self.nonlinear_R_curve_group_count:
+            raise ValueError(
+                "Expected {} nonlinear-R curve assignments, received {}."
+                .format(self.nonlinear_R_curve_group_count, indices.numel()))
+        n_curves = self.nonlinear_R_curve_bank_v_grid.shape[0]
+        if indices.numel() and (indices.min() < 0 or indices.max() >= n_curves):
+            raise ValueError("Nonlinear-R curve assignment is out of range.")
+        self.nonlinear_R_curve_assignment = indices
+
+    def sample_nonlinear_R_curve_assignment(self, sampler=None):
+        """Sample once; callers may supply any compatible assignment sampler."""
+        n_groups = self.nonlinear_R_curve_group_count
+        n_curves = self.nonlinear_R_curve_bank_v_grid.shape[0]
+        generator = None
+        if self.nonlinear_R_curve_seed is not None:
+            generator = torch.Generator(device=self.mat.device)
+            generator.manual_seed(int(self.nonlinear_R_curve_seed))
+        if sampler is None:
+            indices = torch.randint(
+                n_curves, (n_groups,), device=self.mat.device,
+                generator=generator)
+        else:
+            indices = sampler(
+                n_groups=n_groups, n_curves=n_curves,
+                device=self.mat.device, generator=generator)
+        self.set_nonlinear_R_curve_assignment(indices)
+        return self.nonlinear_R_curve_assignment
 
     def _values_to_code_idx(self, values):
         # The input values is the weight matrix values.
@@ -539,6 +778,7 @@ class MVMConv(nn.Module):
         vals = mat_coo.values()
 
         sigma_ = self._get_sparse_sigma_tensor(vals, noise_level, q_hi, weight_scale)
+        self._shared_curve_noisy_mat = None
 
         if mismatch_type == "mul":
             noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * sigma_
@@ -551,6 +791,10 @@ class MVMConv(nn.Module):
                 self.code_idx_mat = self._build_code_idx_mat(
                     val_sign_and_noise=val_sign_and_noise
                 )
+                self._shared_curve_noisy_mat = torch.sparse_coo_tensor(
+                    idx, self.pulse_noisy_values, size=self.mat.shape,
+                    device=self.mat.device, dtype=self.mat.dtype
+                ).coalesce().to_sparse_csr()
                 self.mismatch_mat = None
 
             # In this case, we keep a fixed mismatch.
@@ -610,8 +854,103 @@ class MVMConv(nn.Module):
             v, self.v_grid, self.R_codes, self.R_left, self.R_slope,
             code_idx, proj_fn=getattr(self, "proj_fn", None))
 
+    def _get_gaussian_curve_R_eff(self, v, group_index, nominal_R):
+        """Evaluate fixed Gaussian-sampled curves on their shared voltage grid."""
+        if self.proj_fn is not None:
+            v = self.proj_fn(v)
+        group_index = torch.as_tensor(
+            group_index, device=v.device, dtype=torch.int64).reshape(-1)
+        if v.ndim != 2 or group_index.numel() != v.shape[0]:
+            raise ValueError(
+                "Curve groups must provide one sampled curve per voltage row.")
+
+        grid = self.nonlinear_R_curve_gaussian_v_grid
+        query = v.clamp(min=grid[0], max=grid[-1])
+        interval = torch.searchsorted(
+            grid.contiguous(), query.contiguous(), right=False) - 1
+        interval.clamp_(min=0, max=grid.numel() - 2)
+        curves = self.nonlinear_R_curve_gaussian_R_normalized[group_index]
+        left = curves.gather(1, interval)
+        right = curves.gather(1, interval + 1)
+        left_v = grid[interval]
+        right_v = grid[interval + 1]
+        fraction = (query - left_v) / (right_v - left_v)
+        return nominal_R * (left + fraction * (right - left))
+
+
+    def _get_curve_bank_R_eff(self, v, curve_index):
+        """Evaluate one selected piecewise-linear R(V) curve per source row."""
+        if self.proj_fn is not None:
+            v = self.proj_fn(v)
+        curve_index = torch.as_tensor(
+            curve_index, device=v.device, dtype=torch.int64).reshape(-1)
+        if v.ndim != 2 or curve_index.numel() != v.shape[0]:
+            raise ValueError(
+                "Curve indices must provide one curve for each voltage row.")
+
+        grid = self.nonlinear_R_curve_bank_v_grid[curve_index]
+        lengths = self.nonlinear_R_curve_bank_lengths[curve_index]
+        last_grid = grid.gather(1, (lengths - 1)[:, None])
+        query = torch.maximum(v, grid[:, :1])
+        query = torch.minimum(query, last_grid)
+        interval = torch.searchsorted(
+            grid.contiguous(), query.contiguous(), right=False) - 1
+        interval.clamp_(min=0)
+        interval = torch.minimum(interval, (lengths - 2)[:, None])
+        left_v = grid.gather(1, interval)
+        left_R = self.nonlinear_R_curve_bank_R_left[
+            curve_index].gather(1, interval)
+        slope = self.nonlinear_R_curve_bank_R_slope[
+            curve_index].gather(1, interval)
+        return left_R + slope * (query - left_v)
+
+    def _forward_pulse_per_input(self, x_flat, pulse_weight, nominal_R):
+        if self.nonlinear_R_curve_sampling == "multivariate_gaussian":
+            group = torch.arange(
+                x_flat.shape[0], device=x_flat.device, dtype=torch.int64)
+            R_eff = self._get_gaussian_curve_R_eff(
+                x_flat, group, nominal_R)
+        else:
+            curve_index = self.nonlinear_R_curve_assignment
+            R_eff = self._get_curve_bank_R_eff(x_flat, curve_index)
+        return torch.sparse.mm(
+            pulse_weight, x_flat * nominal_R / R_eff)
+
+    def _forward_pulse_per_edge(self, x_flat, pulse_weight, nominal_R):
+        if pulse_weight.layout != torch.sparse_csr:
+            raise TypeError(
+                "Per-edge nonlinear-R pulse evaluation requires a CSR matrix.")
+        pulse_values = pulse_weight.values()
+        if pulse_values.numel() != self.mat.values().numel():
+            raise ValueError(
+                "Pulse values must align with the expanded physical couplers.")
+
+        active_edges = torch.nonzero(
+            pulse_values != 0, as_tuple=False).reshape(-1)
+        out = x_flat.new_zeros((self.mat.shape[0], x_flat.shape[1]))
+        chunk_size = self.nonlinear_R_curve_edge_chunk_size
+        for start in range(0, active_edges.numel(), chunk_size):
+            edge = active_edges[start:start + chunk_size]
+            cols = self.mat.col_indices()[edge]
+            rows = self.nonlinear_R_curve_row_ids[edge]
+            if self.nonlinear_R_curve_sharing == "per_coupler":
+                group = edge
+            else:
+                group = self.nonlinear_R_curve_group_ids[edge]
+            source = x_flat[cols]
+            if self.nonlinear_R_curve_sampling == "multivariate_gaussian":
+                R_eff = self._get_gaussian_curve_R_eff(
+                    source, group, nominal_R)
+            else:
+                curve = self.nonlinear_R_curve_assignment[group]
+                R_eff = self._get_curve_bank_R_eff(source, curve)
+            contribution = (
+                pulse_values[edge, None] * source * nominal_R / R_eff)
+            out.index_add_(0, rows, contribution)
+        return out
+
     def forward_pulse(self, x, pulse_weight, nominal_R=None):
-        """Apply an externally generated pulse matrix with one nominal R(v) curve."""
+        """Apply an externally generated pulse matrix with configured R(V) sharing."""
         batch_size, _, input_h, input_w = x.shape
         output_h = (input_h + 2 * self.meta["padding"] - self.meta["ker_h"]) // self.meta["stride"] + 1
         output_w = (input_w + 2 * self.meta["padding"] - self.meta["ker_w"]) // self.meta["stride"] + 1
@@ -619,12 +958,34 @@ class MVMConv(nn.Module):
 
         if self.csv_enabled:
             nominal_R = self.R if nominal_R is None else nominal_R
-            nominal_idx = (self.R_codes - nominal_R).abs().argmin()
-            R_eff = self._get_R_eff(x_flat, nominal_idx)
-            x_flat = x_flat * nominal_R / R_eff
-
-        out = torch.sparse.mm(pulse_weight, x_flat)
-        return out.t().reshape(batch_size, self.meta["out_chan"], output_h, output_w)
+            if self.nonlinear_R_curve_sharing == "shared":
+                # One sampled curve is shared by this expanded convolution only.
+                # Validator gives every FF/FB module a distinct sampling seed.
+                if self.nonlinear_R_curve_gaussian_R_normalized is not None:
+                    group = torch.zeros(
+                        x_flat.shape[0], device=x_flat.device,
+                        dtype=torch.int64)
+                    R_eff = self._get_gaussian_curve_R_eff(
+                        x_flat, group, nominal_R)
+                elif self.nonlinear_R_curve_bank_v_grid is not None:
+                    curve = self.nonlinear_R_curve_assignment[0].expand(
+                        x_flat.shape[0])
+                    R_eff = self._get_curve_bank_R_eff(x_flat, curve)
+                else:
+                    nominal_idx = (self.R_codes - nominal_R).abs().argmin()
+                    R_eff = self._get_R_eff(x_flat, nominal_idx)
+                out = torch.sparse.mm(
+                    pulse_weight, x_flat * nominal_R / R_eff)
+            elif self.nonlinear_R_curve_sharing == "per_input":
+                out = self._forward_pulse_per_input(
+                    x_flat, pulse_weight, nominal_R)
+            else:
+                out = self._forward_pulse_per_edge(
+                    x_flat, pulse_weight, nominal_R)
+        else:
+            out = torch.sparse.mm(pulse_weight, x_flat)
+        return out.t().reshape(
+            batch_size, self.meta["out_chan"], output_h, output_w)
 
     def forward(self, x):
         batch_size, input_channels, input_h, input_w = x.shape
@@ -634,6 +995,26 @@ class MVMConv(nn.Module):
 
         if not self.csv_enabled:
             return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
+
+        if self.nonlinear_R_curve_sharing == "shared":
+            if self.nonlinear_R_curve_gaussian_R_normalized is not None:
+                group = torch.zeros(
+                    x.shape[0], device=x.device, dtype=torch.int64)
+                R_eff = self._get_gaussian_curve_R_eff(x, group, self.R)
+            elif self.nonlinear_R_curve_bank_v_grid is not None:
+                curve = self.nonlinear_R_curve_assignment[0].expand(x.shape[0])
+                R_eff = self._get_curve_bank_R_eff(x, curve)
+            else:
+                R_eff = None
+            if R_eff is not None:
+                active_mat = (
+                    self._shared_curve_noisy_mat
+                    if self._shared_curve_noisy_mat is not None else self.mat)
+                out = torch.sparse.mm(active_mat, x * self.R / R_eff)
+                if self.mismatch_mat is not None:
+                    out = out + torch.sparse.mm(self.mismatch_mat, x)
+                return out.t().view(
+                    batch_size, self.meta["out_chan"], output_h, output_w)
 
         if self.code_idx_mat is None:
             self.code_idx_mat = self._build_code_idx_mat()
@@ -727,6 +1108,33 @@ class Validator(nn.Module):
             legacy_stored = torch.load(
                 legacy_exp_w_path, map_location=self.device)
 
+        # For an empirical shared-curve bank, sample without replacement across
+        # the convolutions in this layer. Each expanded convolution then shares
+        # its selected curve across all of its physical couplers.
+        shared_curve_assignment = {}
+        nonlinear_R_pkg = getattr(layer, "_nonlinear_R_pkg", None)
+        if (nonlinear_R_pkg is not None and
+                nonlinear_R_pkg.get("nonlinear_R_curve_sharing") == "shared" and
+                nonlinear_R_pkg.get("curve_bank") is not None):
+            conv_names = [
+                name for name, module in layer.named_modules()
+                if isinstance(module, nn.Conv2d)]
+            n_curves = int(nonlinear_R_pkg["curve_bank"]["v_grid"].shape[0])
+            generator = None
+            curve_seed = nonlinear_R_pkg.get("nonlinear_R_curve_seed")
+            if curve_seed is not None:
+                generator = torch.Generator(device="cpu")
+                generator.manual_seed(
+                    int(curve_seed) + 1009 * int(layer_idx))
+            if n_curves >= len(conv_names):
+                sampled = torch.randperm(
+                    n_curves, generator=generator)[:len(conv_names)].tolist()
+            else:
+                sampled = torch.randint(
+                    n_curves, (len(conv_names),),
+                    generator=generator).tolist()
+            shared_curve_assignment.update(zip(conv_names, sampled))
+
         def make_hook(parent, mod_name, m):
             hook_handlers = {}
             def pre_hook(mod, inputs):
@@ -774,7 +1182,21 @@ class Validator(nn.Module):
                 mvm_conv.set_dtc_metadata(dtc_block_ids, dtc_output_ids)
                 mvm_conv.clean_mat_values = mvm_conv.mat.values().detach().clone()
                 if hasattr(parent, "_nonlinear_R_pkg"):
-                    mvm_conv.enable_csv(**parent._nonlinear_R_pkg)
+                    nonlinear_R_pkg = dict(parent._nonlinear_R_pkg)
+                    curve_seed = nonlinear_R_pkg.get(
+                        "nonlinear_R_curve_seed")
+                    if curve_seed is not None:
+                        module_key = "{}:{}".format(
+                            layer_idx, mod_name).encode("utf-8")
+                        seed_offset = int.from_bytes(
+                            hashlib.sha256(module_key).digest()[:8],
+                            byteorder="little", signed=False)
+                        nonlinear_R_pkg["nonlinear_R_curve_seed"] = (
+                            int(curve_seed) + seed_offset) % (2 ** 63 - 1)
+                    if mod_name in shared_curve_assignment:
+                        nonlinear_R_pkg["nonlinear_R_curve_assignment"] = [
+                            shared_curve_assignment[mod_name]]
+                    mvm_conv.enable_csv(**nonlinear_R_pkg)
                 setattr(parent, mod_name, mvm_conv)
                 hook_handlers["pre_hook"].remove()
                 hook_handlers["post_hook"].remove()

@@ -34,12 +34,14 @@ log.addHandler(handler)
 
 
 def _get_scangfi_dataset(task, train):
-    if task != "cifar100":
-        raise ValueError("The scanGFI dataset supports CIFAR-100 only.")
+    if task not in {"cifar10", "cifar100"}:
+        raise ValueError("The scanGFI dataset supports CIFAR-10 and CIFAR-100 only.")
     repo_root = Path(__file__).resolve().parent
-    data_path = Path(os.environ.get(
-        "SCAN_TEST_DATA",
-        repo_root / "data" / "cifar100_raw.h5"))
+    task_variable = "SCAN_TEST_{}_DATA".format(task.upper())
+    data_path = Path(
+        os.environ.get(task_variable) or
+        os.environ.get("SCAN_TEST_DATA") or
+        repo_root / "data" / "{}_raw.h5".format(task))
     with (repo_root / "data" / "scangen_cifar100_noise.json").open() as handle:
         noise_config = json.load(handle)["noise"]
     return MyNoiseCIFARDataset(
