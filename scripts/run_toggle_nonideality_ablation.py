@@ -144,7 +144,7 @@ def parse_args():
     parser.add_argument("--ckpt", default="best")
     parser.add_argument("--model_dir", default="saved_ckpt")
     parser.add_argument("--expanded_w_dir", default="expanded_weights")
-    parser.add_argument("--output_dir", default="results/prompt2_toggle_ablation")
+    parser.add_argument("--output_dir", default="results/toggle_nonideality_ablation")
     parser.add_argument("--cases", nargs="+", choices=tuple(CASES), default=list(DEFAULT_CASES))
     parser.add_argument("--test_bs", type=int, default=128)
     parser.add_argument("--jobs", type=int, default=1)
