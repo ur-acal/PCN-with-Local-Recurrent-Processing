@@ -1,5 +1,7 @@
 import os
 import glob
+import csv
+import re
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,6 +23,221 @@ _CIFAR_STATS = {
     "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
     "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
 }
+
+_PROCESS_ORDER = ("tt", "ff", "ss", "fs", "sf")
+_PROCESS_ALIASES = {
+    "tt": "tt", "ttg": "tt",
+    "ff": "ff", "ffg": "ff", "ffag": "ff",
+    "ss": "ss", "ssg": "ss", "ssag": "ss",
+    "fs": "fs", "fsg": "fs",
+    "sf": "sf", "sfg": "sf",
+}
+
+
+def _canonical_process(value):
+    token = str(value).lower().strip()
+    if token.startswith("top_"):
+        token = token[4:]
+    token = token.split("_mismatch", 1)[0]
+    if token not in _PROCESS_ALIASES:
+        raise ValueError("Unknown process-corner label: {}".format(value))
+    return _PROCESS_ALIASES[token]
+
+
+def _summary_corner_rows(path):
+    frame = pd.read_csv(path, encoding="latin1")
+    process_column = next(
+        name for name in frame.columns if name.lower().startswith("process"))
+    voltage_column = next(
+        name for name in frame.columns if name.lower().startswith("voltage"))
+    temperature_column = next(
+        name for name in frame.columns if name.lower().startswith("temperature"))
+    voltages = sorted(float(value) for value in frame[voltage_column].unique())
+    temperatures = sorted(
+        float(value) for value in frame[temperature_column].unique())
+    output = {}
+    for _, row in frame.iterrows():
+        key = (
+            _canonical_process(row[process_column]),
+            voltages.index(float(row[voltage_column])),
+            temperatures.index(float(row[temperature_column])),
+        )
+        output[key] = {
+            "mean": float(row["Mean"]),
+            "std": float(row["Std. Dev."]),
+            "voltage": float(row[voltage_column]),
+            "temperature": float(row[temperature_column]),
+        }
+    return output
+
+
+def _paired_curve_count(path):
+    data = np.loadtxt(path, delimiter=",", skiprows=1)
+    if data.ndim != 2 or data.shape[1] % 2 != 0:
+        raise ValueError("Expected paired X/Y columns in {}.".format(path))
+    return data.shape[1] // 2
+
+
+class MC45CornerData:
+    """Align the repository MC data by process and ordered V/T levels."""
+
+    def __init__(self, root,
+                 spin_variation_source="PVT_Monte_Carlo_Results_SPIN.csv",
+                 dtc_pulse_width_variation_source=
+                 "PVT_45corner_DTC_pulse_width.csv",
+                 relu_monte_carlo_source="relu_monteCarlo",
+                 coupler_nonlinear_variation_source="coupler_monte",
+                 coupler_nonlinear_variation_quantity=None,
+                 coupler_nominal_R=67e3):
+        self.root = os.path.abspath(os.fspath(root))
+        spin_source = os.fspath(spin_variation_source)
+        dtc_source = os.fspath(dtc_pulse_width_variation_source)
+        relu_source = os.fspath(relu_monte_carlo_source)
+        self.spin_source_path = (
+            spin_source if os.path.isabs(spin_source)
+            else os.path.join(self.root, spin_source))
+        self.dtc_source_path = (
+            dtc_source if os.path.isabs(dtc_source)
+            else os.path.join(self.root, dtc_source))
+        self.relu_source_path = (
+            relu_source if os.path.isabs(relu_source)
+            else os.path.join(self.root, relu_source))
+        source = os.fspath(coupler_nonlinear_variation_source)
+        self.coupler_source_path = (
+            source if os.path.isabs(source)
+            else os.path.join(self.root, source))
+        self.coupler_nominal_R = float(coupler_nominal_R)
+        quantity = (
+            None if coupler_nonlinear_variation_quantity is None
+            else str(coupler_nonlinear_variation_quantity).lower())
+        if quantity not in {None, "conductance", "resistance"}:
+            raise ValueError(
+                "coupler_nonlinear_variation_quantity must be conductance "
+                "or resistance.")
+        self.coupler_quantity = quantity
+
+        self.spin = _summary_corner_rows(self.spin_source_path)
+        self.dtc = _summary_corner_rows(self.dtc_source_path)
+        self.relu = self._load_relu_files()
+        if os.path.isdir(self.coupler_source_path):
+            self.coupler = self._load_coupler_folder()
+        elif os.path.isfile(self.coupler_source_path):
+            self.coupler = self._load_coupler_file()
+        else:
+            raise FileNotFoundError(
+                "Coupler nonlinear-variation source not found: {}".format(
+                    self.coupler_source_path))
+
+        expected = set(self.spin)
+        for name, values in (
+                ("spin", self.spin), ("DTC", self.dtc),
+                ("ReLU", self.relu), ("coupler", self.coupler)):
+            if set(values) != expected:
+                missing = sorted(expected - set(values))
+                extra = sorted(set(values) - expected)
+                raise ValueError(
+                    "{} corner mismatch: missing={}, extra={}.".format(
+                        name, missing, extra))
+
+        self.corners = []
+        for process in _PROCESS_ORDER:
+            for voltage_level in range(3):
+                for temperature_level in range(3):
+                    key = (process, voltage_level, temperature_level)
+                    self.corners.append({
+                        "id": "{}_V{}_T{}".format(
+                            process.upper(), voltage_level, temperature_level),
+                        "process": process,
+                        "voltage_level": voltage_level,
+                        "temperature_level": temperature_level,
+                        "spin": self.spin[key],
+                        "dtc": self.dtc[key],
+                        "relu": self.relu[key],
+                        "coupler": self.coupler[key],
+                    })
+
+    def _load_coupler_folder(self):
+        paths = sorted(glob.glob(os.path.join(
+            self.coupler_source_path, "*.csv")))
+        if not paths:
+            raise ValueError(
+                "Coupler nonlinear-variation folder contains no CSV files: "
+                "{}".format(self.coupler_source_path))
+        temperatures = sorted({
+            float(re.match(r"[a-z]+_(-?[0-9.]+)_[0-2]\.csv\Z",
+                           os.path.basename(path)).group(1))
+            for path in paths
+        })
+        output = {}
+        for path in paths:
+            match = re.match(
+                r"([a-z]+)_(-?[0-9.]+)_([0-2])\.csv\Z",
+                os.path.basename(path))
+            process = _canonical_process(match.group(1))
+            temperature = float(match.group(2))
+            voltage_level = int(match.group(3))
+            key = (process, voltage_level, temperatures.index(temperature))
+            count = _paired_curve_count(path)
+            output[key] = {
+                "path": path, "curve_indices": list(range(count)),
+                "quantity": self.coupler_quantity or "conductance",
+                "nominal_R": self.coupler_nominal_R,
+                "temperature": temperature,
+            }
+        return output
+
+    def _load_relu_files(self):
+        output = {}
+        paths = sorted(glob.glob(os.path.join(
+            self.relu_source_path, "*.csv")))
+        for path in paths:
+            match = re.match(
+                r"relu_([a-z]+)([0-8])\.csv\Z", os.path.basename(path))
+            process = _canonical_process(match.group(1))
+            voltage_level, temperature_level = divmod(int(match.group(2)), 3)
+            with open(path) as handle:
+                header = handle.readline()
+            vdd_match = re.search(r"VDD_VALUE=([-+0-9.eE]+)", header)
+            temp_match = re.search(r"temperature=([-+0-9.eE]+)", header)
+            count = _paired_curve_count(path)
+            output[(process, voltage_level, temperature_level)] = {
+                "path": path, "curve_indices": list(range(count)),
+                "voltage": float(vdd_match.group(1)),
+                "temperature": float(temp_match.group(1)),
+            }
+        return output
+
+    def _load_coupler_file(self):
+        path = self.coupler_source_path
+        with open(path, newline="") as handle:
+            header = next(csv.reader(handle))
+        records = []
+        pattern = re.compile(
+            r"top_([a-z]+)_mismatch,.*?VDD=([-+0-9.eE]+),"
+            r"temperature=([-+0-9.eE]+),mcparamset=([0-9]+)\) X\Z")
+        for column_index in range(0, len(header), 2):
+            match = pattern.search(header[column_index])
+            if match is None:
+                raise ValueError(
+                    "Cannot parse alternative CU column: {}".format(
+                        header[column_index]))
+            records.append((
+                column_index // 2, _canonical_process(match.group(1)),
+                float(match.group(2)), float(match.group(3))))
+        voltages = sorted({record[2] for record in records})
+        temperatures = sorted({record[3] for record in records})
+        output = {}
+        for curve_index, process, voltage, temperature in records:
+            key = (process, voltages.index(voltage), temperatures.index(temperature))
+            entry = output.setdefault(key, {
+                "path": path, "curve_indices": [],
+                "quantity": self.coupler_quantity or "resistance",
+                "nominal_R": self.coupler_nominal_R,
+                "temperature": temperature,
+            })
+            entry["curve_indices"].append(curve_index)
+        return output
+
 
 def get_parametrized_weight_mods(model):
     """

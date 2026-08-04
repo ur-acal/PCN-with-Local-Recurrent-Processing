@@ -83,7 +83,7 @@ TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
-if [[ "${DATASET_NAME}" == "cifar10" ]]; then
+if [[ "${_task}" == "cifar10" ]]; then
   TEACHER_CKPT="checkpoint/b4.pth"
   TEACHER_ARCH="efficientnet-b4"
 fi

@@ -5,8 +5,11 @@
 # sbatch -N 1 --export=ALL,TIMM_AUG_LEVEL=no_aug,ENOB=6,SWITCH_INF=false ./launch_scripts/run_slurm_ode_mixed_ft.sh
 #######################################################
 
+R_VAL="${R_VAL:-27.8e3}"
+MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.25}"
+
 declare -A NOISE_LEVELS=(
-  [mul]="0.25"
+  [mul]="${MISMATCH_LEVEL}"
   [add]="0.05 0.08 0.1 0.15 0.2"
 )
 NOISE_TYPES=(
@@ -38,10 +41,23 @@ fi
 VARIATION_AWARE_ARGS=(
   --enable_spin_variation "${ENABLE_SPIN_VARIATION:-true}"
   --sigma_spin "${SIGMA_SPIN:-0.10}"
-  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE:-false}"
-  --summing_current_p "${SUMMING_CURRENT_P:-18.5e-12}"
+  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE:-true}"
+  --summing_current_p "${SUMMING_CURRENT_P:-0.6e-12}"
   --enable_coupler_noise "${ENABLE_COUPLER_NOISE:-true}"
   --coupler_noise_p "${COUPLER_NOISE_P:-0.6e-12}"
+)
+if [[ "${NONLINEAR_R_TRAIN_MODE:-none}" != "none" ]]; then
+  ENABLE_NONLINEAR_R=true
+fi
+NONLINEAR_R_TRAIN_ARGS=(
+  --nonlinear_R "${ENABLE_NONLINEAR_R:-false}"
+  --nonlinear_R_table "${NONLINEAR_R_TABLE:-./hardware_data/mc_45_corners/coupler_monte}"
+  --nonlinear_R_mc_quantity "${NONLINEAR_R_MC_QUANTITY:-conductance}"
+  --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING:-shared}"
+  --nonlinear_R_curve_seed "${NONLINEAR_R_CURVE_SEED:-none}"
+  --train_conv_expanded "${TRAIN_CONV_EXPANDED:-false}"
+  --nonlinear_R_train_mode "${NONLINEAR_R_TRAIN_MODE:-none}"
+  --nonlinear_R_corner_range "${NONLINEAR_R_CORNER_RANGE:-all}"
 )
 ODE_BLOCK_OVERRIDE="${ODE_BLOCK_OVERRIDE:-ToggleODEXInitFFFB}"
 # This controls the scaling for the toggle class. approximating the old 1state or directly scale.
@@ -51,8 +67,10 @@ TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
 if [[ -n "${TOGGLE_N_CYCLES:-}" ]]; then TOGGLE_ARGS+=(--toggle_n_cycles "${TOGGLE_N_CYCLES}"); fi
 if [[ -n "${TOGGLE_TIME_SPLIT:-}" ]]; then TOGGLE_ARGS+=(--toggle_time_split "${TOGGLE_TIME_SPLIT}"); fi
 if [[ -n "${TOGGLE_FAST_PATH:-}" ]]; then TOGGLE_ARGS+=(--toggle_fast_path "${TOGGLE_FAST_PATH}"); fi
+echo "=========== R: ${R_VAL}; mismatch level: ${MISMATCH_LEVEL} ==========="
 echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL}, SWITCH_INF: ${SWITCH_INF}, ENOB: ${ENOB}, ODE_BLOCK_OVERRIDE: ${ODE_BLOCK_OVERRIDE} ==========="
 echo "=========== FT spin variation: ${ENABLE_SPIN_VARIATION:-true} (sigma=${SIGMA_SPIN:-0.10}); summing-current noise: ${ENABLE_SUMMING_CURRENT_NOISE:-false} (p=${SUMMING_CURRENT_P:-18.5e-12}); coupler noise: ${ENABLE_COUPLER_NOISE:-true} (p=${COUPLER_NOISE_P:-0.6e-12}) ==========="
+echo "=========== nonlinear-R training: mode=${NONLINEAR_R_TRAIN_MODE:-none}, corners=${NONLINEAR_R_CORNER_RANGE:-all}, expanded=${TRAIN_CONV_EXPANDED:-false} ==========="
 
 #######################################################################################################################
 # For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
@@ -133,7 +151,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --n_steps       5 \
             --tol           "1e-6" \
             --t_end         "1.75" \
-            --R             "27.8e3" \
+            --R             "${R_VAL}" \
             --R_max         "${R_max}" \
             --C             "282e-15" \
             --k             "${K_VAL}" \
@@ -157,6 +175,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --one_over_q    "${one_over_q}" \
             "${TOGGLE_ARGS[@]}" \
             "${VARIATION_AWARE_ARGS[@]}" \
+            "${NONLINEAR_R_TRAIN_ARGS[@]}" \
             --qat_cls       "SymQuantizeWeight" \
             --ode_wrapper   "$QAT_WRAPPER" \
             --pc_conv       "PCConvReLU6" \

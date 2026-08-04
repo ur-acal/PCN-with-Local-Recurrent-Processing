@@ -200,6 +200,37 @@ def get_args():
                    choices=["none", "nonnegative", "auto"], default="auto")
     p.add_argument("--activation_normalize_positive_endpoint", type=str2bool, default=False,
                    help="Scale the entire fitted curve so its positive endpoint reaches full scale.")
+    p.add_argument("--nonlinear_R", type=str2bool, default=False)
+    p.add_argument(
+        "--nonlinear_R_table", type=str,
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "hardware_data", "mc_45_corners",
+                             "coupler_monte"))
+    p.add_argument(
+        "--nonlinear_R_mc_quantity", choices=("conductance", "resistance"),
+        default="conductance")
+    p.add_argument(
+        "--nonlinear_R_curve_sharing", choices=("shared", "per_coupler",
+                                                "per_input", "per_input_output"),
+        default="shared")
+    p.add_argument(
+        "--nonlinear_R_curve_seed",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=None)
+    p.add_argument(
+        "--train_conv_expanded", type=str2bool, default=False,
+        help="Train through spatially expanded convolution matrices. This is "
+             "currently reserved for the nonlinear-R training implementation.")
+    p.add_argument(
+        "--nonlinear_R_train_mode", type=str,
+        choices=["none", "exact_curve", "mean"], default="none",
+        help="Training-time nonlinear-R curve sampling: one raw Monte Carlo "
+             "curve or one per-corner mean curve per convolution and forward. 'none' "
+             "preserves the existing training behavior.")
+    p.add_argument(
+        "--nonlinear_R_corner_range", type=str, default="all",
+        help="Comma-separated MC45 corner IDs used for nonlinear-R training, "
+             "or 'all'. Empty/'none' also mean all corners.")
     # Noise-inject training related args
     p.add_argument('--noise_level', default=None, type=float,
                         help='noise level in noise inject training. None means normal training without noise injection')
@@ -605,6 +636,25 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
+    if args.nonlinear_R_corner_range.strip().lower() in {"", "none"}:
+        args.nonlinear_R_corner_range = "all"
+
+    # TODO: Expanded training needs a differentiable edge-to-kernel mapping so
+    # duplicated physical couplers read the original convolution parameters
+    # instead of becoming independent trainable matrix entries.
+    if args.train_conv_expanded:
+        raise NotImplementedError(
+            "--train_conv_expanded is not implemented. Current convolution "
+            "unrolling detaches and copies kernel weights for inference, so it "
+            "cannot preserve shared convolution-weight gradients during training.")
+
+    if args.nonlinear_R_train_mode != "none":
+        args.nonlinear_R = True
+        if args.nonlinear_R_curve_sharing != "shared":
+            raise ValueError(
+                "Non-expanded Level-2 nonlinear-R training requires "
+                "--nonlinear_R_curve_sharing shared.")
+
     if args.dataset == "cifar100" and args.num_classes == 10:
         logging.warning("Overriding num_classes to 100 for CIFAR-100.")
         args.num_classes = 100
@@ -790,6 +840,13 @@ def main():
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "enob": args.enob, "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                          "nonlinear_R": args.nonlinear_R,
+                          "nonlinear_R_table": args.nonlinear_R_table,
+                          "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
+                          "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
+                          "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
+                          "nonlinear_R_train_mode": args.nonlinear_R_train_mode,
+                          "nonlinear_R_corner_range": args.nonlinear_R_corner_range,
                           "enable_measured_activation": args.enable_measured_activation,
                           "activation_curve_path": args.activation_curve_path,
                           "activation_corner": args.activation_corner,

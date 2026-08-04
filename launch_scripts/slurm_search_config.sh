@@ -28,9 +28,40 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
+
+##############################################################################################
+# Toggle dynamics and physical scaling
+##############################################################################################
 TOGGLE_MODE="${TOGGLE_MODE:-none}"       # none, reset, persistent, odexinit, or pulse_odexinit
 # This controls the scaling for the toggle class. approximating the old 1state or directly scale.
 ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-direct}"
+TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
+TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
+TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
+TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
+if [[ "${TOGGLE_MODE}" == "none" ]]; then
+  R_VAL="${R_VAL:-10e3}"
+  R_MAX="${R_MAX:-150e3}"
+  C_VAL="${C_VAL:-49e-15}"
+  MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.25}"
+  ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+  SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
+  ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-false}"
+  NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-none}"
+else
+  R_VAL="${R_VAL:-67e3}"
+  R_MAX="${R_MAX:-none}"
+  C_VAL="${C_VAL:-282e-15}"
+  MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.0}"
+  ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-true}"
+  SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-0.6e-12}"
+  ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
+  NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-exact_curve}"
+fi
+
+##############################################################################################
+# Measured activation
+##############################################################################################
 ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
 ENABLE_PRETRAIN_MEASURED_ACTIVATION="${ENABLE_PRETRAIN_MEASURED_ACTIVATION:-false}"
 SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
@@ -52,14 +83,27 @@ UNITLESS_PULLBACK_Q="${UNITLESS_PULLBACK_Q:-none}"
 UNITLESS_PULLBACK_K="${UNITLESS_PULLBACK_K:-1e3}"
 UNITLESS_PULLBACK_R="${UNITLESS_PULLBACK_R:-10e3}"
 
+##############################################################################################
+# Spin variation and current noise used during fine-tuning
+##############################################################################################
 ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
 SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
-ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
-SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
 ENABLE_COUPLER_NOISE="${ENABLE_COUPLER_NOISE:-true}"
 COUPLER_NOISE_P="${COUPLER_NOISE_P:-0.6e-12}"
+
+##############################################################################################
+# Quantization, mismatch, and nonlinear-R-aware fine-tuning
+##############################################################################################
 PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitude}" # post_quant_amplitude and pre_quant_weight (this is same as before, add mismatch and then quantize.)
+TRAIN_CONV_EXPANDED="${TRAIN_CONV_EXPANDED:-false}"
+NONLINEAR_R_CORNER_RANGE="${NONLINEAR_R_CORNER_RANGE:-all}"
+NONLINEAR_R_TABLE="${NONLINEAR_R_TABLE:-./hardware_data/mc_45_corners/coupler_monte}"
+NONLINEAR_R_MC_QUANTITY="${NONLINEAR_R_MC_QUANTITY:-conductance}"
+NONLINEAR_R_CURVE_SHARING="${NONLINEAR_R_CURVE_SHARING:-shared}"
+NONLINEAR_R_CURVE_SEED="${NONLINEAR_R_CURVE_SEED:-none}"
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
+WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
+WARMUP_FT="${WARMUP_FT:-0}"
 
 ##############################################################################################
 # Two special modes
@@ -140,6 +184,13 @@ SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 RUN_DATE="${RUN_DATE:-$(date +%m%d)}"
 EXP_PREFIX="${EXP_PREFIX:-${RUN_DATE}_${TRAIN_MODE}_${ODE_BLOCK}}"
+RUN_TAG="${EXP_PREFIX}"
+if [[ "${TOGGLE_MODE}" != "none" ]]; then
+  RUN_TAG+="_toggle_${TOGGLE_MODE}"
+elif [[ "${SWITCH_INF}" == "true" ]]; then
+  RUN_TAG+="_switch_inf"
+fi
+OUTPUT_SAVE_PATH="${OUTPUT_SAVE_PATH:-saved_ckpt_runs/${RUN_TAG}}"
 SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_${EXP_PREFIX}_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
@@ -489,8 +540,13 @@ submit_chunk() {
   local sbatch_exports="ALL"
   sbatch_exports+=",PCN=${pcn},IMG_TYPE=${img_type},SWITCH_INF=${SWITCH_INF}"
   sbatch_exports+=",EXP=${EXP},CIRC_CONF=${circ_conf},TASK=${TASK}"
+  sbatch_exports+=",RUN_TAG=${RUN_TAG},OUTPUT_SAVE_PATH=${OUTPUT_SAVE_PATH}"
   sbatch_exports+=",ODE_BLOCK=${ODE_BLOCK},TOGGLE_MODE=${TOGGLE_MODE}"
+  sbatch_exports+=",WARMUP_PRETRAIN=${WARMUP_PRETRAIN},WARMUP_FT=${WARMUP_FT}"
+  sbatch_exports+=",TOGGLE_N_CYCLES=${TOGGLE_N_CYCLES},TOGGLE_TIME_SPLIT=${TOGGLE_TIME_SPLIT}"
+  sbatch_exports+=",TOGGLE_FAST_PATH=${TOGGLE_FAST_PATH},TOGGLE_ONE_OVER_Q=${TOGGLE_ONE_OVER_Q}"
   sbatch_exports+=",ODEXINIT_SCALING_MODE=${ODEXINIT_SCALING_MODE}"
+  sbatch_exports+=",R_VAL=${R_VAL},R_MAX=${R_MAX},C_VAL=${C_VAL},MISMATCH_LEVEL=${MISMATCH_LEVEL}"
   sbatch_exports+=",ENABLE_MEASURED_ACTIVATION=${ENABLE_MEASURED_ACTIVATION}"
   sbatch_exports+=",ENABLE_PRETRAIN_MEASURED_ACTIVATION=${ENABLE_PRETRAIN_MEASURED_ACTIVATION}"
   sbatch_exports+=",SCALE_MEASURED_ACTIVATION=${SCALE_MEASURED_ACTIVATION}"
@@ -509,6 +565,14 @@ submit_chunk() {
   sbatch_exports+=",ENABLE_COUPLER_NOISE=${ENABLE_COUPLER_NOISE}"
   sbatch_exports+=",COUPLER_NOISE_P=${COUPLER_NOISE_P}"
   sbatch_exports+=",PULSE_MISMATCH_TRAINING_MODE=${PULSE_MISMATCH_TRAINING_MODE}"
+  sbatch_exports+=",TRAIN_CONV_EXPANDED=${TRAIN_CONV_EXPANDED}"
+  sbatch_exports+=",ENABLE_NONLINEAR_R=${ENABLE_NONLINEAR_R}"
+  sbatch_exports+=",NONLINEAR_R_TRAIN_MODE=${NONLINEAR_R_TRAIN_MODE}"
+  sbatch_exports+=",NONLINEAR_R_CORNER_RANGE=${NONLINEAR_R_CORNER_RANGE}"
+  sbatch_exports+=",NONLINEAR_R_TABLE=${NONLINEAR_R_TABLE}"
+  sbatch_exports+=",NONLINEAR_R_MC_QUANTITY=${NONLINEAR_R_MC_QUANTITY}"
+  sbatch_exports+=",NONLINEAR_R_CURVE_SHARING=${NONLINEAR_R_CURVE_SHARING}"
+  sbatch_exports+=",NONLINEAR_R_CURVE_SEED=${NONLINEAR_R_CURVE_SEED}"
   sbatch_exports+=",CHAN_0=${chan0},NUM_LAYERS=${num_layers}"
   sbatch_exports+=",CHUNK_ID=${chunk_id},CHUNK_TAG=${chunk_tag},COMB_LIST=${comb_list}"
 

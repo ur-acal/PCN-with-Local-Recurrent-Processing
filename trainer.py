@@ -699,9 +699,12 @@ class TrainerCiFar(object):
         return running_loss
 
     def reset_spin_variation_for_inference(self):
-        """Clear cached spin factors once before a full-dataset evaluation."""
+        """Clear cached sample-once factors before full-dataset evaluation."""
         for module in self.model.modules():
             reset = getattr(module, "reset_spin_variation", None)
+            if callable(reset):
+                reset()
+            reset = getattr(module, "reset_nonlinear_R_variation", None)
             if callable(reset):
                 reset()
 
