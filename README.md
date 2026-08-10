@@ -9,7 +9,7 @@ This version uses aligned corner-specific characterization data for spin variati
 The headline results are in [`summary.md`](summary.md). Complete 45-corner tables are provided in:
 
 - [`summary_cifar100_coupler_monte_v2_qf1.md`](summary_cifar100_coupler_monte_v2_qf1.md)
-- [`summary_cifar10_0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit.md`](summary_cifar10_0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit.md)
+- [`summary_cifar10_coupler_monte_v2.md`](summary_cifar10_coupler_monte_v2.md)
 
 ## Evaluated nonidealities
 
@@ -18,14 +18,14 @@ For each full-dataset hardware trial, static hardware quantities are sampled onc
 The evaluation includes:
 
 - corner-specific spin-gain mean and local-mismatch standard deviation from `PVT_Monte_Carlo_Results_SPIN.csv`;
-- one empirical conductance curve sampled with replacement per expanded physical coupler from the corresponding empirical corner bank (`coupler_monte_v2` for the default CIFAR-100 study and `coupler_monte` for the retained CIFAR-10 study);
+- one empirical conductance curve sampled with replacement per expanded physical coupler from the corresponding empirical corner bank (`coupler_monte_v2` for both studies);
 - a measured piecewise-linear ReLU curve sampled from the 100 Monte Carlo curves for the selected corner;
 - measured physical-domain average pooling using the selected corner conductance bank;
 - input-dependent conductance evaluated from the sampled empirical coupler curve;
 - summing-current and per-coupler current-noise densities of `0.6 pA/sqrt(Hz)`, scaled by `sqrt(T_K / 298.15 K)`;
 - corner-specific DTC pulse-width mean and local-mismatch standard deviation, plus leading- and falling-edge jitter.
 
-The default CIFAR-100 study uses `R = 50 kOhm`, `C = 500 fF`, five toggle cycles, 5-bit pulse weights, `weight_quant_factor_bits=1`, 8-bit output quantization, direct RC timing, and expanded convolution weights.
+The provided launcher uses `R = 50 kOhm`, `C = 500 fF`, five toggle cycles, 5-bit pulse weights, `weight_quant_factor_bits=1`, 8-bit output quantization, direct RC timing, and expanded convolution weights for both datasets.
 
 ## Package contents
 
@@ -45,7 +45,7 @@ The ZIP intentionally excludes the test datasets.
 Two HDF5 files shipped with scangen 0.3.0 are used:
 
 - `cifar100_raw.h5` for the `coupler_v2_cifar100_qf1` model;
-- `cifar10_raw.h5` for the `0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit` model.
+- `cifar10_raw.h5` for the `coupler_v2_cifar10` model.
 
 Pass their absolute paths with:
 
@@ -104,15 +104,12 @@ SCAN_TEST_CIFAR100_DATA=/absolute/path/to/cifar100_raw.h5 \
 
 ## Run the CIFAR-10 study
 
+**CIFAR-10 compatibility note:** The reported CIFAR-10 accuracy was obtained with a floating-point weight quantization factor because `WEIGHT_QUANT_FACTOR_BITS` was not enabled during that evaluation. The provided reproduction launcher uses `WEIGHT_QUANT_FACTOR_BITS=1` to match the CIFAR-100 hardware configuration. Therefore, rerunning the CIFAR-10 model with the provided launcher is expected to produce lower accuracy than the reported CIFAR-10 summary. Apart from the model and dataset, the launcher uses the same hardware-evaluation configuration as the CIFAR-100 study.
+
 ```bash
-OUTPUT_DIR=results/0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit \
+OUTPUT_DIR=results/coupler_monte_v2_cifar10 \
 MODEL_NAME=TIMMQAT5b8aNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP \
-MODEL_DIR=saved_ckpt_runs/0803_kd_crd_ft_ToggleODEXInitFFFB_toggle_odexinit \
-WEIGHT_QUANT_FACTOR_BITS=none \
-FULL_45_CORNER_C=282e-15 \
-MC_COUPLER_NONLINEAR_VARIATION_SOURCE=coupler_monte \
-MC_COUPLER_NOMINAL_R=67e3 \
-ENABLE_MEASURED_POOLING=false \
+MODEL_DIR=saved_ckpt_runs/coupler_v2_cifar10 \
 SCAN_TEST_CIFAR10_DATA=/absolute/path/to/cifar10_raw.h5 \
 ./launch_scripts/run_mc45_toggle_ablation.sh
 ```
