@@ -104,8 +104,6 @@ SCAN_TEST_CIFAR100_DATA=/absolute/path/to/cifar100_raw.h5 \
 
 ## Run the CIFAR-10 study
 
-The CIFAR-10 and CIFAR-100 checkpoints were trained independently, and both checkpoints are included in this package. Their recorded accuracy tables were obtained with their respective original evaluation launch configurations. The commands below use the same packaged hardware-evaluation configuration for both datasets, changing the model and dataset as appropriate.
-
 ```bash
 OUTPUT_DIR=results/coupler_monte_v2_cifar10 \
 MODEL_NAME=TIMMQAT5b8aNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP \

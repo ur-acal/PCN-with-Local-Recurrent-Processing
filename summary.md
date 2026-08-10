@@ -11,5 +11,3 @@ This reproduction package contains two empirical Monte Carlo 45-corner studies. 
 |---|---|---:|---:|
 | `coupler_monte_v2_cifar100_qf1` | `TT_V1_T2` | 64.3680% | `SS_V0_T2`: 64.8400% |
 | `coupler_monte_v2_cifar10` | `SF_V2_T2` | 87.9760% | `SF_V1_T2`: 88.4100% |
-
-The two checkpoints were trained independently, and both are included in the package. The recorded tables were obtained with their respective original evaluation launch configurations. The provided launcher applies the same packaged hardware-evaluation configuration to both datasets, changing the model and dataset as appropriate.
