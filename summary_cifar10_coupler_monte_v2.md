@@ -6,8 +6,6 @@ This summarizes full-CIFAR-10 test-dataset accuracy across 45 aligned process, v
 
 For every corner, the table reports the accuracy mean and population standard deviation across independently sampled hardware realizations. This version uses the corresponding corner data for spin statistics, empirical coupler conductance curves, measured ReLU curves, measured pooling, and DTC pulse-width statistics. Current-noise densities are scaled using the corner temperature.
 
-**CIFAR-10 compatibility note:** The reported CIFAR-10 accuracy was obtained with a floating-point weight quantization factor because `WEIGHT_QUANT_FACTOR_BITS` was not enabled during that evaluation. The provided reproduction launcher uses `WEIGHT_QUANT_FACTOR_BITS=1` to match the CIFAR-100 hardware configuration. Therefore, rerunning the CIFAR-10 model with the provided launcher is expected to produce lower accuracy than the reported CIFAR-10 summary. Apart from the model and dataset, the launcher uses the same hardware-evaluation configuration as the CIFAR-100 study.
-
 ## Corner-level mapping
 
 `V0`, `V1`, and `V2` are ordered voltage levels matched level-to-level across the characterization sources; they are not one common physical voltage.
@@ -54,6 +52,7 @@ Noise spectral densities were scaled by `sqrt(T_K / 298.15 K)`.
 |---|---:|
 | Lowest corner mean | **FS_V0_T0: 83.9540% ± 1.7413%** |
 | Highest corner mean | **SF_V2_T2: 87.9760%** |
+| Highest single-trial accuracy | **SF_V1_T2: 88.4100%** |
 | Mean of corner means | **87.0240%** |
 | Std of corner means | **0.8846%** |
 

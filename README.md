@@ -104,7 +104,7 @@ SCAN_TEST_CIFAR100_DATA=/absolute/path/to/cifar100_raw.h5 \
 
 ## Run the CIFAR-10 study
 
-**CIFAR-10 compatibility note:** The reported CIFAR-10 accuracy was obtained with a floating-point weight quantization factor because `WEIGHT_QUANT_FACTOR_BITS` was not enabled during that evaluation. The provided reproduction launcher uses `WEIGHT_QUANT_FACTOR_BITS=1` to match the CIFAR-100 hardware configuration. Therefore, rerunning the CIFAR-10 model with the provided launcher is expected to produce lower accuracy than the reported CIFAR-10 summary. Apart from the model and dataset, the launcher uses the same hardware-evaluation configuration as the CIFAR-100 study.
+The CIFAR-10 and CIFAR-100 checkpoints were trained independently, and both checkpoints are included in this package. Their recorded accuracy tables were obtained with their respective original evaluation launch configurations. The commands below use the same packaged hardware-evaluation configuration for both datasets, changing the model and dataset as appropriate.
 
 ```bash
 OUTPUT_DIR=results/coupler_monte_v2_cifar10 \

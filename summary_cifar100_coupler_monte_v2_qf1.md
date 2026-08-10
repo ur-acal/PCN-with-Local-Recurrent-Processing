@@ -54,6 +54,7 @@ Noise spectral densities were scaled by `sqrt(T_K / 298.15 K)`.
 |---|---:|
 | Lowest corner mean | **FS_V0_T0: 59.7660% ± 1.2851%** |
 | Highest corner mean | **TT_V1_T2: 64.3680%** |
+| Highest single-trial accuracy | **SS_V0_T2: 64.8400%** |
 | Mean of corner means | **62.7817%** |
 | Std of corner means | **1.1572%** |
 
