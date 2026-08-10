@@ -21,6 +21,7 @@ from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model, replace_transpose_conv, get_test_data, test_once
 from ode_pc import make_ode_block, is_adaptive, ODEBLOCK_CLASSES, ODEWrapper_CLASSES, wrap_ode_block
 from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats_all_values_noised, MVMConv
+from measured_pooling import configure_measured_pooling
 
 
 import logging
@@ -108,6 +109,12 @@ def parse_args():
     parser.add_argument("--enob", type=lambda s: None if s.lower() in {"none", ""} else int(s),
                         default=None, help="The effective number of bits applied to the output spins.")
     parser.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
+    parser.add_argument(
+        "--weight_quant_factor_bits",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=None,
+        help="Bits used for the max-absolute weight quantization factor; "
+             "negative or none keeps floating point.")
     parser.add_argument("--tie_cap", type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
     parser.add_argument("--one_over_q", type=float, default=10, help="1/q")
     parser.add_argument("--toggle_n_cycles", type=lambda s: None if s.lower() in {"none", ""} else int(s),
@@ -161,6 +168,8 @@ def parse_args():
     parser.add_argument("--dtc_falling_edge_jitter_std", type=float, default=0.005)
     parser.add_argument("--dtc_timing_seed",
                         type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    parser.add_argument("--enable_measured_pooling",
+                        type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=False)
     parser.add_argument("--activation_mc_curve_indices", type=str, default=None)
     parser.add_argument("--full_45_corner_test",
                         type=lambda v: v.lower() in ("yes", "true", "t", "1"),
@@ -288,6 +297,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                       "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "weight_quant_factor_bits": args.weight_quant_factor_bits,
                       "enob": args.enob, "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
@@ -412,6 +422,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                       "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                       "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "weight_quant_factor_bits": args.weight_quant_factor_bits,
                       "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
@@ -624,6 +635,7 @@ def run_ode_inference():
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
                           "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "weight_quant_factor_bits": args.weight_quant_factor_bits,
                           "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
                           "nonlinear_R_mc_curve_index": None,
@@ -704,6 +716,36 @@ def run_ode_inference():
                                                       fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                                       ode_wrapper_params=trial_wrapper_params, wrappers=saved_wrappers,
                                                       **noisy_params)
+                        if args.enable_measured_pooling:
+                            pooling_seed = trial_seed
+                            if pooling_seed is None:
+                                pooling_seed = args.nonlinear_R_curve_seed
+                                if pooling_seed is not None:
+                                    pooling_seed += t
+                            pooling_curve_path = args.nonlinear_R_table
+                            pooling_curve_gaussian = None
+                            if (args.nonlinear_R_curve_sampling ==
+                                    "multivariate_gaussian"):
+                                pooling_curve_path = None
+                                pooling_curve_gaussian = next((
+                                    wrapper.nonlinear_R_curve_gaussian
+                                    for wrapper in saved_wrappers["wrappers"]
+                                    if wrapper.nonlinear_R_curve_gaussian is not None
+                                ), None)
+                                if pooling_curve_gaussian is None:
+                                    raise ValueError(
+                                        "Gaussian measured pooling requires "
+                                        "nonlinear_R Gaussian curve sampling.")
+                            configure_measured_pooling(
+                                net_, saved_wrappers["wrappers"],
+                                enable_nonideality=True,
+                                curve_path=pooling_curve_path,
+                                curve_gaussian=pooling_curve_gaussian,
+                                quantity=args.nonlinear_R_mc_quantity,
+                                curve_indices=nonlinear_R_curve_bank_indices,
+                                nominal_R=args.R, seed=pooling_seed)
+                            logging.warning(
+                                "Measured physical-domain average pooling enabled.")
                         if args.test_expanded:
                             # Use validator to expand the weights of the model
                             valid_ins = Validator(model=net_,

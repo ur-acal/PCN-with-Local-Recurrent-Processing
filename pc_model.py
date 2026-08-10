@@ -19,6 +19,7 @@ from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvReLU6Li
 from pc_conv import FFFBReLU6NoLastConv, FFFBReLU6NoLastConvNoisy, FFFBReLU6NoLastConvYasX, FFFBReLU6NoLastConvYasXNoisy
 from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
+from measured_pooling import GlobalAvgPool2d
 
 import logging
 log = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class PCNet(nn.Module):
         # Linear layer
         self.linear = nn.Linear(self.ocs[-1], num_classes)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2) if not avg_pooling else nn.AvgPool2d(kernel_size=2, stride=2)
+        self.global_avg_pool2d = GlobalAvgPool2d()
         self.relu = nn.ReLU(inplace=True)
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
@@ -67,7 +69,7 @@ class PCNet(nn.Module):
             x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
-                x = self.max_pool2d(x)
+                x = self._apply_spatial_pool(x, i)
             if clamp:
                 x = torch.clamp(x, -1, 1)
 
@@ -76,7 +78,7 @@ class PCNet(nn.Module):
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
         feat = self.relu(self.BNend(x))
-        out = F.avg_pool2d(feat, feat.size(-1))
+        out = self.global_avg_pool2d(feat)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         if is_feat:
@@ -116,8 +118,13 @@ class PCNet(nn.Module):
                 torch.save(expanded_weights_,
                            os.path.join(save_to, 'expanded_weights_layer_bp_{}.pt'.format(layer_idx + 1)))
             if self.max_pool[layer_idx]:
-                y_ = self.max_pool2d(y_)
+                y_ = self._apply_spatial_pool(y_, layer_idx)
             x_ = y_
+
+    def _apply_spatial_pool(self, x, layer_idx):
+        if getattr(self.max_pool2d, "uses_pool_id", False):
+            return self.max_pool2d(x, pool_id=layer_idx)
+        return self.max_pool2d(x)
 
     def _apply_noise(self, p):
         # Todo: How to handle the final linear layer?
@@ -208,7 +215,7 @@ class PCNetNoBatchNorm(PCNet):
         for i in range(self.num_layers):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
-                x = self.max_pool2d(x)
+                x = self._apply_spatial_pool(x, i)
             cur_max = torch.max(torch.abs(x.max()), torch.abs(x.min()))
             max_abs = torch.max(max_abs, cur_max)
         return max_abs
@@ -217,7 +224,7 @@ class PCNetNoBatchNorm(PCNet):
         for i in range(self.num_layers):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
-                x = self.max_pool2d(x)
+                x = self._apply_spatial_pool(x, i)
             if clamp:
                 x = torch.clamp(x, -1, 1)
             log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
@@ -228,7 +235,7 @@ class PCNetNoBatchNorm(PCNet):
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
         feat = F.relu(x)
-        out = F.avg_pool2d(feat, feat.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        out = self.global_avg_pool2d(feat) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         if is_feat:
@@ -254,7 +261,7 @@ class PCNetWithMiddleConv(PCNet):
             x = self.BNs[i](x)
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
-                x = self.max_pool2d(x)
+                x = self._apply_spatial_pool(x, i)
             if clamp:
                 x = torch.clamp(x, -1, 1)
 
@@ -263,7 +270,7 @@ class PCNetWithMiddleConv(PCNet):
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
         feat = self.relu(self.BNend(self.mid_convs[-1](x)))
-        out = F.avg_pool2d(feat, feat.size(-1))
+        out = self.global_avg_pool2d(feat)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         if is_feat:
@@ -324,7 +331,7 @@ class PCNetSepBN(PCNetSeparable):
         for i in range(self.num_layers):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
-                x = self.max_pool2d(x)
+                x = self._apply_spatial_pool(x, i)
             log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
                 i, x.mean(), x.median(), x.min(), x.max(), x.std()))
             x = self.BNs[i](x)
@@ -333,7 +340,7 @@ class PCNetSepBN(PCNetSeparable):
         if self.dropout > 0.0:
             x = F.dropout(input=x, p=self.dropout, training=self.training)
         feat = F.relu(x)
-        out = F.avg_pool2d(feat, feat.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        out = self.global_avg_pool2d(feat) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         if is_feat:
@@ -351,7 +358,7 @@ class PCNetSepBNRes(PCNetSepBN):
             inp = x.clone()
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
-                x = self.max_pool2d(x)
+                x = self._apply_spatial_pool(x, i)
             log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
                 i, x.mean(), x.median(), x.min(), x.max(), x.std()))
             x = self.BNs[i](x) + inp
@@ -360,7 +367,7 @@ class PCNetSepBNRes(PCNetSepBN):
         if self.dropout > 0.0:
             x = F.dropout(input=x, p=self.dropout, training=self.training)
         feat = F.relu(x)
-        out = F.avg_pool2d(feat, feat.size(-1)) # Here inplace ReLU can't be used. Will throw error.
+        out = self.global_avg_pool2d(feat) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         if is_feat:

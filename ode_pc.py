@@ -31,10 +31,23 @@ import logging
 log = logging.getLogger(__name__)
 
 
-def _symmetric_qat_weight_scale(layer_weight):
+def _symmetric_qat_weight_scale(layer_weight, weight_quant_factor_bits=None):
     """Return the detached s_w used by SymQuantizeWeight.compute_s()."""
     with torch.no_grad():
-        return 1 / layer_weight.detach().abs().max()
+        abs_max = layer_weight.detach().abs().max()
+        if weight_quant_factor_bits is None or int(weight_quant_factor_bits) < 0:
+            return 1 / abs_max
+
+        num_levels = 1 << int(weight_quant_factor_bits)
+        scaled_abs_max = abs_max * num_levels
+        nearest_level = scaled_abs_max.round()
+        scaled_abs_max = torch.where(
+            torch.isclose(
+                scaled_abs_max, nearest_level, rtol=1e-4, atol=1e-7),
+            nearest_level, scaled_abs_max)
+        quantized_abs_max = torch.ceil(scaled_abs_max)
+        quantized_abs_max.clamp_(min=1, max=num_levels).div_(num_levels)
+        return 1 / quantized_abs_max
 
 
 def is_adaptive(method):
@@ -2707,6 +2720,8 @@ class QuantizationImpl(torch.autograd.Function):
 class SymQuantizeWeight(nn.Module):
     def __init__(self, w_bits=8, w_scalar=1.0, **kwargs):
         super().__init__()
+        self.weight_quant_factor_bits = kwargs.get(
+            "weight_quant_factor_bits", None)
         self.register_buffer("w_bits", torch.tensor(w_bits))
         self.register_buffer("upper", torch.tensor((1 << (w_bits - 1)) - 1))
         self.register_buffer("lower", -self.upper)
@@ -2717,7 +2732,8 @@ class SymQuantizeWeight(nn.Module):
         return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper, self.w_scalar)
 
     def compute_s(self, layer_weight: nn.Parameter):
-        self.s_w.copy_(_symmetric_qat_weight_scale(layer_weight))
+        self.s_w.copy_(_symmetric_qat_weight_scale(
+            layer_weight, self.weight_quant_factor_bits))
 
 
 class PulseQuantizationImpl(torch.autograd.Function):
@@ -2923,6 +2939,8 @@ class WrapQuantizeW(ODEWrapperRC):
         self.nonlinear_R_curve_gaussian = None
         self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
         self.mul_mismatch_mode = kwargs.pop("mul_mismatch_mode", "scale_mismatch")
+        self.weight_quant_factor_bits = kwargs.pop(
+            "weight_quant_factor_bits", None)
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
 
         self.enable_measured_activation = kwargs.pop("enable_measured_activation", False)
@@ -2997,22 +3015,27 @@ class WrapQuantizeW(ODEWrapperRC):
             self.ode_block.add_noise()
 
     @staticmethod
-    def cal_quant_factor_and_set(q_hi, p: nn.Parameter):
+    def cal_quant_factor_and_set(
+            q_hi, p: nn.Parameter, weight_quant_factor_bits=None):
         with torch.no_grad():
-            abs_max = p.data.abs().max()
-            # -2 ** n is not used for symmetry
-            s = q_hi / abs_max
-            torch.clamp((s * p).round(), min=-q_hi, max=q_hi, out=p)
+            s = _symmetric_qat_weight_scale(
+                p, weight_quant_factor_bits)
+            torch.clamp((s * q_hi * p).round(),
+                        min=-q_hi, max=q_hi, out=p)
             p.div_(q_hi)
-            return s / q_hi
+            return s
 
     def get_quantize_factor(self):
         # calculate quantization coefficient
         # the clean_params of the ode_block is set to the quantized weight in-place
         self.register_buffer(
-            "s_ff", self.cal_quant_factor_and_set(self.q_hi, self.ode_block.clean_params["FFconv"]))
+            "s_ff", self.cal_quant_factor_and_set(
+                self.q_hi, self.ode_block.clean_params["FFconv"],
+                self.weight_quant_factor_bits))
         self.register_buffer(
-            "s_fb", self.cal_quant_factor_and_set(self.q_hi, self.ode_block.clean_params["FBconv"]))
+            "s_fb", self.cal_quant_factor_and_set(
+                self.q_hi, self.ode_block.clean_params["FBconv"],
+                self.weight_quant_factor_bits))
         if not torch.allclose(torch.zeros_like(self.ode_block.b0[0]), self.ode_block.clean_params["b0"]):
             with torch.no_grad():
                 ff_weight = self.ode_block.clean_params["FFconv"].data

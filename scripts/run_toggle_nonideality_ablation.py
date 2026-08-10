@@ -107,6 +107,10 @@ def parse_args():
         type=lambda v: v.lower() in ("yes", "true", "t", "1"),
         default=True)
     parser.add_argument(
+        "--full_45_corner_enable_measured_pooling",
+        type=lambda v: v.lower() in ("yes", "true", "t", "1"),
+        default=False)
+    parser.add_argument(
         "--full_45_corner_enable_nonlinear_R",
         type=lambda v: v.lower() in ("yes", "true", "t", "1"),
         default=True)
@@ -151,6 +155,14 @@ def parse_args():
     parser.add_argument("--toggle_level", type=int, choices=(2, 3), default=3)
     parser.add_argument("--odexinit_scaling_mode",
                         choices=("approx", "direct"), default="approx")
+    parser.add_argument(
+        "--weight_quant_factor_bits",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=None)
+    parser.add_argument(
+        "--enob",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=8)
     parser.add_argument("--summing_current_p", type=float, default=18.5e-12)
     parser.add_argument("--coupler_noise_p", type=float, default=0.6e-12)
     parser.add_argument("--nonlinear_R_table", default=None)
@@ -235,8 +247,11 @@ def build_command(args, case_name):
         "--C", str(args.C),
         "--k", str(args.k),
         "--v_dd", str(args.v_dd),
-        "--enob", "8",
+        "--enob", "none" if args.enob is None else str(args.enob),
         "--w_bits", "5",
+        "--weight_quant_factor_bits",
+        "none" if args.weight_quant_factor_bits is None
+        else str(args.weight_quant_factor_bits),
         "--patch_node", "8",
         "--patch_stride", "8",
         "--patch_cycle", "1",
@@ -275,6 +290,7 @@ def build_command(args, case_name):
         "--activation_normalize_positive_endpoint",
         bool_arg(args.activation_normalize_positive_endpoint),
         "--compile_measured_activation", bool_arg(args.compile_measured_activation),
+        "--enable_measured_pooling", "false",
         "--enable_summing_current_noise", bool_arg(enabled.get("current_noise", False)),
         "--summing_current_p", str(args.summing_current_p),
         "--summing_noise_seed", str(args.base_seed),
@@ -393,6 +409,9 @@ def build_corner_command(args, corner, corner_index):
         command, "--enable_measured_activation",
         bool_arg(args.full_45_corner_enable_measured_activation))
     _set_command_arg(
+        command, "--enable_measured_pooling",
+        bool_arg(args.full_45_corner_enable_measured_pooling))
+    _set_command_arg(
         command, "--enable_coupler_noise",
         bool_arg(args.full_45_corner_enable_coupler_noise))
     _set_command_arg(command, "--coupler_noise_p", trial_config["coupler_noise_p"])
@@ -469,14 +488,31 @@ def write_corner_outputs(results, output_dir):
     by_corner = {}
     for row in results:
         by_corner.setdefault(row["corner"], []).append(row["accuracy"])
+    corner_stats = {
+        corner: (statistics.mean(values), statistics.pstdev(values))
+        for corner, values in by_corner.items()
+    }
+    lowest_corner = min(corner_stats, key=lambda corner: corner_stats[corner][0])
+    corner_means = [values[0] for values in corner_stats.values()]
     lines = [
-        "| Corner | Per-trial accuracy (%) | Mean (%) | Std (%) |",
-        "|---|---:|---:|---:|",
+        "| Aggregate | Result |",
+        "|---|---:|",
+        "| Mean of corner means | {:.4f}% |".format(
+            statistics.mean(corner_means)),
+        "| Std of corner means | {:.4f}% |".format(
+            statistics.pstdev(corner_means)),
+        "| Lowest corner | {} |".format(lowest_corner),
+        "| Lowest-corner mean | {:.4f}% |".format(
+            corner_stats[lowest_corner][0]),
+        "| Lowest-corner std | {:.4f}% |".format(
+            corner_stats[lowest_corner][1]),
+        "",
+        "| Corner | Mean (%) | Std (%) |",
+        "|---|---:|---:|",
     ]
-    for corner, values in by_corner.items():
-        lines.append("| {} | {} | {:.4f} | {:.4f} |".format(
-            corner, ", ".join("{:.4f}".format(value) for value in values),
-            statistics.mean(values), statistics.pstdev(values)))
+    for corner, (mean, std) in corner_stats.items():
+        lines.append("| {} | {:.4f} | {:.4f} |".format(
+            corner, mean, std))
     summary_path = output_dir / "summary.md"
     summary_path.write_text("\n".join(lines) + "\n")
     print("\n" + summary_path.read_text(), flush=True)
