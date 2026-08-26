@@ -24,10 +24,63 @@ from measured_activation import (
     CubicBSplineActivation, MeasuredPiecewiseLinearReLU6Activation,
     MeasuredReLU6Activation, PiecewiseLinearActivation,
     configure_measured_activation_corner_mode)
+from measured_pooling import configure_measured_pooling
+from input_preprocessing import (
+    append_preprocessing_suffix, resolve_preprocessing, write_run_config)
 
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
+
+
+def scale_train_recipe_value(v):
+    """Parse the disabled/Boolean/numerical scale-train-recipe forms."""
+    if v is None:
+        return 0.0
+    if isinstance(v, bool):
+        return float(v)
+    text = str(v).strip().lower()
+    if text in ("", "none", "false", "f", "no", "n", "off", "0"):
+        return 0.0
+    if text in ("true", "t", "yes", "y", "on"):
+        return 1.0
+    try:
+        factor = float(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "scale_train_recipe must be false/none/0, true, or a "
+            "nonnegative numerical factor.") from exc
+    if not np.isfinite(factor) or factor < 0:
+        raise argparse.ArgumentTypeError(
+            "scale_train_recipe must be a finite nonnegative factor.")
+    return factor
+
+
+def fixed_timing_recipe_scales(args):
+    """Return fixed-timing dynamics relative to current derived pretraining."""
+    if args.toggle_timing_mode != "fixed":
+        return 1.0, 1.0
+    n_cycles = (
+        int(args.toggle_n_cycles) if args.toggle_n_cycles is not None
+        else int(args.n_steps))
+    reference_cycle_t = float(args.t_end) / float(n_cycles)
+    reference_rc = float(args.R) * float(args.C)
+    fb_scale = (float(args.toggle_y_time) *
+                float(args.z_over_y_time)) / reference_rc
+    ff_scale = float(args.toggle_y_time) / (reference_rc * reference_cycle_t)
+    return ff_scale, fb_scale
+
+
+def scale_toggle_initial_weights(model, ff_scale, fb_scale):
+    """Match the derived-timing initial function under fixed-time dynamics."""
+    with torch.no_grad():
+        for block in model.PcConvs:
+            block.FFconv.weight.div_(ff_scale)
+            block.FBconv.weight.div_(fb_scale)
+            if block.FFconv.bias is not None:
+                block.FFconv.bias.div_(ff_scale)
+            if block.FBconv.bias is not None:
+                block.FBconv.bias.div_(fb_scale)
 
 
 def configure_unitless_measured_activation(model, curve_path, corner,
@@ -74,12 +127,24 @@ def get_args():
              "from --save_path.")
     p.add_argument("--skip_eval_epochs", type=int, default=0)
     p.add_argument("--img_type", type=str, default="rgb")
+    p.add_argument(
+        "--input_quant_bits",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=None,
+        help="Uniform input quantization bits; inferred from _iqN run directories when omitted.")
+    p.add_argument(
+        "--center_student_input", type=str2bool, default=None,
+        help="Apply 2*x-1 to the student input; inferred from _ctr run directories when omitted.")
     p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
     p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--timm_trainer", type=str2bool, default=False)
     p.add_argument("--timm_aug_level", type=str,
                    default="none", choices=["no_aug", "mild", "mid", "none", ""],
                    help="Passing none and empty string means using default timm aug.")
+    p.add_argument(
+        "--timm_re_prob", type=float, default=0.0,
+        help="Override only the timm Random Erasing probability (0 disables it). "
+             "Random Erasing is disabled by default for PCN training.")
     p.add_argument("--timm_sched", type=str, default="multistep", choices=["multistep", "cosine"])
     p.add_argument("--batch_size",    type=int,   default=512)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
@@ -145,6 +210,12 @@ def get_args():
     p.add_argument("--enob", type=lambda s: None if s.lower() in {"none", ""} else int(s),
                    default=None, help="The effective number of bits applied to the output spins.")
     p.add_argument("--w_bits", type=int, default=8, help="weight quantized bits")
+    p.add_argument(
+        "--weight_quant_factor_bits",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=None,
+        help="Bits used for the max-absolute weight quantization factor; "
+             "negative or none keeps floating point.")
     p.add_argument("--tie_cap", type=str2bool, default=False)
     p.add_argument("--one_over_q", type=float, default=10, help="1/q")
     p.add_argument("--toggle_n_cycles", type=lambda s: None if s.lower() in {"none", ""} else int(s),
@@ -153,6 +224,18 @@ def get_args():
                    help="Fraction of each t_end/N_cycles toggle cycle used by the z-stage.")
     p.add_argument("--toggle_fast_path", type=str2bool, default=True,
                    help="Use direct constant-RHS updates inside Level 3 pulse slices.")
+    p.add_argument("--toggle_timing_mode", choices=("derived", "fixed"),
+                   default="derived",
+                   help="Keep existing derived timing or use fixed physical base times.")
+    p.add_argument("--toggle_y_time", type=float, default=5e-9,
+                   help="Base y-stage time in seconds for fixed toggle timing.")
+    p.add_argument("--z_over_y_time", type=float, default=3.0,
+                   help="Fixed-mode ratio T_z / T_y.")
+    p.add_argument("--scale_train_recipe", type=scale_train_recipe_value,
+                   default=0.0,
+                   help="Rescale FF/FB initialization, learning rates, and weight decay "
+                        "to compensate fixed-timing dynamics, optionally multiplying "
+                        "the timing-derived recipe scales by a numerical factor.")
     p.add_argument("--odexinit_scaling_mode", choices=("approx", "direct"),
                    default="approx",
                    help="Use legacy k-based or direct RC ODEXInit toggle timing.")
@@ -177,9 +260,17 @@ def get_args():
     p.add_argument("--coupler_noise_p", type=float, default=0.6e-12)
     p.add_argument("--coupler_noise_seed",
                    type=lambda s: None if s.lower() in {"none", ""} else int(s), default=None)
+    p.add_argument("--enable_slow_summing_current", type=str2bool, default=False)
+    p.add_argument("--slow_summing_current", type=float, default=2.47e-9)
+    p.add_argument("--enable_slow_coupler_noise", type=str2bool, default=False)
+    p.add_argument("--slow_coupler_noise", type=float, default=2.47e-9)
     p.add_argument("--enable_measured_activation", type=str2bool, default=False,
                    help="Use the ReLU6-scale measured curve when unwrapped and the "
                         "runtime-v_dd measured curve when wrapped.")
+    p.add_argument(
+        "--enable_measured_pooling", type=str2bool, default=False,
+        help="Use measured conductance curves for intermediate and global "
+             "average pooling during wrapped fine-tuning and evaluation.")
     p.add_argument(
         "--activation_curve_path", type=str,
         default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -200,6 +291,37 @@ def get_args():
                    choices=["none", "nonnegative", "auto"], default="auto")
     p.add_argument("--activation_normalize_positive_endpoint", type=str2bool, default=False,
                    help="Scale the entire fitted curve so its positive endpoint reaches full scale.")
+    p.add_argument("--nonlinear_R", type=str2bool, default=False)
+    p.add_argument(
+        "--nonlinear_R_table", type=str,
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "hardware_data", "mc_45_corners",
+                             "coupler_monte"))
+    p.add_argument(
+        "--nonlinear_R_mc_quantity", choices=("conductance", "resistance"),
+        default="conductance")
+    p.add_argument(
+        "--nonlinear_R_curve_sharing", choices=("shared", "per_coupler",
+                                                "per_input", "per_input_output"),
+        default="shared")
+    p.add_argument(
+        "--nonlinear_R_curve_seed",
+        type=lambda s: None if s.lower() in {"none", ""} else int(s),
+        default=None)
+    p.add_argument(
+        "--train_conv_expanded", type=str2bool, default=False,
+        help="Train through spatially expanded convolution matrices. This is "
+             "currently reserved for the nonlinear-R training implementation.")
+    p.add_argument(
+        "--nonlinear_R_train_mode", type=str,
+        choices=["none", "exact_curve", "mean"], default="none",
+        help="Training-time nonlinear-R curve sampling: one raw Monte Carlo "
+             "curve or one per-corner mean curve per convolution and forward. 'none' "
+             "preserves the existing training behavior.")
+    p.add_argument(
+        "--nonlinear_R_corner_range", type=str, default="all",
+        help="Comma-separated MC45 corner IDs used for nonlinear-R training, "
+             "or 'all'. Empty/'none' also mean all corners.")
     # Noise-inject training related args
     p.add_argument('--noise_level', default=None, type=float,
                         help='noise level in noise inject training. None means normal training without noise injection')
@@ -224,6 +346,14 @@ def get_args():
                    help="Spatial size for teacher inputs (resize + optional center crop).")
     p.add_argument("--teacher_center_crop", type=str2bool, default=True,
                    help="Whether to center crop teacher inputs after resizing.")
+    p.add_argument(
+        "--adapt_PIL_teacher", "--adapt_pil_teacher",
+        dest="adapt_PIL_teacher", type=str2bool, default=False,
+        help=(
+            "Reproduce the legacy PIL/8-bit teacher preprocessing during distillation. "
+            "Use for teachers trained by old run_teacher with match_distill_preprocess=false."
+        ),
+    )
     p.add_argument(
         "--distill_method",
         type=str,
@@ -251,6 +381,16 @@ def get_args():
                    help="Weight assigned to the teacher KL loss term.")
     p.add_argument("--distill_temperature", type=float, default=1.0,
                    help="Temperature used in distillation soft targets.")
+    p.add_argument(
+        "--srrl_weight", "--srrl_beta", dest="srrl_weight", type=float, default=1.0,
+        help="Fixed outer weight applied to the complete SRRL objective.",
+    )
+    p.add_argument("--reviewkd_weight", type=float, default=1.0,
+                   help="Weight applied to the ReviewKD HCL objective.")
+    p.add_argument("--reviewkd_warmup_epochs", type=float, default=20.0,
+                   help="Linear warmup epochs for the ReviewKD loss weight.")
+    p.add_argument("--reviewkd_num_stages", type=int, default=4,
+                   help="Number of deepest ReviewKD feature matches, including the pooled feature.")
     p.add_argument("--crd_feat_dim", type=int, default=128, help="Projection dimension for CRD.")
     p.add_argument("--crd_k", type=int, default=16384, help="Number of negatives in the CRD memory bank.")
     p.add_argument("--crd_temperature", type=float, default=0.07, help="Temperature for CRD logits.")
@@ -303,8 +443,7 @@ def evaluate_teacher(model: torch.nn.Module, trainer: TrainerCiFar) -> float:
                 inputs, labels = batch
             inputs = inputs.to(device)
             labels = labels.to(device)
-            inputs = trainer._prepare_teacher_inputs(inputs)
-            outputs = model(inputs)
+            outputs, _ = trainer.teacher_forward_for_distillation(inputs)
             _, predicted = torch.max(outputs, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
@@ -399,6 +538,9 @@ def _constr_model_name(args, rep=1):
             ft_prefix += "NT{}{}".format(str(args.noise_level).replace('.', 'p'), args.noise_type)
         if args.model_name is not None:
             source_model_name = args.model_name
+            if args.img_type == "CiFAIR":
+                source_model_name = source_model_name.replace(
+                    "scanGFI", "CiFAIR")
             if source_model_name.startswith("TIMMQAT"):
                 nested_timm = source_model_name.find("TIMM", len("TIMM"))
                 if nested_timm >= 0:
@@ -605,6 +747,42 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
+    inference_path = args.save_path if args.model_name is not None else ""
+    args.input_quant_bits, args.center_student_input = resolve_preprocessing(
+        inference_path, args.input_quant_bits, args.center_student_input)
+    output_root = args.output_save_path or args.save_path
+    output_root = append_preprocessing_suffix(
+        output_root, args.input_quant_bits, args.center_student_input)
+    args.output_save_path = output_root
+    write_run_config(
+        output_root, args.input_quant_bits, args.center_student_input)
+    logging.warning(
+        "Input preprocessing: quant_bits=%s, center_student=%s; run_config=%s",
+        args.input_quant_bits, args.center_student_input,
+        os.path.join(output_root, "run_config.json"))
+    if args.img_type.lower() == "cifair":
+        args.img_type = "CiFAIR"
+    elif args.img_type.lower() == "scangfi":
+        args.img_type = "scanGFI"
+    if args.nonlinear_R_corner_range.strip().lower() in {"", "none"}:
+        args.nonlinear_R_corner_range = "all"
+
+    # TODO: Expanded training needs a differentiable edge-to-kernel mapping so
+    # duplicated physical couplers read the original convolution parameters
+    # instead of becoming independent trainable matrix entries.
+    if args.train_conv_expanded:
+        raise NotImplementedError(
+            "--train_conv_expanded is not implemented. Current convolution "
+            "unrolling detaches and copies kernel weights for inference, so it "
+            "cannot preserve shared convolution-weight gradients during training.")
+
+    if args.nonlinear_R_train_mode != "none":
+        args.nonlinear_R = True
+        if args.nonlinear_R_curve_sharing != "shared":
+            raise ValueError(
+                "Non-expanded Level-2 nonlinear-R training requires "
+                "--nonlinear_R_curve_sharing shared.")
+
     if args.dataset == "cifar100" and args.num_classes == 10:
         logging.warning("Overriding num_classes to 100 for CIFAR-100.")
         args.num_classes = 100
@@ -707,15 +885,50 @@ def main():
     ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "patch_node", "patch_stride",
                           "patch_cycle", "patch_pad", "fold_scalar", "n_iters",
                           "toggle_n_cycles", "toggle_time_split", "toggle_fast_path",
+                          "toggle_timing_mode", "toggle_y_time", "z_over_y_time",
                           "odexinit_scaling_mode",
                           "enable_spin_variation", "sigma_spin", "spin_variation_seed",
                           "enable_summing_current_noise", "summing_current_p",
                           "summing_noise_seed", "enable_coupler_noise",
-                          "coupler_noise_p", "coupler_noise_seed"], {}
+                          "coupler_noise_p", "coupler_noise_seed",
+                          "enable_slow_summing_current", "slow_summing_current",
+                          "enable_slow_coupler_noise", "slow_coupler_noise"], {}
     for _name, _val in vars(args).items():
         if _name in ode_kw and _val is not None:
             ode_kwargs[_name] = _val
     ode_block = ODEBLOCK_CLASSES[args.ode_block]
+    ff_train_scale, fb_train_scale = fixed_timing_recipe_scales(args)
+    if args.toggle_timing_mode == "fixed":
+        if ode_block is not ODEBLOCK_CLASSES["ToggleODEXInitFFFB"]:
+            raise ValueError(
+                "--toggle_timing_mode fixed requires "
+                "--ode_block ToggleODEXInitFFFB.")
+        ode_kwargs.update(
+            toggle_timing_R=args.R, toggle_timing_C=args.C)
+        logging.warning(
+            "Fixed toggle timing: T_y=%g s, T_z=%g s, R=%g ohm, C=%g F; "
+            "relative FF/FB dynamics scales=%g/%g",
+            args.toggle_y_time, args.toggle_y_time * args.z_over_y_time,
+            args.R, args.C, ff_train_scale, fb_train_scale)
+    elif args.scale_train_recipe:
+        raise ValueError(
+            "--scale_train_recipe requires --toggle_timing_mode fixed.")
+
+    if args.scale_train_recipe:
+        ff_train_scale *= args.scale_train_recipe
+        fb_train_scale *= args.scale_train_recipe
+        logging.warning(
+            "Scale-train-recipe factor=%g; effective FF/FB scales=%g/%g.",
+            args.scale_train_recipe, ff_train_scale, fb_train_scale)
+        if args.model_name is None:
+            scale_toggle_initial_weights(model, ff_train_scale, fb_train_scale)
+            logging.warning(
+                "Scaled initial FF/FB weights by %g/%g.",
+                1.0 / ff_train_scale, 1.0 / fb_train_scale)
+        else:
+            logging.warning(
+                "Loaded checkpoint is assumed to already use the scaled "
+                "fixed-timing initialization; weights were not rescaled again.")
     if args.unitless_measured_pullback_mode != "none":
         if ode_block is not ODEBLOCK_CLASSES["ToggleODEXInitFFFB"]:
             raise ValueError(
@@ -784,12 +997,21 @@ def main():
         model.train()
 
     # wrap blocks for QAT
+    wrappers = []
     if args.ode_wrapper is not None:
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": None,
                           "R": args.R, "R_max": args.R_max, "C": args.C, "k": args.k,
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
+                          "weight_quant_factor_bits": args.weight_quant_factor_bits,
                           "enob": args.enob, "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                          "nonlinear_R": args.nonlinear_R,
+                          "nonlinear_R_table": args.nonlinear_R_table,
+                          "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
+                          "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
+                          "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
+                          "nonlinear_R_train_mode": args.nonlinear_R_train_mode,
+                          "nonlinear_R_corner_range": args.nonlinear_R_corner_range,
                           "enable_measured_activation": args.enable_measured_activation,
                           "activation_curve_path": args.activation_curve_path,
                           "activation_corner": args.activation_corner,
@@ -798,8 +1020,28 @@ def main():
                           "activation_fit_constraint": args.activation_fit_constraint,
                           "activation_normalize_positive_endpoint":
                               args.activation_normalize_positive_endpoint}
-        model, _ = wrap_ode_block(model, **wrapper_params)
+        model, wrappers = wrap_ode_block(model, **wrapper_params)
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
+
+    if args.enable_measured_pooling:
+        if not wrappers:
+            raise ValueError(
+                "Measured pooling training requires a wrapped ODE model.")
+        configure_measured_pooling(
+            model, wrappers, enable_nonideality=True,
+            curve_path=args.nonlinear_R_table,
+            quantity=args.nonlinear_R_mc_quantity,
+            nominal_R=args.R,
+            seed=args.nonlinear_R_curve_seed,
+            training_curve_mode=(
+                args.nonlinear_R_train_mode
+                if args.nonlinear_R_train_mode != "none"
+                else "exact_curve"),
+            corner_range=args.nonlinear_R_corner_range)
+        logging.warning(
+            "Measured average-pooling training enabled: table=%s, "
+            "quantity=%s, nominal_R=%s",
+            args.nonlinear_R_table, args.nonlinear_R_mc_quantity, args.R)
 
     if (args.activation_corner_mode == "random_per_forward" and
             args.enable_measured_activation):
@@ -854,6 +1096,11 @@ def main():
         elif args.timm_aug_level == "mid":
             cfg.update(RGGB_MID_AUG)
 
+        if args.timm_re_prob is not None:
+            if not 0.0 <= args.timm_re_prob <= 1.0:
+                raise ValueError("--timm_re_prob must be between 0 and 1")
+            cfg["re_prob"] = args.timm_re_prob
+
         trainer_kwargs = dict(
             # Parent TrainerCiFar args.
             model=model,
@@ -882,6 +1129,9 @@ def main():
             orig_t_inp=args.orig_t_inp,
             teacher_input_size=args.teacher_input_size,
             teacher_center_crop=args.teacher_center_crop,
+            adapt_PIL_teacher=args.adapt_PIL_teacher,
+            input_quant_bits=args.input_quant_bits,
+            center_student_input=args.center_student_input,
 
             # TrainerCiFarTimmStyle-specific args.
             timm_opt=cfg["timm_opt"],
@@ -917,7 +1167,20 @@ def main():
             noise_level=args.noise_level,
             noise_type=args.noise_type,
             pulse_mismatch_training_mode=args.pulse_mismatch_training_mode,
+            scale_train_recipe=args.scale_train_recipe,
+            ff_train_scale=ff_train_scale,
+            fb_train_scale=fb_train_scale,
         )
+        if timm_trainer_cls is TrainerCiFarTimmStyleReviewKD:
+            trainer_kwargs.update(
+                reviewkd_weight=args.reviewkd_weight,
+                reviewkd_warmup_epochs=args.reviewkd_warmup_epochs,
+                reviewkd_num_stages=args.reviewkd_num_stages,
+            )
+        elif timm_trainer_cls is TrainerCiFarTimmStyleSRRL:
+            if args.srrl_weight < 0.0:
+                raise ValueError("--srrl_weight must be non-negative")
+            trainer_kwargs.update(srrl_beta=args.srrl_weight)
         trainer = timm_trainer_cls(**trainer_kwargs)
         if args.model_name is not None and hasattr(trainer, "load_feature_kd_from_ckpt"):
             # Make sure the original model's distillation method matches the distillation method used now.
@@ -947,6 +1210,9 @@ def main():
             noise_level   = args.noise_level,
             noise_type    = args.noise_type,
             pulse_mismatch_training_mode = args.pulse_mismatch_training_mode,
+            scale_train_recipe = args.scale_train_recipe,
+            ff_train_scale = ff_train_scale,
+            fb_train_scale = fb_train_scale,
             contrast_method = args.contrast_method,
             neg_sample    = args.neg_sample,
             orig_t_inp    = args.orig_t_inp,
@@ -961,6 +1227,9 @@ def main():
             teacher_model = teacher_model,
             teacher_input_size = args.teacher_input_size,
             teacher_center_crop = args.teacher_center_crop,
+            adapt_PIL_teacher = args.adapt_PIL_teacher,
+            input_quant_bits = args.input_quant_bits,
+            center_student_input = args.center_student_input,
             skip_eval_epochs=args.skip_eval_epochs if (not args.test_only and args.cosine_t0 is None) else 0,
         )
 

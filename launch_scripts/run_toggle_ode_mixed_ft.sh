@@ -5,8 +5,13 @@
 # sbatch -N 1 --export=ALL,TIMM_AUG_LEVEL=no_aug,ENOB=6,SWITCH_INF=false ./launch_scripts/run_slurm_ode_mixed_ft.sh
 #######################################################
 
+R_VAL="${R_VAL:-67e3}"
+R_MAX="${R_MAX:-none}"
+C_VAL="${C_VAL:-282e-15}"
+MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.0}"
+
 declare -A NOISE_LEVELS=(
-  [mul]="0.25"
+  [mul]="${MISMATCH_LEVEL}"
   [add]="0.05 0.08 0.1 0.15 0.2"
 )
 NOISE_TYPES=(
@@ -14,8 +19,9 @@ NOISE_TYPES=(
 #  "add"
 )
 NBITS=(5)
-R_MAX_LIST=("")
-ONE_OVER_Q_LIST=("1")
+R_MAX_LIST=("${R_MAX}")
+TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
+ONE_OVER_Q_LIST=("${TOGGLE_ONE_OVER_Q}")
 EXP="${EXP_OVERRIDE:-NODE_0602_QAT_with_noise_inject_kd_crd_training_C100}"
 LOGDIR="./logs/${EXP}"
 mkdir -p "${LOGDIR}"
@@ -23,13 +29,56 @@ MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXI
 #MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP}"
 #MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
 
+if [[ -z "${IMG_TYPE:-}" ]]; then
+  if [[ "${MODEL_NAME,,}" == *cifair* ]]; then
+    IMG_TYPE="CiFAIR"
+  else
+    IMG_TYPE="scanGFI"
+  fi
+fi
+case "${IMG_TYPE,,}" in
+  cifair) IMG_TYPE="CiFAIR" ;;
+  scangfi|raw|_raw) IMG_TYPE="scanGFI" ;;
+esac
+
 SWITCH_INF=${SWITCH_INF:-false} # Change depending on model name; true if using Euler solver.
 TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
 ENOB="${ENOB:-8}"
 K_VAL="${K_VAL:-1e3}"
+MODEL_DIR="${MODEL_DIR:-./saved_ckpt}"
+INPUT_PREPROCESS_ARGS=()
+if [[ -n "${INPUT_QUANT_BITS+x}" ]]; then
+  INPUT_PREPROCESS_ARGS+=(--input_quant_bits "${INPUT_QUANT_BITS}")
+fi
+if [[ -n "${CENTER_STUDENT_INPUT+x}" ]]; then
+  INPUT_PREPROCESS_ARGS+=(--center_student_input "${CENTER_STUDENT_INPUT}")
+fi
+PCN="${PCN:-PCNetNoBatchNorm}"
+WARMUP_FT="${WARMUP_FT:-0}"
+FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
+FT_NUM_EPOCHS="${FT_NUM_EPOCHS:-${NUM_EPOCHS:-140}}"
+MEM_FRAC="${MEM_FRAC:-0.9}"
+DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
+SRRL_WEIGHT="${SRRL_WEIGHT:-1.0}"
+SRRL_ARGS=(--srrl_weight "${SRRL_WEIGHT}")
+TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
+TIMM_RE_ARGS=(--timm_re_prob "${TIMM_RE_PROB}")
+REVIEWKD_WEIGHT="${REVIEWKD_WEIGHT:-1.0}"
+REVIEWKD_WARMUP_EPOCHS="${REVIEWKD_WARMUP_EPOCHS:-20}"
+REVIEWKD_NUM_STAGES="${REVIEWKD_NUM_STAGES:-4}"
+REVIEWKD_ARGS=(
+  --reviewkd_weight "${REVIEWKD_WEIGHT}"
+  --reviewkd_warmup_epochs "${REVIEWKD_WARMUP_EPOCHS}"
+  --reviewkd_num_stages "${REVIEWKD_NUM_STAGES}"
+)
 PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitude}"
+WEIGHT_QUANT_FACTOR_BITS="${WEIGHT_QUANT_FACTOR_BITS:-none}"
 # This controls if we are using different measure activation curves per forward pass in training.
 ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
+ENABLE_MEASURED_POOLING="${ENABLE_MEASURED_POOLING:-false}"
+NONLINEAR_R_TABLE="${NONLINEAR_R_TABLE:-coupler_monte}"
+NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-exact_curve}"
+ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
 if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
 else
@@ -38,21 +87,55 @@ fi
 VARIATION_AWARE_ARGS=(
   --enable_spin_variation "${ENABLE_SPIN_VARIATION:-true}"
   --sigma_spin "${SIGMA_SPIN:-0.10}"
-  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE:-false}"
-  --summing_current_p "${SUMMING_CURRENT_P:-18.5e-12}"
+  --enable_summing_current_noise "${ENABLE_SUMMING_CURRENT_NOISE:-true}"
+  --summing_current_p "${SUMMING_CURRENT_P:-0.6e-12}"
   --enable_coupler_noise "${ENABLE_COUPLER_NOISE:-true}"
   --coupler_noise_p "${COUPLER_NOISE_P:-0.6e-12}"
+  --enable_slow_summing_current "${ENABLE_SLOW_SUMMING_CURRENT:-false}"
+  --slow_summing_current "${SLOW_SUMMING_CURRENT:-2.47e-9}"
+  --enable_slow_coupler_noise "${ENABLE_SLOW_COUPLER_NOISE:-false}"
+  --slow_coupler_noise "${SLOW_COUPLER_NOISE:-2.47e-9}"
+)
+if [[ "${NONLINEAR_R_TRAIN_MODE:-none}" != "none" ]]; then
+  ENABLE_NONLINEAR_R=true
+fi
+NONLINEAR_R_TRAIN_ARGS=(
+  --nonlinear_R "${ENABLE_NONLINEAR_R:-false}"
+  --nonlinear_R_table "./hardware_data/mc_45_corners/${NONLINEAR_R_TABLE}"
+  --nonlinear_R_mc_quantity "${NONLINEAR_R_MC_QUANTITY:-conductance}"
+  --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING:-shared}"
+  --nonlinear_R_curve_seed "${NONLINEAR_R_CURVE_SEED:-none}"
+  --train_conv_expanded "${TRAIN_CONV_EXPANDED:-false}"
+  --nonlinear_R_train_mode "${NONLINEAR_R_TRAIN_MODE:-none}"
+  --nonlinear_R_corner_range "${NONLINEAR_R_CORNER_RANGE:-all}"
 )
 ODE_BLOCK_OVERRIDE="${ODE_BLOCK_OVERRIDE:-ToggleODEXInitFFFB}"
 # This controls the scaling for the toggle class. approximating the old 1state or directly scale.
 ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-direct}" # "approx", "direct"
-TOGGLE_ARGS=(--odexinit_scaling_mode "${ODEXINIT_SCALING_MODE}")
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
+TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
+TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
+TOGGLE_TIMING_MODE="${TOGGLE_TIMING_MODE:-derived}"
+TOGGLE_Y_TIME="${TOGGLE_Y_TIME:-5e-9}"
+Z_OVER_Y_TIME="${Z_OVER_Y_TIME:-3}"
+SCALE_TRAIN_RECIPE="${SCALE_TRAIN_RECIPE:-false}"
+TOGGLE_ARGS=(--odexinit_scaling_mode "${ODEXINIT_SCALING_MODE}")
+TOGGLE_ARGS+=(--toggle_timing_mode "${TOGGLE_TIMING_MODE}")
+TOGGLE_ARGS+=(--toggle_y_time "${TOGGLE_Y_TIME}")
+TOGGLE_ARGS+=(--z_over_y_time "${Z_OVER_Y_TIME}")
 if [[ -n "${TOGGLE_N_CYCLES:-}" ]]; then TOGGLE_ARGS+=(--toggle_n_cycles "${TOGGLE_N_CYCLES}"); fi
 if [[ -n "${TOGGLE_TIME_SPLIT:-}" ]]; then TOGGLE_ARGS+=(--toggle_time_split "${TOGGLE_TIME_SPLIT}"); fi
 if [[ -n "${TOGGLE_FAST_PATH:-}" ]]; then TOGGLE_ARGS+=(--toggle_fast_path "${TOGGLE_FAST_PATH}"); fi
+echo "=========== R: ${R_VAL}; R_max: ${R_MAX}; C: ${C_VAL}; mismatch level: ${MISMATCH_LEVEL} ==========="
 echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL}, SWITCH_INF: ${SWITCH_INF}, ENOB: ${ENOB}, ODE_BLOCK_OVERRIDE: ${ODE_BLOCK_OVERRIDE} ==========="
-echo "=========== FT spin variation: ${ENABLE_SPIN_VARIATION:-true} (sigma=${SIGMA_SPIN:-0.10}); summing-current noise: ${ENABLE_SUMMING_CURRENT_NOISE:-false} (p=${SUMMING_CURRENT_P:-18.5e-12}); coupler noise: ${ENABLE_COUPLER_NOISE:-true} (p=${COUPLER_NOISE_P:-0.6e-12}) ==========="
+echo "=========== FT spin variation: ${ENABLE_SPIN_VARIATION:-true} (sigma=${SIGMA_SPIN:-0.10}); summing-current noise: ${ENABLE_SUMMING_CURRENT_NOISE:-true} (p=${SUMMING_CURRENT_P:-0.6e-12}); coupler noise: ${ENABLE_COUPLER_NOISE:-true} (p=${COUPLER_NOISE_P:-0.6e-12}) ==========="
+echo "=========== FT slow summing current: ${ENABLE_SLOW_SUMMING_CURRENT:-false} (std=${SLOW_SUMMING_CURRENT:-2.47e-9} A); slow coupler noise: ${ENABLE_SLOW_COUPLER_NOISE:-false} (per-coupler std=${SLOW_COUPLER_NOISE:-2.47e-9} A) ==========="
+echo "=========== nonlinear-R training: mode=${NONLINEAR_R_TRAIN_MODE:-none}, corners=${NONLINEAR_R_CORNER_RANGE:-all}, expanded=${TRAIN_CONV_EXPANDED:-false} ==========="
+echo "=========== measured pooling training: ${ENABLE_MEASURED_POOLING} ==========="
+echo "=========== weight quant factor bits: ${WEIGHT_QUANT_FACTOR_BITS} ==========="
+echo "=========== toggle timing: ${TOGGLE_TIMING_MODE}, T_y=${TOGGLE_Y_TIME}s, T_z/T_y=${Z_OVER_Y_TIME}, scale_train_recipe=${SCALE_TRAIN_RECIPE} ==========="
+echo "=========== image data: ${IMG_TYPE} ==========="
+echo "=========== FT objective: ${DISTILL_METHOD}, SRRL weight: ${SRRL_WEIGHT}; LR: ${FT_LEARNING_RATE}, epochs: ${FT_NUM_EPOCHS}, warmup: ${WARMUP_FT} ==========="
 
 #######################################################################################################################
 # For QAT models, keep finetuning with full_param checkpoint, which keeps the original un-parametrized weights
@@ -67,6 +150,11 @@ if [[ "$MODEL_NAME" == *C100* ]]; then
   _task="cifar100"
 else
   _task="cifar10"
+fi
+if [[ "${_task}" == "cifar100" ]]; then
+  N_CLASSES=100
+else
+  N_CLASSES=10
 fi
 # Set Wrapper
 QAT_WRAPPER="QATWrapper1State"
@@ -86,15 +174,23 @@ elif [[ "${ODE_BLK}" == "ToggleResetZ" || "${ODE_BLK}" == "ToggleKeepZ" || "${OD
   QAT_WRAPPER="ToggleQATWrapper1State"
 fi
 # Teacher model setting
-TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
-TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${_task}_CiFAIR_timm.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+elif [[ "${_task}" == "cifar10" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet-b4"
+else
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4_100.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+fi
+TEACHER_CKPT="${TEACHER_CKPT:-${_DEFAULT_TEACHER_CKPT}}"
+TEACHER_ARCH="${TEACHER_ARCH:-${_DEFAULT_TEACHER_ARCH}}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
-if [[ "${DATASET_NAME}" == "cifar10" ]]; then
-  TEACHER_CKPT="checkpoint/b4.pth"
-  TEACHER_ARCH="efficientnet-b4"
-fi
+# Enable only for legacy run_teacher PIL checkpoints (match_distill_preprocess=false).
+ADAPT_PIL_TEACHER="${ADAPT_PIL_TEACHER:-false}"
 
 train_solver="dopri5"
 if [[ "${SWITCH_INF}" == "true" ]]; then
@@ -110,16 +206,21 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
           echo "log dir: ${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
           python train_ode_cifar.py \
             --dataset       "${_task}" \
+            --num_classes   "${N_CLASSES}" \
+            --save_path     "${MODEL_DIR}" \
             --ckpt          "${CKPT}" \
             --timm_trainer  "true" \
             --timm_sched    "cosine" \
             --timm_aug_level "${TIMM_AUG_LEVEL}" \
+            "${TIMM_RE_ARGS[@]}" \
             --rggb_to_rgb   "false" \
             --optim         "SGD" \
-            --learning_rate 0.005 \
+            --learning_rate "${FT_LEARNING_RATE}" \
             --eval_every    "${EVAL_EVERY:-2}" \
-            --num_epochs    "${NUM_EPOCHS:-140}" \
-            --img_type      "scanGFI" \
+            --num_epochs    "${FT_NUM_EPOCHS}" \
+            --warmup_epoch  "${WARMUP_FT}" \
+            --img_type      "${IMG_TYPE}" \
+            "${INPUT_PREPROCESS_ARGS[@]}" \
             --model_name    "${MODEL_NAME}" \
             --output_save_path "${OUTPUT_SAVE_PATH:-./saved_ckpt}" \
             --offset_eps    0.0 \
@@ -133,12 +234,13 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --n_steps       5 \
             --tol           "1e-6" \
             --t_end         "1.75" \
-            --R             "27.8e3" \
+            --R             "${R_VAL}" \
             --R_max         "${R_max}" \
-            --C             "282e-15" \
+            --C             "${C_VAL}" \
             --k             "${K_VAL}" \
             --v_dd          "0.1" \
             --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}" \
+            --enable_measured_pooling "${ENABLE_MEASURED_POOLING}" \
             --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
             --activation_corner "${ACTIVATION_CORNER:-TT}" \
             --activation_corner_mode "${ACTIVATION_CORNER_MODE}" \
@@ -148,16 +250,20 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION:-false}" \
             --enob          "${ENOB}" \
             --w_bits        "${n_bits}" \
-            --patch_node    "8" \
-            --patch_stride  "8" \
-            --patch_cycle   "1" \
-            --patch_pad     "0" \
-            --fold_scalar   "1" \
+            --weight_quant_factor_bits "${WEIGHT_QUANT_FACTOR_BITS}" \
+            --scale_train_recipe "${SCALE_TRAIN_RECIPE}" \
+            --patch_node    "${PATCH_NODE:-}" \
+            --patch_stride  "${PATCH_STRIDE:-}" \
+            --patch_cycle   "${PATCH_CYCLE:-}" \
+            --patch_pad     "${PATCH_PAD:-}" \
+            --fold_scalar   "${FOLD_SCALAR:-}" \
             --tie_cap       "false" \
             --one_over_q    "${one_over_q}" \
             "${TOGGLE_ARGS[@]}" \
             "${VARIATION_AWARE_ARGS[@]}" \
+            "${NONLINEAR_R_TRAIN_ARGS[@]}" \
             --qat_cls       "SymQuantizeWeight" \
+            --pcn           "${PCN}" \
             --ode_wrapper   "$QAT_WRAPPER" \
             --pc_conv       "PCConvReLU6" \
             --ode_block     "$ODE_BLK" \
@@ -169,10 +275,15 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
             --teacher_input_size  "${TEACHER_INPUT_SIZE}" \
             --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-            --distill_method srrl \
+            --adapt_PIL_teacher "${ADAPT_PIL_TEACHER}" \
+            --distill_method "${DISTILL_METHOD}" \
+            "${SRRL_ARGS[@]}" \
+            "${REVIEWKD_ARGS[@]}" \
             --contrast_method "memory" \
             --distill_alpha  0.3 \
             --distill_temperature 2.0 \
+            --test_only     "false" \
+            --mem_frac      "${MEM_FRAC}" \
             2>&1 | tee "${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}_${one_over_q}.log"
         done
       done

@@ -12,6 +12,7 @@ import torch.nn.utils.parametrize as P
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
+from input_preprocessing import prepare_student_input, quantize_unit_interval
 import argparse
 import tqdm
 import subprocess
@@ -276,30 +277,42 @@ def _default_cifar_dir(dataset_name: str) -> str:
     # return "cifar-10-data" if name == "cifar10" else "cifar-100-data"
 
 
+def _is_scan_cifar(img_type: str) -> bool:
+    return img_type.lower() in {"scangfi", "cifair"}
+
+
+def _scan_cifar_input_name(img_type: str, dataset_name: str) -> str:
+    dataset_name = _normalize_dataset_name(dataset_name)
+    if img_type.lower() == "cifair":
+        return "ciFAIR100" if dataset_name == "cifar100" else "ciFAIR10"
+    return dataset_name + "_raw"
+
+
 def _resolve_cifar_data_root(img_type: str, input_name: str) -> Path:
     dataset_name = _normalize_dataset_name(input_name)
-    hdf5_name = f"{dataset_name}_raw.h5"
+    data_input_name = _scan_cifar_input_name(img_type, dataset_name)
+    hdf5_names = (f"{data_input_name}.h5", f"{data_input_name}.hdf5")
     env_root = os.getenv("SCANGEN_DATA_ROOT")
     if env_root:
         env_root_path = Path(env_root).expanduser()
         if env_root_path.is_file():
-            if env_root_path.name == hdf5_name:
+            if env_root_path.name in hdf5_names:
                 return env_root_path.parent
             env_root_path = env_root_path.parent
         candidates = [
             env_root_path,
-            env_root_path / img_type,
-            env_root_path / _default_cifar_dir(dataset_name) / img_type,
+            env_root_path / "scanGFI",
+            env_root_path / _default_cifar_dir(dataset_name) / "scanGFI",
         ]
         for candidate in candidates:
-            if (candidate / hdf5_name).exists():
+            if any((candidate / name).exists() for name in hdf5_names):
                 return candidate
         logging.warning(
             "SCANGEN_DATA_ROOT=%s does not contain %s; falling back to project-relative path.",
             env_root,
-            hdf5_name,
+            data_input_name,
         )
-    return Path(__file__).resolve().parent.parent / _default_cifar_dir(dataset_name) / img_type
+    return Path(__file__).resolve().parent.parent / _default_cifar_dir(dataset_name) / "scanGFI"
 
 
 class TrainerCiFar(object):
@@ -315,6 +328,10 @@ class TrainerCiFar(object):
                  distill_method="kd", crd_feat_dim=128, crd_k=16384,
                  crd_temperature=0.07, crd_momentum=0.5, crd_beta=0.8,
                  teacher_input_size=224, teacher_center_crop=True,
+                 adapt_PIL_teacher=False,
+                 input_quant_bits=None, center_student_input=False,
+                 scale_train_recipe=False, ff_train_scale=1.0,
+                 fb_train_scale=1.0,
                  pulse_mismatch_training_mode="post_quant_amplitude"):
         self.skip_eval_epochs = skip_eval_epochs
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -323,6 +340,12 @@ class TrainerCiFar(object):
         model = model.to(self.device)
         self.model = model
         self.model_name = model_name
+        self.scale_train_recipe = bool(scale_train_recipe)
+        self.ff_train_scale = float(ff_train_scale)
+        self.fb_train_scale = float(fb_train_scale)
+        if self.scale_train_recipe and (
+                self.ff_train_scale <= 0 or self.fb_train_scale <= 0):
+            raise ValueError("Training-recipe dynamics scales must be positive.")
         self.save_path = save_path
         self.optimizer = self._get_optimizer(optim_type, lr=learning_rate, weight_decay=weight_decay)
         # Reuse the LR schedule epoch as before
@@ -357,6 +380,15 @@ class TrainerCiFar(object):
         self.teacher_model = None
         self.teacher_input_size = teacher_input_size
         self.teacher_center_crop = teacher_center_crop
+        # Use only for a teacher trained by the old run_teacher logic with
+        # PIL inputs and match_distill_preprocess=false.
+        self.adapt_PIL_teacher = bool(adapt_PIL_teacher)
+        self.input_quant_bits = input_quant_bits
+        self.center_student_input = bool(center_student_input)
+        if self.adapt_PIL_teacher:
+            logging.warning(
+                "Adapting distillation teacher inputs through the legacy PIL preprocessing path."
+            )
         if teacher_model is not None:
             self.teacher_model = teacher_model.to(self.device)
             self.teacher_model.eval()
@@ -447,6 +479,7 @@ class TrainerCiFar(object):
         return last_linear
 
     def _student_forward(self, inputs):
+        inputs = self._prepare_student_inputs(inputs)
         if self._student_feature_module is None:
             outputs = self.noisy_model(inputs) if self.noisy_model else self.model(inputs)
             return outputs, None
@@ -469,6 +502,7 @@ class TrainerCiFar(object):
     def _teacher_forward(self, inputs):
         if self.teacher_model is None:
             return None, None
+        inputs = self._quantize_inputs(inputs)
         if self._teacher_feature_module is None:
             with torch.no_grad():
                 outputs = self.teacher_model(inputs)
@@ -483,7 +517,7 @@ class TrainerCiFar(object):
         try:
             with torch.no_grad():
                 normalized_inputs = inputs
-                if self.img_type == "scanGFI":
+                if _is_scan_cifar(self.img_type):
                     normalized_inputs = self._prepare_teacher_inputs(normalized_inputs)
                 outputs = self.teacher_model(normalized_inputs)
         finally:
@@ -495,16 +529,45 @@ class TrainerCiFar(object):
             teacher_feat = teacher_feat.detach()
         return outputs, teacher_feat
 
+    def teacher_forward_for_distillation(self, inputs):
+        """Run the exact teacher path used to produce distillation targets."""
+        return self._teacher_forward(inputs)
+
+    def _quantize_inputs(self, inputs):
+        return quantize_unit_interval(inputs, self.input_quant_bits)
+
+    def _prepare_student_inputs(self, inputs):
+        return prepare_student_input(
+            inputs, self.input_quant_bits, self.center_student_input)
+
     def _prepare_teacher_inputs(self, inputs):
         target_size = self.teacher_input_size
-        if target_size and inputs.size(-1) != target_size:
-            inputs = F.interpolate(inputs, size=(target_size, target_size), mode="bilinear", align_corners=False)
-        if self.teacher_center_crop and target_size:
-            h, w = inputs.shape[-2:]
-            if h >= target_size and w >= target_size:
-                top = (h - target_size) // 2
-                left = (w - target_size) // 2
-                inputs = inputs[..., top:top + target_size, left:left + target_size]
+        if self.adapt_PIL_teacher:
+            # Preserve the already shared student augmentations, but reproduce
+            # legacy teacher preprocessing exactly: float tensor -> PIL/uint8
+            # -> resize/crop -> float tensor. The teacher is frozen, so this
+            # intentionally non-differentiable conversion is safe.
+            transform_steps = [transforms.ToPILImage()]
+            if target_size:
+                transform_steps.append(transforms.Resize(target_size))
+                if self.teacher_center_crop:
+                    transform_steps.append(transforms.CenterCrop(target_size))
+            transform_steps.append(transforms.ToTensor())
+            pil_transform = transforms.Compose(transform_steps)
+            source_device = inputs.device
+            source_dtype = inputs.dtype
+            inputs = torch.stack([
+                pil_transform(sample.detach().cpu()) for sample in inputs
+            ]).to(device=source_device, dtype=source_dtype)
+        else:
+            if target_size and inputs.size(-1) != target_size:
+                inputs = F.interpolate(inputs, size=(target_size, target_size), mode="bilinear", align_corners=False)
+            if self.teacher_center_crop and target_size:
+                h, w = inputs.shape[-2:]
+                if h >= target_size and w >= target_size:
+                    top = (h - target_size) // 2
+                    left = (w - target_size) // 2
+                    inputs = inputs[..., top:top + target_size, left:left + target_size]
         channels = inputs.size(1)
         mean = torch.full((1, channels, 1, 1), 0.5, device=inputs.device)
         std = torch.full((1, channels, 1, 1), 0.5, device=inputs.device)
@@ -624,7 +687,7 @@ class TrainerCiFar(object):
             outputs, student_feat = self._student_forward(inputs)
             teacher_logits, teacher_feat = None, None
             if self.teacher_model is not None and (self._kd_enabled or self._crd_enabled):
-                teacher_logits, teacher_feat = self._teacher_forward(
+                teacher_logits, teacher_feat = self.teacher_forward_for_distillation(
                     teacher_inputs if teacher_inputs is not None else inputs
                 )
             ce_loss = self.loss_fn(outputs, labels)
@@ -699,9 +762,15 @@ class TrainerCiFar(object):
         return running_loss
 
     def reset_spin_variation_for_inference(self):
-        """Clear cached spin factors once before a full-dataset evaluation."""
+        """Clear cached sample-once factors before full-dataset evaluation."""
         for module in self.model.modules():
             reset = getattr(module, "reset_spin_variation", None)
+            if callable(reset):
+                reset()
+            reset = getattr(module, "reset_nonlinear_R_variation", None)
+            if callable(reset):
+                reset()
+            reset = getattr(module, "reset_measured_pooling", None)
             if callable(reset):
                 reset()
 
@@ -740,7 +809,7 @@ class TrainerCiFar(object):
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                 # calculate outputs by running inputs through the network
-                outputs = self.model(inputs)
+                outputs = self.model(self._prepare_student_inputs(inputs))
 
                 loss = self.loss_fn(outputs, labels)
                 running_loss += loss.item()
@@ -816,11 +885,60 @@ class TrainerCiFar(object):
         torch.save(state, save_pth_path)
         return save_pth_path
 
+    def _optimizer_parameters(
+            self, lr, weight_decay, filter_bias_and_bn=False):
+        if not self.scale_train_recipe:
+            return self.model.parameters()
+
+        skip = set()
+        if filter_bias_and_bn and hasattr(self.model, "no_weight_decay"):
+            skip = set(self.model.no_weight_decay())
+        grouped = {
+            (stage, no_decay): []
+            for stage in ("other", "ff", "fb")
+            for no_decay in (False, True)
+        }
+        for name, parameter in self.model.named_parameters():
+            if ".FFconv." in name:
+                stage = "ff"
+            elif ".FBconv." in name:
+                stage = "fb"
+            else:
+                stage = "other"
+            no_decay = (
+                filter_bias_and_bn and
+                (parameter.ndim <= 1 or name.endswith(".bias") or name in skip))
+            grouped[(stage, no_decay)].append(parameter)
+
+        parameter_groups = []
+        for stage, scale in (("other", 1.0),
+                             ("ff", self.ff_train_scale),
+                             ("fb", self.fb_train_scale)):
+            for no_decay in (False, True):
+                if grouped[(stage, no_decay)]:
+                    parameter_groups.append({
+                        "params": grouped[(stage, no_decay)],
+                        "lr": lr / (scale * scale),
+                        "weight_decay": (
+                            0.0 if no_decay else
+                            weight_decay * scale * scale),
+                        "group_name": (
+                            stage + "_no_decay" if no_decay else stage)})
+        logging.warning(
+            "Scaled training recipe optimizer groups: FF lr=%g, wd=%g; "
+            "FB lr=%g, wd=%g",
+            lr / (self.ff_train_scale ** 2),
+            weight_decay * self.ff_train_scale ** 2,
+            lr / (self.fb_train_scale ** 2),
+            weight_decay * self.fb_train_scale ** 2)
+        return parameter_groups
+
     def _get_optimizer(self, optim_type, lr, weight_decay):
+        parameters = self._optimizer_parameters(lr, weight_decay)
         if optim_type == "SGD":
-            return optim.SGD(self.model.parameters(), momentum=0.9, lr=lr, weight_decay=weight_decay, nesterov=False)
+            return optim.SGD(parameters, momentum=0.9, lr=lr, weight_decay=weight_decay, nesterov=False)
         elif optim_type == "Adam":
-            return optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+            return optim.Adam(parameters, lr=lr, weight_decay=weight_decay)
         else:
             raise ValueError("Unknown optimizer: {}".format(optim_type))
 
@@ -877,7 +995,7 @@ class TrainerCiFar(object):
                     ToPackedRGGB(return_orig=False), ])
             self.train_set = dataset_cls(root='../data', train=True, download=True, transform=transform_train)
             self.val_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
-        elif img_type == "scanGFI":
+        elif _is_scan_cifar(img_type):
             with tempfile.TemporaryDirectory() as tmpdir:
                 conf_path = Path(os.path.join(tmpdir, "config.json"))
                 subprocess.run("uv run scangen create-config --dataset {} {}".format(dataset_name, str(conf_path)), shell=True)
@@ -889,10 +1007,11 @@ class TrainerCiFar(object):
             self.scangen_noise_config = scangen_config["noise"]
 
             noise_data_root = _resolve_cifar_data_root(img_type, dataset_name)
+            data_input_name = _scan_cifar_input_name(img_type, dataset_name)
             self.scangen_noise_root = noise_data_root
             self.train_set = MyNoiseCIFARDataset(
                 root=noise_data_root,
-                input_name=dataset_name + "_raw",
+                input_name=data_input_name,
                 train=True,
                 noise_config=self.scangen_noise_config,
                 device=self.device,
@@ -922,7 +1041,7 @@ class TrainerCiFar(object):
 
             self.val_set = MyNoiseCIFARDataset(
                 root=noise_data_root,
-                input_name=dataset_name + "_raw",
+                input_name=data_input_name,
                 train=False,
                 noise_config=self.scangen_noise_config,
                 device=self.device,
@@ -950,21 +1069,12 @@ class TrainerCiFar(object):
                 )
             else:
                 # Evaluate the teacher model with the scanGFI dataset.
-                teacher_transform_steps = [transforms.ToPILImage()]
-                if self.teacher_input_size and self.teacher_input_size > 0:
-                    teacher_transform_steps.append(transforms.Resize(self.teacher_input_size))
-                    if self.teacher_center_crop:
-                        teacher_transform_steps.append(transforms.CenterCrop(self.teacher_input_size))
-                teacher_transform_steps.append(transforms.ToTensor())
-                teacher_transform = transforms.Compose(teacher_transform_steps)
-
                 teacher_dataset = MyNoiseCIFARDataset(
                     root=noise_data_root,
-                    input_name=dataset_name + "_raw",
+                    input_name=data_input_name,
                     train=False,
                     noise_config=self.scangen_noise_config,
                     device=self.device,
-                    transform=teacher_transform,
                     seed=0,
                 )
 
@@ -989,7 +1099,7 @@ class TrainerCiFar(object):
 
         if self._crd_enabled:
             assert self.neg_sample in {"label", "index"}
-            if self.orig_t_inp and img_type == "scanGFI":
+            if self.orig_t_inp and _is_scan_cifar(img_type):
                 if self.neg_sample == "index":
                     # negative samples based on i != j
                     self.train_set = PairDatasetWithIndex(self.train_set)

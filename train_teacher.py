@@ -6,6 +6,9 @@ import json
 import logging
 import os
 import random
+import subprocess
+import sys
+import tempfile
 from collections import OrderedDict
 from pathlib import Path
 from typing import Sequence, Callable
@@ -13,6 +16,7 @@ from typing import Sequence, Callable
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
@@ -26,6 +30,29 @@ from utils import progress_bar
 RAW_MEAN = (0.5, 0.5, 0.5, 0.5)
 RAW_STD = (0.5, 0.5, 0.5, 0.5)
 
+
+class DirectTensorResize:
+    """Resize CHW float tensors exactly like the distillation teacher path."""
+
+    def __init__(self, size: int) -> None:
+        self.size = (size, size)
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        return F.interpolate(
+            tensor.unsqueeze(0),
+            size=self.size,
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(0)
+
+
+class QuantizeInput8Bit:
+    """Quantize each raw RGGB channel independently to unsigned 8-bit."""
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        return torch.round(tensor.clamp(0.0, 1.0) * 255.0) / 255.0
+
+
 def _normalize_dataset_name(dataset_name: str | None) -> str:
     name = (dataset_name or "cifar10").lower().replace("-", "").replace("_", "")
     if name in {"cifar10", "cifar100"}:
@@ -36,6 +63,13 @@ def _normalize_dataset_name(dataset_name: str | None) -> str:
 def _default_cifar_dir(dataset_name: str) -> str:
     name = _normalize_dataset_name(dataset_name)
     return "cifar-10-data" if name == "cifar10" else "cifar-100-data"
+
+
+def _data_input_name(img_type: str, dataset_name: str) -> str:
+    dataset_name = _normalize_dataset_name(dataset_name)
+    if img_type.lower() == "cifair":
+        return "ciFAIR100" if dataset_name == "cifar100" else "ciFAIR10"
+    return dataset_name + "_raw"
 
 
 def _get_efficientnet_v2_builder(arch: str):
@@ -140,6 +174,7 @@ def load_hankyul_efficientnet_v2_4ch(
     num_classes: int,
     arch: str,
     in_channels: int = 4,
+    pretrained: bool = False,
 ) -> nn.Module:
     """Load EfficientNetV2 from hankyul2/EfficientNetV2-pytorch and adapt input channels."""
     hankyul_arch = _map_arch_to_hankyul(arch)
@@ -147,6 +182,7 @@ def load_hankyul_efficientnet_v2_4ch(
         model = torch.hub.load(
             "hankyul2/EfficientNetV2-pytorch",
             hankyul_arch,
+            pretrained=pretrained,
             nclass=num_classes,
             skip_validation=True,
         )
@@ -157,6 +193,7 @@ def load_hankyul_efficientnet_v2_4ch(
             model = torch.hub.load(
                 "hankyul2/EfficientNetV2-pytorch",
                 arch,
+                pretrained=pretrained,
                 nclass=num_classes,
                 skip_validation=True,
             )
@@ -195,6 +232,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--alpha', default=0.1, type=float, help='mixup interpolation coefficient')
     parser.add_argument('--dataset', default='cifar10', choices=('cifar10', 'cifar100'),
                         help='dataset name (cifar10 or cifar100)')
+    parser.add_argument('--img_type', default='scanGFI',
+                        help='input data type (scanGFI or CiFAIR, case insensitive)')
     parser.add_argument('--train_size', default=160, type=int,
                         help='input resolution for training transforms')
     parser.add_argument('--test_size', default=200, type=int,
@@ -203,6 +242,23 @@ def parse_args() -> argparse.Namespace:
                         help='training augmentation preset (rrc=RandomResizedCrop, cifar=resize+pad+crop)')
     parser.add_argument('--test_center_crop', action='store_true',
                         help='apply center crop for test transforms')
+    parser.add_argument(
+        '--match_distill_preprocess',
+        action='store_true',
+        help=(
+            'keep inputs as float tensors and use direct bilinear resizing, matching '
+            'the distillation teacher path instead of the legacy PIL/8-bit round trip'
+        ),
+    )
+    parser.add_argument(
+        '--input_quant_bits',
+        type=int,
+        default=None,
+        help=(
+            'quantize raw tensor inputs before resizing; currently only 8-bit '
+            'quantization on the direct-tensor path is supported'
+        ),
+    )
     parser.add_argument('--root', default=None, type=str,
                         help='root directory containing noise data (defaults to SCANGEN_DATA_ROOT)')
     parser.add_argument('--noise_config', default='scangen/config.json', type=str,
@@ -347,17 +403,22 @@ def adapt_state_dict_input_channels(
     return updated
 
 
-def resolve_noise_data_root(root_argument: str | None, input_name: str) -> Path:
+def resolve_noise_data_root(
+    root_argument: str | None,
+    input_name: str,
+    img_type: str = "scanGFI",
+) -> Path:
     """Locate the directory that holds the generated HDF5 noise data."""
     dataset_name = _normalize_dataset_name(input_name)
-    hdf5_name = f"{dataset_name}_raw.h5"
+    data_input_name = _data_input_name(img_type, dataset_name)
+    hdf5_names = (f"{data_input_name}.h5", f"{data_input_name}.hdf5")
 
     if root_argument:
         user_root = Path(root_argument).expanduser()
         if user_root.is_file():
-            if user_root.name == hdf5_name:
-                return user_root.parent
-            msg = f"--root points to {user_root}, but expected {hdf5_name}"
+            if user_root.name in hdf5_names:
+                return user_root.resolve().parent
+            msg = f"--root points to {user_root}, but expected one of {hdf5_names}"
             raise FileNotFoundError(msg)
 
         candidates = [
@@ -366,41 +427,41 @@ def resolve_noise_data_root(root_argument: str | None, input_name: str) -> Path:
             user_root / _default_cifar_dir(dataset_name) / "scanGFI",
         ]
         for candidate in candidates:
-            if (candidate / hdf5_name).exists():
-                return candidate
-        msg = f"Could not find {hdf5_name} under provided root {root_argument}"
+            if any((candidate / name).exists() for name in hdf5_names):
+                return candidate.resolve()
+        msg = f"Could not find {hdf5_names} under provided root {root_argument}"
         raise FileNotFoundError(msg)
 
     env_root = os.getenv("SCANGEN_DATA_ROOT")
     if env_root:
         env_path = Path(env_root).expanduser()
-        if env_path.is_file() and env_path.name == hdf5_name:
-            return env_path.parent
+        if env_path.is_file() and env_path.name in hdf5_names:
+            return env_path.resolve().parent
         env_candidates = [
             env_path,
             env_path / "scanGFI",
             env_path / _default_cifar_dir(dataset_name) / "scanGFI",
         ]
         for candidate in env_candidates:
-            if (candidate / hdf5_name).exists():
-                return candidate
+            if any((candidate / name).exists() for name in hdf5_names):
+                return candidate.resolve()
         logging.warning(
             "SCANGEN_DATA_ROOT=%s does not contain %s; falling back to defaults.",
             env_root,
-            hdf5_name,
+            data_input_name,
         )
 
     default_root = Path(__file__).resolve().parent / _default_cifar_dir(dataset_name) / "scanGFI"
-    if (default_root / hdf5_name).exists():
+    if any((default_root / name).exists() for name in hdf5_names):
         return default_root
 
     raise FileNotFoundError(
-        f"Could not locate {hdf5_name}. "
+        f"Could not locate {hdf5_names}. "
         "Provide --root or set SCANGEN_DATA_ROOT to the dataset directory."
     )
 
 
-def load_noise_config(config_path_str: str) -> dict:
+def load_noise_config(config_path_str: str, dataset_name: str) -> dict:
     """Load the noise configuration used for on-the-fly noise generation."""
     candidate_paths = [Path(config_path_str).expanduser()]
     if not candidate_paths[0].is_absolute():
@@ -412,37 +473,67 @@ def load_noise_config(config_path_str: str) -> dict:
                 config = json.load(fp)
             return config.get("noise", config)
 
-    raise FileNotFoundError(f"Could not read noise config at {config_path_str}")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_path = Path(tmpdir) / "config.json"
+        subprocess.run(
+            [sys.executable, "-m", "scangen", "create-config", "--dataset",
+             dataset_name, str(config_path)],
+            check=True,
+        )
+        with open(config_path, 'r', encoding='utf-8') as fp:
+            config = json.load(fp)
+    return config["noise"]
 
 
 def build_transforms(args: argparse.Namespace) -> tuple[transforms.Compose, transforms.Compose]:
+    input_quant = []
+    if args.input_quant_bits is not None:
+        if args.input_quant_bits != 8:
+            raise ValueError('--input_quant_bits currently supports only 8.')
+        if not args.match_distill_preprocess:
+            raise ValueError(
+                '--input_quant_bits requires --match_distill_preprocess so that '
+                'PIL/RGBA conversion remains disabled.')
+        input_quant.append(QuantizeInput8Bit())
+
+    if args.match_distill_preprocess:
+        to_resizable = input_quant
+        resize_train = [DirectTensorResize(args.train_size)]
+        resize_test = [DirectTensorResize(args.test_size)]
+        to_tensor = []
+    else:
+        to_resizable = [transforms.ToPILImage()]
+        resize_train = [transforms.Resize(size=args.train_size)]
+        resize_test = [transforms.Resize(size=args.test_size)]
+        to_tensor = [transforms.ToTensor()]
+
     if args.train_transform == "cifar":
         transform_train = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(size=args.train_size),
+            *to_resizable,
+            *resize_train,
             transforms.Pad(4, padding_mode="reflect"),
             transforms.RandomCrop(size=args.train_size),
             transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
+            *to_tensor,
             transforms.Normalize(RAW_MEAN, RAW_STD),
         ])
     else:
         transform_train = transforms.Compose([
-            transforms.ToPILImage(),
+            *to_resizable,
             transforms.RandomResizedCrop(size=args.train_size, scale=(0.6, 1.0)),
             transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
+            *to_tensor,
             transforms.Normalize(RAW_MEAN, RAW_STD),
         ])
 
     transform_test_steps = [
-        transforms.ToPILImage(),
-        transforms.Resize(size=args.test_size),
+        *to_resizable,
+        *resize_test,
     ]
     if args.test_center_crop:
         transform_test_steps.append(transforms.CenterCrop(size=args.test_size))
     transform_test_steps.extend([
-        transforms.ToTensor(),
+        *to_tensor,
         transforms.Normalize(RAW_MEAN, RAW_STD),
     ])
     transform_test = transforms.Compose(transform_test_steps)
@@ -450,14 +541,15 @@ def build_transforms(args: argparse.Namespace) -> tuple[transforms.Compose, tran
 
 
 def create_datasets(args: argparse.Namespace) -> tuple[MyNoiseCIFARDataset, MyNoiseCIFARDataset]:
-    noise_config = load_noise_config(args.noise_config)
     dataset_name = _normalize_dataset_name(args.dataset)
-    noise_root = resolve_noise_data_root(args.root, dataset_name)
+    noise_config = load_noise_config(args.noise_config, dataset_name)
+    data_input_name = _data_input_name(args.img_type, dataset_name)
+    noise_root = resolve_noise_data_root(args.root, dataset_name, args.img_type)
     transform_train, transform_test = build_transforms(args)
 
     train_set = MyNoiseCIFARDataset(
         root=noise_root,
-        input_name=dataset_name,
+        input_name=data_input_name,
         train=True,
         noise_config=noise_config,
         device=torch.device("cpu"),
@@ -466,7 +558,7 @@ def create_datasets(args: argparse.Namespace) -> tuple[MyNoiseCIFARDataset, MyNo
     )
     test_set = MyNoiseCIFARDataset(
         root=noise_root,
-        input_name=dataset_name,
+        input_name=data_input_name,
         train=False,
         noise_config=noise_config,
         device=torch.device("cpu"),

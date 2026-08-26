@@ -1,12 +1,14 @@
 import csv
 import re
 
+import numpy as np
 import torch
 import torch.nn as nn
 
 
 _FIT_CONSTRAINTS = {"none", "nonnegative", "auto"}
 _CORNER_MODES = {"fixed", "random_per_forward"}
+_CURVE_SHARING_MODES = {"per_model", "per_layer", "per_spin"}
 _RAW_CURVE_COLUMN_RE = re.compile(
     r":top_(?P<process>ff|fs|sf|ss|tt),.*?"
     r"VDD_VALUE=(?P<vdd>[-+0-9.eE]+),"
@@ -103,6 +105,47 @@ def _compiled_piecewise_cubic():
     return _COMPILED_PIECEWISE_CUBIC
 
 
+class _CurveSharingMixin:
+    """Cache one empirical measured-curve assignment for a hardware trial."""
+
+    def _configure_curve_sharing(self, curve_sharing, curve_seed):
+        curve_sharing = str(curve_sharing).lower()
+        if curve_sharing not in _CURVE_SHARING_MODES:
+            raise ValueError(
+                "Measured-activation curve sharing must be one of {}.".format(
+                    ", ".join(sorted(_CURVE_SHARING_MODES))))
+        self.curve_sharing = curve_sharing
+        self.curve_seed = None if curve_seed is None else int(curve_seed)
+        self.register_buffer("_sampled_curve_indices", None, persistent=False)
+
+    def _curve_indices_for(self, x):
+        if self.curve_sharing == "per_model":
+            return None
+        expected_shape = (
+            torch.Size([]) if self.curve_sharing == "per_layer"
+            else torch.Size((1,) + tuple(x.shape[1:])))
+        if self._sampled_curve_indices is None:
+            generator = None
+            if self.curve_seed is not None:
+                generator = torch.Generator(device="cpu")
+                generator.manual_seed(self.curve_seed)
+            sampled = torch.randint(
+                len(self.corner_names), expected_shape,
+                generator=generator, device="cpu")
+            self._sampled_curve_indices = sampled.to(device=x.device)
+        elif self._sampled_curve_indices.shape != expected_shape:
+            raise RuntimeError(
+                "Cached measured-activation curve assignment has shape {}, "
+                "but this layer requested {}.".format(
+                    tuple(self._sampled_curve_indices.shape),
+                    tuple(expected_shape)))
+        return self._sampled_curve_indices.to(device=x.device)
+
+    def _expanded_curve_indices(self, x):
+        indices = self._curve_indices_for(x)
+        return None if indices is None else indices.expand_as(x).reshape(-1)
+
+
 class _SplineCoefficientBuffers(nn.Module):
     """Dictionary-like storage for fixed, device-aware spline coefficients."""
 
@@ -118,7 +161,7 @@ class _SplineCoefficientBuffers(nn.Module):
         return name in self._buffers
 
 
-class CubicBSplineActivation(nn.Module):
+class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
     """Cubic B-spline activation fitted once from characterized voltage curves.
 
     The CSV axes are in volts. Runtime scaling uses s = v_dd / max(abs(Vin)),
@@ -133,7 +176,8 @@ class CubicBSplineActivation(nn.Module):
 
     def __init__(self, curve_path, v_dd, corner="TT", num_parameters=10,
                  normalize_positive_endpoint=False, compile_evaluator=False,
-                 fit_constraint="auto"):
+                 fit_constraint="auto", curve_sharing="per_model",
+                 curve_seed=None):
         super().__init__()
         if num_parameters <= self.degree:
             raise ValueError("A cubic B-spline needs at least four control coefficients.")
@@ -151,6 +195,7 @@ class CubicBSplineActivation(nn.Module):
         self.fit_constraint = fit_constraint
         self.corner_columns = column_names
         self.corner_names = tuple(curves)
+        self._configure_curve_sharing(curve_sharing, curve_seed)
 
         self.register_buffer("vin_min", vin.min(), persistent=False)
         self.register_buffer("vin_max", vin.max(), persistent=False)
@@ -192,6 +237,16 @@ class CubicBSplineActivation(nn.Module):
             endpoint_scales[name] = float(endpoint_scale)
             corner_fit_constraints[name] = corner_constraint
         self.coefficients = _SplineCoefficientBuffers(coefficients)
+        self.register_buffer(
+            "coefficient_bank",
+            torch.stack([coefficients[name] for name in self.corner_names]),
+            persistent=False)
+        self.register_buffer(
+            "nonnegative_curve_mask",
+            torch.tensor([
+                corner_fit_constraints[name] == "nonnegative"
+                for name in self.corner_names], dtype=torch.bool),
+            persistent=False)
         self.endpoint_scales = endpoint_scales
         self.corner_fit_constraints = corner_fit_constraints
         self.active_corner = self._resolve_corner(corner)
@@ -212,6 +267,32 @@ class CubicBSplineActivation(nn.Module):
 
     @classmethod
     def _load_csv(cls, path):
+        with open(path) as handle:
+            header = handle.readline()
+        if "mcparamset=" in header:
+            data = np.loadtxt(path, delimiter=",", skiprows=1)
+            if data.ndim != 2 or data.shape[1] % 2 != 0:
+                raise ValueError(
+                    "Measured-activation MC CSV must contain paired X/Y columns.")
+            vin = torch.tensor(data[:, 0], dtype=torch.float32)
+            curves = {}
+            column_names = {}
+            for index in range(data.shape[1] // 2):
+                curve_vin = data[:, 2 * index]
+                if not np.allclose(
+                        curve_vin, data[:, 0], rtol=1e-6, atol=1e-12):
+                    raise ValueError(
+                        "Measured-activation MC curves must share one Vin grid.")
+                name = "MC{}".format(index + 1)
+                curves[name] = torch.tensor(
+                    data[:, 2 * index + 1], dtype=torch.float32)
+                column_names[name] = name
+            order = torch.argsort(vin)
+            return (
+                vin[order],
+                {name: values[order] for name, values in curves.items()},
+                column_names)
+
         with open(path, newline="") as handle:
             reader = csv.DictReader(handle)
             rows = list(reader)
@@ -329,6 +410,26 @@ class CubicBSplineActivation(nn.Module):
             x, coefficients, self.span_left, self.span_width,
             self.span_control_indices, self.span_polynomial_transform)
 
+    def _evaluate_local_banked(self, x, curve_indices):
+        flat = x.reshape(-1)
+        span_left = self.span_left.to(device=x.device, dtype=x.dtype)
+        span_width = self.span_width.to(device=x.device, dtype=x.dtype)
+        position = (flat - span_left[0]) / span_width[0]
+        span_offset = torch.floor(position).to(torch.long).clamp(
+            min=0, max=span_left.numel() - 1)
+        local_u = ((flat - span_left[span_offset]) /
+                   span_width[span_offset]).clamp(0, 1)
+        controls = self.span_control_indices.to(device=x.device)[span_offset]
+        bank = self.coefficient_bank.to(device=x.device, dtype=x.dtype)
+        local_coefficients = bank[curve_indices[:, None], controls]
+        transform = self.span_polynomial_transform.to(
+            device=x.device, dtype=x.dtype)[span_offset]
+        polynomial = torch.bmm(
+            transform, local_coefficients.unsqueeze(-1)).squeeze(-1)
+        p0, p1, p2, p3 = polynomial.unbind(dim=1)
+        return (((p3 * local_u + p2) * local_u + p1) *
+                local_u + p0).reshape_as(x)
+
     def _resolve_corner(self, corner):
         requested = str(corner)
         for name, column in self.corner_columns.items():
@@ -372,12 +473,21 @@ class CubicBSplineActivation(nn.Module):
         x_char = (x / scale).clamp(
             min=self.vin_min.to(device=x.device, dtype=x.dtype),
             max=self.vin_max.to(device=x.device, dtype=x.dtype))
-        coeff = self.coefficients[selected]
-        y_char = self._evaluate_local(x_char, coeff)
-        if self.corner_fit_constraints[selected] == "nonnegative":
-            y_char = y_char.clamp_min(0)
+        curve_indices = None if corner is not None else self._expanded_curve_indices(x_char)
+        if curve_indices is None:
+            coeff = self.coefficients[selected]
+            y_char = self._evaluate_local(x_char, coeff)
+            if self.corner_fit_constraints[selected] == "nonnegative":
+                y_char = y_char.clamp_min(0)
+        else:
+            y_char = self._evaluate_local_banked(x_char, curve_indices)
+            nonnegative = self.nonnegative_curve_mask.to(
+                device=x.device)[curve_indices].reshape_as(x_char)
+            y_char = torch.where(nonnegative, y_char.clamp_min(0), y_char)
         output = scale * y_char
-        return output if pullback_scale is None else output / pullback_scale
+        output = output if pullback_scale is None else output / pullback_scale
+        v_dd = self.v_dd.to(device=output.device, dtype=output.dtype)
+        return output.clamp(min=-v_dd, max=v_dd)
 
 
 class MeasuredReLU6Activation(CubicBSplineActivation):
@@ -425,7 +535,7 @@ class _CurveValueBuffers(nn.Module):
         return name in self._buffers
 
 
-class PiecewiseLinearActivation(nn.Module):
+class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
     """Piecewise-linear activation from fixed characterized voltage curves.
 
     The voltage-coordinate transformation, endpoint normalization, corner
@@ -438,7 +548,8 @@ class PiecewiseLinearActivation(nn.Module):
     """
 
     def __init__(self, curve_path, v_dd, corner="TT",
-                 normalize_positive_endpoint=False):
+                 normalize_positive_endpoint=False,
+                 curve_sharing="per_model", curve_seed=None):
         super().__init__()
         vin, curves, column_names = CubicBSplineActivation._load_csv(curve_path)
         if vin.numel() < 2:
@@ -453,6 +564,7 @@ class PiecewiseLinearActivation(nn.Module):
         self.normalize_positive_endpoint = bool(normalize_positive_endpoint)
         self.corner_columns = column_names
         self.corner_names = tuple(curves)
+        self._configure_curve_sharing(curve_sharing, curve_seed)
 
         endpoint_scales = {}
         scaled_curves = {}
@@ -477,6 +589,10 @@ class PiecewiseLinearActivation(nn.Module):
             "v_dd", torch.as_tensor(float(v_dd), dtype=vin.dtype),
             persistent=False)
         self.curves = _CurveValueBuffers(scaled_curves)
+        self.register_buffer(
+            "curve_bank",
+            torch.stack([scaled_curves[name] for name in self.corner_names]),
+            persistent=False)
         self.endpoint_scales = endpoint_scales
         self.active_corner = self._resolve_corner(corner)
         self.default_corner = self.active_corner
@@ -551,6 +667,26 @@ class PiecewiseLinearActivation(nn.Module):
             values[left_idx + 1] - values[left_idx])
         return output.reshape_as(x)
 
+    def _interpolate_banked(self, x, curve_indices):
+        vin = self.vin.to(device=x.device, dtype=x.dtype)
+        values = self.curve_bank.to(device=x.device, dtype=x.dtype)
+        flat = x.reshape(-1)
+        if self.uniform_grid:
+            position = (
+                (flat - vin[0]) /
+                self.grid_spacing.to(device=x.device, dtype=x.dtype))
+            left_idx = torch.floor(position).to(torch.long)
+        else:
+            left_idx = torch.searchsorted(
+                vin, flat.contiguous(), right=True) - 1
+        left_idx = left_idx.clamp(min=0, max=vin.numel() - 2)
+        x_left = vin[left_idx]
+        x_right = vin[left_idx + 1]
+        fraction = (flat - x_left) / (x_right - x_left)
+        left = values[curve_indices, left_idx]
+        right = values[curve_indices, left_idx + 1]
+        return (left + fraction * (right - left)).reshape_as(x)
+
     def forward(self, x, corner=None):
         selected = (
             self.active_corner if corner is None else
@@ -566,9 +702,15 @@ class PiecewiseLinearActivation(nn.Module):
         x_char = (x / scale).clamp(
             min=self.vin_min.to(device=x.device, dtype=x.dtype),
             max=self.vin_max.to(device=x.device, dtype=x.dtype))
-        y_char = self._interpolate(x_char, self.curves[selected])
+        curve_indices = None if corner is not None else self._expanded_curve_indices(x_char)
+        y_char = (
+            self._interpolate(x_char, self.curves[selected])
+            if curve_indices is None else
+            self._interpolate_banked(x_char, curve_indices))
         output = scale * y_char
-        return output if pullback_scale is None else output / pullback_scale
+        output = output if pullback_scale is None else output / pullback_scale
+        v_dd = self.v_dd.to(device=output.device, dtype=output.dtype)
+        return output.clamp(min=-v_dd, max=v_dd)
 
 
 class MeasuredPiecewiseLinearReLU6Activation(PiecewiseLinearActivation):

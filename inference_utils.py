@@ -24,6 +24,7 @@ from ode_pc import make_ode_block, wrap_ode_block
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_quant_model, _CIFAR_STATS
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from quant_helper import QUANT_HELPER_CLS, replace_with_quant_layers, QUANT_SCHEME_PC
+from input_preprocessing import InputPreprocessedDataset
 
 import logging
 log = logging.getLogger(__name__)
@@ -34,7 +35,25 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
-def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
+
+def _get_scangfi_location(task, img_type="scanGFI"):
+    task_variable = "SCAN_TEST_{}_DATA".format(task.upper())
+    data_path = os.environ.get(task_variable) or os.environ.get("SCAN_TEST_DATA")
+    if data_path:
+        data_path = os.path.abspath(data_path)
+        return os.path.dirname(data_path), os.path.splitext(
+            os.path.basename(data_path))[0]
+    return (
+        os.path.join(
+            os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
+            "cifar-10-data", "scanGFI"),
+        ("ciFAIR100" if task == "cifar100" else "ciFAIR10")
+        if img_type.lower() == "cifair" else task + "_raw",
+    )
+
+
+def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
+                  input_quant_bits=None, center_student_input=False):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             mean, std = _CIFAR_STATS[task]
@@ -47,16 +66,16 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
                 ToPackedRGGB(return_orig=False), ])
         dataset_cls = torchvision.datasets.CIFAR100 if task == "cifar100" else torchvision.datasets.CIFAR10
         test_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
-    elif img_type == "scanGFI":
+    elif img_type.lower() in {"scangfi", "cifair"}:
+        data_root, input_name = _get_scangfi_location(task, img_type)
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")
             subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
             with open("{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             test_set = MyNoiseCIFARDataset(
-                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                  "cifar-10-data", img_type),
-                input_name=task + "_raw",
+                root=data_root,
+                input_name=input_name,
                 train=False,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
@@ -66,6 +85,9 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
             transforms.ToTensor(),
         ])
         test_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=False, transform=transform_test)
+    if input_quant_bits is not None or center_student_input:
+        test_set = InputPreprocessedDataset(
+            test_set, input_quant_bits, center_student_input)
     # Create a DataLoader
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=shuffle, num_workers=2)
     return test_loader
@@ -88,16 +110,16 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb", task="cifar10"):
                 transforms.RandomHorizontalFlip(),
             ])
         train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
-    elif img_type == "scanGFI":
+    elif img_type.lower() in {"scangfi", "cifair"}:
+        data_root, input_name = _get_scangfi_location(task, img_type)
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")
             subprocess.run("uv run scangen create-config --dataset {} {}".format(task, conf_file), shell=True)
             with open("{}".format(conf_file)) as fp:
                 scangen_config = json.load(fp)
             train_set = MyNoiseCIFARDataset(
-                root=os.path.join(os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
-                                  "cifar-10-data", img_type),
-                input_name=task + "_raw",
+                root=data_root,
+                input_name=input_name,
                 train=True,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),

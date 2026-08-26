@@ -17,7 +17,10 @@ from functools import wraps
 from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from pc_conv import ReLUX, HardTanhByX
-from utils import expand_weights_to_matrix, load_res_vs_vin, interpolate_R_eff
+from utils import (expand_weights_to_matrix, interpolate_R_eff,
+                   load_mc_res_curve_bank, load_mc_res_curve_gaussian,
+                   load_mc_res_training_curve_bank,
+                   patch_mc_res_curve_gaussian_mean, load_res_vs_vin)
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 from measured_activation import (
@@ -29,10 +32,23 @@ import logging
 log = logging.getLogger(__name__)
 
 
-def _symmetric_qat_weight_scale(layer_weight):
+def _symmetric_qat_weight_scale(layer_weight, weight_quant_factor_bits=None):
     """Return the detached s_w used by SymQuantizeWeight.compute_s()."""
     with torch.no_grad():
-        return 1 / layer_weight.detach().abs().max()
+        abs_max = layer_weight.detach().abs().max()
+        if weight_quant_factor_bits is None or int(weight_quant_factor_bits) < 0:
+            return 1 / abs_max
+
+        num_levels = 1 << int(weight_quant_factor_bits)
+        scaled_abs_max = abs_max * num_levels
+        nearest_level = scaled_abs_max.round()
+        scaled_abs_max = torch.where(
+            torch.isclose(
+                scaled_abs_max, nearest_level, rtol=1e-4, atol=1e-7),
+            nearest_level, scaled_abs_max)
+        quantized_abs_max = torch.ceil(scaled_abs_max)
+        quantized_abs_max.clamp_(min=1, max=num_levels).div_(num_levels)
+        return 1 / quantized_abs_max
 
 
 def is_adaptive(method):
@@ -606,12 +622,21 @@ class ToggleBaseFFFB(ODEXInitFFFB):
     reset_z = None
 
     def __init__(self, toggle_n_cycles=None, toggle_time_split=0.5,
-                 toggle_fast_path=True, odexinit_scaling_mode="approx", **kwargs):
+                 toggle_fast_path=True, odexinit_scaling_mode="approx", toggle_timing_mode="derived",
+                 toggle_y_time=5e-9, z_over_y_time=3.0,
+                 toggle_timing_R=None, toggle_timing_C=None, **kwargs):
         super().__init__(**kwargs)
         self.toggle_n_cycles = toggle_n_cycles
         self.toggle_time_split = toggle_time_split
         self.toggle_fast_path = toggle_fast_path
         self.odexinit_scaling_mode = str(odexinit_scaling_mode).lower()
+        self.toggle_timing_mode = str(toggle_timing_mode).lower()
+        self.toggle_y_time = float(toggle_y_time)
+        self.z_over_y_time = float(z_over_y_time)
+        self.toggle_timing_R = (
+            None if toggle_timing_R is None else float(toggle_timing_R))
+        self.toggle_timing_C = (
+            None if toggle_timing_C is None else float(toggle_timing_C))
 
         if self.reset_z is None:
             raise ValueError("ToggleBaseFFFB subclasses must set reset_z.")
@@ -622,6 +647,18 @@ class ToggleBaseFFFB(ODEXInitFFFB):
         if self.odexinit_scaling_mode not in {"approx", "direct"}:
             raise ValueError(
                 "odexinit_scaling_mode must be 'approx' or 'direct'.")
+        if self.toggle_timing_mode not in {"derived", "fixed"}:
+            raise ValueError(
+                "toggle_timing_mode must be 'derived' or 'fixed'.")
+        if self.toggle_timing_mode == "fixed":
+            if self.toggle_y_time <= 0 or self.z_over_y_time <= 0:
+                raise ValueError(
+                    "toggle_y_time and z_over_y_time must be positive in fixed mode.")
+            if (self.toggle_timing_R is None or self.toggle_timing_R <= 0 or
+                    self.toggle_timing_C is None or self.toggle_timing_C <= 0):
+                raise ValueError(
+                    "Fixed toggle timing requires positive toggle_timing_R "
+                    "and toggle_timing_C.")
 
     def _integration_end_like(self, ref):
         return self.integration_time[-1].to(device=ref.device, dtype=ref.dtype)
@@ -655,14 +692,24 @@ class ToggleBaseFFFB(ODEXInitFFFB):
 
 class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
     supports_post_quant_mismatch = True
+    _SUMMING_NOISE_SEED_OFFSET = 1000003
+    _COUPLER_NOISE_SEED_OFFSET = 2000003
+    _DTC_TIMING_SEED_OFFSET = 3000017
+    _SLOW_SUMMING_CURRENT_SEED_OFFSET = 4000037
+    _SLOW_COUPLER_NOISE_SEED_OFFSET = 5000011
 
-    def __init__(self, enable_spin_variation=False, sigma_spin=0.10, spin_variation_seed=None,
+    def __init__(self, enable_spin_variation=False, sigma_spin=0.10,
+                 spin_variation_mean=1.0, spin_variation_seed=None,
                  enable_summing_current_noise=False, summing_current_p=12.73e-12,
                  summing_noise_seed=None, enable_coupler_noise=False,
-                 coupler_noise_p=0.6e-12, coupler_noise_seed=None, **kwargs):
+                 coupler_noise_p=0.6e-12, coupler_noise_seed=None,
+                 enable_slow_summing_current=False, slow_summing_current=2.47e-9,
+                 enable_slow_coupler_noise=False, slow_coupler_noise=2.47e-9,
+                 **kwargs):
         super().__init__(**kwargs)
         self.enable_spin_variation = bool(enable_spin_variation)
         self.sigma_spin = float(sigma_spin)
+        self.spin_variation_mean = float(spin_variation_mean)
         self.spin_variation_seed = spin_variation_seed
         self.enable_summing_current_noise = bool(enable_summing_current_noise)
         self.summing_current_p = float(summing_current_p)
@@ -670,13 +717,26 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         self.enable_coupler_noise = bool(enable_coupler_noise)
         self.coupler_noise_p = float(coupler_noise_p)
         self.coupler_noise_seed = coupler_noise_seed
+        self.enable_slow_summing_current = bool(enable_slow_summing_current)
+        self.slow_summing_current = float(slow_summing_current)
+        self.enable_slow_coupler_noise = bool(enable_slow_coupler_noise)
+        self.slow_coupler_noise = float(slow_coupler_noise)
+        if self.slow_summing_current < 0 or self.slow_coupler_noise < 0:
+            raise ValueError("Slow-current standard deviations must be nonnegative.")
         self.register_buffer("_spin_factor_y", None, persistent=False)
         self.register_buffer("_spin_factor_z", None, persistent=False)
         self._spin_variation_generators = {}
         self._summing_noise_generators = {}
         self._coupler_noise_generators = {}
+        self._slow_summing_current_generators = {}
+        self._slow_coupler_noise_generators = {}
+        self._slow_summing_current_samples = {}
+        self._slow_coupler_noise_samples = {}
+        self._slow_coupler_count_cache = {}
         self._active_coupler_count_cache = {}
         self._training_pulse_mismatch = None
+        self._nonlinear_R_training_generators = {}
+        self._nonlinear_R_training_curve_indices = {}
 
     def begin_training_pulse_mismatch(self, noise_level, mismatch_type):
         """Sample one post-quantization coupler-amplitude mismatch for this forward."""
@@ -694,6 +754,9 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         self._training_pulse_mismatch = None
 
     def _apply_averaged_module(self, module, source):
+        if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
+            source = self._averaged_nonlinear_R_source(module, source)
+
         mismatch = self._training_pulse_mismatch
         if mismatch is None:
             return module(source)
@@ -720,11 +783,23 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         self._spin_factor_y = None
         self._spin_factor_z = None
 
+    def reset_nonlinear_R_variation(self):
+        self._nonlinear_R_training_curve_indices.clear()
+
+    def reset_slow_current_noise(self):
+        self._slow_summing_current_samples.clear()
+        self._slow_coupler_noise_samples.clear()
+
     def forward(self, x, layer_idx=None):
         # Training samples one hardware realization per forward. Evaluation
         # keeps the lazily sampled factors fixed for this model/trial.
+        # Slow current offsets are instead resampled for every input batch and
+        # layer, then remain fixed across all toggle cycles and pulse slices.
+        self.reset_slow_current_noise()
         if self.training and self.enable_spin_variation:
             self.reset_spin_variation()
+        if self.training and hasattr(self, "_nonlinear_R_training_pkg"):
+            self.reset_nonlinear_R_variation()
         return super().forward(x, layer_idx=layer_idx)
 
     def _layer_seed_offset(self):
@@ -732,6 +807,71 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
             return 1009 * int(self.layer_idx)
         except (TypeError, ValueError):
             return 0
+
+
+    def _nonlinear_R_training_module_key(self, module):
+        if module is self.FBconv:
+            return "FBconv"
+        if module is self.FFconv:
+            return "FFconv"
+        raise ValueError("Nonlinear-R training received an unknown convolution module.")
+
+    def _nonlinear_R_training_generator(self, ref):
+        package = getattr(self, "_nonlinear_R_training_pkg", None)
+        if package is None or package.get("nonlinear_R_curve_seed") is None:
+            return None
+        key = str(ref.device)
+        generator = self._nonlinear_R_training_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=ref.device)
+            generator.manual_seed(
+                int(package["nonlinear_R_curve_seed"]) +
+                self._layer_seed_offset())
+            self._nonlinear_R_training_generators[key] = generator
+        return generator
+
+    def _sample_nonlinear_R_training_curve(self, ref, module_key):
+        package = self._nonlinear_R_training_pkg
+        if not self._nonlinear_R_training_curve_indices:
+            n_curves = int(package["v_grid"].shape[0])
+            if n_curves < 2:
+                raise ValueError(
+                    "At least two nonlinear-R curves are required to sample "
+                    "different FF and FB curves without replacement.")
+            pair = torch.randperm(
+                n_curves, device=ref.device,
+                generator=self._nonlinear_R_training_generator(ref))[:2].tolist()
+            self._nonlinear_R_training_curve_indices.update(
+                FFconv=int(pair[0]), FBconv=int(pair[1]))
+        return self._nonlinear_R_training_curve_indices[module_key]
+
+    def _averaged_nonlinear_R_source(self, module, source):
+        package = getattr(self, "_nonlinear_R_training_pkg", None)
+        if package is None:
+            return source
+
+        module_key = self._nonlinear_R_training_module_key(module)
+        curve_index = self._sample_nonlinear_R_training_curve(
+            source, module_key)
+        length = int(package["lengths"][curve_index].item())
+        grid = package["v_grid"][curve_index, :length].to(
+            device=source.device, dtype=source.dtype)
+        left = package["R_left"][curve_index, :length - 1].to(
+            device=source.device, dtype=source.dtype)
+        slope = package["R_slope"][curve_index, :length - 1].to(
+            device=source.device, dtype=source.dtype)
+
+        query = source
+        proj_fn = package.get("proj_fn")
+        if proj_fn is not None:
+            query = proj_fn(query)
+        query = query.clamp(min=grid[0], max=grid[-1])
+        interval = torch.bucketize(query.contiguous(), grid.contiguous()) - 1
+        interval = interval.clamp(min=0, max=length - 2)
+        R_eff = (
+            left[interval] +
+            slope[interval] * (query - grid[interval]))
+        return source * source.new_tensor(package["R"]) / R_eff
 
     def _spin_variation_generator(self, ref, stage):
         if self.spin_variation_seed is None:
@@ -753,7 +893,7 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         factor = getattr(self, name)
         expected_shape = (1,) + tuple(summed_rhs.shape[1:])
         if factor is None:
-            factor = 1.0 + self.sigma_spin * torch.randn(
+            factor = self.spin_variation_mean + self.sigma_spin * torch.randn(
                 expected_shape, device=summed_rhs.device, dtype=summed_rhs.dtype,
                 generator=self._spin_variation_generator(summed_rhs, stage))
             setattr(self, name, factor)
@@ -780,7 +920,9 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         generator = self._summing_noise_generators.get(key)
         if generator is None:
             generator = torch.Generator(device=state.device)
-            generator.manual_seed(int(self.summing_noise_seed) + self._layer_seed_offset())
+            generator.manual_seed(
+                int(self.summing_noise_seed) + self._layer_seed_offset() +
+                self._SUMMING_NOISE_SEED_OFFSET)
             self._summing_noise_generators[key] = generator
         return generator
 
@@ -791,9 +933,107 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         generator = self._coupler_noise_generators.get(key)
         if generator is None:
             generator = torch.Generator(device=state.device)
-            generator.manual_seed(int(self.coupler_noise_seed) + self._layer_seed_offset())
+            generator.manual_seed(
+                int(self.coupler_noise_seed) + self._layer_seed_offset() +
+                self._COUPLER_NOISE_SEED_OFFSET)
             self._coupler_noise_generators[key] = generator
         return generator
+
+    def _slow_current_generator(self, state, stage, coupler):
+        if coupler:
+            seed = self.coupler_noise_seed
+            generators = self._slow_coupler_noise_generators
+            source_offset = self._SLOW_COUPLER_NOISE_SEED_OFFSET
+        else:
+            seed = self.summing_noise_seed
+            generators = self._slow_summing_current_generators
+            source_offset = self._SLOW_SUMMING_CURRENT_SEED_OFFSET
+        if seed is None:
+            return None
+        key = (str(state.device), stage)
+        generator = generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=state.device)
+            stage_offset = 0 if stage == "z" else 1
+            generator.manual_seed(
+                int(seed) + self._layer_seed_offset() + source_offset + stage_offset)
+            generators[key] = generator
+        return generator
+
+    def _slow_summing_current_sample(self, state, stage):
+        sample = self._slow_summing_current_samples.get(stage)
+        if sample is None:
+            sample = self.slow_summing_current * torch.randn(
+                state.shape, device=state.device, dtype=state.dtype,
+                generator=self._slow_current_generator(state, stage, coupler=False))
+            self._slow_summing_current_samples[stage] = sample
+        elif tuple(sample.shape) != tuple(state.shape):
+            raise RuntimeError(
+                "Cached slow summing-current shape {} does not match state {}.".format(
+                    tuple(sample.shape), tuple(state.shape)))
+        return sample
+
+    def _slow_coupler_count(self, module, source, state):
+        cache_key = (id(module), tuple(source.shape[1:]), tuple(state.shape[1:]),
+                     str(state.device), state.dtype)
+        cached = self._slow_coupler_count_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        with torch.no_grad():
+            source_ones = source.new_ones((1,) + tuple(source.shape[1:]))
+            if isinstance(module, nn.Conv2d):
+                count = F.conv2d(
+                    source_ones, torch.ones_like(module.weight), None,
+                    module.stride, module.padding, module.dilation, module.groups)
+            elif isinstance(module, nn.ConvTranspose2d):
+                count = F.conv_transpose2d(
+                    source_ones, torch.ones_like(module.weight), None,
+                    module.stride, module.padding, module.output_padding,
+                    module.groups, module.dilation)
+            elif hasattr(module, "mat"):
+                meta = module.meta
+                kernel = state.new_ones((
+                    int(meta["out_chan"]), int(meta["inp_chan"]),
+                    int(meta["ker_h"]), int(meta["ker_w"])))
+                count = F.conv2d(
+                    source_ones, kernel, None,
+                    int(meta["stride"]), int(meta["padding"]))
+            else:
+                raise TypeError(
+                    "Slow coupler noise supports Conv2d, ConvTranspose2d, and MVMConv modules.")
+
+            if tuple(count.shape[1:]) != tuple(state.shape[1:]):
+                raise RuntimeError(
+                    "Slow-coupler count shape {} does not match destination state {}.".format(
+                        tuple(count.shape), tuple(state.shape)))
+            self._slow_coupler_count_cache[cache_key] = count
+            return count
+
+    def _slow_coupler_noise_sample(self, state, stage, module, source):
+        sample = self._slow_coupler_noise_samples.get(stage)
+        if sample is None:
+            count = self._slow_coupler_count(module, source, state).clamp_min(0.0)
+            sample = self.slow_coupler_noise * count.sqrt() * torch.randn(
+                state.shape, device=state.device, dtype=state.dtype,
+                generator=self._slow_current_generator(state, stage, coupler=True))
+            self._slow_coupler_noise_samples[stage] = sample
+        elif tuple(sample.shape) != tuple(state.shape):
+            raise RuntimeError(
+                "Cached slow coupler-current shape {} does not match state {}.".format(
+                    tuple(sample.shape), tuple(state.shape)))
+        return sample
+
+    def _slow_stage_current(self, state, stage, module, source):
+        slow_current = None
+        if self.enable_slow_summing_current:
+            slow_current = self._slow_summing_current_sample(state, stage)
+        if self.enable_slow_coupler_noise:
+            coupler_current = self._slow_coupler_noise_sample(
+                state, stage, module, source)
+            slow_current = (coupler_current if slow_current is None else
+                            slow_current + coupler_current)
+        return slow_current
 
     def _brownian_increment(self, state, duration, stage):
         normal = torch.randn(
@@ -846,16 +1086,20 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         return scale * (duration * level_sum / float(self.q_hi)).sqrt() * normal
 
     def _averaged_stage_update(
-            self, state, summed_rhs, duration, stage, coupler_level_sum=None):
+            self, state, summed_rhs, duration, stage, coupler_level_sum=None,
+            slow_current=None):
         summed_rhs = self._apply_spin_variation(stage, summed_rhs)
 
         if not getattr(self, "physical", False):
-            if self.enable_summing_current_noise or self.enable_coupler_noise:
+            if (self.enable_summing_current_noise or self.enable_coupler_noise or
+                    slow_current is not None):
                 raise ValueError(
                     "Physical current noise requires a hardware wrapper with stage capacitances.")
             return state + duration * summed_rhs
 
         updated = state + (duration / (self.R * self._stage_capacitance(stage))) * summed_rhs
+        if slow_current is not None:
+            updated = updated + duration * slow_current / self._stage_capacitance(stage)
         if self.enable_summing_current_noise:
             updated = updated + self._brownian_increment(state, duration, stage)
         if self.enable_coupler_noise:
@@ -903,7 +1147,9 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
             level_sum = self._averaged_coupler_level_sum(self.FBconv, y_hold, z)
         return self._averaged_stage_update(
             z, self._apply_averaged_module(self.FBconv, y_hold), T_z, "z",
-            coupler_level_sum=level_sum)
+            coupler_level_sum=level_sum,
+            slow_current=self._slow_stage_current(
+                z, "z", self.FBconv, y_hold))
 
     def y_stage_update(self, y, h_hold, T_y):
         level_sum = None
@@ -911,7 +1157,9 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
             level_sum = self._averaged_coupler_level_sum(self.FFconv, h_hold, y)
         return self._averaged_stage_update(
             y, self._apply_averaged_module(self.FFconv, h_hold), T_y, "y",
-            coupler_level_sum=level_sum)
+            coupler_level_sum=level_sum,
+            slow_current=self._slow_stage_current(
+                y, "y", self.FFconv, h_hold))
 
     def run_one_cycle(self, y, z, cycle_params):
         # cycle_params is generated by resolve_cycle_params
@@ -1002,6 +1250,25 @@ class ToggleODEXInitFFFB(ToggleAveragedPhysicalFFFB):
     def resolve_cycle_params(self, ref):
         n_cycles = 1 if self.toggle_n_cycles is None else int(self.toggle_n_cycles)
         cycle_t = self._integration_end_like(ref) / float(n_cycles)
+        if self.toggle_timing_mode == "fixed":
+            T_y_base = ref.new_tensor(self.toggle_y_time)
+            T_z_base = T_y_base * self.z_over_y_time
+            if not getattr(self, "physical", False):
+                reference_rc = self.toggle_timing_R * self.toggle_timing_C
+                return T_z_base / reference_rc, T_y_base / reference_rc
+
+            missing = [name for name in ("R", "C", "C_fb", "s_ff", "s_fb")
+                       if not hasattr(self, name)]
+            if missing:
+                raise ValueError(
+                    "Fixed ToggleODEXInitFFFB requires wrapper-provided " +
+                    ", ".join(missing))
+            T_z = T_z_base / self.s_fb
+            T_y = T_y_base / self.s_ff
+            if T_z <= 0 or T_y <= 0:
+                raise ValueError("Fixed toggle stage durations must be positive.")
+            return T_z, T_y
+
         if not getattr(self, "physical", False):
             return torch.ones_like(cycle_t), cycle_t
 
@@ -1041,6 +1308,7 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
 
     def __init__(self, enable_dtc_nonideality=False,
                  dtc_leading_edge_variation_std=0.0,
+                 dtc_width_variation_mean=0.0,
                  dtc_width_variation_std=0.018,
                  dtc_leading_edge_jitter_std=0.005,
                  dtc_falling_edge_jitter_std=0.005,
@@ -1048,6 +1316,7 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         super().__init__(**kwargs)
         self.enable_dtc_nonideality = bool(enable_dtc_nonideality)
         self.dtc_leading_edge_variation_std = float(dtc_leading_edge_variation_std)
+        self.dtc_width_variation_mean = float(dtc_width_variation_mean)
         self.dtc_width_variation_std = float(dtc_width_variation_std)
         self.dtc_leading_edge_jitter_std = float(dtc_leading_edge_jitter_std)
         self.dtc_falling_edge_jitter_std = float(dtc_falling_edge_jitter_std)
@@ -1113,7 +1382,8 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
             generator = torch.Generator(device=ref.device)
             stage_offset = 0 if stage == "z" else 104729
             generator.manual_seed(
-                int(self.dtc_timing_seed) + self._layer_seed_offset() + stage_offset)
+                int(self.dtc_timing_seed) + self._layer_seed_offset() +
+                stage_offset + self._DTC_TIMING_SEED_OFFSET)
             self._dtc_timing_generators[key] = generator
         return generator
 
@@ -1149,9 +1419,11 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
                 "leading_edge": self.dtc_leading_edge_variation_std * torch.randn(
                     num_outputs, device=clean_values.device, dtype=clean_values.dtype,
                     generator=generator),
-                "width": self.dtc_width_variation_std * torch.randn(
-                    num_outputs, device=clean_values.device, dtype=clean_values.dtype,
-                    generator=generator),
+                "width": (
+                    self.dtc_width_variation_mean +
+                    self.dtc_width_variation_std * torch.randn(
+                        num_outputs, device=clean_values.device,
+                        dtype=clean_values.dtype, generator=generator)),
             }
             self._dtc_fixed_variation[stage] = fixed
         generator = self._dtc_timing_generator(clean_values, stage)
@@ -1317,12 +1589,26 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
     def z_stage_rhs(self, t, z, y_hold, pulse_weight):
         summed_rhs = self._apply_pulse_module(self.FBconv, y_hold, pulse_weight)
         summed_rhs = self._apply_spin_variation("z", summed_rhs)
-        return summed_rhs / (self.R * self.C_fb)
+        rhs = summed_rhs / (self.R * self.C_fb)
+        slow_current = None
+        if (getattr(self, "enable_slow_summing_current", False) is True or
+                getattr(self, "enable_slow_coupler_noise", False) is True):
+            slow_current = self._slow_stage_current(
+                z, "z", self.FBconv, y_hold)
+        return (rhs if slow_current is None else
+                rhs + slow_current / self._stage_capacitance("z"))
 
     def y_stage_rhs(self, t, y, h_hold, pulse_weight):
         summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
         summed_rhs = self._apply_spin_variation("y", summed_rhs)
-        return summed_rhs / (self.R * self.C_ff)
+        rhs = summed_rhs / (self.R * self.C_ff)
+        slow_current = None
+        if (getattr(self, "enable_slow_summing_current", False) is True or
+                getattr(self, "enable_slow_coupler_noise", False) is True):
+            slow_current = self._slow_stage_current(
+                y, "y", self.FFconv, h_hold)
+        return (rhs if slow_current is None else
+                rhs + slow_current / self._stage_capacitance("y"))
 
     def _active_pulse_mask(self, module, slice_idx):
         _, clean_weight = self._clean_weight(module)
@@ -1516,6 +1802,18 @@ class TogglePulseODEXInitFFFB(TogglePulseFFFB):
     reset_z = True
 
     def resolve_cycle_params(self, ref):
+        if self.toggle_timing_mode == "fixed":
+            missing = [name for name in ("R", "C", "C_fb", "s_ff", "s_fb")
+                       if not hasattr(self, name)]
+            if missing:
+                raise ValueError(
+                    "Fixed TogglePulseODEXInitFFFB requires wrapper-provided " +
+                    ", ".join(missing))
+            T_y = ref.new_tensor(self.toggle_y_time) / self.s_ff
+            T_z = (ref.new_tensor(self.toggle_y_time) *
+                   self.z_over_y_time / self.s_fb)
+            return T_z, T_y
+
         required = ["R", "C", "C_fb", "w_bits"]
         if self.odexinit_scaling_mode == "direct":
             required.extend(["s_ff", "s_fb"])
@@ -1544,7 +1842,14 @@ class TogglePulseODEXInitFFFB(TogglePulseFFFB):
     def y_stage_rhs(self, t, y, h_hold, pulse_weight):
         summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
         summed_rhs = self._apply_spin_variation("y", summed_rhs)
-        return summed_rhs / (self.R * self.C)
+        rhs = summed_rhs / (self.R * self.C)
+        slow_current = None
+        if (getattr(self, "enable_slow_summing_current", False) is True or
+                getattr(self, "enable_slow_coupler_noise", False) is True):
+            slow_current = self._slow_stage_current(
+                y, "y", self.FFconv, h_hold)
+        return (rhs if slow_current is None else
+                rhs + slow_current / self._stage_capacitance("y"))
 
     def _stage_capacitance(self, stage):
         return self.C_fb if stage == "z" else self.C
@@ -1636,6 +1941,18 @@ class TogglePulseBlkXInitFFFB(TogglePulseBlk):
     """Integer-level pulse block with the ODEXInitFFFB physical timing."""
 
     def resolve_cycle_params(self, ref):
+        if self.toggle_timing_mode == "fixed":
+            missing = [name for name in ("R", "C", "C_fb", "s_ff", "s_fb")
+                       if not hasattr(self, name)]
+            if missing:
+                raise ValueError(
+                    "Fixed TogglePulseBlkXInitFFFB requires wrapper-provided " +
+                    ", ".join(missing))
+            T_y = ref.new_tensor(self.toggle_y_time) / self.s_ff
+            T_z = (ref.new_tensor(self.toggle_y_time) *
+                   self.z_over_y_time / self.s_fb)
+            return T_z, T_y
+
         required = ["R", "C", "C_fb", "w_bits"]
         if self.odexinit_scaling_mode == "direct":
             required.extend(["s_ff", "s_fb"])
@@ -1660,7 +1977,14 @@ class TogglePulseBlkXInitFFFB(TogglePulseBlk):
     def y_stage_rhs(self, t, y, h_hold, pulse_weight):
         summed_rhs = self._apply_pulse_module(self.FFconv, h_hold, pulse_weight)
         summed_rhs = self._apply_spin_variation("y", summed_rhs)
-        return summed_rhs / (self.R * self.C)
+        rhs = summed_rhs / (self.R * self.C)
+        slow_current = None
+        if (getattr(self, "enable_slow_summing_current", False) is True or
+                getattr(self, "enable_slow_coupler_noise", False) is True):
+            slow_current = self._slow_stage_current(
+                y, "y", self.FFconv, h_hold)
+        return (rhs if slow_current is None else
+                rhs + slow_current / self._stage_capacitance("y"))
 
     def _stage_capacitance(self, stage):
         return self.C_fb if stage == "z" else self.C
@@ -2626,6 +2950,8 @@ class QuantizationImpl(torch.autograd.Function):
 class SymQuantizeWeight(nn.Module):
     def __init__(self, w_bits=8, w_scalar=1.0, **kwargs):
         super().__init__()
+        self.weight_quant_factor_bits = kwargs.get(
+            "weight_quant_factor_bits", None)
         self.register_buffer("w_bits", torch.tensor(w_bits))
         self.register_buffer("upper", torch.tensor((1 << (w_bits - 1)) - 1))
         self.register_buffer("lower", -self.upper)
@@ -2636,7 +2962,8 @@ class SymQuantizeWeight(nn.Module):
         return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper, self.w_scalar)
 
     def compute_s(self, layer_weight: nn.Parameter):
-        self.s_w.copy_(_symmetric_qat_weight_scale(layer_weight))
+        self.s_w.copy_(_symmetric_qat_weight_scale(
+            layer_weight, self.weight_quant_factor_bits))
 
 
 class PulseQuantizationImpl(torch.autograd.Function):
@@ -2818,13 +3145,56 @@ class WrapQuantizeW(ODEWrapperRC):
 
         self.nonlinear_R = kwargs.pop("nonlinear_R", False)
         self.nonlinear_R_table = kwargs.pop("nonlinear_R_table", None)
+        self.nonlinear_R_mc_curve_index = kwargs.pop(
+            "nonlinear_R_mc_curve_index", None)
+        self.nonlinear_R_mc_quantity = kwargs.pop(
+            "nonlinear_R_mc_quantity", "conductance")
+        self.nonlinear_R_curve_sharing = kwargs.pop(
+            "nonlinear_R_curve_sharing", "shared")
+        self.nonlinear_R_curve_bank_indices = kwargs.pop(
+            "nonlinear_R_curve_bank_indices", None)
+        self.nonlinear_R_curve_seed = kwargs.pop(
+            "nonlinear_R_curve_seed", None)
+        self.nonlinear_R_curve_edge_chunk_size = kwargs.pop(
+            "nonlinear_R_curve_edge_chunk_size", 65536)
+        self.nonlinear_R_curve_sampling = kwargs.pop(
+            "nonlinear_R_curve_sampling", "empirical_with_replacement")
+        # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
+        self.patched_nonlinearity_data = kwargs.pop(
+            "patched_nonlinearity_data", False)
+        self.patched_nonlinearity_mean_table = kwargs.pop(
+            "patched_nonlinearity_mean_table", None)
+        self.patched_nonlinearity_mean_curve_index = kwargs.pop(
+            "patched_nonlinearity_mean_curve_index", None)
+        # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
+        self.nonlinear_R_train_mode = str(kwargs.pop(
+            "nonlinear_R_train_mode", "none")).lower()
+        self.nonlinear_R_corner_range = kwargs.pop(
+            "nonlinear_R_corner_range", "all")
+        if self.nonlinear_R_train_mode not in {"none", "exact_curve", "mean"}:
+            raise ValueError("Unknown nonlinear_R_train_mode.")
+        if self.patched_nonlinearity_data and not self.nonlinear_R:
+            raise ValueError(
+                "patched_nonlinearity_data requires nonlinear_R=True.")
+        if (self.patched_nonlinearity_data and
+                self.nonlinear_R_train_mode != "none"):
+            raise ValueError(
+                "patched_nonlinearity_data is inference-only.")
+        self.nonlinear_R_curve_bank = None
+        self.nonlinear_R_curve_gaussian = None
         self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
         self.mul_mismatch_mode = kwargs.pop("mul_mismatch_mode", "scale_mismatch")
+        self.weight_quant_factor_bits = kwargs.pop(
+            "weight_quant_factor_bits", None)
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
 
         self.enable_measured_activation = kwargs.pop("enable_measured_activation", False)
         self.activation_curve_path = kwargs.pop("activation_curve_path", None)
         self.activation_corner = kwargs.pop("activation_corner", "TT")
+        self.activation_curve_sharing = kwargs.pop(
+            "activation_curve_sharing", "per_model")
+        self.activation_curve_seed = kwargs.pop(
+            "activation_curve_seed", None)
         self.activation_interpolation = str(kwargs.pop(
             "activation_interpolation", "piecewise_linear")).lower()
         if self.activation_interpolation not in {"cubic_bspline", "piecewise_linear"}:
@@ -2875,7 +3245,12 @@ class WrapQuantizeW(ODEWrapperRC):
                 os.path.dirname(__file__), "hardware_data", "relu_current_0p2uA_finer.csv")
         activation_kwargs = dict(
             curve_path=curve_path, v_dd=self.v_dd, corner=self.activation_corner,
-            normalize_positive_endpoint=self.activation_normalize_positive_endpoint)
+            normalize_positive_endpoint=self.activation_normalize_positive_endpoint,
+            curve_sharing=self.activation_curve_sharing,
+            curve_seed=(
+                None if self.activation_curve_seed is None else
+                int(self.activation_curve_seed) +
+                1009 * int(self.ode_block.layer_idx)))
         if activation_cls is CubicBSplineActivation:
             activation_kwargs.update(
                 num_parameters=self.activation_spline_parameters,
@@ -2894,22 +3269,27 @@ class WrapQuantizeW(ODEWrapperRC):
             self.ode_block.add_noise()
 
     @staticmethod
-    def cal_quant_factor_and_set(q_hi, p: nn.Parameter):
+    def cal_quant_factor_and_set(
+            q_hi, p: nn.Parameter, weight_quant_factor_bits=None):
         with torch.no_grad():
-            abs_max = p.data.abs().max()
-            # -2 ** n is not used for symmetry
-            s = q_hi / abs_max
-            torch.clamp((s * p).round(), min=-q_hi, max=q_hi, out=p)
+            s = _symmetric_qat_weight_scale(
+                p, weight_quant_factor_bits)
+            torch.clamp((s * q_hi * p).round(),
+                        min=-q_hi, max=q_hi, out=p)
             p.div_(q_hi)
-            return s / q_hi
+            return s
 
     def get_quantize_factor(self):
         # calculate quantization coefficient
         # the clean_params of the ode_block is set to the quantized weight in-place
         self.register_buffer(
-            "s_ff", self.cal_quant_factor_and_set(self.q_hi, self.ode_block.clean_params["FFconv"]))
+            "s_ff", self.cal_quant_factor_and_set(
+                self.q_hi, self.ode_block.clean_params["FFconv"],
+                self.weight_quant_factor_bits))
         self.register_buffer(
-            "s_fb", self.cal_quant_factor_and_set(self.q_hi, self.ode_block.clean_params["FBconv"]))
+            "s_fb", self.cal_quant_factor_and_set(
+                self.q_hi, self.ode_block.clean_params["FBconv"],
+                self.weight_quant_factor_bits))
         if not torch.allclose(torch.zeros_like(self.ode_block.b0[0]), self.ode_block.clean_params["b0"]):
             with torch.no_grad():
                 ff_weight = self.ode_block.clean_params["FFconv"].data
@@ -2975,10 +3355,53 @@ class WrapQuantizeW(ODEWrapperRC):
         # R_table: Actual resistance value at different voltage; (N, M)
         if not self.nonlinear_R:
             return False
+        if (self.patched_nonlinearity_data and
+                self.nonlinear_R_curve_sampling != "multivariate_gaussian"):
+            raise ValueError(
+                "patched_nonlinearity_data requires multivariate_gaussian "
+                "curve sampling.")
+
+        if (self.nonlinear_R_curve_sharing != "shared" or
+                self.nonlinear_R_curve_bank_indices is not None):
+            if self.nonlinear_R_table is None:
+                raise ValueError(
+                    "Sampled nonlinear-R curves require nonlinear_R_table.")
+            if self.nonlinear_R_curve_sampling == "multivariate_gaussian":
+                self.nonlinear_R_curve_gaussian = load_mc_res_curve_gaussian(
+                    self.nonlinear_R_table,
+                    quantity=self.nonlinear_R_mc_quantity,
+                    curve_indices=self.nonlinear_R_curve_bank_indices,
+                    device=self.ode_block.FFconv.weight.device)
+                # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
+                if self.patched_nonlinearity_data:
+                    if (self.patched_nonlinearity_mean_table is None or
+                            self.patched_nonlinearity_mean_curve_index is None):
+                        raise ValueError(
+                            "Patched nonlinear-R mean table and curve index "
+                            "are required.")
+                    self.nonlinear_R_curve_gaussian = (
+                        patch_mc_res_curve_gaussian_mean(
+                            self.nonlinear_R_curve_gaussian,
+                            self.patched_nonlinearity_mean_table,
+                            self.patched_nonlinearity_mean_curve_index))
+                # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
+            else:
+                self.nonlinear_R_curve_bank = load_mc_res_curve_bank(
+                    self.nonlinear_R_table,
+                    quantity=self.nonlinear_R_mc_quantity,
+                    curve_indices=self.nonlinear_R_curve_bank_indices,
+                    device=self.ode_block.FFconv.weight.device)
+            shared_curve_index = (
+                0 if self.nonlinear_R_curve_bank_indices is None else
+                int(self.nonlinear_R_curve_bank_indices[0]))
+        else:
+            shared_curve_index = self.nonlinear_R_mc_curve_index
 
         self.v_grid, self.R_codes, self.R_table = load_res_vs_vin(
             R=self.R, R_max=self.R_max, device=self.ode_block.FFconv.weight.device,
-            nonlinear_R_table=self.nonlinear_R_table)
+            nonlinear_R_table=self.nonlinear_R_table,
+            nonlinear_R_mc_curve_index=shared_curve_index,
+            nonlinear_R_mc_quantity=self.nonlinear_R_mc_quantity)
 
         v_sort_idx = torch.argsort(self.v_grid)
         self.v_grid = self.v_grid[v_sort_idx]
@@ -3001,6 +3424,40 @@ class WrapQuantizeW(ODEWrapperRC):
 
     def _ship_nonlinear_R_pkg(self):
         if not self.nonlinear_R:
+            if self.nonlinear_R_train_mode != "none":
+                raise ValueError(
+                    "nonlinear_R_train_mode requires nonlinear_R=True.")
+            return
+
+        if self.nonlinear_R_train_mode != "none":
+            if not isinstance(self.ode_block, ToggleAveragedPhysicalFFFB):
+                raise TypeError(
+                    "Level-2 nonlinear-R training requires "
+                    "ToggleAveragedPhysicalFFFB or a derived Level-2 block.")
+            if isinstance(self.ode_block, TogglePulseFFFB):
+                raise TypeError(
+                    "nonlinear_R_train_mode is for non-expanded Level-2 blocks.")
+            if self.nonlinear_R_curve_sharing != "shared":
+                raise ValueError(
+                    "Level-2 nonlinear-R training supports shared curves only.")
+            if self.nonlinear_R_table is None:
+                raise ValueError(
+                    "nonlinear_R_table must point to the coupler MC source.")
+            bank = load_mc_res_training_curve_bank(
+                self.nonlinear_R_table,
+                mode=self.nonlinear_R_train_mode,
+                corner_range=self.nonlinear_R_corner_range,
+                quantity=self.nonlinear_R_mc_quantity,
+                dtype=self.ode_block.FFconv.weight.dtype,
+                device=self.ode_block.FFconv.weight.device)
+            self.ode_block._nonlinear_R_training_pkg = {
+                **bank,
+                "R": self.R,
+                "proj_fn": getattr(self, "proj_fn", None),
+                "nonlinear_R_train_mode": self.nonlinear_R_train_mode,
+                "nonlinear_R_corner_range": self.nonlinear_R_corner_range,
+                "nonlinear_R_curve_seed": self.nonlinear_R_curve_seed,
+            }
             return
 
         self._csv_prepare_table()
@@ -3018,6 +3475,13 @@ class WrapQuantizeW(ODEWrapperRC):
             "R_slope": self.R_slope,
             "proj_fn": getattr(self, "proj_fn", None),
             "mul_mismatch_mode": self.mul_mismatch_mode,
+            "curve_bank": self.nonlinear_R_curve_bank,
+            "curve_gaussian": self.nonlinear_R_curve_gaussian,
+            "nonlinear_R_curve_sampling": self.nonlinear_R_curve_sampling,
+            "nonlinear_R_curve_sharing": self.nonlinear_R_curve_sharing,
+            "nonlinear_R_curve_seed": self.nonlinear_R_curve_seed,
+            "nonlinear_R_curve_edge_chunk_size": (
+                self.nonlinear_R_curve_edge_chunk_size),
         }
 
 
@@ -3300,9 +3764,13 @@ class QATWrapper2State(ODEWrapper2State):
         kwargs.update({"patch": False, "quantize": False})
         super().__init__(**kwargs)
         self.w_bits = kwargs.get("w_bits", 8)
+        self.weight_quant_factor_bits = kwargs.get(
+            "weight_quant_factor_bits", None)
         self.FF_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    weight_quant_factor_bits=self.weight_quant_factor_bits,
                                     layer_weight=self.ode_block.FFconv.weight).to(self.ode_block.FFconv.weight.device)
         self.FB_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    weight_quant_factor_bits=self.weight_quant_factor_bits,
                                     layer_weight=self.ode_block.FBconv.weight).to(self.ode_block.FBconv.weight.device)
         self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
         self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
@@ -3456,9 +3924,13 @@ class QATWrapper1State(ODEWrapper1State):
         kwargs.update({"patch": False, "quantize": False})
         super().__init__(**kwargs)
         self.w_bits = kwargs.get("w_bits", 8)
+        self.weight_quant_factor_bits = kwargs.get(
+            "weight_quant_factor_bits", None)
         self.FF_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    weight_quant_factor_bits=self.weight_quant_factor_bits,
                                     layer_weight=self.ode_block.FFconv.weight).to(self.ode_block.FFconv.weight.device)
         self.FB_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    weight_quant_factor_bits=self.weight_quant_factor_bits,
                                     layer_weight=self.ode_block.FBconv.weight).to(self.ode_block.FBconv.weight.device)
         self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
         self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)
@@ -3721,12 +4193,14 @@ class TogglePulseWrapper1State(ToggleWrapper1State):
         super().__init__(**kwargs)
 
     @staticmethod
-    def cal_quant_factor_and_set(q_hi, p: nn.Parameter):
+    def cal_quant_factor_and_set(
+            q_hi, p: nn.Parameter, weight_quant_factor_bits=None):
         with torch.no_grad():
             abs_max = p.data.abs().max()
             if torch.allclose(abs_max, torch.zeros_like(abs_max)):
                 return p.new_tensor(1.0)
-            s = 1.0 / abs_max
+            s = _symmetric_qat_weight_scale(
+                p, weight_quant_factor_bits)
             torch.clamp((s * q_hi * p).round(), min=-q_hi, max=q_hi, out=p)
             return s
 
@@ -3810,9 +4284,13 @@ class QATWrapper1StateWithX(ODEWrapper1StateWithX):
         kwargs.update({"patch": False, "quantize": False})
         super().__init__(**kwargs)
         self.w_bits = kwargs.get("w_bits", 8)
+        self.weight_quant_factor_bits = kwargs.get(
+            "weight_quant_factor_bits", None)
         self.FF_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    weight_quant_factor_bits=self.weight_quant_factor_bits,
                                     layer_weight=self.ode_block.FFconv.weight).to(self.ode_block.FFconv.weight.device)
         self.FB_quantizer = qat_cls(w_bits=self.w_bits, w_scalar=self.weight_scale,
+                                    weight_quant_factor_bits=self.weight_quant_factor_bits,
                                     layer_weight=self.ode_block.FBconv.weight).to(self.ode_block.FBconv.weight.device)
         self.FF_quantizer.compute_s(self.ode_block.FFconv.weight)
         self.FB_quantizer.compute_s(self.ode_block.FBconv.weight)

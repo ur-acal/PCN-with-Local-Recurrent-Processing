@@ -30,7 +30,13 @@ from pc_model import PCNet
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, PackedRGGBToRGB
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions, MGDLoss
-from distillation import SimKD, SRRLLoss, TeacherFeatureExtractor
+from distillation import (
+    ReviewKDLoss,
+    ReviewKDTeacherFeatureExtractor,
+    SimKD,
+    SRRLLoss,
+    TeacherFeatureExtractor,
+)
 
 
 from trainer import TrainerCiFar, _normalize_dataset_name, _CIFAR_STATS
@@ -269,7 +275,11 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         if self.opt_betas is not None:
             opt_kwargs["betas"] = self.opt_betas
 
-        return create_optimizer_v2(self.model, **opt_kwargs)
+        optimizer_target = (
+            self._optimizer_parameters(
+                lr, weight_decay, filter_bias_and_bn=True)
+            if self.scale_train_recipe else self.model)
+        return create_optimizer_v2(optimizer_target, **opt_kwargs)
 
     # ------------------------------------------------------------------
     # Scheduler
@@ -379,7 +389,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         if self.timm_input_size is not None:
             return self.timm_input_size
 
-        if img_type in {"rggb", "scanGFI"}:
+        if img_type.lower() in {"rggb", "scangfi", "cifair"}:
             return (4, 16, 16)
 
         return (3, 16, 16)
@@ -593,14 +603,16 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                 transform_test,
                 set_teacher=False,
             )
-        elif img_type == "scanGFI" and self.timm_aug and self.convert_non_rgb_to_rgb:
+        elif img_type.lower() in {"scangfi", "cifair"} and self.timm_aug and self.convert_non_rgb_to_rgb:
             transform_train, transform_test = self._build_scanGFI_to_rgb_timm_transforms(dataset_name)
             self._set_transform_recursive(self.train_set, transform_train, set_teacher=False)
             self._set_transform_recursive(self.val_set, transform_test, set_teacher=False)
-        elif img_type == "scanGFI" and self.timm_aug:
+        elif img_type.lower() in {"scangfi", "cifair"} and self.timm_aug:
             transform_train, transform_test = self._build_non_rgb_timm_transforms(img_type)
             if transform_train is not None:
                 self._set_transform_recursive(self.train_set, transform_train, set_teacher=False)
+            if transform_test is not None:
+                self._set_transform_recursive(self.val_set, transform_test, set_teacher=False)
 
         elif img_type != "rgb":
             logging.warning(
@@ -842,7 +854,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
             teacher_logits = None
             if self.teacher_model is not None and self._kd_enabled:
-                teacher_logits, _ = self._teacher_forward(
+                teacher_logits, _ = self.teacher_forward_for_distillation(
                     teacher_inputs if teacher_inputs is not None else inputs
                 )
 
@@ -1191,9 +1203,10 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
         so this works directly for SRRL/MGD.
 
-        For ReviewKD, modify PCNet to return multiple features:
-            [feat1, feat2, feat3, feat4], out
+        ReviewKD overrides this method and captures its stage maps with
+        temporary hooks, leaving PCNet's public forward contract unchanged.
         """
+        inputs = self._prepare_student_inputs(inputs)
         if self.noisy_model is not None and self.model.training:
             if hasattr(self.noisy_model, "forward_with_kwargs"):
                 result = self.noisy_model.forward_with_kwargs(inputs, is_feat=True)
@@ -1224,7 +1237,8 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
         return outputs, list(features)
 
     def _prepare_feature_kd_teacher_inputs(self, inputs):
-        if self.img_type == "scanGFI":
+        inputs = self._quantize_inputs(inputs)
+        if self.img_type.lower() in {"scangfi", "cifair"}:
             return self._prepare_teacher_inputs(inputs)
         return inputs
 
@@ -1251,6 +1265,10 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
         return teacher_logits, [teacher_feat]
 
+    def teacher_forward_for_distillation(self, inputs):
+        """Use the feature-KD teacher path for both training and validation."""
+        return self._teacher_forward_feature_kd(inputs)
+
     def _build_feature_kd_from_one_batch(self):
         was_training = self.model.training
 
@@ -1266,7 +1284,7 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
         with torch.no_grad():
             _, student_features = self._student_forward_feature_kd(inputs)
-            _, teacher_features = self._teacher_forward_feature_kd(
+            _, teacher_features = self.teacher_forward_for_distillation(
                 teacher_inputs if teacher_inputs is not None else inputs
             )
 
@@ -1367,7 +1385,7 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
             outputs, student_features = self._student_forward_feature_kd(inputs)
 
-            teacher_logits, teacher_features = self._teacher_forward_feature_kd(
+            teacher_logits, teacher_features = self.teacher_forward_for_distillation(
                 teacher_inputs if teacher_inputs is not None else inputs
             )
 
@@ -1609,4 +1627,173 @@ class TrainerCiFarTimmStyleMGD(TrainerCiFarTimmStyleFeatureKD):
 
 
 class TrainerCiFarTimmStyleReviewKD(TrainerCiFarTimmStyleFeatureKD):
-    pass
+    feature_kd_name = "reviewkd"
+
+    def __init__(
+        self,
+        *args,
+        reviewkd_weight=1.0,
+        reviewkd_warmup_epochs=20.0,
+        reviewkd_num_stages=4,
+        **kwargs,
+    ):
+        self.reviewkd_weight = float(reviewkd_weight)
+        self.reviewkd_warmup_epochs = float(reviewkd_warmup_epochs)
+        self.reviewkd_num_stages = int(reviewkd_num_stages)
+        self._reviewkd_epoch = 0
+
+        if self.reviewkd_weight < 0.0:
+            raise ValueError("reviewkd_weight must be nonnegative.")
+        if self.reviewkd_warmup_epochs < 0.0:
+            raise ValueError("reviewkd_warmup_epochs must be nonnegative.")
+        if self.reviewkd_num_stages < 1:
+            raise ValueError("reviewkd_num_stages must be at least 1.")
+
+        super().__init__(
+            *args,
+            feature_kd_beta=self.reviewkd_weight,
+            **kwargs,
+        )
+
+    def _make_teacher_extractor(self):
+        return ReviewKDTeacherFeatureExtractor(
+            self.teacher_model,
+            num_stages=self.reviewkd_num_stages,
+        )
+
+    @staticmethod
+    def _require_feature_tensor(output, name):
+        if isinstance(output, (tuple, list)):
+            tensors = [value for value in output if torch.is_tensor(value)]
+            if len(tensors) != 1:
+                raise RuntimeError(f"{name} did not produce exactly one tensor.")
+            output = tensors[0]
+        if not torch.is_tensor(output) or output.dim() != 4:
+            shape = tuple(output.shape) if torch.is_tensor(output) else type(output)
+            raise RuntimeError(f"{name} must be a 4D feature map, got {shape}.")
+        return output
+
+    def _student_forward_feature_kd(self, inputs):
+        """Capture PCNet stage outputs without changing its ordinary forward API."""
+        inputs = self._prepare_student_inputs(inputs)
+        if not all(hasattr(self.model, name) for name in (
+                "PcConvs", "max_pool", "global_avg_pool2d")):
+            raise ValueError(
+                "ReviewKD currently requires a PCNet-style student exposing "
+                "PcConvs, max_pool, and global_avg_pool2d."
+            )
+
+        spatial_features = []
+        final_spatial_features = []
+        pooled_features = []
+        handles = []
+
+        def spatial_hook(_module, _inputs, output):
+            spatial_features.append(
+                self._require_feature_tensor(output, "ReviewKD student stage hook")
+            )
+
+        def global_pool_pre_hook(_module, hook_inputs):
+            if len(hook_inputs) != 1:
+                raise RuntimeError("Unexpected ReviewKD global-pool input format.")
+            final_spatial_features.append(
+                self._require_feature_tensor(
+                    hook_inputs[0],
+                    "ReviewKD student final-spatial hook",
+                )
+            )
+
+        def global_pool_hook(_module, _inputs, output):
+            pooled_features.append(
+                self._require_feature_tensor(output, "ReviewKD student pooling hook")
+            )
+
+        for index, should_pool in enumerate(self.model.max_pool):
+            if should_pool:
+                handles.append(
+                    self.model.PcConvs[index].register_forward_hook(spatial_hook)
+                )
+        handles.append(
+            self.model.global_avg_pool2d.register_forward_pre_hook(global_pool_pre_hook)
+        )
+        handles.append(
+            self.model.global_avg_pool2d.register_forward_hook(global_pool_hook)
+        )
+
+        try:
+            outputs = self.noisy_model(inputs) if self.noisy_model else self.model(inputs)
+        finally:
+            for handle in handles:
+                handle.remove()
+
+        if not final_spatial_features or not pooled_features:
+            raise RuntimeError("ReviewKD failed to capture final PCNet features.")
+
+        spatial_features.append(final_spatial_features[-1])
+        spatial_count = self.reviewkd_num_stages - 1
+        if len(spatial_features) < spatial_count:
+            shapes = [tuple(feature.shape) for feature in spatial_features]
+            raise RuntimeError(
+                f"ReviewKD requested {spatial_count} spatial student stages, but "
+                f"only {len(spatial_features)} were captured: {shapes}."
+            )
+
+        selected = spatial_features[-spatial_count:] if spatial_count else []
+        pooled = pooled_features[-1]
+        if pooled.shape[-2:] != (1, 1):
+            raise RuntimeError(
+                "ReviewKD expected a 1x1 student pooled feature, got "
+                f"{tuple(pooled.shape)}."
+            )
+        selected.append(pooled)
+        return outputs, selected
+
+    def _teacher_forward_feature_kd(self, inputs):
+        if self._teacher_extractor is None:
+            raise RuntimeError("ReviewKD teacher extractor was not initialized.")
+        inputs = self._prepare_feature_kd_teacher_inputs(inputs)
+        return self._teacher_extractor.forward_with_features(inputs)
+
+    def _make_feature_kd_loss(self, student_features, teacher_features):
+        if len(student_features) != self.reviewkd_num_stages:
+            raise RuntimeError(
+                f"ReviewKD expected {self.reviewkd_num_stages} student stages, "
+                f"got {len(student_features)}."
+            )
+        if len(teacher_features) != self.reviewkd_num_stages:
+            raise RuntimeError(
+                f"ReviewKD expected {self.reviewkd_num_stages} teacher stages, "
+                f"got {len(teacher_features)}."
+            )
+        logging.warning(
+            "ReviewKD stage alignment: student=%s teacher=%s",
+            [tuple(feature.shape[1:]) for feature in student_features],
+            [tuple(feature.shape[1:]) for feature in teacher_features],
+        )
+        return ReviewKDLoss(student_features, teacher_features)
+
+    def _warmup_factor(self):
+        if self.reviewkd_warmup_epochs == 0.0:
+            return 1.0
+        return min(1.0, self._reviewkd_epoch / self.reviewkd_warmup_epochs)
+
+    def _compute_feature_kd_loss(
+        self,
+        student_features,
+        teacher_features,
+        teacher_logits,
+    ):
+        raw_loss, _ = self._feature_kd_loss(
+            student_features,
+            teacher_features,
+            return_dict=True,
+        )
+        warmup = self._warmup_factor()
+        return raw_loss * warmup, {
+            "HCLraw": raw_loss.detach(),
+            "RKw": raw_loss.new_tensor(self.reviewkd_weight * warmup),
+        }
+
+    def train_one_epoch(self, epoch):
+        self._reviewkd_epoch = epoch
+        return super().train_one_epoch(epoch)

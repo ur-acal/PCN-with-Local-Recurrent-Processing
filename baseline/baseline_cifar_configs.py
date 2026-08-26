@@ -35,6 +35,7 @@ CUSTOM_CIFAR_MODELS = {
     "resnet32_cifar",
     "resnet44_cifar",
     "resnet56_cifar",
+    "resnet110_cifar",
     "preact_resnet164_cifar",
     "wrn_28_10_cifar",
 }
@@ -387,7 +388,7 @@ def build_model(model_name: str, cfg: dict, num_classes: int):
         model_name,
         pretrained=cfg.get("pretrained", False),
         num_classes=num_classes,
-        in_chans=3,
+        in_chans=cfg.get("in_chans", 3),
     )
 
     if case.startswith("adapt_noresize"):
