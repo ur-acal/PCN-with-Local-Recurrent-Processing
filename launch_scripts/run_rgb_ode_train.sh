@@ -48,6 +48,7 @@ DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 
 PCN="${PCN:-PCNetNoBatchNorm}"
 PCCONV="${PCCONV:-PCConvReLU6}"
+ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"
 T_END="${T_END:-1.75}"
 WARMUP_EPOCH="${WARMUP_EPOCH:-0}"
 IS_TIMM="${IS_TIMM:-true}"
@@ -66,7 +67,7 @@ MAX_POOL="${MAX_POOL:-0 0 1 0 1 0 0 0}"
 #MAX_POOL="${MAX_POOL:-0 0 0 1 0 1 0}"
 
 # Change exp name here
-EXP_SUFFIX="9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}_INP_${INP_CHANNELS// /-}_OUT_${OUT_CHANNELS// /-}_POOL_${MAX_POOL// /-}"
+EXP_SUFFIX="${ODE_BLOCK}_9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}_INP_${INP_CHANNELS// /-}_OUT_${OUT_CHANNELS// /-}_POOL_${MAX_POOL// /-}"
 
 
 read -r -a INP <<< "${INP_CHANNELS}"
@@ -115,7 +116,7 @@ python train_ode_cifar.py \
   --noise_type    "mul" \
   --pcn           "${PCN}" \
   --pc_conv       "${PCCONV}" \
-  --ode_block     "ODEXInitFFFB" \
+  --ode_block     "${ODE_BLOCK}" \
   --teacher_ckpt "${TEACHER_CKPT}" \
   --teacher_arch "${TEACHER_ARCH}" \
   --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
