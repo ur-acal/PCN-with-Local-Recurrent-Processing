@@ -43,9 +43,25 @@ mkdir -p "${LOGDIR}"
 # The ckpt of this model does NOT have auxiliary modules for distillation
 #MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_5REP"
 MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP"
+if [[ -z "${IMG_TYPE:-}" ]]; then
+  if [[ "${MODEL_NAME,,}" == *cifair* ]]; then IMG_TYPE="CiFAIR"; else IMG_TYPE="scanGFI"; fi
+fi
+case "${IMG_TYPE,,}" in
+  cifair) IMG_TYPE="CiFAIR" ;;
+  scangfi|raw|_raw) IMG_TYPE="scanGFI" ;;
+esac
 #MODEL_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_eulerSolver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_12Layers11l0l0_1Pool5_srrlDistill_a0p3_t2p0_scanGFI_2REP"
 
 SWITCH_INF=${SWITCH_INF:-false} # Change depending on model name; true if using Euler solver.
+DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
+REVIEWKD_WEIGHT="${REVIEWKD_WEIGHT:-1.0}"
+REVIEWKD_WARMUP_EPOCHS="${REVIEWKD_WARMUP_EPOCHS:-20}"
+REVIEWKD_NUM_STAGES="${REVIEWKD_NUM_STAGES:-4}"
+REVIEWKD_ARGS=(
+  --reviewkd_weight "${REVIEWKD_WEIGHT}"
+  --reviewkd_warmup_epochs "${REVIEWKD_WARMUP_EPOCHS}"
+  --reviewkd_num_stages "${REVIEWKD_NUM_STAGES}"
+)
 TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL:-no_aug}
 ENOB="${ENOB:-5}"
 echo "=========== TIMM_AUG_LEVEL: ${TIMM_AUG_LEVEL}, SWITCH_INF: ${SWITCH_INF}, ENOB: ${ENOB} ==========="
@@ -78,15 +94,23 @@ fi
 IFS='_' read -r -a parts <<< "$MODEL_NAME"
 ODE_BLK="${parts[3]}"
 # Teacher model setting
-TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
-TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${_task}_CiFAIR_timm.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+elif [[ "${_task}" == "cifar10" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet-b4"
+else
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4_100.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+fi
+TEACHER_CKPT="${TEACHER_CKPT:-${_DEFAULT_TEACHER_CKPT}}"
+TEACHER_ARCH="${TEACHER_ARCH:-${_DEFAULT_TEACHER_ARCH}}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
-if [[ "${DATASET_NAME}" == "cifar10" ]]; then
-  TEACHER_CKPT="checkpoint/b4.pth"
-  TEACHER_ARCH="efficientnet-b4"
-fi
+# Enable only for legacy run_teacher PIL checkpoints (match_distill_preprocess=false).
+ADAPT_PIL_TEACHER="${ADAPT_PIL_TEACHER:-false}"
 
 train_solver="dopri5"
 if [[ "${SWITCH_INF}" == "true" ]]; then
@@ -111,7 +135,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --learning_rate 0.005 \
             --eval_every    2 \
             --num_epochs    140 \
-            --img_type      "scanGFI" \
+            --img_type      "${IMG_TYPE}" \
             --model_name    "${MODEL_NAME}" \
             --offset_eps    0.0 \
             --dropout       0.25 \
@@ -148,7 +172,9 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
             --teacher_input_size  "${TEACHER_INPUT_SIZE}" \
             --teacher_center_crop "${TEACHER_CENTER_CROP}" \
-            --distill_method srrl \
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER}" \
+            --distill_method "${DISTILL_METHOD}" \
+            "${REVIEWKD_ARGS[@]}" \
             --contrast_method "memory" \
             --distill_alpha  0.3 \
             --distill_temperature 2.0 \

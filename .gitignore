@@ -39,6 +39,12 @@ saved_ckpt_runs/
 checkpoint/
 logs/
 hw_validation_data/
+
+# Downloaded model initialization weights and local backup/download artifacts
+pretrained/official/
+*.orig
+wget-log*
+
 run_single*
 run_multiple.sh
 test_model__.py

@@ -17,7 +17,11 @@ conda activate scanbase
 ##########################################################################
 # Inputs from launcher (packed COMB_LIST)
 ##########################################################################
-IMG_TYPE=${IMG_TYPE:-rgb}
+IMG_TYPE=${IMG_TYPE:-scanGFI}
+case "${IMG_TYPE,,}" in
+  cifair) IMG_TYPE="CiFAIR" ;;
+  scangfi|raw|_raw) IMG_TYPE="scanGFI" ;;
+esac
 PCN=${PCN:-PCNetNoBatchNorm}
 
 TASK="${TASK:-cifar10}"
@@ -55,15 +59,23 @@ else
 fi
 TRAIN_BATCH_SIZE="${patch_bs:-128}"
 
-TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
-TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${TASK}_CiFAIR_timm.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+elif [[ "${TASK}" == "cifar10" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet-b4"
+else
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4_100.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+fi
+TEACHER_CKPT="${TEACHER_CKPT:-${_DEFAULT_TEACHER_CKPT}}"
+TEACHER_ARCH="${TEACHER_ARCH:-${_DEFAULT_TEACHER_ARCH}}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
-if [[ "${TASK}" == "cifar10" ]]; then
-  TEACHER_CKPT="checkpoint/b4.pth"
-  TEACHER_ARCH="efficientnet-b4"
-fi
+# Enable only for legacy run_teacher PIL checkpoints (match_distill_preprocess=false).
+ADAPT_PIL_TEACHER="${ADAPT_PIL_TEACHER:-false}"
 
 TOL="1e-6"
 n_bits=5
@@ -229,6 +241,7 @@ run_one_combo () {
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
     --teacher_input_size "${TEACHER_INPUT_SIZE}" \
     --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER}" \
     --distill_method kd_crd \
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \

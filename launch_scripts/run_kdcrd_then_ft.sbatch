@@ -17,7 +17,11 @@ conda activate scanbase
 ##########################################################################
 # Inputs from launcher (packed COMB_LIST)
 ##########################################################################
-IMG_TYPE=${IMG_TYPE:-rgb}
+IMG_TYPE=${IMG_TYPE:-scanGFI}
+case "${IMG_TYPE,,}" in
+  cifair) IMG_TYPE="CiFAIR" ;;
+  scangfi|raw|_raw) IMG_TYPE="scanGFI" ;;
+esac
 PCN=${PCN:-PCNetNoBatchNorm}
 SWITCH_INF=${SWITCH_INF:-false}
 
@@ -33,14 +37,54 @@ SAN_BLOCKS="${BLOCKS_LIST:-ALL}"
 SAN_BLOCKS="${SAN_BLOCKS//,/+}"
 
 EXP="${EXP:-no_bn_${PCN}_NODE_search_${TASK}_${IMG_TYPE}_${CIRC_CONF:-NoCirc}_job${SLURM_JOB_ID}_Exp}"
+RUN_TAG="${RUN_TAG:-${EXP_PREFIX:-kdcrd_then_ft}}"
+OUTPUT_SAVE_PATH="${OUTPUT_SAVE_PATH:-./saved_ckpt_runs/${RUN_TAG}}"
 
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"
+
+##########################################################################
+# Toggle dynamics and physical scaling
+##########################################################################
 TOGGLE_MODE="${TOGGLE_MODE:-none}"
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
 TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
 TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
 ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-direct}"
+TOGGLE_TIMING_MODE="${TOGGLE_TIMING_MODE:-derived}"
+TOGGLE_Y_TIME="${TOGGLE_Y_TIME:-5e-9}"
+Z_OVER_Y_TIME="${Z_OVER_Y_TIME:-3}"
+SCALE_TRAIN_RECIPE="${SCALE_TRAIN_RECIPE:-false}"
+INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-none}"
+CENTER_STUDENT_INPUT="${CENTER_STUDENT_INPUT:-false}"
 TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
+V_DD="${V_DD:-0.1}"
+if [[ "${TOGGLE_MODE}" == "none" ]]; then
+  R_VAL="${R_VAL:-10e3}"
+  R_MAX="${R_MAX:-150e3}"
+  C_VAL="${C_VAL:-49e-15}"
+  MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.25}"
+  ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+  ENABLE_SLOW_SUMMING_CURRENT="${ENABLE_SLOW_SUMMING_CURRENT:-false}"
+  ENABLE_SLOW_COUPLER_NOISE="${ENABLE_SLOW_COUPLER_NOISE:-false}"
+  SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
+  ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-false}"
+  NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-none}"
+else
+  R_VAL="${R_VAL:-67e3}"
+  R_MAX="${R_MAX:-none}"
+  C_VAL="${C_VAL:-282e-15}"
+  MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.0}"
+  ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-true}"
+  ENABLE_SLOW_SUMMING_CURRENT="${ENABLE_SLOW_SUMMING_CURRENT:-false}"
+  ENABLE_SLOW_COUPLER_NOISE="${ENABLE_SLOW_COUPLER_NOISE:-false}"
+  SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-0.6e-12}"
+  ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
+  NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-exact_curve}"
+fi
+
+##########################################################################
+# Measured activation
+##########################################################################
 ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
 ENABLE_PRETRAIN_MEASURED_ACTIVATION="${ENABLE_PRETRAIN_MEASURED_ACTIVATION:-false}"
 SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
@@ -88,13 +132,54 @@ UNITLESS_MEASURED_PULLBACK_ARGS=(
   --unitless_pullback_R "${UNITLESS_PULLBACK_R}"
 )
 echo "Measured activation: pretrain=${ENABLE_PRETRAIN_MEASURED_ACTIVATION}, ft/inference=${ENABLE_MEASURED_ACTIVATION}, interpolation=${ACTIVATION_INTERPOLATION}, endpoint_scaled=${SCALE_MEASURED_ACTIVATION}"
+
+##########################################################################
+# Measured pooling used during fine-tuning
+##########################################################################
+ENABLE_MEASURED_POOLING="${ENABLE_MEASURED_POOLING:-false}"
+FT_MEASURED_POOLING_ARGS=(
+  --enable_measured_pooling "${ENABLE_MEASURED_POOLING}"
+)
+echo "Measured pooling: ft/inference=${ENABLE_MEASURED_POOLING}"
+
+##########################################################################
+# Spin variation and current noise used during fine-tuning
+##########################################################################
 ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
 SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
-ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
-SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
 ENABLE_COUPLER_NOISE="${ENABLE_COUPLER_NOISE:-true}"
 COUPLER_NOISE_P="${COUPLER_NOISE_P:-0.6e-12}"
+SLOW_SUMMING_CURRENT="${SLOW_SUMMING_CURRENT:-2.47e-9}"
+SLOW_COUPLER_NOISE="${SLOW_COUPLER_NOISE:-2.47e-9}"
+
+##########################################################################
+# Quantization and mismatch-aware fine-tuning
+##########################################################################
 PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitude}"
+WEIGHT_QUANT_FACTOR_BITS="${WEIGHT_QUANT_FACTOR_BITS:-none}"
+
+##########################################################################
+# Nonlinear-R-aware fine-tuning
+##########################################################################
+TRAIN_CONV_EXPANDED="${TRAIN_CONV_EXPANDED:-false}"
+NONLINEAR_R_CORNER_RANGE="${NONLINEAR_R_CORNER_RANGE:-all}"
+NONLINEAR_R_TABLE="${NONLINEAR_R_TABLE:-coupler_monte}"
+NONLINEAR_R_MC_QUANTITY="${NONLINEAR_R_MC_QUANTITY:-conductance}"
+NONLINEAR_R_CURVE_SHARING="${NONLINEAR_R_CURVE_SHARING:-shared}"
+NONLINEAR_R_CURVE_SEED="${NONLINEAR_R_CURVE_SEED:-none}"
+if [[ "${NONLINEAR_R_TRAIN_MODE}" != "none" ]]; then
+  ENABLE_NONLINEAR_R=true
+fi
+FT_NONLINEAR_R_ARGS=(
+  --nonlinear_R "${ENABLE_NONLINEAR_R}"
+  --nonlinear_R_table "./hardware_data/mc_45_corners/${NONLINEAR_R_TABLE}"
+  --nonlinear_R_mc_quantity "${NONLINEAR_R_MC_QUANTITY}"
+  --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING}"
+  --nonlinear_R_curve_seed "${NONLINEAR_R_CURVE_SEED}"
+  --train_conv_expanded "${TRAIN_CONV_EXPANDED}"
+  --nonlinear_R_train_mode "${NONLINEAR_R_TRAIN_MODE}"
+  --nonlinear_R_corner_range "${NONLINEAR_R_CORNER_RANGE}"
+)
 FT_SPIN_VARIATION_ARGS=(
   --enable_spin_variation "${ENABLE_SPIN_VARIATION}"
   --sigma_spin "${SIGMA_SPIN}"
@@ -106,6 +191,12 @@ FT_SUMMING_CURRENT_NOISE_ARGS=(
 FT_COUPLER_NOISE_ARGS=(
   --enable_coupler_noise "${ENABLE_COUPLER_NOISE}"
   --coupler_noise_p "${COUPLER_NOISE_P}"
+)
+FT_SLOW_CURRENT_NOISE_ARGS=(
+  --enable_slow_summing_current "${ENABLE_SLOW_SUMMING_CURRENT}"
+  --slow_summing_current "${SLOW_SUMMING_CURRENT}"
+  --enable_slow_coupler_noise "${ENABLE_SLOW_COUPLER_NOISE}"
+  --slow_coupler_noise "${SLOW_COUPLER_NOISE}"
 )
 CHAN_0=${CHAN_0:-}
 NUM_LAYERS=${NUM_LAYERS:-}
@@ -133,16 +224,41 @@ TRAIN_BATCH_SIZE="${patch_bs:-128}"
 ##########################################################################
 DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
 IS_TIMM="${IS_TIMM:-true}"
+WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
+WARMUP_FT="${WARMUP_FT:-0}"
+FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
+FT_NUM_EPOCHS="${FT_NUM_EPOCHS:-140}"
+TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
+REVIEWKD_WEIGHT="${REVIEWKD_WEIGHT:-1.0}"
+REVIEWKD_WARMUP_EPOCHS="${REVIEWKD_WARMUP_EPOCHS:-20}"
+REVIEWKD_NUM_STAGES="${REVIEWKD_NUM_STAGES:-4}"
+REVIEWKD_ARGS=(
+  --reviewkd_weight "${REVIEWKD_WEIGHT}"
+  --reviewkd_warmup_epochs "${REVIEWKD_WARMUP_EPOCHS}"
+  --reviewkd_num_stages "${REVIEWKD_NUM_STAGES}"
+)
+TIMM_RE_ARGS=()
+if [[ "${TIMM_RE_PROB}" != "none" && -n "${TIMM_RE_PROB}" ]]; then
+  TIMM_RE_ARGS+=(--timm_re_prob "${TIMM_RE_PROB}")
+fi
 
-TEACHER_CKPT="${TEACHER_CKPT:-checkpoint/b4_100.pth}"
-TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
+if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${TASK}_CiFAIR_timm.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+elif [[ "${TASK}" == "cifar10" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet-b4"
+else
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4_100.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+fi
+TEACHER_CKPT="${TEACHER_CKPT:-${_DEFAULT_TEACHER_CKPT}}"
+TEACHER_ARCH="${TEACHER_ARCH:-${_DEFAULT_TEACHER_ARCH}}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
-if [[ "${TASK}" == "cifar10" ]]; then
-  TEACHER_CKPT="checkpoint/b4.pth"
-  TEACHER_ARCH="efficientnet-b4"
-fi
+# Enable only for legacy run_teacher PIL checkpoints (match_distill_preprocess=false).
+ADAPT_PIL_TEACHER="${ADAPT_PIL_TEACHER:-false}"
 ##########################################################################
 
 trap 'echo "Signal caught; killing children..."; kill -- -$$ 2>/dev/null || true' TERM INT
@@ -195,10 +311,18 @@ if [[ "${TOGGLE_MODE}" != "none" ]]; then
     --toggle_time_split "${TOGGLE_TIME_SPLIT}"
     --toggle_fast_path "${TOGGLE_FAST_PATH}"
     --odexinit_scaling_mode "${ODEXINIT_SCALING_MODE}"
+    --toggle_timing_mode "${TOGGLE_TIMING_MODE}"
+    --toggle_y_time "${TOGGLE_Y_TIME}"
+    --z_over_y_time "${Z_OVER_Y_TIME}"
   )
 fi
 echo "Toggle mode=${TOGGLE_MODE}: train=${TRAIN_ODE_BLOCK}, ft=${FT_ODE_BLOCK}, inference=${INF_ODE_BLOCK}"
-echo "FT spin variation=${ENABLE_SPIN_VARIATION} (sigma=${SIGMA_SPIN}); summing-current noise=${ENABLE_SUMMING_CURRENT_NOISE} (p=${SUMMING_CURRENT_P})"
+echo "Toggle timing=${TOGGLE_TIMING_MODE}: T_y=${TOGGLE_Y_TIME}s, T_z/T_y=${Z_OVER_Y_TIME}, scale_train_recipe=${SCALE_TRAIN_RECIPE}"
+echo "Weight quant factor bits=${WEIGHT_QUANT_FACTOR_BITS}"
+echo "Checkpoint output: run_tag=${RUN_TAG}, path=${OUTPUT_SAVE_PATH}"
+echo "FT physical config: R=${R_VAL}, R_max=${R_MAX}, C=${C_VAL}, mismatch=${MISMATCH_LEVEL}"
+echo "FT spin variation=${ENABLE_SPIN_VARIATION} (sigma=${SIGMA_SPIN}); summing-current noise=${ENABLE_SUMMING_CURRENT_NOISE} (p=${SUMMING_CURRENT_P}); coupler noise=${ENABLE_COUPLER_NOISE} (p=${COUPLER_NOISE_P})"
+echo "FT nonlinear-R: enabled=${ENABLE_NONLINEAR_R}, mode=${NONLINEAR_R_TRAIN_MODE}, corners=${NONLINEAR_R_CORNER_RANGE}, table=${NONLINEAR_R_TABLE}, quantity=${NONLINEAR_R_MC_QUANTITY}, sharing=${NONLINEAR_R_CURVE_SHARING}, expanded=${TRAIN_CONV_EXPANDED}"
 ##########################################################################
 
 ##########################################################################
@@ -289,14 +413,20 @@ run_one_combo () {
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
+    --save_path     "${OUTPUT_SAVE_PATH}" \
+    --output_save_path "${OUTPUT_SAVE_PATH}" \
     --optim         "SGD" \
     --timm_trainer  "${IS_TIMM}" \
     --timm_sched    "cosine" \
+    "${TIMM_RE_ARGS[@]}" \
     --img_type      "${IMG_TYPE}" \
+    --input_quant_bits "${INPUT_QUANT_BITS}" \
+    --center_student_input "${CENTER_STUDENT_INPUT}" \
     --dataset       "${TASK}" \
     --num_classes   "${N_CLASSES}" \
     --num_epochs    300 \
     --eval_every    5 \
+    --warmup_epoch  "${WARMUP_PRETRAIN}" \
     --learning_rate 0.01 \
     --offset_eps    0.0 \
     --inp_channels  "${INP[@]}" \
@@ -321,6 +451,9 @@ run_one_combo () {
     --n_steps        5 \
     --tol           "1e-4" \
     --t_end         "${t_end}" \
+    --R             "${R_VAL}" \
+    --C             "${C_VAL}" \
+    --scale_train_recipe "${SCALE_TRAIN_RECIPE}" \
     --pcn           "${PCN}" \
     --pc_conv       "PCConvReLU6" \
     --ode_block     "${block}" \
@@ -334,7 +467,9 @@ run_one_combo () {
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
     --teacher_input_size "${TEACHER_INPUT_SIZE}" \
     --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER}" \
     --distill_method "${DISTILL_METHOD}" \
+    "${REVIEWKD_ARGS[@]}" \
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \
     --test_only     "false" \
@@ -343,19 +478,17 @@ run_one_combo () {
 }
 
 # ------------------------ EVAL ONE MODEL ------------------------
-MODEL_DIR="./saved_ckpt"
+MODEL_DIR="${OUTPUT_SAVE_PATH}"
 METHOD="dopri5"
 TOL="1e-6"
 n_bits=5
-ENOB=8
-V_DD="0.1"
+ENOB="${ENOB:-8}"
 ONE_OVER_Q="1"
 if [[ "${TOGGLE_MODE}" != "none" ]]; then
   ONE_OVER_Q="${TOGGLE_ONE_OVER_Q}"
 fi
-R_val="10e3"
-R_MAX="150e3"
-C_val="49e-15"
+R_val="${R_VAL}"
+C_val="${C_VAL}"
 EVAL_BASE="${LOGDIR}/evals"
 MASTER_LOG="${LOGDIR}/eval_master_merged.log"
 mkdir -p "${EVAL_BASE}"
@@ -376,6 +509,71 @@ eval_one_combo_model() {
   local ckpt="best"
 
   local test_bs=128
+
+  if [[ "${TOGGLE_MODE}" != "none" ]]; then
+    echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V2_T1 all-on, 10 trials, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
+    OMP_NUM_THREADS=${THREADS_PER_PROC} \
+    python -u scripts/run_toggle_nonideality_ablation.py \
+      --full_45_corner_test true \
+      --mc_45_corner_dir hardware_data/mc_45_corners \
+      --mc_spin_variation_source PVT_Monte_Carlo_Results_SPIN.csv \
+      --mc_dtc_pulse_width_variation_source PVT_45corner_DTC_pulse_width.csv \
+      --mc_relu_monte_carlo_source relu_monteCarlo \
+      --mc_coupler_nonlinear_variation_source "${NONLINEAR_R_TABLE}" \
+      --mc_coupler_nonlinear_variation_quantity "${NONLINEAR_R_MC_QUANTITY}" \
+      --mc_coupler_nominal_R "${R_VAL}" \
+      --full_45_corner_enable_spin_variation true \
+      --full_45_corner_enable_measured_activation true \
+      --full_45_corner_enable_measured_pooling "${ENABLE_MEASURED_POOLING}" \
+      --full_45_corner_enable_nonlinear_R true \
+      --full_45_corner_enable_diff_mismatch false \
+      --full_45_corner_enable_summing_current_noise true \
+      --full_45_corner_enable_coupler_noise true \
+      --full_45_corner_enable_slow_summing_current "${ENABLE_SLOW_SUMMING_CURRENT}" \
+      --full_45_corner_slow_summing_current "${SLOW_SUMMING_CURRENT}" \
+      --full_45_corner_enable_slow_coupler_noise "${ENABLE_SLOW_COUPLER_NOISE}" \
+      --full_45_corner_slow_coupler_noise "${SLOW_COUPLER_NOISE}" \
+      --full_45_corner_enable_dtc_nonideality true \
+      --corner_ids FS_V2_T1 \
+      --n_trials 10 \
+      --base_seed 20260723 \
+      --model_name "${name}" \
+      --model_dir "${MODEL_DIR}" \
+      --ckpt "${ckpt}" \
+      --output_dir "${dir}" \
+      --test_bs "${test_bs}" \
+      --jobs 1 \
+      --toggle_level 3 \
+      --odexinit_scaling_mode direct \
+      --toggle_timing_mode "${TOGGLE_TIMING_MODE}" \
+      --toggle_y_time "${TOGGLE_Y_TIME}" \
+      --z_over_y_time "${Z_OVER_Y_TIME}" \
+      --v_dd "${V_DD}" \
+      --one_over_q "${ONE_OVER_Q}" \
+      --input_quant_bits "${INPUT_QUANT_BITS}" \
+      --center_student_input "${CENTER_STUDENT_INPUT}" \
+      --enob "${ENOB}" \
+      --weight_quant_factor_bits "${WEIGHT_QUANT_FACTOR_BITS}" \
+      --R_max "${R_MAX}" \
+      --full_45_corner_C "${C_VAL}" \
+      --room_temperature_c 25.0 \
+      --full_45_corner_summing_current_p 0.6e-12 \
+      --coupler_noise_p 0.6e-12 \
+      --dtc_characterized_nominal_fraction 0.0625 \
+      --dtc_leading_edge_variation_std 0.0 \
+      --dtc_leading_edge_jitter_std 0.005 \
+      --dtc_falling_edge_jitter_std 0.005 \
+      --nonlinear_R_curve_sharing per_coupler \
+      --nonlinear_R_curve_sampling empirical_with_replacement \
+      --nonlinear_R_curve_edge_chunk_size 65536 \
+      --activation_interpolation piecewise_linear \
+      --activation_fit_constraint auto \
+      --activation_normalize_positive_endpoint false \
+      --compile_measured_activation false \
+      --expanded_w_dir expanded_weights \
+      2>&1 | tee -a "$dir/job.log"
+    return
+  fi
 
   local wrapper="ODEWrapper1State"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
@@ -427,6 +625,7 @@ eval_one_combo_model() {
     --v_dd            "${V_DD}" \
     --enob            "${ENOB}" \
     --w_bits          "${n_bits}" \
+    --weight_quant_factor_bits "${WEIGHT_QUANT_FACTOR_BITS}" \
     --patch_node      "${patch_node}" \
     --patch_stride    "${patch_stride}" \
     --patch_cycle     "${patch_cycle}" \
@@ -436,9 +635,11 @@ eval_one_combo_model() {
     --one_over_q      "${ONE_OVER_Q}" \
     "${TOGGLE_ARGS[@]}" \
     "${MEASURED_ACTIVATION_ARGS[@]}" \
+    "${FT_MEASURED_POOLING_ARGS[@]}" \
     "${FT_SPIN_VARIATION_ARGS[@]}" \
     "${FT_SUMMING_CURRENT_NOISE_ARGS[@]}" \
     "${FT_COUPLER_NOISE_ARGS[@]}" \
+    "${FT_SLOW_CURRENT_NOISE_ARGS[@]}" \
     --pc_conv         "${pc_conv}Noisy" \
     --ode_block       "${test_block}" \
     --ode_wrapper     "${wrapper}" \
@@ -478,7 +679,7 @@ finetune_one_combo_model() {
     qat_wrapper="ToggleQATWrapper1State"
   fi
 
-  local nl="0.25"
+  local nl="${MISMATCH_LEVEL}"
   local nt="mul"
 
   train_solver="dopri5"
@@ -488,17 +689,23 @@ finetune_one_combo_model() {
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
+    --save_path     "${MODEL_DIR}" \
+    --output_save_path "${OUTPUT_SAVE_PATH}" \
     --dataset       "${TASK}" \
     --timm_trainer  "${IS_TIMM}" \
     --timm_sched    "cosine" \
     --timm_aug_level "no_aug" \
+    "${TIMM_RE_ARGS[@]}" \
     --num_classes   "${N_CLASSES}" \
     --ckpt          "${ckpt}" \
     --optim         "SGD" \
-    --learning_rate 0.005 \
+    --learning_rate "${FT_LEARNING_RATE}" \
     --eval_every    2 \
-    --num_epochs    140 \
+    --num_epochs    "${FT_NUM_EPOCHS}" \
+    --warmup_epoch  "${WARMUP_FT}" \
     --img_type      "${IMG_TYPE}" \
+    --input_quant_bits "${INPUT_QUANT_BITS}" \
+    --center_student_input "${CENTER_STUDENT_INPUT}" \
     --model_name    "${name}" \
     --offset_eps    0.0 \
     --dropout       0.25 \
@@ -517,6 +724,8 @@ finetune_one_combo_model() {
     --v_dd          "${V_DD}" \
     --enob          "${ENOB}" \
     --w_bits        "${n_bits}" \
+    --weight_quant_factor_bits "${WEIGHT_QUANT_FACTOR_BITS}" \
+    --scale_train_recipe "${SCALE_TRAIN_RECIPE}" \
     --patch_node    "${patch_node}" \
     --patch_stride  "${patch_stride}" \
     --patch_cycle   "${patch_cycle}" \
@@ -526,9 +735,12 @@ finetune_one_combo_model() {
     --one_over_q    "${ONE_OVER_Q}" \
     "${TOGGLE_ARGS[@]}" \
     "${MEASURED_ACTIVATION_ARGS[@]}" \
+    "${FT_MEASURED_POOLING_ARGS[@]}" \
     "${FT_SPIN_VARIATION_ARGS[@]}" \
     "${FT_SUMMING_CURRENT_NOISE_ARGS[@]}" \
     "${FT_COUPLER_NOISE_ARGS[@]}" \
+    "${FT_SLOW_CURRENT_NOISE_ARGS[@]}" \
+    "${FT_NONLINEAR_R_ARGS[@]}" \
     --qat_cls       "SymQuantizeWeight" \
     --pcn           "${PCN}" \
     --ode_wrapper   "${qat_wrapper}" \
@@ -542,7 +754,9 @@ finetune_one_combo_model() {
     --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
     --teacher_input_size "${TEACHER_INPUT_SIZE}" \
     --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER}" \
     --distill_method "${DISTILL_METHOD}" \
+    "${REVIEWKD_ARGS[@]}" \
     --distill_alpha 0.3 \
     --distill_temperature 2.0 \
     --contrast_method "memory" \

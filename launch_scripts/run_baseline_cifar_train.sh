@@ -36,6 +36,22 @@ PRETRAINED="${PRETRAINED:-false}"
 PREFER_RESIZE="${PREFER_RESIZE:-false}"
 EXTRA_OVERRIDE="${EXTRA_OVERRIDE:-eval_every=5}"
 PRINT_ONLY="${PRINT_ONLY:-false}"
+IMG_TYPE="${IMG_TYPE:-rgb}"
+RGGB_TO_RGB="${RGGB_TO_RGB:-false}"
+TIMM_AUG_LEVEL="${TIMM_AUG_LEVEL:-none}"
+TIMM_RE_PROB="${TIMM_RE_PROB:-none}"
+DISTILL_METHOD="${DISTILL_METHOD:-none}"
+TEACHER_CKPT="${TEACHER_CKPT:-}"
+TEACHER_ARCH="${TEACHER_ARCH:-}"
+TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
+TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
+TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
+ADAPT_PIL_TEACHER="${ADAPT_PIL_TEACHER:-false}"
+ORIG_T_INP="${ORIG_T_INP:-false}"
+DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
+DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
+SRRL_WEIGHT="${SRRL_WEIGHT:-1.0}"
+RUN_EVAL="${RUN_EVAL:-true}"
 
 MULT_NOISE_LEVEL_LIST="${MULT_NOISE_LEVEL_LIST:-0,0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4}"
 ADD_NOISE_LEVEL_LIST="${ADD_NOISE_LEVEL_LIST:-0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.1}"
@@ -85,7 +101,29 @@ run_train_one() {
     --pretrained "${pretrained}"
     --prefer_resize "${prefer_resize}"
     --print_only "${PRINT_ONLY}"
+    --img_type "${IMG_TYPE}"
+    --rggb_to_rgb "${RGGB_TO_RGB}"
+    --timm_aug_level "${TIMM_AUG_LEVEL}"
+    --distill_method "${DISTILL_METHOD}"
+    --teacher_arch_source "${TEACHER_ARCH_SOURCE}"
+    --teacher_input_size "${TEACHER_INPUT_SIZE}"
+    --teacher_center_crop "${TEACHER_CENTER_CROP}"
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER}"
+    --orig_t_inp "${ORIG_T_INP}"
+    --distill_alpha "${DISTILL_ALPHA}"
+    --distill_temperature "${DISTILL_TEMPERATURE}"
+    --srrl_weight "${SRRL_WEIGHT}"
   )
+
+  if [[ "${TIMM_RE_PROB}" != "none" ]]; then
+    CMD+=(--timm_re_prob "${TIMM_RE_PROB}")
+  fi
+  if [[ -n "${TEACHER_CKPT}" ]]; then
+    CMD+=(--teacher_ckpt "${TEACHER_CKPT}")
+  fi
+  if [[ -n "${TEACHER_ARCH}" ]]; then
+    CMD+=(--teacher_arch "${TEACHER_ARCH}")
+  fi
 
   if [[ -n "${EXTRA_OVERRIDE}" ]]; then
     CMD+=(--override "${EXTRA_OVERRIDE}")
@@ -171,6 +209,11 @@ run_one() {
   echo "${ckpt_path}"
   echo "======================================================================"
 
+  if [[ "${RUN_EVAL}" != "true" ]]; then
+    echo "RUN_EVAL=${RUN_EVAL}; skipping legacy RGB mismatch evaluation."
+    return 0
+  fi
+
   run_eval_one "${model_name}" "${dataset_name}" "${case_name}" "${ckpt_path}" "${prefer_resize}" \
     "multiplicative" "${MULT_NOISE_LEVEL_LIST}" "false"
 
@@ -195,6 +238,16 @@ echo "DATASET_NAME=${DATASET_NAME}"
 echo "CASE_NAME=${CASE_NAME}"
 echo "PRETRAINED=${PRETRAINED}"
 echo "PREFER_RESIZE=${PREFER_RESIZE}"
+echo "IMG_TYPE=${IMG_TYPE}"
+echo "TIMM_AUG_LEVEL=${TIMM_AUG_LEVEL}"
+echo "TIMM_RE_PROB=${TIMM_RE_PROB}"
+echo "DISTILL_METHOD=${DISTILL_METHOD}"
+echo "TEACHER_CKPT=${TEACHER_CKPT:-auto}"
+echo "TEACHER_ARCH=${TEACHER_ARCH:-auto}"
+echo "TEACHER_ARCH_SOURCE=${TEACHER_ARCH_SOURCE}"
+echo "ADAPT_PIL_TEACHER=${ADAPT_PIL_TEACHER}"
+echo "ORIG_T_INP=${ORIG_T_INP}"
+echo "RUN_EVAL=${RUN_EVAL}"
 echo "DATA_DIR=${DATA_DIR}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 echo "MULT_NOISE_LEVEL_LIST=${MULT_NOISE_LEVEL_LIST}"

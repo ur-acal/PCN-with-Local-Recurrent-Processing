@@ -49,6 +49,8 @@ TEACHER_ARCH="${TEACHER_ARCH:-efficientnet_v2_l}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
 TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
+# Enable only for legacy run_teacher PIL checkpoints (match_distill_preprocess=false).
+ADAPT_PIL_TEACHER="${ADAPT_PIL_TEACHER:-false}"
 if [[ "${DATASET_NAME}" == "cifar10" ]]; then
   TEACHER_CKPT="checkpoint/b4.pth"
   TEACHER_ARCH="efficientnet-b4"
@@ -105,6 +107,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --teacher_arch_source "${TEACHER_ARCH_SOURCE}" \
             --teacher_input_size  "${TEACHER_INPUT_SIZE}" \
             --teacher_center_crop "${TEACHER_CENTER_CROP}" \
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER}" \
             --distill_method kd_crd \
             --contrast_method "memory" \
             --distill_alpha  0.3 \

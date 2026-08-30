@@ -145,10 +145,12 @@ class CIFARResNet(nn.Module):
             return x
         return self.fc(x)
 
-    def forward(self, x):
-        x = self.forward_features(x)
-        x = self.forward_head(x)
-        return x
+    def forward(self, x, is_feat: bool = False):
+        features = self.forward_features(x)
+        outputs = self.forward_head(features)
+        if is_feat:
+            return [features], outputs
+        return outputs
 
     def get_classifier(self):
         return self.fc
@@ -394,6 +396,13 @@ def resnet56_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: in
     if pretrained:
         raise ValueError("No registered pretrained weights for resnet56_cifar. Use checkpoint_map/checkpoint_dir instead.")
     return CIFARResNet(depth=56, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def resnet110_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for resnet110_cifar. Use checkpoint_map/checkpoint_dir instead.")
+    return CIFARResNet(depth=110, num_classes=num_classes, in_chans=in_chans, **kwargs)
 
 
 @register_model

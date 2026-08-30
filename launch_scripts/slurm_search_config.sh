@@ -27,10 +27,68 @@ GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
 ###############################################################################################
 
 TASK="${TASK:-cifar100}"                 # for naming / future use
+if [[ -z "${IMG_TYPE:-}" ]]; then
+  if [[ "${MODEL_NAME:-}" == *[Cc][Ii][Ff][Aa][Ii][Rr]* ]]; then IMG_TYPE="CiFAIR"; else IMG_TYPE="scanGFI"; fi
+fi
+case "${IMG_TYPE,,}" in
+  cifair) IMG_TYPE="CiFAIR" ;;
+  scangfi|raw|_raw) IMG_TYPE="scanGFI" ;;
+esac
+if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${TASK}_CiFAIR_timm.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+elif [[ "${TASK}" == "cifar10" ]]; then
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet-b4"
+else
+  _DEFAULT_TEACHER_CKPT="checkpoint/b4_100.pth"
+  _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
+fi
+TEACHER_CKPT="${TEACHER_CKPT:-${_DEFAULT_TEACHER_CKPT}}"
+TEACHER_ARCH="${TEACHER_ARCH:-${_DEFAULT_TEACHER_ARCH}}"
+TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
+TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
+TEACHER_CENTER_CROP="${TEACHER_CENTER_CROP:-true}"
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"   # fixed block for now ODEXInitFFFB
+
+##############################################################################################
+# Toggle dynamics and physical scaling
+##############################################################################################
 TOGGLE_MODE="${TOGGLE_MODE:-none}"       # none, reset, persistent, odexinit, or pulse_odexinit
 # This controls the scaling for the toggle class. approximating the old 1state or directly scale.
 ODEXINIT_SCALING_MODE="${ODEXINIT_SCALING_MODE:-direct}"
+TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
+TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
+TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
+TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
+V_DD="${V_DD:-0.1}"
+TOGGLE_TIMING_MODE="${TOGGLE_TIMING_MODE:-derived}"
+TOGGLE_Y_TIME="${TOGGLE_Y_TIME:-5e-9}"
+Z_OVER_Y_TIME="${Z_OVER_Y_TIME:-3}"
+SCALE_TRAIN_RECIPE="${SCALE_TRAIN_RECIPE:-false}"
+if [[ "${TOGGLE_MODE}" == "none" ]]; then
+  R_MAX="${R_MAX:-150e3}"
+  C_VAL="${C_VAL:-49e-15}"
+  MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.25}"
+  ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
+  ENABLE_SLOW_SUMMING_CURRENT="${ENABLE_SLOW_SUMMING_CURRENT:-false}"
+  ENABLE_SLOW_COUPLER_NOISE="${ENABLE_SLOW_COUPLER_NOISE:-false}"
+  SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
+  ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-false}"
+else
+  R_MAX="${R_MAX:-none}"
+  C_VAL="${C_VAL:-282e-15}"
+  MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.0}"
+  ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-true}"
+  ENABLE_SLOW_SUMMING_CURRENT="${ENABLE_SLOW_SUMMING_CURRENT:-false}"
+  ENABLE_SLOW_COUPLER_NOISE="${ENABLE_SLOW_COUPLER_NOISE:-false}"
+  SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-0.6e-12}"
+  ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
+fi
+
+##############################################################################################
+# Measured activation
+##############################################################################################
 ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
 ENABLE_PRETRAIN_MEASURED_ACTIVATION="${ENABLE_PRETRAIN_MEASURED_ACTIVATION:-false}"
 SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
@@ -52,14 +110,46 @@ UNITLESS_PULLBACK_Q="${UNITLESS_PULLBACK_Q:-none}"
 UNITLESS_PULLBACK_K="${UNITLESS_PULLBACK_K:-1e3}"
 UNITLESS_PULLBACK_R="${UNITLESS_PULLBACK_R:-10e3}"
 
+##############################################################################################
+# Spin variation and current noise used during fine-tuning
+##############################################################################################
 ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
 SIGMA_SPIN="${SIGMA_SPIN:-0.10}"
-ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-false}"
-SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-18.5e-12}"
 ENABLE_COUPLER_NOISE="${ENABLE_COUPLER_NOISE:-true}"
 COUPLER_NOISE_P="${COUPLER_NOISE_P:-0.6e-12}"
+SLOW_SUMMING_CURRENT="${SLOW_SUMMING_CURRENT:-2.47e-9}"
+SLOW_COUPLER_NOISE="${SLOW_COUPLER_NOISE:-2.47e-9}"
+
+##############################################################################################
+# Quantization, mismatch, and nonlinear-R-aware fine-tuning
+##############################################################################################
+ENABLE_MEASURED_POOLING="${ENABLE_MEASURED_POOLING:-false}"
 PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitude}" # post_quant_amplitude and pre_quant_weight (this is same as before, add mismatch and then quantize.)
+WEIGHT_QUANT_FACTOR_BITS="${WEIGHT_QUANT_FACTOR_BITS:-none}"
+ENOB="${ENOB:-8}"
+TRAIN_CONV_EXPANDED="${TRAIN_CONV_EXPANDED:-false}"
+NONLINEAR_R_CORNER_RANGE="${NONLINEAR_R_CORNER_RANGE:-all}"
+if [[ "${TOGGLE_MODE}" == "none" ]]; then
+  R_VAL="${R_VAL:-10e3}"
+  NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-none}"
+else
+  R_VAL="${R_VAL:-67e3}"
+  NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-exact_curve}"
+fi
+NONLINEAR_R_TABLE="${NONLINEAR_R_TABLE:-coupler_monte}"
+NONLINEAR_R_MC_QUANTITY="${NONLINEAR_R_MC_QUANTITY:-conductance}"
+NONLINEAR_R_CURVE_SHARING="${NONLINEAR_R_CURVE_SHARING:-shared}"
+NONLINEAR_R_CURVE_SEED="${NONLINEAR_R_CURVE_SEED:-none}"
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
+WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
+WARMUP_FT="${WARMUP_FT:-0}"
+FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
+FT_NUM_EPOCHS="${FT_NUM_EPOCHS:-140}"
+TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
+DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
+REVIEWKD_WEIGHT="${REVIEWKD_WEIGHT:-1.0}"
+REVIEWKD_WARMUP_EPOCHS="${REVIEWKD_WARMUP_EPOCHS:-20}"
+REVIEWKD_NUM_STAGES="${REVIEWKD_NUM_STAGES:-4}"
 
 ##############################################################################################
 # Two special modes
@@ -82,7 +172,7 @@ SWITCH_INF="${SWITCH_INF:-false}"
 ##############################################################################################
 
 PCNS=( "PCNetNoBatchNorm" )
-IMG_TYPES=( "scanGFI" )
+IMG_TYPES=( "${IMG_TYPE}" )
 CIRC_CONFS=( "" )
 
 # CHAN_0 options (order matters)
@@ -140,6 +230,22 @@ SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 RUN_DATE="${RUN_DATE:-$(date +%m%d)}"
 EXP_PREFIX="${EXP_PREFIX:-${RUN_DATE}_${TRAIN_MODE}_${ODE_BLOCK}}"
+INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-none}"
+CENTER_STUDENT_INPUT="${CENTER_STUDENT_INPUT:-false}"
+INPUT_PREPROCESS_SUFFIX=""
+if [[ "${INPUT_QUANT_BITS,,}" != "none" && -n "${INPUT_QUANT_BITS}" ]]; then
+  INPUT_PREPROCESS_SUFFIX="_iq${INPUT_QUANT_BITS}"
+fi
+if [[ "${CENTER_STUDENT_INPUT,,}" == "true" ]]; then
+  INPUT_PREPROCESS_SUFFIX+="_ctr"
+fi
+RUN_TAG="${EXP_PREFIX}${INPUT_PREPROCESS_SUFFIX}"
+if [[ "${TOGGLE_MODE}" != "none" ]]; then
+  RUN_TAG+="_toggle_${TOGGLE_MODE}"
+elif [[ "${SWITCH_INF}" == "true" ]]; then
+  RUN_TAG+="_switch_inf"
+fi
+OUTPUT_SAVE_PATH="${OUTPUT_SAVE_PATH:-saved_ckpt_runs/${RUN_TAG}}"
 SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_${EXP_PREFIX}_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
@@ -489,9 +595,29 @@ submit_chunk() {
   local sbatch_exports="ALL"
   sbatch_exports+=",PCN=${pcn},IMG_TYPE=${img_type},SWITCH_INF=${SWITCH_INF}"
   sbatch_exports+=",EXP=${EXP},CIRC_CONF=${circ_conf},TASK=${TASK}"
+  sbatch_exports+=",TEACHER_CKPT=${TEACHER_CKPT},TEACHER_ARCH=${TEACHER_ARCH}"
+  sbatch_exports+=",TEACHER_ARCH_SOURCE=${TEACHER_ARCH_SOURCE}"
+  sbatch_exports+=",TEACHER_INPUT_SIZE=${TEACHER_INPUT_SIZE},TEACHER_CENTER_CROP=${TEACHER_CENTER_CROP}"
+  # Search jobs always use the direct tensor teacher path. Legacy PIL adaptation
+  # remains available to explicit non-search launches only.
+  sbatch_exports+=",ADAPT_PIL_TEACHER=false"
+  sbatch_exports+=",RUN_TAG=${RUN_TAG},OUTPUT_SAVE_PATH=${OUTPUT_SAVE_PATH}"
   sbatch_exports+=",ODE_BLOCK=${ODE_BLOCK},TOGGLE_MODE=${TOGGLE_MODE}"
+  sbatch_exports+=",WARMUP_PRETRAIN=${WARMUP_PRETRAIN},WARMUP_FT=${WARMUP_FT}"
+  sbatch_exports+=",INPUT_QUANT_BITS=${INPUT_QUANT_BITS},CENTER_STUDENT_INPUT=${CENTER_STUDENT_INPUT}"
+  sbatch_exports+=",FT_LEARNING_RATE=${FT_LEARNING_RATE}"
+  sbatch_exports+=",FT_NUM_EPOCHS=${FT_NUM_EPOCHS}"
+  sbatch_exports+=",TIMM_RE_PROB=${TIMM_RE_PROB}"
+  sbatch_exports+=",DISTILL_METHOD=${DISTILL_METHOD},REVIEWKD_WEIGHT=${REVIEWKD_WEIGHT}"
+  sbatch_exports+=",REVIEWKD_WARMUP_EPOCHS=${REVIEWKD_WARMUP_EPOCHS},REVIEWKD_NUM_STAGES=${REVIEWKD_NUM_STAGES}"
+  sbatch_exports+=",TOGGLE_N_CYCLES=${TOGGLE_N_CYCLES},TOGGLE_TIME_SPLIT=${TOGGLE_TIME_SPLIT}"
+  sbatch_exports+=",TOGGLE_FAST_PATH=${TOGGLE_FAST_PATH},TOGGLE_ONE_OVER_Q=${TOGGLE_ONE_OVER_Q}"
   sbatch_exports+=",ODEXINIT_SCALING_MODE=${ODEXINIT_SCALING_MODE}"
+  sbatch_exports+=",TOGGLE_TIMING_MODE=${TOGGLE_TIMING_MODE},TOGGLE_Y_TIME=${TOGGLE_Y_TIME}"
+  sbatch_exports+=",Z_OVER_Y_TIME=${Z_OVER_Y_TIME},SCALE_TRAIN_RECIPE=${SCALE_TRAIN_RECIPE}"
+  sbatch_exports+=",R_VAL=${R_VAL},R_MAX=${R_MAX},C_VAL=${C_VAL},V_DD=${V_DD},MISMATCH_LEVEL=${MISMATCH_LEVEL}"
   sbatch_exports+=",ENABLE_MEASURED_ACTIVATION=${ENABLE_MEASURED_ACTIVATION}"
+  sbatch_exports+=",ENABLE_MEASURED_POOLING=${ENABLE_MEASURED_POOLING}"
   sbatch_exports+=",ENABLE_PRETRAIN_MEASURED_ACTIVATION=${ENABLE_PRETRAIN_MEASURED_ACTIVATION}"
   sbatch_exports+=",SCALE_MEASURED_ACTIVATION=${SCALE_MEASURED_ACTIVATION}"
   sbatch_exports+=",ACTIVATION_CURVE_PATH=${ACTIVATION_CURVE_PATH}"
@@ -508,7 +634,21 @@ submit_chunk() {
   sbatch_exports+=",SUMMING_CURRENT_P=${SUMMING_CURRENT_P}"
   sbatch_exports+=",ENABLE_COUPLER_NOISE=${ENABLE_COUPLER_NOISE}"
   sbatch_exports+=",COUPLER_NOISE_P=${COUPLER_NOISE_P}"
+  sbatch_exports+=",ENABLE_SLOW_SUMMING_CURRENT=${ENABLE_SLOW_SUMMING_CURRENT}"
+  sbatch_exports+=",SLOW_SUMMING_CURRENT=${SLOW_SUMMING_CURRENT}"
+  sbatch_exports+=",ENABLE_SLOW_COUPLER_NOISE=${ENABLE_SLOW_COUPLER_NOISE}"
+  sbatch_exports+=",SLOW_COUPLER_NOISE=${SLOW_COUPLER_NOISE}"
   sbatch_exports+=",PULSE_MISMATCH_TRAINING_MODE=${PULSE_MISMATCH_TRAINING_MODE}"
+  sbatch_exports+=",WEIGHT_QUANT_FACTOR_BITS=${WEIGHT_QUANT_FACTOR_BITS}"
+  sbatch_exports+=",ENOB=${ENOB}"
+  sbatch_exports+=",TRAIN_CONV_EXPANDED=${TRAIN_CONV_EXPANDED}"
+  sbatch_exports+=",ENABLE_NONLINEAR_R=${ENABLE_NONLINEAR_R}"
+  sbatch_exports+=",NONLINEAR_R_TRAIN_MODE=${NONLINEAR_R_TRAIN_MODE}"
+  sbatch_exports+=",NONLINEAR_R_CORNER_RANGE=${NONLINEAR_R_CORNER_RANGE}"
+  sbatch_exports+=",NONLINEAR_R_TABLE=${NONLINEAR_R_TABLE}"
+  sbatch_exports+=",NONLINEAR_R_MC_QUANTITY=${NONLINEAR_R_MC_QUANTITY}"
+  sbatch_exports+=",NONLINEAR_R_CURVE_SHARING=${NONLINEAR_R_CURVE_SHARING}"
+  sbatch_exports+=",NONLINEAR_R_CURVE_SEED=${NONLINEAR_R_CURVE_SEED}"
   sbatch_exports+=",CHAN_0=${chan0},NUM_LAYERS=${num_layers}"
   sbatch_exports+=",CHUNK_ID=${chunk_id},CHUNK_TAG=${chunk_tag},COMB_LIST=${comb_list}"
 
