@@ -19,6 +19,7 @@ from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvReLU6Li
 from pc_conv import FFFBReLU6NoLastConv, FFFBReLU6NoLastConvNoisy, FFFBReLU6NoLastConvYasX, FFFBReLU6NoLastConvYasXNoisy
 from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
+from mismatch_utils import ADDITIVE_SCALE_MODES, additive_mismatch_scale
 
 import logging
 log = logging.getLogger(__name__)
@@ -119,15 +120,23 @@ class PCNet(nn.Module):
                 y_ = self.max_pool2d(y_)
             x_ = y_
 
-    def _apply_noise(self, p):
+    def _apply_noise(self, p, mismatch_type="mul", additive_scale_mode="max_abs"):
         # Todo: How to handle the final linear layer?
         noise_level = self.noise_level
         if isinstance(self.noise_level, dict):
-            noise_level = torch.tensor(list(self.noise_level.values()), device=self.device, requires_grad=False).max()
-        noise_ = torch.randn_like(p, device=self.device, requires_grad=False) * noise_level
-        p.mul_(1 + noise_)
+            noise_level = torch.tensor(list(self.noise_level.values()), device=p.device, requires_grad=False).max()
+        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * noise_level
+        if mismatch_type == "mul":
+            p.mul_(1 + noise_)
+        elif mismatch_type == "add":
+            p.add_(noise_ * additive_mismatch_scale(p, additive_scale_mode))
+        else:
+            raise ValueError(f"Unsupported mismatch type: {mismatch_type}")
 
-    def add_noise(self, noise_to_bn=False, noise_to_linear=False):
+    def add_noise(self, noise_to_bn=False, noise_to_linear=False, noise_to_conv_bias=True,
+                  mismatch_type="mul", additive_scale_mode="max_abs"):
+        if additive_scale_mode not in ADDITIVE_SCALE_MODES:
+            raise ValueError(f"Unsupported additive scale mode: {additive_scale_mode}")
         for pc_conv in self.PcConvs:
             if hasattr(pc_conv, "init_ds_conv_block"):
                 pc_conv.init_ds_conv_block()
@@ -136,18 +145,20 @@ class PCNet(nn.Module):
         # Todo: Add noise for BN and linear
         with torch.no_grad():
             for _name, _p in self.named_parameters():
-                if "conv" in _name.lower() and "pc" not in _name.lower():
+                is_non_pc_conv = "conv" in _name.lower() and "pc" not in _name.lower()
+                is_conv_bias = is_non_pc_conv and _name.lower().endswith(".bias")
+                if is_non_pc_conv and (noise_to_conv_bias or not is_conv_bias):
                     log.info("Adding noise to conv layer: {}".format(_name))
                     self.clean_params[_name] = _p.clone()
-                    self._apply_noise(_p)
+                    self._apply_noise(_p, mismatch_type, additive_scale_mode)
                 if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to batch norm")
                     self.clean_params[_name] = _p.clone()
-                    self._apply_noise(_p)
+                    self._apply_noise(_p, mismatch_type, additive_scale_mode)
                 elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to linear layer")
                     self.clean_params[_name] = _p.clone()
-                    self._apply_noise(_p)
+                    self._apply_noise(_p, mismatch_type, additive_scale_mode)
 
             if noise_to_bn:
                 # adding noise to running mean and variance of batch norm
@@ -155,11 +166,11 @@ class PCNet(nn.Module):
                     if _name.endswith(('running_mean', 'running_var')):
                         log.info("Adding noise to running mean and variance")
                         self.clean_params[_name] = _p.clone()
-                        self._apply_noise(_buf)
+                        self._apply_noise(_buf, mismatch_type, additive_scale_mode)
                     elif _name.endswith('conv_beta_init'):
                         log.info("Adding noise to conv beta init")
                         self.clean_params[_name] = _p.clone()
-                        self._apply_noise(_buf)
+                        self._apply_noise(_buf, mismatch_type, additive_scale_mode)
 
     def recover_params(self):
         with torch.no_grad():

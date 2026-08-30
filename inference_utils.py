@@ -202,7 +202,7 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
 
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
-                           conv_only=False, ode_params=None, ode_wrapper_params=None, wrappers=None,
+                           noise_to_conv_bias=True, conv_only=False, ode_params=None, ode_wrapper_params=None, wrappers=None,
                            quant_params=None, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device, weights_only=False)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
@@ -252,6 +252,8 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
     # Add noise
     if hasattr(net_, "add_noise"):
+        mismatch_type = ode_params.get("mismatch_type", "mul") if isinstance(ode_params, dict) else kwargs.get("mismatch_type", "mul")
+        additive_scale_mode = ode_params.get("additive_scale_mode", "max_abs") if isinstance(ode_params, dict) else kwargs.get("additive_scale_mode", "max_abs")
         noise_level = net_.noise_level
         #############################################################################
         # ODE related
@@ -270,14 +272,18 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
             for _blk in net_.PcConvs:
                 _blk.noise_level = noise_level
             # All mismatch added in this method
-            net_.add_noise(noise_to_bn=True, noise_to_linear=True)  # Add noise to linear and bn also
+            net_.add_noise(noise_to_bn=True, noise_to_linear=True, noise_to_conv_bias=noise_to_conv_bias,
+                           mismatch_type=mismatch_type,
+                           additive_scale_mode=additive_scale_mode)  # Add noise to linear and bn also
         #############################################################################
         else:
             clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
             clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
             # When each PcConv is not ode_block, calling this will not add mismatch in-place to conv weights.
             # But will add mismatch to linear layers.
-            net_.add_noise(noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear)
+            net_.add_noise(noise_to_bn=noise_to_bn, noise_to_linear=noise_to_linear,
+                           noise_to_conv_bias=noise_to_conv_bias,
+                           mismatch_type=mismatch_type, additive_scale_mode=additive_scale_mode)
         if isinstance(noise_level, dict) or noise_level > 0.0:
             mean_abs = []
             for _name, _p in net_.named_parameters():
@@ -286,7 +292,13 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                 elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
 
-                if isinstance(ode_params, dict):
+                is_excluded_conv_bias = (
+                    not noise_to_conv_bias
+                    and "conv" in _name.lower()
+                    and "pc" not in _name.lower()
+                    and _name.lower().endswith(".bias")
+                )
+                if isinstance(ode_params, dict) and not is_excluded_conv_bias:
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name]), "param name: {}".format(_name)
                     logging.warning("name: {}, noisy params mean: {}, min: {}, max: {}".format(
                         _name, _p.mean(), _p.min(), _p.max()))

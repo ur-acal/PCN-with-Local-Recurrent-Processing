@@ -7,6 +7,7 @@ import gc
 import pickle
 import argparse
 import json
+import random
 import torchinfo
 import logging
 
@@ -71,6 +72,10 @@ def parse_args():
                         help="Only useful when self.eps is set in the ODESolver class.")
     parser.add_argument("--mismatch_type", type=str, default="mul", choices=["mul", "add"],
                         help="Additive or multiplicative mismatch.")
+    parser.add_argument("--additive_scale_mode", choices=["max_abs", "rms"], default="max_abs",
+                        help="Per-tensor scale used by additive mismatch.")
+    parser.add_argument("--noise_to_conv_bias", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=True, help="Apply mismatch to non-PC convolution biases.")
     parser.add_argument("--noise_level_list", type=str, default="0.0,0.01,0.02,0.05")
     parser.add_argument("--sweep_eps", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
@@ -112,6 +117,12 @@ def parse_args():
                         default=False)
     parser.add_argument("--mem_frac", type=float, default=1.0)
     parser.add_argument("--noisy_trials", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Optional base seed using the WRN per-model/per-level/per-trial formula.")
+    parser.add_argument("--model_index", type=int, default=0,
+                        help="Model index used with --seed to match WRN trial seeding.")
+    parser.add_argument("--max_eval_batches", type=lambda s: None if s.lower() in {"none", ""} else int(s),
+                        default=None, help="Optional smoke-test limit; default evaluates the full test set.")
     parser.add_argument("--test_only_nl", type=float, default=0.15,
                         help="The noise level to use when test_only=True.")
     parser.add_argument("--analyze_mm", type=float, default=0.25, help="Mismatch level for analysis.")
@@ -138,6 +149,8 @@ def parse_args():
                         help="Number of samples used for validation")
     parser.add_argument("--weight_range_audit_csv", type=str, default="",
                         help="Optional sidecar CSV for clean-checkpoint max_abs/rms/kappa audit of selected tensors.")
+    parser.add_argument("--output_pickle", default="",
+                        help="Optional explicit output pickle path; default preserves the legacy filename.")
     parser.add_argument("--weight_range_audit_only", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False, help="Write the weight-range audit and exit without running evaluation.")
     return parser.parse_args()
@@ -153,6 +166,21 @@ def get_t_end(args):
     else:
         assert args.t_end is not None
         return args.t_end
+
+
+def mismatch_trial_seed(base_seed, model_idx, noise_level, trial):
+    return base_seed + 100000 * model_idx + 1000 * int(round(noise_level * 1e6)) + trial
+
+
+def seed_mismatch_trial(base_seed, model_idx, noise_level, trial):
+    if base_seed is None:
+        return None
+    seed = mismatch_trial_seed(base_seed, model_idx, noise_level, trial)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed % (2**32 - 1))
+    random.seed(seed)
+    return seed
 
 
 def _merge_metric_dicts(metric_dicts, weights=None):
@@ -309,6 +337,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
                                   noise_to_bn=True, noise_to_linear=True,
+                                  noise_to_conv_bias=args.noise_to_conv_bias,
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                   ode_wrapper_params=wrapper_params, wrappers=saved_wrappers,
                                   **noisy_params)
@@ -369,6 +398,7 @@ def run_weight_range_audit(args, ckpt_path, pc_conv, device, t_end=None, return_
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
                   "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
+                  "additive_scale_mode": args.additive_scale_mode,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
@@ -381,6 +411,7 @@ def run_weight_range_audit(args, ckpt_path, pc_conv, device, t_end=None, return_
         net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                       pc_conv_layer=pc_conv, data_parallel=False,
                                       noise_to_bn=True, noise_to_linear=True,
+                                      noise_to_conv_bias=args.noise_to_conv_bias,
                                       fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                       ode_wrapper_params=wrapper_params,
                                       noise_level=0.0, weight=None)
@@ -404,6 +435,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
                   "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
+                  "additive_scale_mode": args.additive_scale_mode,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
     wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
@@ -416,6 +448,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                   pc_conv_layer=pc_conv, data_parallel=False,
                                   noise_to_bn=True, noise_to_linear=True,
+                                  noise_to_conv_bias=args.noise_to_conv_bias,
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                   ode_wrapper_params=wrapper_params,
                                   **noisy_params)
@@ -545,6 +578,7 @@ def run_ode_inference():
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
                       "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
                       "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
+                  "additive_scale_mode": args.additive_scale_mode,
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar}
         wrapper_params = {"ode_wrapper": ODEWrapper_CLASSES[args.ode_wrapper], "calib_path": args.state_calib,
@@ -565,6 +599,7 @@ def run_ode_inference():
                     trials = min(5, trials) if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
                 for t in range(trials):
+                    seed_mismatch_trial(args.seed, args.model_index, noise_level, t)
                     noisy_params = {"noise_level": noise_level, "weight": None}
                     if args.test_expanded:
                         # Add non-ideality to expanded weights
@@ -574,6 +609,7 @@ def run_ode_inference():
                         net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                                       pc_conv_layer=pc_conv, data_parallel=False,
                                                       noise_to_bn=True, noise_to_linear=True,
+                                                      noise_to_conv_bias=args.noise_to_conv_bias,
                                                       fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                                       ode_wrapper_params=wrapper_params, wrappers=saved_wrappers,
                                                       **noisy_params)
@@ -600,9 +636,15 @@ def run_ode_inference():
                                 _blk.noise_level = noise_level
                                 # _blk.add_noise()
                             # All mismatch added in this method
-                            net_.add_noise(noise_to_bn=True, noise_to_linear=True) # Add noise to linear and bn also
+                            net_.add_noise(noise_to_bn=True, noise_to_linear=True,
+                                           noise_to_conv_bias=args.noise_to_conv_bias,
+                                           mismatch_type=args.mismatch_type,
+                                           additive_scale_mode=args.additive_scale_mode) # Add noise to linear and bn also
                             if isinstance(noise_level, dict) or noise_level > 0.0:
                                 for _name, _p in net_.named_parameters():
+                                    if (not args.noise_to_conv_bias and "conv" in _name.lower()
+                                            and "pc" not in _name.lower() and _name.lower().endswith(".bias")):
+                                        continue
                                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[
                                         _name]), "{} noise not added".format(_name)
                                 for _name, _buf in net_.named_buffers():
@@ -637,6 +679,8 @@ def run_ode_inference():
 
                         running_acc = 100.0 * correct / total
                         pbar.set_postfix(acc=f"{running_acc:.2f}%")
+                        if args.max_eval_batches is not None and batch_idx + 1 >= args.max_eval_batches:
+                            break
 
                     # Calculate the accuracy
                     accuracy = 100 * correct / total
@@ -705,7 +749,9 @@ def run_ode_inference():
         acc_dict[real_t_end] = {"noise_acc_spec": noise_acc_spec_all, "t": (t_end, real_t_end, min_real_t, max_real_t)}
 
     # save noise acc spec to a pkl
-    if args.ode_wrapper is None:
+    if args.output_pickle:
+        spec_path = args.output_pickle
+    elif args.ode_wrapper is None:
         spec_path = os.path.join(
             "logs/ode_noisy_acc", "TEnd{}_{}_{}_{}_{}NoiseLevel.pkl".format(
                 str(round(t_end_list[0], 2)).replace(".", "p"),
@@ -718,6 +764,7 @@ def run_ode_inference():
                 str(round(t_end_list[-1], 2)).replace(".", "p"),
                 args.C, args.method, args.model_name[:170], args.ode_wrapper, args.w_bits,
                 len(noise_level_list_)))
+    os.makedirs(os.path.dirname(spec_path) or ".", exist_ok=True)
     with open(spec_path, "wb") as fp:
         pickle.dump(acc_dict, fp)
     log.warning("-------- ODEBlock Noisy experiment finished, spec saved to {} --------".format(spec_path))

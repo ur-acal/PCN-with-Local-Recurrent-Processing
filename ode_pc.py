@@ -18,6 +18,7 @@ from pc_model import PCNet
 from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvHardTanhNoisy, PCConvHardTanh
 from pc_conv import ReLUX, HardTanhByX
 from utils import expand_weights_to_matrix, load_res_vs_vin
+from mismatch_utils import ADDITIVE_SCALE_MODES, additive_mismatch_scale
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 # from TorchDiffEqPack.odesolver_mem import odesolve_adjoint as aca_ode_solve
@@ -47,6 +48,7 @@ class ODEBlockPC(nn.Module):
 
     def __init__(self, pc_conv: Union[PCConvNoisy, PCConv], noise_level=0.0, method="dopri5", t_end=None, t_step=None,
                  tol=1e-3, return_mid=False, init_b=False, sde_noise_type="mul", mismatch_type="mul",
+                 additive_scale_mode="max_abs",
                  return_init=False, **kwargs):
         super(ODEBlockPC, self).__init__()
         self.noise_level = noise_level
@@ -76,6 +78,9 @@ class ODEBlockPC(nn.Module):
 
         self.mismatch_type = mismatch_type
         assert self.mismatch_type in {"mul", "add"}
+        if additive_scale_mode not in ADDITIVE_SCALE_MODES:
+            raise ValueError(f"Unsupported additive scale mode: {additive_scale_mode}")
+        self.additive_scale_mode = additive_scale_mode
         if isinstance(self.noise_level, dict) or (self.noise_level is not None and self.noise_level > 0):
             self.add_noise()
 
@@ -215,8 +220,8 @@ class ODEBlockPC(nn.Module):
                 noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * sigma_
                 v_.mul_(1 + noise_)  # This will change values of CSR matrix in-place
             else:
-                max_abs = v_.abs().max()
-                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * (sigma_ * max_abs)
+                scale = additive_mismatch_scale(v_, self.additive_scale_mode)
+                noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * (sigma_ * scale)
                 v_.add_(noise_)
         else:
             sigma_ = self._get_dense_sigma_tensor(p)
@@ -224,8 +229,8 @@ class ODEBlockPC(nn.Module):
                 noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * sigma_
                 p.mul_(1 + noise_)
             else:
-                max_abs = p.abs().max()
-                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * (sigma_ * max_abs)
+                scale = additive_mismatch_scale(p, self.additive_scale_mode)
+                noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * (sigma_ * scale)
                 p.add_(noise_)
 
     def add_noise(self):
@@ -238,6 +243,7 @@ class ODEBlockPC(nn.Module):
                 noise_level=self.noise_level,
                 mismatch_type=self.mismatch_type,
                 q_hi=getattr(self, "q_hi", None),
+                additive_scale_mode=self.additive_scale_mode,
                 weight_scale=getattr(self, "weight_scale", 1.0)
             )
         else:
@@ -249,6 +255,7 @@ class ODEBlockPC(nn.Module):
                     noise_level=self.noise_level,
                     mismatch_type=self.mismatch_type,
                     q_hi=getattr(self, "q_hi", None),
+                    additive_scale_mode=self.additive_scale_mode,
                     weight_scale=getattr(self, "weight_scale", 1.0)
                 )
             else:
@@ -260,6 +267,7 @@ class ODEBlockPC(nn.Module):
                     noise_level=self.noise_level,
                     mismatch_type=self.mismatch_type,
                     q_hi=getattr(self, "q_hi", None),
+                    additive_scale_mode=self.additive_scale_mode,
                     weight_scale=getattr(self, "weight_scale", 1.0)
                 )
             else:
