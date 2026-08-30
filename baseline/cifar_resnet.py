@@ -145,10 +145,12 @@ class CIFARResNet(nn.Module):
             return x
         return self.fc(x)
 
-    def forward(self, x):
-        x = self.forward_features(x)
-        x = self.forward_head(x)
-        return x
+    def forward(self, x, is_feat: bool = False):
+        features = self.forward_features(x)
+        outputs = self.forward_head(features)
+        if is_feat:
+            return [features], outputs
+        return outputs
 
     def get_classifier(self):
         return self.fc
@@ -271,19 +273,32 @@ class PreActCIFARResNet(nn.Module):
 # depth = 6n + 4. WRN-28 => n = 4. Widen factor = 10.
 # -----------------------------------------------------------------------------
 class WideBasicBlock(nn.Module):
-    def __init__(self, in_planes: int, planes: int, dropout_rate: float, stride: int = 1):
+    def __init__(
+        self,
+        in_planes: int,
+        planes: int,
+        dropout_rate: float,
+        stride: int = 1,
+        use_batchnorm: bool = True,
+    ):
         super().__init__()
-        self.bn1 = nn.BatchNorm2d(in_planes)
+        self.bn1 = nn.BatchNorm2d(in_planes) if use_batchnorm else nn.Identity()
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(
+            in_planes, planes, kernel_size=3, stride=1, padding=1, bias=not use_batchnorm
+        )
 
-        self.bn2 = nn.BatchNorm2d(planes)
+        self.bn2 = nn.BatchNorm2d(planes) if use_batchnorm else nn.Identity()
         self.relu2 = nn.ReLU(inplace=True)
         self.dropout_rate = float(dropout_rate)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(
+            planes, planes, kernel_size=3, stride=stride, padding=1, bias=not use_batchnorm
+        )
 
         if stride != 1 or in_planes != planes:
-            self.shortcut = nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride, bias=False)
+            self.shortcut = nn.Conv2d(
+                in_planes, planes, kernel_size=1, stride=stride, bias=not use_batchnorm
+            )
         else:
             self.shortcut = nn.Identity()
 
@@ -306,6 +321,7 @@ class WideResNetCIFAR(nn.Module):
         num_classes: int = 10,
         in_chans: int = 3,
         base_width: int = 16,
+        use_batchnorm: bool = True,
         **kwargs,
     ):
         super().__init__()
@@ -318,14 +334,17 @@ class WideResNetCIFAR(nn.Module):
         self.depth = depth
         self.widen_factor = widen_factor
         self.dropout_rate = dropout_rate
+        self.use_batchnorm = bool(use_batchnorm)
         self.out_dim = widths[3]
         self.in_planes = widths[0]
 
-        self.conv1 = nn.Conv2d(in_chans, widths[0], kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(
+            in_chans, widths[0], kernel_size=3, stride=1, padding=1, bias=not self.use_batchnorm
+        )
         self.layer1 = self._make_layer(widths[1], n, stride=1)
         self.layer2 = self._make_layer(widths[2], n, stride=2)
         self.layer3 = self._make_layer(widths[3], n, stride=2)
-        self.bn = nn.BatchNorm2d(widths[3])
+        self.bn = nn.BatchNorm2d(widths[3]) if self.use_batchnorm else nn.Identity()
         self.relu = nn.ReLU(inplace=True)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(widths[3], num_classes)
@@ -336,7 +355,15 @@ class WideResNetCIFAR(nn.Module):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for s in strides:
-            layers.append(WideBasicBlock(self.in_planes, planes, self.dropout_rate, stride=s))
+            layers.append(
+                WideBasicBlock(
+                    self.in_planes,
+                    planes,
+                    self.dropout_rate,
+                    stride=s,
+                    use_batchnorm=self.use_batchnorm,
+                )
+            )
             self.in_planes = planes
         return nn.Sequential(*layers)
 
@@ -394,6 +421,13 @@ def resnet56_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: in
     if pretrained:
         raise ValueError("No registered pretrained weights for resnet56_cifar. Use checkpoint_map/checkpoint_dir instead.")
     return CIFARResNet(depth=56, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+@register_model
+def resnet110_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for resnet110_cifar. Use checkpoint_map/checkpoint_dir instead.")
+    return CIFARResNet(depth=110, num_classes=num_classes, in_chans=in_chans, **kwargs)
 
 
 @register_model
@@ -470,3 +504,36 @@ def wrn_40_4_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: in
     if pretrained:
         raise ValueError("No registered pretrained weights for wrn_40_4_cifar.")
     return WideResNetCIFAR(depth=40, widen_factor=4, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+def _build_wrn_nobn(depth: int, widen_factor: int, pretrained: bool, num_classes: int, in_chans: int, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for BN-free WRN models.")
+    return WideResNetCIFAR(
+        depth=depth,
+        widen_factor=widen_factor,
+        num_classes=num_classes,
+        in_chans=in_chans,
+        use_batchnorm=False,
+        **kwargs,
+    )
+
+
+@register_model
+def wrn_16_2_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(16, 2, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_4_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(16, 4, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_2_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(28, 2, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_4_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(28, 4, pretrained, num_classes, in_chans, **kwargs)

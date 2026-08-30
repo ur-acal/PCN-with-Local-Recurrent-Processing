@@ -223,7 +223,7 @@ class FixedMismatchHelper:
                 if should_apply and self.noise_sigma > 0:
                     self._apply_noise_(p)
                     changed = not torch.equal(p.detach(), clean)
-                    if all_zero and self.noise_type == "multiplicative":
+                    if all_zero:
                         changed = False
                     applied_records.append(NoiseApplyRecord(name, "param", changed, all_zero, p.numel()))
                 else:
@@ -239,7 +239,7 @@ class FixedMismatchHelper:
                     if "running_var" in name:
                         buf.clamp_(min=1e-6)
                     changed = not torch.equal(buf.detach(), clean)
-                    if all_zero and self.noise_type == "multiplicative":
+                    if all_zero:
                         changed = False
                     applied_records.append(NoiseApplyRecord(name, "buffer", changed, all_zero, buf.numel()))
                 else:
@@ -257,10 +257,11 @@ class FixedMismatchHelper:
         assert len(summary.applied_records) > 0, "No tensors were selected for mismatch. Check options."
 
         for rec in summary.applied_records:
-            if rec.all_zero and self.noise_type == "multiplicative":
+            if rec.all_zero:
                 log.warning(
-                    "Skipping strict assertion for all-zero %s tensor under multiplicative mismatch: %s",
+                    "Skipping strict assertion for all-zero %s tensor under %s mismatch: %s",
                     rec.kind,
+                    self.noise_type,
                     rec.name,
                 )
                 continue
@@ -337,6 +338,12 @@ def parse_args():
     parser.add_argument("--noisy_trials", type=int, default=5)
     parser.add_argument("--noise_type", type=str, choices=["multiplicative", "additive"], default="multiplicative")
     parser.add_argument("--noise_to_norm", type=str2bool, default=False)
+    parser.add_argument(
+        "--exclude_conv_bias_from_mismatch",
+        type=str2bool,
+        default=False,
+        help="Exclude only bias parameters owned by convolution modules from mismatch.",
+    )
     parser.add_argument("--fold_norm", type=str2bool, default=False)
     parser.add_argument(
         "--fold_norm_mode",
@@ -542,6 +549,18 @@ def load_model_weights(model: nn.Module, ckpt_path: Optional[str], device: torch
         log.warning("Missing keys (first 20): %s", missing[:20])
     if len(unexpected) > 0:
         log.warning("Unexpected keys (first 20): %s", unexpected[:20])
+
+
+def convolution_bias_parameter_names(model: nn.Module) -> Set[str]:
+    conv_types = (
+        nn.Conv1d, nn.Conv2d, nn.Conv3d,
+        nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d,
+    )
+    return {
+        f"{module_name}.bias" if module_name else "bias"
+        for module_name, module in model.named_modules()
+        if isinstance(module, conv_types) and module.bias is not None
+    }
 
 
 def _build_eval_transform(model: nn.Module, dataset_name: str, cfg: dict):
@@ -983,13 +1002,17 @@ def main():
         if bn_recalibration_cfg.enabled:
             calibration_dataloader = build_bn_calibration_loader(model, args, cfg, bn_recalibration_cfg)
 
+        excluded_param_names = set(getattr(model, "_mismatch_excluded_param_names", set()))
+        if args.exclude_conv_bias_from_mismatch:
+            excluded_param_names.update(convolution_bias_parameter_names(model))
+
         mismatch_helper = FixedMismatchHelper(
             model=model,
             noise_sigma=0.0,
             noise_type=args.noise_type,
             noise_to_norm=args.noise_to_norm,
             include_buffers=True,
-            exclude_param_names=getattr(model, "_mismatch_excluded_param_names", set()),
+            exclude_param_names=excluded_param_names,
         )
         mismatch_helper.snapshot_clean_state()
 
@@ -1060,6 +1083,7 @@ def main():
                 "acc": f"{avg_acc:.2f}±{std_acc:.2f}%",
                 "noise_type": args.noise_type,
                 "noise_to_norm": args.noise_to_norm,
+                "exclude_conv_bias_from_mismatch": args.exclude_conv_bias_from_mismatch,
             })
 
         for _nl, _acc in noise_acc_spec.items():
@@ -1095,7 +1119,7 @@ def main():
     print("\n=== Final Summary ===")
     for row in all_rows:
         print(
-            "Model={model:20s} noise={noise_level:<8g} acc={acc} noise_type={noise_type} noise_to_norm={noise_to_norm}".format(**row)
+            "Model={model:20s} noise={noise_level:<8g} acc={acc} noise_type={noise_type} noise_to_norm={noise_to_norm} exclude_conv_bias={exclude_conv_bias_from_mismatch}".format(**row)
         )
     print(f"\nSaved CSV to: {csv_path}")
     print(f"Saved pickle to: {pkl_path}")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Config-driven CIFAR baseline launcher using existing TrainerCiFarTimmStyle.
+Config-driven CIFAR baseline launcher using the existing timm-style trainers.
 
 This script does NOT implement a training loop. It only:
     1. chooses the correct CIFAR baseline config,
@@ -36,9 +36,17 @@ if str(PROJECT_ROOT) not in sys.path:
 # Required local baseline utilities.
 # Make sure baseline/__init__.py exists.
 import baseline.cifar_resnet  # registers custom CIFAR models into timm
-from baseline.baseline_cifar_configs import get_baseline_config, build_model
+from baseline.baseline_cifar_configs import (
+    RGGB_DEFAULTS,
+    RGGB_MID_AUG,
+    RGGB_MILD_AUG,
+    RGGB_NO_AUG,
+    RGGB_TO_RGB_EXTRAS,
+    build_model,
+    get_baseline_config,
+)
+from train_ode_cifar import build_teacher_model, evaluate_teacher, _get_feature_kd_trainer
 
-from trainer_timm import TrainerCiFarTimmStyle
 
 
 def str2bool(v: str) -> bool:
@@ -95,6 +103,28 @@ def parse_args():
     parser.add_argument('--noise_type', default='mul', type=str, choices=['mul', 'add'],
                         help='Multiplicative or additive noise')
 
+    parser.add_argument("--img_type", default="rgb",
+                        help="Input data type: rgb, scanGFI, raw, _raw, or CiFAIR.")
+    parser.add_argument("--rggb_to_rgb", type=str2bool, default=False)
+    parser.add_argument("--timm_aug_level", default="none",
+                        choices=("none", "no_aug", "mild", "mid"))
+    parser.add_argument("--timm_re_prob", type=float, default=None)
+
+    parser.add_argument("--teacher_ckpt", default=None)
+    parser.add_argument("--teacher_arch", default=None)
+    parser.add_argument("--teacher_arch_source", default="auto",
+                        choices=("auto", "torchvision", "hankyul2"))
+    parser.add_argument("--teacher_input_size", type=int, default=224)
+    parser.add_argument("--teacher_center_crop", type=str2bool, default=True)
+    parser.add_argument("--adapt_PIL_teacher", "--adapt_pil_teacher",
+                        dest="adapt_PIL_teacher", type=str2bool, default=False)
+    parser.add_argument("--orig_t_inp", type=str2bool, default=False)
+    parser.add_argument("--distill_method", default="none",
+                        choices=("none", "kd", "srrl"))
+    parser.add_argument("--distill_alpha", type=float, default=0.3)
+    parser.add_argument("--distill_temperature", type=float, default=2.0)
+    parser.add_argument("--srrl_weight", type=float, default=1.0)
+
     # auto means:
     #   custom CIFAR model -> 1a custom_noresize
     #   supported adapted timm model -> 1b adapt_noresize
@@ -138,7 +168,7 @@ def infer_num_classes(dataset_name: str) -> int:
     raise ValueError(dataset_name)
 
 
-def build_trainer_kwargs(args, cfg: dict, model: nn.Module) -> dict:
+def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) -> dict:
     """
     Build kwargs for TrainerCiFarTimmStyle.
 
@@ -164,16 +194,20 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module) -> dict:
         max_norm=cfg.get("max_norm", None),
         aug=False,  # transforms are handled by TrainerCiFarTimmStyle
         eval_every=cfg.get("eval_every", 5),
-        img_type="rgb",
+        img_type=args.img_type,
         dataset_name=args.dataset,
 
-        # Keep these disabled for plain baseline training.
+        # Plain baseline training keeps distill_method=none and teacher_model=None.
         noise_level=cfg.get("noise_level", None),
         noise_type=cfg.get("noise_type", None),
         mismatch_levels=None,
-        distill_alpha=0.0,
-        teacher_model=None,
-        orig_t_inp=False,
+        distill_method=args.distill_method,
+        distill_alpha=args.distill_alpha,
+        distill_temperature=args.distill_temperature,
+        teacher_model=teacher_model,
+        orig_t_inp=args.orig_t_inp,
+        teacher_input_size=args.teacher_input_size,
+        teacher_center_crop=args.teacher_center_crop,
 
         # TrainerCiFarTimmStyle-specific args.
         timm_opt=cfg["timm_opt"],
@@ -193,6 +227,13 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module) -> dict:
         mixup_alpha=cfg["mixup_alpha"],
         cutmix_alpha=cfg["cutmix_alpha"],
 
+        convert_non_rgb_to_rgb=cfg.get("convert_non_rgb_to_rgb", False),
+        non_rgb_spatial_aug=cfg.get("non_rgb_spatial_aug", True),
+        non_rgb_crop_padding=cfg.get("non_rgb_crop_padding", 2),
+        non_rgb_affine_degrees=cfg.get("non_rgb_affine_degrees", 0),
+        non_rgb_affine_translate=cfg.get("non_rgb_affine_translate", None),
+        non_rgb_affine_shear=cfg.get("non_rgb_affine_shear", None),
+
         skip_eval_epochs=cfg["skip_eval_epochs"],
     )
 
@@ -201,7 +242,18 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module) -> dict:
 
 def main():
     args = parse_args()
+    img_type_lower = args.img_type.lower()
+    if img_type_lower == "cifair":
+        args.img_type = "CiFAIR"
+    elif img_type_lower in {"scangfi", "raw", "_raw"}:
+        args.img_type = "scanGFI"
+    elif img_type_lower == "rgb":
+        args.img_type = "rgb"
+    else:
+        raise ValueError("img_type must be rgb, scanGFI/raw, or CiFAIR")
+
     num_classes = infer_num_classes(args.dataset)
+    args.num_classes = num_classes
 
     extra_overrides = parse_kv_overrides(args.override)
     cfg = get_baseline_config(
@@ -212,8 +264,65 @@ def main():
         extra_overrides=extra_overrides,
     )
 
+    if args.img_type != "rgb" and args.rggb_to_rgb:
+        cfg.update(RGGB_TO_RGB_EXTRAS)
+    elif args.img_type != "rgb":
+        cfg.update(RGGB_DEFAULTS)
+
+    if args.img_type != "rgb":
+        if args.timm_aug_level == "no_aug":
+            cfg.update(RGGB_NO_AUG)
+        elif args.timm_aug_level == "mild":
+            cfg.update(RGGB_MILD_AUG)
+        elif args.timm_aug_level == "mid":
+            cfg.update(RGGB_MID_AUG)
+
+        # Match the current PCN pretraining default.
+        if args.timm_re_prob is None:
+            cfg["re_prob"] = 0.0
+
+    if args.timm_re_prob is not None:
+        if not 0.0 <= args.timm_re_prob <= 1.0:
+            raise ValueError("--timm_re_prob must be between 0 and 1")
+        cfg["re_prob"] = args.timm_re_prob
+
+    distill_enabled = args.distill_method != "none"
+    if distill_enabled and not args.teacher_ckpt:
+        if args.img_type == "CiFAIR":
+            args.teacher_ckpt = (
+                f"checkpoint/efficientnet_v2_l_{args.dataset}_"
+                "CiFAIR_OldNoTimm_MatchDistill.pth"
+            )
+        elif args.dataset == "cifar10":
+            args.teacher_ckpt = "checkpoint/b4.pth"
+        else:
+            args.teacher_ckpt = "checkpoint/b4_100.pth"
+    if distill_enabled and not args.teacher_arch:
+        args.teacher_arch = (
+            "efficientnet-b4"
+            if args.img_type != "CiFAIR" and args.dataset == "cifar10"
+            else "efficientnet_v2_l"
+        )
+    if distill_enabled:
+        # Match the PCN pretraining loader sizing and avoid evaluating the
+        # 224x224 EfficientNet teacher with the baseline-only 1024 batch.
+        cfg["test_batch_size"] = cfg["batch_size"]
+
     model = build_model(args.model_name, cfg, num_classes)
-    trainer_kwargs = build_trainer_kwargs(args, cfg, model)
+    teacher_model = None
+    if distill_enabled and not args.print_only:
+        teacher_model = build_teacher_model(
+            args,
+            student_in_channels=cfg.get("in_chans", 3),
+            orig_t_inp=args.orig_t_inp,
+        )
+
+    trainer_kwargs = build_trainer_kwargs(args, cfg, model, teacher_model)
+    trainer_cls = _get_feature_kd_trainer(args)
+    if args.distill_method == "srrl":
+        if args.srrl_weight < 0.0:
+            raise ValueError("--srrl_weight must be non-negative")
+        trainer_kwargs["srrl_beta"] = args.srrl_weight
 
     os.makedirs(trainer_kwargs["save_path"], exist_ok=True)
     with open(os.path.join(trainer_kwargs["save_path"], "baseline_config.json"), "w") as f:
@@ -230,12 +339,29 @@ def main():
     print("\nResolved baseline config:")
     pprint(cfg)
     print("\nTrainer kwargs:")
-    pprint({k: v for k, v in trainer_kwargs.items() if k != "model"})
+    pprint({k: v for k, v in trainer_kwargs.items() if k not in {"model", "teacher_model"}})
+    if distill_enabled:
+        print("\nResolved distillation config:")
+        pprint({
+            "teacher_ckpt": args.teacher_ckpt,
+            "teacher_arch": args.teacher_arch,
+            "teacher_arch_source": args.teacher_arch_source,
+            "teacher_input_size": args.teacher_input_size,
+            "teacher_center_crop": args.teacher_center_crop,
+            "adapt_PIL_teacher": args.adapt_PIL_teacher,
+            "orig_t_inp": args.orig_t_inp,
+            "distill_method": args.distill_method,
+            "distill_alpha": args.distill_alpha,
+            "distill_temperature": args.distill_temperature,
+            "srrl_weight": args.srrl_weight,
+        })
 
     if args.print_only:
         return
 
-    trainer = TrainerCiFarTimmStyle(**trainer_kwargs)
+    trainer = trainer_cls(**trainer_kwargs)
+    if teacher_model is not None:
+        evaluate_teacher(teacher_model, trainer)
     trainer.train()
 
 
