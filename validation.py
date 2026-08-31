@@ -6,6 +6,7 @@ from collections import OrderedDict
 
 import numpy as np
 import torch
+from mismatch_utils import additive_mismatch_scale
 import os
 import torch.nn as nn
 import torch.nn.functional as F
@@ -357,7 +358,8 @@ class MVMConv(nn.Module):
         return sigma
 
     @torch.no_grad()
-    def add_noise(self, noise_level, mismatch_type="mul", q_hi=None, weight_scale=1.0):
+    def add_noise(self, noise_level, mismatch_type="mul", q_hi=None, weight_scale=1.0,
+                  additive_scale_mode="max_abs"):
         if noise_level is None:
             return
         if not isinstance(noise_level, dict) and noise_level <= 0:
@@ -378,8 +380,8 @@ class MVMConv(nn.Module):
                 noise_ = torch.randn_like(v_, device=v_.device, requires_grad=False) * sigma_
                 v_.mul_(1 + noise_)
             else:
-                max_abs = v_.abs().max()
-                noise_ = torch.randn_like(v_, device=v_.device, requires_grad=False) * (sigma_ * max_abs)
+                scale = additive_mismatch_scale(v_, additive_scale_mode)
+                noise_ = torch.randn_like(v_, device=v_.device, requires_grad=False) * (sigma_ * scale)
                 v_.add_(noise_)
             return
 
@@ -436,8 +438,8 @@ class MVMConv(nn.Module):
                 raise ValueError("Unknown mismatch mode.")
 
         else:
-            max_abs = vals.abs().max()
-            noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * (sigma_ * max_abs)
+            scale = additive_mismatch_scale(vals, additive_scale_mode)
+            noise_ = torch.randn_like(vals, device=vals.device, requires_grad=False) * (sigma_ * scale)
 
             # Keep nonlinear-R nominal path unchanged.
             self.code_idx_mat = self._build_code_idx_mat()

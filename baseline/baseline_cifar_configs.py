@@ -38,10 +38,19 @@ CUSTOM_CIFAR_MODELS = {
     "resnet110_cifar",
     "preact_resnet164_cifar",
     "wrn_28_10_cifar",
+    "wrn_16_2_cifar",
+    "wrn_16_4_cifar",
+    "wrn_16_8_cifar",
+    "wrn_28_2_cifar",
+    "wrn_28_4_cifar",
+    "wrn_40_2_cifar",
     "wrn_16_2_cifar_nobn",
+    "wrn_16_2_cifar_nobn_maxpool_shortcut",
     "wrn_16_4_cifar_nobn",
+    "wrn_16_8_cifar_nobn",
     "wrn_28_2_cifar_nobn",
     "wrn_28_4_cifar_nobn",
+    "wrn_40_2_cifar_nobn",
 }
 
 
@@ -253,6 +262,35 @@ CASE_DEFAULTS = {
         "skip_eval_epochs": 200,
     },
 }
+
+
+TINYIMAGENET_DEFAULTS = {
+    "pretrained": False,
+    "timm_input_size": (3, 64, 64),
+    "num_epochs": 300,
+    "batch_size": 128,
+    "test_batch_size": 512,
+    "lr": 0.1,
+    "weight_decay": 1e-3,
+    "timm_opt": "sgd",
+    "momentum": 0.9,
+    "timm_sched": "cosine",
+    "min_lr": 1e-6,
+    "warmup_epoch": 5,
+    "warmup_lr": 1e-5,
+    "label_smoothing": 0.1,
+    "mixup_alpha": 0.2,
+    "cutmix_alpha": 1.0,
+    "auto_augment": "rand-m9-mstd0.5-inc1",
+    "color_jitter": 0.1,
+    "re_prob": 0.25,
+    "timm_train_scale": (0.75, 1.0),
+    "timm_train_ratio": (0.75, 4.0 / 3.0),
+    "hflip": 0.5,
+    "skip_eval_epochs": 75,
+    "final_dropout_rate": 0.25,
+    "dropout_rate": 0.0,
+}
 # -----------------------------------------------------------------------------
 # Some updated configs for rggb data
 # -----------------------------------------------------------------------------
@@ -393,6 +431,8 @@ def build_model(model_name: str, cfg: dict, num_classes: int):
         pretrained=cfg.get("pretrained", False),
         num_classes=num_classes,
         in_chans=cfg.get("in_chans", 3),
+        **({"dropout_rate": cfg["dropout_rate"]} if "dropout_rate" in cfg else {}),
+        **({"final_dropout_rate": cfg["final_dropout_rate"]} if "final_dropout_rate" in cfg else {}),
     )
 
     if case.startswith("adapt_noresize"):

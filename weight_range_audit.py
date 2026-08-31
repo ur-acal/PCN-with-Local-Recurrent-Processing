@@ -154,6 +154,32 @@ def collect_pcn_ode_weight_range_audit_rows(
     selected = []
     order = 1
 
+    first_conv = getattr(model, "first_conv", None)
+    if isinstance(first_conv, nn.Conv2d):
+        if getattr(first_conv, "weight", None) is not None:
+            selected.append(
+                (
+                    "first_conv.weight",
+                    first_conv,
+                    "weight",
+                    first_conv.weight,
+                    order,
+                    {"pcn_layer_index": "", "pcn_role": "first_conv", "selection_source": "PCNet.add_noise_conv_name"},
+                )
+            )
+            order += 1
+        if getattr(first_conv, "bias", None) is not None:
+            selected.append(
+                (
+                    "first_conv.bias",
+                    first_conv,
+                    "bias",
+                    first_conv.bias,
+                    0,
+                    {"pcn_layer_index": "", "pcn_role": "first_conv_bias", "selection_source": "PCNet.add_noise_conv_name"},
+                )
+            )
+
     pc_convs = getattr(model, "PcConvs", [])
     for layer_idx, block in enumerate(pc_convs):
         ff = getattr(block, "FFconv", None)

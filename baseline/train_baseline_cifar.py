@@ -11,6 +11,7 @@ This script does NOT implement a training loop. It only:
 """
 
 import argparse
+import random
 import json
 import os
 import sys
@@ -18,6 +19,8 @@ from pathlib import Path
 from pprint import pprint
 
 import timm
+import numpy as np
+import torch
 import torch.nn as nn
 
 # This file is intended to live inside baseline/ while trainer.py lives one level up:
@@ -42,6 +45,7 @@ from baseline.baseline_cifar_configs import (
     RGGB_MILD_AUG,
     RGGB_NO_AUG,
     RGGB_TO_RGB_EXTRAS,
+    TINYIMAGENET_DEFAULTS,
     build_model,
     get_baseline_config,
 )
@@ -73,6 +77,15 @@ def parse_kv_overrides(s: str) -> dict:
         key = key.strip()
         val = val.strip()
 
+        if key in {"timm_train_scale", "timm_train_ratio"} and ":" in val:
+            parts = val.split(":")
+            if len(parts) != 2:
+                raise ValueError(f"{key} must contain exactly two colon-separated values")
+            out[key] = tuple(float(part) for part in parts)
+            continue
+        if val.lower() in {"none", "null"}:
+            out[key] = None
+            continue
         if val.lower() in {"true", "false"}:
             out[key] = val.lower() == "true"
             continue
@@ -95,9 +108,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train CIFAR baseline using TrainerCiFarTimmStyle.")
 
     parser.add_argument("--model_name", type=str, required=True)
-    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
+    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100", "tinyimagenet"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument("--eval_every", type=int, default=5)
+    parser.add_argument("--seed", type=int, default=4096)
+    parser.add_argument("--validation_samples", type=int, default=0)
+    parser.add_argument("--validation_seed", type=int, default=20240826)
     parser.add_argument('--noise_level', default=None, type=float,
                         help='noise level in noise inject training. None means normal training without noise injection')
     parser.add_argument('--noise_type', default='mul', type=str, choices=['mul', 'add'],
@@ -165,6 +181,8 @@ def infer_num_classes(dataset_name: str) -> int:
         return 10
     if dataset_name == "cifar100":
         return 100
+    if dataset_name == "tinyimagenet":
+        return 200
     raise ValueError(dataset_name)
 
 
@@ -235,6 +253,10 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
         non_rgb_affine_shear=cfg.get("non_rgb_affine_shear", None),
 
         skip_eval_epochs=cfg["skip_eval_epochs"],
+        validation_samples=args.validation_samples,
+        validation_seed=args.validation_seed,
+        bias_lr_multiplier=cfg.get("bias_lr_multiplier", 1.0),
+        bias_weight_decay=cfg.get("bias_weight_decay", None),
     )
 
     return trainer_kwargs
@@ -242,6 +264,11 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
 
 def main():
     args = parse_args()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     img_type_lower = args.img_type.lower()
     if img_type_lower == "cifair":
         args.img_type = "CiFAIR"
@@ -263,6 +290,13 @@ def main():
         prefer_resize=args.prefer_resize,
         extra_overrides=extra_overrides,
     )
+    if args.dataset == "tinyimagenet":
+        case_name = cfg["case"]
+        model_name = cfg["model_name"]
+        cfg.update(TINYIMAGENET_DEFAULTS)
+        cfg["case"] = case_name
+        cfg["model_name"] = model_name
+        cfg.update(extra_overrides)
 
     if args.img_type != "rgb" and args.rggb_to_rgb:
         cfg.update(RGGB_TO_RGB_EXTRAS)
@@ -318,6 +352,10 @@ def main():
         )
 
     trainer_kwargs = build_trainer_kwargs(args, cfg, model, teacher_model)
+    if args.dataset == "tinyimagenet":
+        trainer_kwargs["data_root"] = args.data_dir
+        trainer_kwargs["num_workers"] = 8
+        trainer_kwargs["persistent_workers"] = True
     trainer_cls = _get_feature_kd_trainer(args)
     if args.distill_method == "srrl":
         if args.srrl_weight < 0.0:

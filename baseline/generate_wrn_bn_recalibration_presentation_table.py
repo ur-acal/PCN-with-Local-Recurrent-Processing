@@ -224,6 +224,8 @@ def generate_markdown(
         "",
         "Accuracy values are percentages. Calibration uses 5120 train images with batch size 128, so the calibration pass has exactly 40 full batches.",
         "",
+        "PCNetNoBatchNorm is the fixed PCN model family at every mismatch level; no per-level selection across PCN variants is used.",
+        "",
         "****************************************************************************",
         "WRN folded recal-BN acc: Fold foldable BNs into their previous convolutions",
         "and then recalibrate the rest BNs.",
@@ -248,7 +250,7 @@ def generate_markdown(
                 [
                     f"## {dataset} {arch} kappa audit",
                     "",
-                    "PCN/NODE selected Conv/Linear weights:",
+                    "PCNetNoBatchNorm selected Conv/Linear weights:",
                 ]
             )
             lines.extend(markdown_kappa_table(pcn_rows) if pcn_rows else ["PCN/NODE kappa rows unavailable."])
@@ -260,7 +262,7 @@ def generate_markdown(
                         "",
                         "| model | layers | median kappa | mean kappa | min | max |",
                         "|---|---:|---:|---:|---:|---:|",
-                        summary_row("PCN/NODE", pcn_rows),
+                        summary_row("PCNetNoBatchNorm", pcn_rows),
                         summary_row("WRN", wrn_rows),
                         "",
                         f"Kappa comparison: {comparison_label(pcn_rows, wrn_rows)}",
@@ -269,10 +271,10 @@ def generate_markdown(
             last_pair = pair
 
         if include_unfolded_recal:
-            header = "| mismatch level | trials | PCN/NODE acc | WRN folded frozen-BN acc | WRN folded recal-BN acc | WRN unfused recal-BN acc | folded BN recovery | remaining PCN gap folded recal |"
+            header = "| mismatch level | trials | PCNetNoBatchNorm acc | WRN folded frozen-BN acc | WRN folded recal-BN acc | WRN unfused recal-BN acc | folded BN recovery | remaining PCN gap folded recal |"
             sep = "|---:|---:|---:|---:|---:|---:|---:|---:|"
         else:
-            header = "| mismatch level | trials | PCN/NODE acc | WRN folded frozen-BN acc | WRN folded recal-BN acc | BN recovery | remaining PCN gap |"
+            header = "| mismatch level | trials | PCNetNoBatchNorm acc | WRN folded frozen-BN acc | WRN folded recal-BN acc | BN recovery | remaining PCN gap |"
             sep = "|---:|---:|---:|---:|---:|---:|---:|"
         lines.extend(["", f"## {dataset} {arch} {mismatch_type}", "", header, sep])
         for row in grouped[(dataset, arch, mismatch_type)]:

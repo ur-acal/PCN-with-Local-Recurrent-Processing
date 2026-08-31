@@ -17,9 +17,15 @@ fi
 
 REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
 MODEL_DIR="${MODEL_DIR:-${REPO_ROOT}/saved_ckpt}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/logs/pcn_with1stconv_mismatch_slurm}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 MODEL_SET="${MODEL_SET:-existing}"
 SHARD_ID="${SHARD_ID:-0}"
+MODEL_NAME="${MODEL_NAME:-}"
+MODEL_INDEX="${MODEL_INDEX:-}"
+ARCHITECTURE="${ARCHITECTURE:-}"
+RESULT_TAG="${RESULT_TAG:-}"
+ODE_BLOCK="${ODE_BLOCK:-}"
+PC_CONV="${PC_CONV:-}"
 NOISY_TRIALS="${NOISY_TRIALS:-10}"
 BASE_SEED="${BASE_SEED:-123}"
 TEST_BS="${TEST_BS:-128}"
@@ -39,7 +45,26 @@ C100_16_4="TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd
 C100_28_2="TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S128C_0.25Dropout_13Layers0l3l6_2Pool_1REP"
 C100_28_4="TIMMPCNetWith1stConv_PCConv_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S256C_0.25Dropout_13Layers0l3l6_2Pool_1REP"
 
-case "${MODEL_SET}:${SHARD_ID}" in
+if [[ -n "${MODEL_NAME}" ]]; then
+  if [[ -z "${MODEL_INDEX}" || -z "${ARCHITECTURE}" || -z "${ODE_BLOCK}" || -z "${PC_CONV}" ]]; then
+    echo "Dynamic model requires MODEL_INDEX, ARCHITECTURE, ODE_BLOCK, and PC_CONV"
+    exit 2
+  fi
+  if [[ "${MODEL_NAME}" == *"_T200_"* || "${MODEL_NAME}" == *"_TINY200_"* ]]; then
+    task="tinyimagenet"
+  elif [[ "${MODEL_NAME}" == *"_C100_"* ]]; then
+    task="cifar100"
+  else
+    task="cifar10"
+  fi
+  RESULT_TAG="${RESULT_TAG:-${MODEL_NAME}}"
+  OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/logs/pcn_dynamic_mismatch_slurm}"
+  MODELS=("${MODEL_NAME}|${task}|${MODEL_INDEX}|${ARCHITECTURE}|${RESULT_TAG}")
+else
+  OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/logs/pcn_with1stconv_mismatch_slurm}"
+  ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"
+  PC_CONV="${PC_CONV:-PCConvNoisy}"
+  case "${MODEL_SET}:${SHARD_ID}" in
   existing:0) MODELS=("${C10_28_4}|cifar10|3|WRN_28_4") ;;
   existing:1) MODELS=("${C100_28_4}|cifar100|7|WRN_28_4") ;;
   existing:2) MODELS=("${C10_16_2}|cifar10|0|WRN_16_2" "${C100_16_4}|cifar100|5|WRN_16_4") ;;
@@ -54,10 +79,12 @@ case "${MODEL_SET}:${SHARD_ID}" in
     echo "Unsupported MODEL_SET/SHARD_ID: ${MODEL_SET}/${SHARD_ID}"
     exit 2
     ;;
-esac
+  esac
+fi
 
 for entry in "${MODELS[@]}"; do
-  IFS='|' read -r model_name task model_index architecture <<< "${entry}"
+  IFS='|' read -r model_name task model_index architecture result_tag <<< "${entry}"
+  result_tag="${result_tag:-${architecture}}"
   checkpoint="${MODEL_DIR}/${model_name}/${model_name}_best_ckpt.pth"
   if [[ ! -f "${checkpoint}" ]]; then
     echo "Missing checkpoint: ${checkpoint}"
@@ -69,7 +96,7 @@ for entry in "${MODELS[@]}"; do
     "max_additive|add|max_abs|${MAX_ADD_LEVELS}" \
     "rms_additive|add|rms|${RMS_ADD_LEVELS}"; do
     IFS='|' read -r condition mismatch_type scale_mode levels <<< "${spec}"
-    output_dir="${OUTPUT_ROOT}/${task}/${architecture}/${condition}"
+    output_dir="${OUTPUT_ROOT}/${task}/${result_tag}/${condition}"
     output_pickle="${output_dir}/result.pkl"
     log_file="${output_dir}/run.log"
     mkdir -p "${output_dir}"
@@ -103,8 +130,8 @@ for entry in "${MODELS[@]}"; do
       --seed "${BASE_SEED}" \
       --model_index "${model_index}" \
       --test_bs "${TEST_BS}" \
-      --pc_conv PCConvNoisy \
-      --ode_block ODEXInitFFFB \
+      --pc_conv "${PC_CONV}" \
+      --ode_block "${ODE_BLOCK}" \
       --output_pickle "${output_pickle}" \
       >"${log_file}" 2>&1
 

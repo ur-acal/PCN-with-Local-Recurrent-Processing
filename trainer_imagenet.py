@@ -102,6 +102,8 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         self.opt_eps = kwargs.pop("opt_eps", None)
         self.opt_betas = kwargs.pop("opt_betas", None)
         self.momentum = kwargs.pop("momentum", 0.9)
+        self.bias_lr_multiplier = kwargs.pop("bias_lr_multiplier", 1.0)
+        self.bias_weight_decay = kwargs.pop("bias_weight_decay", None)
 
         self.timm_sched = kwargs.pop("timm_sched", "cosine")
         self.min_lr = kwargs.pop("min_lr", 1e-6)
@@ -348,7 +350,7 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         # ------------------------------------------------------------
         # ImageNet data, timm scheduler, timm loss/mixup.
         # ------------------------------------------------------------
-        self._prepare_imagenet()
+        self._prepare_dataset()
 
         self.warmup_scheduler = None
         self._build_timm_scheduler()
@@ -408,6 +410,9 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
     # ------------------------------------------------------------------
     # ImageNet dataset
     # ------------------------------------------------------------------
+    def _prepare_dataset(self):
+        self._prepare_imagenet()
+
     def _prepare_imagenet(self):
         train_dir = self.imagenet_root / "train"
         val_dir = self.imagenet_root / "val"

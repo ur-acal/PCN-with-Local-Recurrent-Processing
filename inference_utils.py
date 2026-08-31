@@ -24,6 +24,11 @@ from ode_pc import make_ode_block, wrap_ode_block
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_quant_model, _CIFAR_STATS
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from quant_helper import QUANT_HELPER_CLS, replace_with_quant_layers, QUANT_SCHEME_PC
+from tinyimagenet_data import (
+    TINYIMAGENET_MEAN,
+    TINYIMAGENET_STD,
+    build_tinyimagenet_datasets,
+)
 
 import logging
 log = logging.getLogger(__name__)
@@ -34,10 +39,13 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter("%(message)s"))
 log.addHandler(handler)
 
-def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
+def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False, data_root=None):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
-            mean, std = _CIFAR_STATS[task]
+            if task == "tinyimagenet":
+                mean, std = TINYIMAGENET_MEAN, TINYIMAGENET_STD
+            else:
+                mean, std = _CIFAR_STATS[task]
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std), ])
@@ -45,8 +53,18 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False):
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
                 ToPackedRGGB(return_orig=False), ])
-        dataset_cls = torchvision.datasets.CIFAR100 if task == "cifar100" else torchvision.datasets.CIFAR10
-        test_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
+        if task == "tinyimagenet":
+            if img_type != "rgb":
+                raise ValueError("Tiny ImageNet inference supports img_type='rgb' only.")
+            root = data_root or "../data/tiny-imagenet-200"
+            _, test_set = build_tinyimagenet_datasets(
+                root,
+                val_transform=transform_test,
+                validate_counts=True,
+            )
+        else:
+            dataset_cls = torchvision.datasets.CIFAR100 if task == "cifar100" else torchvision.datasets.CIFAR10
+            test_set = dataset_cls(root=data_root or '../data', train=False, download=True, transform=transform_test)
     elif img_type == "scanGFI":
         with tempfile.TemporaryDirectory() as tmpdir:
             conf_file = os.path.join(tmpdir, "config.json")

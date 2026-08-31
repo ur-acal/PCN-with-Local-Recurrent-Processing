@@ -141,6 +141,10 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         num_workers=2,
         pin_memory=True,
         persistent_workers=False,
+        validation_samples=0,
+        validation_seed=20240826,
+        bias_lr_multiplier=1.0,
+        bias_weight_decay=None,
 
         is_timm_model=True,
 
@@ -188,6 +192,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         self.interpolation = interpolation
 
         self.timm_opt = timm_opt
+        self.bias_lr_multiplier = float(bias_lr_multiplier)
+        self.bias_weight_decay = bias_weight_decay
         self.opt_eps = opt_eps
         self.opt_betas = opt_betas
         self.momentum = momentum
@@ -219,6 +225,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.persistent_workers = persistent_workers
+        self.validation_samples = int(validation_samples)
+        self.validation_seed = int(validation_seed)
 
         # Parent receives lr_reduce_on but does not store it.
         self.lr_reduce_on = kwargs.get("lr_reduce_on", "80,122,150,225,262")
@@ -256,6 +264,23 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         Keep same signature as parent, but use timm optimizer factory.
         """
+        if self.bias_lr_multiplier != 1.0 or self.bias_weight_decay is not None:
+            bias_params = []
+            other_params = []
+            for name, param in self.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                (bias_params if name.endswith(".bias") else other_params).append(param)
+            groups = [
+                {"params": other_params, "lr": lr, "weight_decay": weight_decay},
+                {
+                    "params": bias_params,
+                    "lr": lr * self.bias_lr_multiplier,
+                    "weight_decay": weight_decay if self.bias_weight_decay is None else self.bias_weight_decay,
+                },
+            ]
+            return optim.SGD(groups, lr=lr, momentum=self.momentum, nesterov=True)
+
         opt_kwargs = dict(
             opt=self.timm_opt,
             lr=lr,
@@ -607,6 +632,25 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                 "timm RGB transforms are not applied for img_type=%s. "
                 "Keeping original custom transforms.",
                 img_type,
+            )
+
+        if self.validation_samples:
+            if img_type != "rgb":
+                raise ValueError("Search validation splits currently support RGB CIFAR only")
+            if not 0 < self.validation_samples < len(self.train_set):
+                raise ValueError("validation_samples must be between zero and the training-set size")
+            validation_source = copy.deepcopy(self.train_set)
+            self._set_transform_recursive(validation_source, transform_test, set_teacher=False)
+            generator = torch.Generator().manual_seed(self.validation_seed)
+            indices = torch.randperm(len(self.train_set), generator=generator).tolist()
+            validation_indices = indices[:self.validation_samples]
+            training_indices = indices[self.validation_samples:]
+            self.train_set = torch.utils.data.Subset(self.train_set, training_indices)
+            self.val_set = torch.utils.data.Subset(validation_source, validation_indices)
+            self._train_sample_count = len(self.train_set)
+            logging.warning(
+                "Using deterministic train/validation split: train=%d validation=%d seed=%d",
+                len(self.train_set), len(self.val_set), self.validation_seed,
             )
 
         self.train_dataloader = torch.utils.data.DataLoader(

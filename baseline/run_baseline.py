@@ -27,9 +27,15 @@ PROJECT_ROOT = THIS_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 import baseline.cifar_resnet  # registers custom CIFAR models into timm
-from baseline.baseline_cifar_configs import get_baseline_config, build_model
+from baseline.baseline_cifar_configs import TINYIMAGENET_DEFAULTS, get_baseline_config, build_model
 from trainer import _CIFAR_STATS
 from weight_range_audit import collect_wrn_weight_range_audit_rows, save_audit_csv
+from mismatch_utils import ADDITIVE_SCALE_MODES, additive_mismatch_scale
+from tinyimagenet_data import (
+    TINYIMAGENET_MEAN,
+    TINYIMAGENET_STD,
+    build_tinyimagenet_datasets,
+)
 
 
 log = logging.getLogger(__name__)
@@ -112,6 +118,7 @@ class FixedMismatchHelper:
         include_buffers: bool = True,
         seed: Optional[int] = None,
         exclude_param_names: Optional[Iterable[str]] = None,
+        additive_scale_mode: str = "max_abs",
     ):
         self.model = model
         self.noise_sigma = float(noise_sigma)
@@ -120,6 +127,9 @@ class FixedMismatchHelper:
         self.include_buffers = bool(include_buffers)
         self.seed = seed
         self.exclude_param_names: Set[str] = set(exclude_param_names or [])
+        if additive_scale_mode not in ADDITIVE_SCALE_MODES:
+            raise ValueError(f"Unsupported additive scale mode: {additive_scale_mode}")
+        self.additive_scale_mode = additive_scale_mode
 
         self._clean_state = None
         self._last_summary = None
@@ -171,7 +181,8 @@ class FixedMismatchHelper:
         if self.noise_type == "multiplicative":
             x.mul_(1.0 + self.noise_sigma * noise)
         elif self.noise_type == "additive":
-            x.add_(self.noise_sigma * noise * x.abs().max())
+            scale = additive_mismatch_scale(x, self.additive_scale_mode)
+            x.add_(self.noise_sigma * noise * scale)
         else:
             raise ValueError(f"Unsupported noise_type: {self.noise_type}")
 
@@ -301,7 +312,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate timm baselines under fixed mismatch.")
     parser.add_argument("--model_list", type=str, required=True,
                         help="Comma-separated timm model names, e.g. resnet18,resnet34")
-    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100", "imagenet"], required=True)
+    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100", "tinyimagenet", "imagenet"], required=True)
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--checkpoint_dir", type=str, default="",
                         help="Optional directory containing <model_name>.pth, <model_name>.pt, or <model_name>.ckpt")
@@ -337,6 +348,7 @@ def parse_args():
     parser.add_argument("--noise_level_list", type=str, default="0.0,0.01,0.02,0.05")
     parser.add_argument("--noisy_trials", type=int, default=5)
     parser.add_argument("--noise_type", type=str, choices=["multiplicative", "additive"], default="multiplicative")
+    parser.add_argument("--additive_scale_mode", choices=ADDITIVE_SCALE_MODES, default="max_abs")
     parser.add_argument("--noise_to_norm", type=str2bool, default=False)
     parser.add_argument(
         "--exclude_conv_bias_from_mismatch",
@@ -393,6 +405,8 @@ def infer_num_classes(dataset_name: str, explicit_num_classes: Optional[int]) ->
         return 10
     if dataset_name == "cifar100":
         return 100
+    if dataset_name == "tinyimagenet":
+        return 200
     if dataset_name == "imagenet":
         return 1000
     raise ValueError(f"Unsupported dataset: {dataset_name}")
@@ -564,6 +578,11 @@ def convolution_bias_parameter_names(model: nn.Module) -> Set[str]:
 
 
 def _build_eval_transform(model: nn.Module, dataset_name: str, cfg: dict):
+    if dataset_name == "tinyimagenet":
+        return transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(TINYIMAGENET_MEAN, TINYIMAGENET_STD),
+        ])
     if dataset_name in {"cifar10", "cifar100"}:
         mean, std = _CIFAR_STATS[dataset_name]
         input_size = cfg["timm_input_size"]
@@ -607,6 +626,14 @@ def build_test_loader(model: nn.Module, args, cfg: dict) -> DataLoader:
                 download=True,
                 transform=test_transform,
             )
+
+    elif args.dataset == "tinyimagenet":
+        test_transform = _build_eval_transform(model, args.dataset, cfg)
+        _, test_dataset = build_tinyimagenet_datasets(
+            args.data_dir,
+            val_transform=test_transform,
+            validate_counts=True,
+        )
 
     elif args.dataset == "imagenet":
         test_transform = _build_eval_transform(model, args.dataset, cfg)
@@ -680,17 +707,23 @@ def _parse_num_samples(raw: str, dataset_len: int) -> int:
 
 
 def build_bn_calibration_loader(model: nn.Module, args, cfg: dict, recal_cfg: BNRecalibrationConfig) -> DataLoader:
-    if args.dataset not in {"cifar10", "cifar100"}:
-        raise ValueError("BN recalibration calibration loader currently supports CIFAR train splits only.")
-
     transform = _build_eval_transform(model, args.dataset, cfg)
-    dataset_cls = datasets.CIFAR10 if args.dataset == "cifar10" else datasets.CIFAR100
-    train_dataset = dataset_cls(
-        root=args.data_dir,
-        train=True,
-        download=True,
-        transform=transform,
-    )
+    if args.dataset == "tinyimagenet":
+        train_dataset, _ = build_tinyimagenet_datasets(
+            args.data_dir,
+            train_transform=transform,
+            validate_counts=True,
+        )
+    elif args.dataset in {"cifar10", "cifar100"}:
+        dataset_cls = datasets.CIFAR10 if args.dataset == "cifar10" else datasets.CIFAR100
+        train_dataset = dataset_cls(
+            root=args.data_dir,
+            train=True,
+            download=True,
+            transform=transform,
+        )
+    else:
+        raise ValueError("BN recalibration supports CIFAR and Tiny ImageNet train splits only.")
 
     n = _parse_num_samples(recal_cfg.num_samples, len(train_dataset))
     if n < len(train_dataset):
@@ -991,6 +1024,12 @@ def main():
             prefer_resize=args.prefer_resize,
             extra_overrides=None,
         )
+        if args.dataset == "tinyimagenet":
+            case_name = cfg["case"]
+            model_name = cfg["model_name"]
+            cfg.update(TINYIMAGENET_DEFAULTS)
+            cfg["case"] = case_name
+            cfg["model_name"] = model_name
 
         model = build_model(model_arch, cfg, num_classes=num_classes).to(device)
         ckpt_path = resolve_checkpoint_path(model_arch, checkpoint_map, args.checkpoint_dir)
@@ -1013,6 +1052,7 @@ def main():
             noise_to_norm=args.noise_to_norm,
             include_buffers=True,
             exclude_param_names=excluded_param_names,
+            additive_scale_mode=args.additive_scale_mode,
         )
         mismatch_helper.snapshot_clean_state()
 
@@ -1082,6 +1122,7 @@ def main():
                 "noise_level": noise_level,
                 "acc": f"{avg_acc:.2f}±{std_acc:.2f}%",
                 "noise_type": args.noise_type,
+                "additive_scale_mode": args.additive_scale_mode,
                 "noise_to_norm": args.noise_to_norm,
                 "exclude_conv_bias_from_mismatch": args.exclude_conv_bias_from_mismatch,
             })

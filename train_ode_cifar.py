@@ -12,7 +12,7 @@ import numpy as np
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from switch import SWITCH_CLASSES
 from trainer_timm import TrainerCiFarTimmStyle, TrainerCiFarTimmStyleSRRL, TrainerCiFarTimmStyleMGD, TrainerCiFarTimmStyleReviewKD
-from baseline.baseline_cifar_configs import CASE_DEFAULTS, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS, RGGB_NO_AUG, RGGB_MILD_AUG, RGGB_MID_AUG
+from baseline.baseline_cifar_configs import CASE_DEFAULTS, TINYIMAGENET_DEFAULTS, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS, RGGB_NO_AUG, RGGB_MILD_AUG, RGGB_MID_AUG
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
@@ -32,14 +32,17 @@ def get_args():
     p.add_argument("--save_path",     type=str,   default=model_save_path)
     p.add_argument("--skip_eval_epochs", type=int, default=0)
     p.add_argument("--img_type", type=str, default="rgb")
-    p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
-    p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
+    p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100", "tinyimagenet"], default="cifar10")
+    p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100", "tinyimagenet"])
+    p.add_argument("--tinyimagenet_root", type=str, default="../data/tiny-imagenet-200")
+    p.add_argument("--seed", type=int, default=None)
     p.add_argument("--timm_trainer", type=str2bool, default=False)
     p.add_argument("--timm_aug_level", type=str,
                    default="none", choices=["no_aug", "mild", "mid", "none", ""],
                    help="Passing none and empty string means using default timm aug.")
     p.add_argument("--timm_sched", type=str, default="multistep", choices=["multistep", "cosine"])
     p.add_argument("--batch_size",    type=int,   default=512)
+    p.add_argument("--test_batch_size", type=int, default=None)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
     p.add_argument("--weight_decay",  type=float, default=1e-3)
@@ -259,6 +262,8 @@ def _constr_model_name(args, rep=1):
         model_name += str(args.learning_rate) + 'LR_'
     if args.dataset == "cifar100":
         model_name += "C100_"
+    elif args.dataset == "tinyimagenet":
+        model_name += "T200_"
     elif args.dataset in {"imagenet", "imagenet1k", "ilsvrc2012"}:
         model_name += "IN1K_"
     _ksz = args.kernel_size if not isinstance(args.kernel_size, List) else args.kernel_size[0]
@@ -483,6 +488,12 @@ def _get_feature_kd_trainer(args):
     method = getattr(args, "distill_method", "none")
     method_lower = method.lower()
 
+    if args.dataset == "tinyimagenet":
+        if method_lower != "none":
+            raise ValueError("Tiny ImageNet initially supports distill_method='none' only.")
+        from trainer_tinyimagenet import TrainerTinyImageNetTimmStyle
+        return TrainerTinyImageNetTimmStyle
+
     needs_srrl = "srrl" in method_lower
     needs_mgd = "mgd" in method_lower
     needs_reviewkd = "reviewkd" in method_lower
@@ -497,9 +508,19 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
+    if args.seed is not None:
+        import random
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
     if args.dataset == "cifar100" and args.num_classes == 10:
         logging.warning("Overriding num_classes to 100 for CIFAR-100.")
         args.num_classes = 100
+    elif args.dataset == "tinyimagenet" and args.num_classes == 10:
+        logging.warning("Overriding num_classes to 200 for Tiny ImageNet.")
+        args.num_classes = 200
 
     # Handle RGGB to RGB conversion: adjust input channels from 4 to 3
     # Transform upsamples 16x16 to 32x32, model architecture stays the same (just different input channels)
@@ -650,18 +671,22 @@ def main():
         logging.warning("teacher_ckpt provided but distillation disabled by configuration; ignoring teacher.")
     if args.timm_trainer:
         timm_trainer_cls = _get_feature_kd_trainer(args)
-        cfg = CASE_DEFAULTS["custom_noresize"].copy()
+        cfg = (
+            TINYIMAGENET_DEFAULTS.copy()
+            if args.dataset == "tinyimagenet"
+            else CASE_DEFAULTS["custom_noresize"].copy()
+        )
         cfg["lr"] = args.learning_rate
         cfg["num_epochs"] = args.num_epochs
         cfg["warmup_epoch"] = args.warmup_epoch
         cfg["weight_decay"] = args.weight_decay
         cfg["batch_size"] = args.batch_size
-        cfg["test_batch_size"] = args.batch_size
+        cfg["test_batch_size"] = args.test_batch_size or cfg.get("test_batch_size", args.batch_size)
         # Todo: Align the lr scheduler with old train recipe for now.
         cfg["timm_sched"] = args.timm_sched
         # not used when timm_sched is "cosine"
         cfg["lr_reduce_on"] = args.lr_reduce_on
-        if args.timm_sched == "cosine":
+        if args.timm_sched == "cosine" and args.dataset != "tinyimagenet":
             cfg["skip_eval_epochs"] = min(max(cfg["skip_eval_epochs"], 0.5 * args.num_epochs), args.num_epochs * 0.8)
 
         if args.img_type != "rgb" and args.rggb_to_rgb:
@@ -739,6 +764,10 @@ def main():
             noise_level=args.noise_level,
             noise_type=args.noise_type,
         )
+        if args.dataset == "tinyimagenet":
+            trainer_kwargs["data_root"] = args.tinyimagenet_root
+            trainer_kwargs["num_workers"] = 8
+            trainer_kwargs["persistent_workers"] = True
         trainer = timm_trainer_cls(**trainer_kwargs)
         if args.model_name is not None and hasattr(trainer, "load_feature_kd_from_ckpt"):
             # Make sure the original model's distillation method matches the distillation method used now.

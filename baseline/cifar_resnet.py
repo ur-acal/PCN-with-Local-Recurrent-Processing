@@ -272,6 +272,25 @@ class PreActCIFARResNet(nn.Module):
 # WideResNet-28-10 for CIFAR.
 # depth = 6n + 4. WRN-28 => n = 4. Widen factor = 10.
 # -----------------------------------------------------------------------------
+class MaxPoolChannelPad(nn.Module):
+    """Parameter-free stride shortcut with symmetric zero channel padding."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 2):
+        super().__init__()
+        if stride <= 1 or out_channels < in_channels:
+            raise ValueError("MaxPoolChannelPad requires stride > 1 and nondecreasing channels")
+        self.pool = nn.MaxPool2d(kernel_size=stride, stride=stride)
+        extra = out_channels - in_channels
+        self.pad_left = extra // 2
+        self.pad_right = extra - self.pad_left
+
+    def forward(self, x):
+        x = self.pool(x)
+        if self.pad_left or self.pad_right:
+            x = F.pad(x, (0, 0, 0, 0, self.pad_left, self.pad_right))
+        return x
+
+
 class WideBasicBlock(nn.Module):
     def __init__(
         self,
@@ -280,6 +299,7 @@ class WideBasicBlock(nn.Module):
         dropout_rate: float,
         stride: int = 1,
         use_batchnorm: bool = True,
+        maxpool_downsample_shortcut: bool = False,
     ):
         super().__init__()
         self.bn1 = nn.BatchNorm2d(in_planes) if use_batchnorm else nn.Identity()
@@ -295,7 +315,9 @@ class WideBasicBlock(nn.Module):
             planes, planes, kernel_size=3, stride=stride, padding=1, bias=not use_batchnorm
         )
 
-        if stride != 1 or in_planes != planes:
+        if stride != 1 and maxpool_downsample_shortcut:
+            self.shortcut = MaxPoolChannelPad(in_planes, planes, stride=stride)
+        elif stride != 1 or in_planes != planes:
             self.shortcut = nn.Conv2d(
                 in_planes, planes, kernel_size=1, stride=stride, bias=not use_batchnorm
             )
@@ -318,10 +340,12 @@ class WideResNetCIFAR(nn.Module):
         depth: int = 28,
         widen_factor: int = 10,
         dropout_rate: float = 0.0,
+        final_dropout_rate: float = 0.0,
         num_classes: int = 10,
         in_chans: int = 3,
         base_width: int = 16,
         use_batchnorm: bool = True,
+        maxpool_downsample_shortcut: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -333,8 +357,10 @@ class WideResNetCIFAR(nn.Module):
         self.in_chans = in_chans
         self.depth = depth
         self.widen_factor = widen_factor
-        self.dropout_rate = dropout_rate
+        self.dropout_rate = float(dropout_rate)
+        self.final_dropout_rate = float(final_dropout_rate)
         self.use_batchnorm = bool(use_batchnorm)
+        self.maxpool_downsample_shortcut = bool(maxpool_downsample_shortcut)
         self.out_dim = widths[3]
         self.in_planes = widths[0]
 
@@ -362,6 +388,7 @@ class WideResNetCIFAR(nn.Module):
                     self.dropout_rate,
                     stride=s,
                     use_batchnorm=self.use_batchnorm,
+                    maxpool_downsample_shortcut=self.maxpool_downsample_shortcut,
                 )
             )
             self.in_planes = planes
@@ -372,7 +399,10 @@ class WideResNetCIFAR(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.relu(self.bn(x))
+        x = self.bn(x)
+        if self.final_dropout_rate > 0:
+            x = F.dropout(x, p=self.final_dropout_rate, training=self.training)
+        x = self.relu(x)
         return x
 
     def forward_head(self, x, pre_logits: bool = False):
@@ -530,6 +560,11 @@ def wrn_16_4_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chan
 
 
 @register_model
+def wrn_16_8_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(16, 8, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
 def wrn_28_2_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
     return _build_wrn_nobn(28, 2, pretrained, num_classes, in_chans, **kwargs)
 
@@ -537,3 +572,20 @@ def wrn_28_2_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chan
 @register_model
 def wrn_28_4_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
     return _build_wrn_nobn(28, 4, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_40_2_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(40, 2, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_2_cifar_nobn_maxpool_shortcut(
+    pretrained: bool = False,
+    num_classes: int = 10,
+    in_chans: int = 3,
+    **kwargs,
+):
+    return _build_wrn_nobn(
+        16, 2, pretrained, num_classes, in_chans, maxpool_downsample_shortcut=True, **kwargs
+    )

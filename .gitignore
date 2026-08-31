@@ -2,7 +2,7 @@
 *.pyc
 
 # Byte-compiled
-_pycache__/
+__pycache__/
 .cache/
 
 # Python egg metadata, regenerated from source files by setuptools.
@@ -47,3 +47,7 @@ debug*
 *.pth
 *.png
 *.pdf
+
+# Local generated diagnostics and planning notes.
+bn_recalibration_diagnostics/
+EXPERIMENT_PLANS.md

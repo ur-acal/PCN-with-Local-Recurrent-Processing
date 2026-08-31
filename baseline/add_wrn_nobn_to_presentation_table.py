@@ -12,7 +12,7 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--markdown", required=True)
     p.add_argument("--presentation_csv", required=True)
-    p.add_argument("--bn_free_aggregate_csv", required=True)
+    p.add_argument("--bn_free_aggregate_csv", required=True, nargs="+")
     p.add_argument("--output_markdown", default=None)
     p.add_argument("--output_csv", default=None)
     return p.parse_args()
@@ -31,8 +31,9 @@ def add_markdown_column(text, by_key):
     lines = text.splitlines()
     notation = [
         "",
-        "WRN BN-free acc: Train the matched WRN topology without BatchNorm;",
-        "apply mismatch to Conv/Linear parameters while excluding Conv biases.",
+        "WRN BN-free acc: Train the matched WRN topology without BatchNorm using",
+        "independently searched CIFAR-10 and CIFAR-100 recipes; apply mismatch to",
+        "all learned non-normalization parameters while excluding Conv biases.",
     ]
     if not any("WRN BN-free acc:" in line for line in lines):
         borders = [i for i, line in enumerate(lines) if line == "****************************************************************************"]
@@ -42,11 +43,20 @@ def add_markdown_column(text, by_key):
         lines[border:border] = notation
 
     current = None
+    bnfree_insert_at = None
+    bnfree_column_count = None
     used = set()
     for index, line in enumerate(lines):
         match = HEADING.match(line)
         if match:
             current = match.groups()
+            bnfree_insert_at = None
+            bnfree_column_count = None
+            continue
+        if line.startswith("## "):
+            current = None
+            bnfree_insert_at = None
+            bnfree_column_count = None
             continue
         if current is None or not line.startswith("|"):
             continue
@@ -56,6 +66,8 @@ def add_markdown_column(text, by_key):
                 insert_at = cells.index("folded BN recovery")
                 cells.insert(insert_at, "WRN BN-free acc")
                 lines[index] = "| " + " | ".join(cells) + " |"
+            bnfree_insert_at = cells.index("WRN BN-free acc")
+            bnfree_column_count = len(cells)
             continue
         if cells and all(set(cell) <= {"-", ":"} for cell in cells):
             header = [cell.strip() for cell in lines[index - 1].strip("|").split("|")]
@@ -70,9 +82,10 @@ def add_markdown_column(text, by_key):
         row_key = (*current, level)
         if row_key not in by_key:
             raise ValueError(f"Missing BN-free aggregate row for {row_key}")
-        header = [cell.strip() for cell in lines[index - 2].strip("|").split("|")]
-        insert_at = header.index("WRN BN-free acc")
-        if len(cells) < len(header):
+        if bnfree_insert_at is None or bnfree_column_count is None:
+            raise ValueError(f"BN-free table header not found before line {index + 1}")
+        insert_at = bnfree_insert_at
+        if len(cells) < bnfree_column_count:
             cells.insert(insert_at, f"{float(by_key[row_key]['wrn_nobn_mean_accuracy']):.2f}")
             lines[index] = "| " + " | ".join(cells) + " |"
         used.add(row_key)
@@ -104,7 +117,11 @@ def write_csv(path, rows):
 
 
 def run(args):
-    aggregate_rows = read_csv(args.bn_free_aggregate_csv)
+    aggregate_rows = [
+        row
+        for path in args.bn_free_aggregate_csv
+        for row in read_csv(path)
+    ]
     by_key = {key(row): row for row in aggregate_rows}
     markdown_path = Path(args.markdown)
     output_markdown = Path(args.output_markdown or args.markdown)

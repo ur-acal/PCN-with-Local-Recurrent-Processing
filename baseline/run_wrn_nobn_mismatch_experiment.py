@@ -34,12 +34,16 @@ def parse_args():
     p.add_argument("--output_dir", default="logs/wrn_nobn_mismatch")
     p.add_argument("--data_dir", default="../data")
     p.add_argument("--checkpoint_root", default="checkpoint/baselines_nobn")
+    p.add_argument("--checkpoint_override", default="")
+    p.add_argument("--model_name_override", default="")
     p.add_argument("--datasets", default="cifar10,cifar100")
     p.add_argument("--architectures", default=",".join(ARCHITECTURES))
     p.add_argument("--mismatch_types", default="additive,multiplicative")
+    p.add_argument("--additive_scale_mode", choices=["max_abs", "rms"], default="max_abs")
     p.add_argument("--noise_levels", default="default")
     p.add_argument("--noisy_trials", type=int, default=10)
     p.add_argument("--seed", type=int, default=123)
+    p.add_argument("--model_index_offset", type=int, default=0)
     p.add_argument("--device", default="cuda")
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--num_workers", type=int, default=4)
@@ -85,6 +89,7 @@ def aggregate_rows(rows):
             "dataset": dataset, "architecture": architecture,
             "model_name": items[0]["model_name"], "mismatch_type": kind,
             "mismatch_level": level, "num_trials": len(items),
+            "additive_scale_mode": items[0]["additive_scale_mode"],
             "wrn_nobn_mean_accuracy": float(acc.mean()),
             "wrn_nobn_std_accuracy": float(acc.std()),
             "parameter_count": items[0]["parameter_count"],
@@ -112,15 +117,23 @@ def run(args):
         raise ValueError("Unsupported architecture selection")
     if set(kinds) - set(LEVELS):
         raise ValueError("Unsupported mismatch type selection")
+    if (args.checkpoint_override or args.model_name_override) and (
+        len(datasets) != 1 or len(architectures) != 1
+    ):
+        raise ValueError("Checkpoint/model overrides require exactly one dataset and architecture")
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
-    rows, model_index = [], 0
+    rows, model_index = [], args.model_index_offset
 
     for dataset in datasets:
         for architecture in architectures:
-            name = model_name(architecture)
+            name = args.model_name_override or model_name(architecture)
             cfg = get_baseline_config(name, False, args.case, False, None)
             model = build_model(name, cfg, infer_num_classes(dataset, None)).to(device)
-            checkpoint = checkpoint_path(Path(args.checkpoint_root), dataset, args.case, name)
+            checkpoint = (
+                Path(args.checkpoint_override)
+                if args.checkpoint_override
+                else checkpoint_path(Path(args.checkpoint_root), dataset, args.case, name)
+            )
             if not checkpoint.exists():
                 raise FileNotFoundError(f"Missing checkpoint: {checkpoint}")
             load_model_weights(model, str(checkpoint), device)
@@ -135,7 +148,8 @@ def run(args):
             for kind in kinds:
                 levels = LEVELS[kind] if args.noise_levels == "default" else tuple(map(float, split_csv(args.noise_levels)))
                 helper = FixedMismatchHelper(
-                    model, 0, kind, False, True, exclude_param_names=excluded
+                    model, 0, kind, False, True, exclude_param_names=excluded,
+                    additive_scale_mode=args.additive_scale_mode,
                 )
                 helper.snapshot_clean_state()
                 for level in levels:
@@ -159,6 +173,7 @@ def run(args):
                             "dataset": dataset, "architecture": architecture,
                             "model_name": name, "checkpoint": str(checkpoint),
                             "mismatch_type": kind, "mismatch_level": level,
+                            "additive_scale_mode": args.additive_scale_mode,
                             "mismatch_seed": helper.seed, "trial": trial,
                             "accuracy": accuracy, "parameter_count": parameter_count,
                             "excluded_conv_bias_count": len(excluded),
@@ -176,6 +191,7 @@ def run(args):
     summary = {
         "datasets": datasets, "architectures": architectures,
         "mismatch_types": kinds, "noisy_trials": args.noisy_trials,
+        "additive_scale_mode": args.additive_scale_mode,
         "mismatch_parameter_policy": "all_non_norm_params_except_conv_bias",
     }
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -56,6 +56,16 @@ def parse_args():
     p.add_argument("--datasets", default="all", help="Comma list or all.")
     p.add_argument("--architectures", default="all", help="Comma list like WRN_16_2,WRN_28_4 or all.")
     p.add_argument("--mismatch_types", default="all", help="Comma list of additive,multiplicative or all.")
+    p.add_argument("--additive_scale_mode", choices=["max_abs", "rms"], default="max_abs")
+    p.add_argument(
+        "--pcn_reference_policy",
+        choices=["condition_matched_legacy", "none"],
+        default="condition_matched_legacy",
+        help=(
+            "Controls optional PCN comparison fields only. Legacy references are "
+            "used for multiplicative and max-absolute additive runs, never RMS additive runs."
+        ),
+    )
     p.add_argument("--noise_levels", default="csv", help="csv for all levels from files, or comma list.")
     p.add_argument("--noisy_trials", type=int, default=10)
     p.add_argument("--seed", type=int, default=123)
@@ -132,7 +142,18 @@ def read_compare_csv(path: Path) -> Dict:
                 wrn_frozen_entries.append(item)
             else:
                 pcn_entries.append(item)
-        best_pcn = max(pcn_entries, key=lambda x: x["mean"]) if pcn_entries else None
+        selected_pcn_entries = [
+            item for item in pcn_entries if "PCNetNoBatchNorm" in item["column"]
+        ]
+        if len(selected_pcn_entries) != 1:
+            raise ValueError(
+                f"Expected exactly one PCNetNoBatchNorm column in {path} at "
+                f"noise level {level}, found {len(selected_pcn_entries)}: "
+                f"{[item['column'] for item in selected_pcn_entries]}"
+            )
+        # Keep the legacy key for output compatibility. This is a fixed model
+        # selection, not a per-level maximum over different PCN variants.
+        best_pcn = selected_pcn_entries[0]
         by_level[level] = {
             "pcn_entries": pcn_entries,
             "best_pcn": best_pcn,
@@ -187,7 +208,7 @@ def levels_for_spec(args, spec: Dict) -> List[float]:
     if args.noise_levels == "csv":
         return list(spec["compare"]["levels"])
     wanted = [float(x.strip()) for x in args.noise_levels.split(",") if x.strip()]
-    return [x for x in spec["compare"]["levels"] if x in set(wanted)]
+    return wanted
 
 
 def mismatch_seed(base_seed: int, model_idx: int, noise_level: float, trial: int) -> int:
@@ -273,6 +294,7 @@ def evaluate_all_bn_recal_before_fold_trial(
         noise_type=mismatch_type,
         noise_to_norm=False,
         include_buffers=True,
+        additive_scale_mode=args.additive_scale_mode,
     )
     helper.seed = mismatch_seed_value
     helper.snapshot_clean_state()
@@ -359,6 +381,7 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
         noise_to_norm=False,
         include_buffers=True,
         exclude_param_names=getattr(model, "_mismatch_excluded_param_names", set()),
+        additive_scale_mode=args.additive_scale_mode,
     )
     helper.snapshot_clean_state()
 
@@ -382,9 +405,16 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
 
     for noise_level in levels:
         old_info = spec["compare"]["by_level"].get(float(noise_level), {})
-        old_wrn = old_info.get("old_wrn_entries", [])
+        legacy_condition_matches = (
+            mismatch_type == "multiplicative" or args.additive_scale_mode == "max_abs"
+        )
+        old_wrn = old_info.get("old_wrn_entries", []) if legacy_condition_matches else []
         old_frozen_mean = old_wrn[0]["mean"] if old_wrn else None
-        best_pcn = old_info.get("best_pcn")
+        best_pcn = (
+            old_info.get("best_pcn")
+            if legacy_condition_matches and args.pcn_reference_policy == "condition_matched_legacy"
+            else None
+        )
         for trial in range(trials):
             helper.restore_clean_state()
             helper.noise_sigma = noise_level
@@ -450,6 +480,7 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
                 "model_name": model_name,
                 "checkpoint": str(checkpoint),
                 "mismatch_type": mismatch_type,
+                "additive_scale_mode": args.additive_scale_mode,
                 "mismatch_level": noise_level,
                 "mismatch_seed": helper.seed,
                 "trial": trial,
@@ -533,24 +564,25 @@ def aggregate_rows(rows: List[Dict]) -> List[Dict]:
         all_bn_before_fold = np.array(all_bn_before_fold_vals) if all_bn_before_fold_vals else None
         recovery = recal - frozen
         pcn_vals = [x for x in items if x["pcn_node_best_mean_accuracy"] != ""]
-        pcn_mean = float(pcn_vals[0]["pcn_node_best_mean_accuracy"]) if pcn_vals else np.nan
-        pcn_std = float(pcn_vals[0]["pcn_node_best_std_accuracy"]) if pcn_vals else np.nan
+        pcn_mean = float(pcn_vals[0]["pcn_node_best_mean_accuracy"]) if pcn_vals else None
+        pcn_std = float(pcn_vals[0]["pcn_node_best_std_accuracy"]) if pcn_vals else None
         row = {
             "dataset": dataset,
             "architecture": arch,
             "mismatch_type": mismatch_type,
             "mismatch_level": level,
+            "additive_scale_mode": items[0].get("additive_scale_mode", "max_abs"),
             "num_trials": len(items),
             "pcn_node_column": pcn_vals[0]["pcn_node_best_column"] if pcn_vals else "",
-            "pcn_node_mean_accuracy": pcn_mean,
-            "pcn_node_std_accuracy": pcn_std,
+            "pcn_node_mean_accuracy": pcn_mean if pcn_mean is not None else "",
+            "pcn_node_std_accuracy": pcn_std if pcn_std is not None else "",
             "paired_wrn_frozen_bn_mean_accuracy": float(frozen.mean()),
             "paired_wrn_frozen_bn_std_accuracy": float(frozen.std()),
             "wrn_recalibrated_bn_mean_accuracy": float(recal.mean()),
             "wrn_recalibrated_bn_std_accuracy": float(recal.std()),
             "mean_paired_bn_recovery": float(recovery.mean()),
             "std_paired_bn_recovery": float(recovery.std()),
-            "remaining_pcn_gap": float(pcn_mean - recal.mean()) if not np.isnan(pcn_mean) else "",
+            "remaining_pcn_gap": float(pcn_mean - recal.mean()) if pcn_mean is not None else "",
             "mismatch_parameter_policy": items[0].get("mismatch_parameter_policy", "existing"),
         }
         if all_bn_before_fold is not None:
@@ -562,7 +594,7 @@ def aggregate_rows(rows: List[Dict]) -> List[Dict]:
                     "mean_paired_all_bn_recal_before_fold_recovery": float(all_bn_recovery.mean()),
                     "std_paired_all_bn_recal_before_fold_recovery": float(all_bn_recovery.std()),
                     "remaining_pcn_gap_all_bn_recal_before_fold": (
-                        float(pcn_mean - all_bn_before_fold.mean()) if not np.isnan(pcn_mean) else ""
+                        float(pcn_mean - all_bn_before_fold.mean()) if pcn_mean is not None else ""
                     ),
                 }
             )
@@ -573,7 +605,7 @@ def aggregate_rows(rows: List[Dict]) -> List[Dict]:
 def interpretation_label(aggregate: List[Dict]) -> str:
     valid = [r for r in aggregate if r["remaining_pcn_gap"] != ""]
     if not valid:
-        return "partial BN recovery with substantial PCN advantage remaining"
+        return "PCN comparison unavailable"
     mean_recovery = float(np.mean([r["mean_paired_bn_recovery"] for r in valid]))
     mean_gap = float(np.mean([r["remaining_pcn_gap"] for r in valid]))
     if mean_recovery < 1.0:
@@ -615,7 +647,8 @@ def make_plots(output_dir: Path, aggregate: List[Dict], rows: List[Dict]):
 
         base = f"{dataset}_{arch}_{mismatch_type}"
         fig, ax = plt.subplots()
-        ax.plot(levels, pcn, marker="o", label="PCN/NODE")
+        if not np.all(np.isnan(pcn)):
+            ax.plot(levels, pcn, marker="o", label="PCN/NODE")
         ax.plot(levels, frozen, marker="o", label="WRN frozen BN")
         ax.plot(levels, recal, marker="o", label="WRN recalibrated BN")
         if not np.all(np.isnan(all_bn_before_fold)):
@@ -637,14 +670,15 @@ def make_plots(output_dir: Path, aggregate: List[Dict], rows: List[Dict]):
         plt.close(fig)
         created.append(str(path))
 
-        fig, ax = plt.subplots()
-        ax.plot(levels, gap, marker="o")
-        ax.set_xlabel("Mismatch level")
-        ax.set_ylabel("Remaining PCN gap (pp)")
-        path = plot_dir / f"{base}_remaining_gap.png"
-        fig.savefig(path, bbox_inches="tight", dpi=180)
-        plt.close(fig)
-        created.append(str(path))
+        if not np.all(np.isnan(gap)):
+            fig, ax = plt.subplots()
+            ax.plot(levels, gap, marker="o")
+            ax.set_xlabel("Mismatch level")
+            ax.set_ylabel("Remaining PCN gap (pp)")
+            path = plot_dir / f"{base}_remaining_gap.png"
+            fig.savefig(path, bbox_inches="tight", dpi=180)
+            plt.close(fig)
+            created.append(str(path))
 
         seed_rows = [r for r in rows if (r["dataset"], r["architecture"], r["mismatch_type"]) == key]
         fig, ax = plt.subplots()
