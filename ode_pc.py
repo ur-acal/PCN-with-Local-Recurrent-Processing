@@ -212,7 +212,7 @@ class ODEBlockPC(nn.Module):
         sigma = sigma_lut[level_idx]
         return sigma
 
-    def _apply_noise(self, p):
+    def _apply_noise(self, p, module=None):
         if getattr(p, "is_sparse_csr", False):
             v_ = p.values()
             sigma_ = self._get_sparse_sigma_tensor(v_)
@@ -220,6 +220,8 @@ class ODEBlockPC(nn.Module):
                 noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * sigma_
                 v_.mul_(1 + noise_)  # This will change values of CSR matrix in-place
             else:
+                if self.additive_scale_mode == "max_sqrt":
+                    raise ValueError("max_sqrt is not supported for sparse CSR weights.")
                 scale = additive_mismatch_scale(v_, self.additive_scale_mode)
                 noise_ = torch.randn_like(v_, device=p.device, requires_grad=False) * (sigma_ * scale)
                 v_.add_(noise_)
@@ -229,7 +231,7 @@ class ODEBlockPC(nn.Module):
                 noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * sigma_
                 p.mul_(1 + noise_)
             else:
-                scale = additive_mismatch_scale(p, self.additive_scale_mode)
+                scale = additive_mismatch_scale(p, self.additive_scale_mode, module=module)
                 noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * (sigma_ * scale)
                 p.add_(noise_)
 
@@ -247,7 +249,7 @@ class ODEBlockPC(nn.Module):
                 weight_scale=getattr(self, "weight_scale", 1.0)
             )
         else:
-            self._apply_noise(self.FFconv.weight)
+            self._apply_noise(self.FFconv.weight, module=self.FFconv)
 
         if not self.tie_weights:
             if hasattr(self.FBconv, "add_noise"):
@@ -259,7 +261,7 @@ class ODEBlockPC(nn.Module):
                     weight_scale=getattr(self, "weight_scale", 1.0)
                 )
             else:
-                self._apply_noise(self.FBconv.weight)
+                self._apply_noise(self.FBconv.weight, module=self.FBconv)
 
         if not self.tie_bp and self.bypass is not None:
             if hasattr(self.bypass, "add_noise"):
@@ -271,9 +273,10 @@ class ODEBlockPC(nn.Module):
                     weight_scale=getattr(self, "weight_scale", 1.0)
                 )
             else:
-                self._apply_noise(self.bypass.weight)
+                self._apply_noise(self.bypass.weight, module=self.bypass)
 
-        if not torch.allclose(self.b0[0], torch.zeros_like(self.b0[0])):
+        if (not (self.mismatch_type == "add" and self.additive_scale_mode == "max_sqrt")
+                and not torch.allclose(self.b0[0], torch.zeros_like(self.b0[0]))):
             self._apply_noise(self.b0[0])
 
     @torch.no_grad()

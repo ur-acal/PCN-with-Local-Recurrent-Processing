@@ -29,6 +29,7 @@ from tinyimagenet_data import (
     TINYIMAGENET_STD,
     build_tinyimagenet_datasets,
 )
+from mismatch_utils import apply_pcn_ff_gain
 
 import logging
 log = logging.getLogger(__name__)
@@ -221,7 +222,7 @@ def get_val_scale(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNo
 def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer=PCConvNoisy,
                            data_parallel=False, noise_to_bn=False, noise_to_linear=False, fuse_bn=True,
                            noise_to_conv_bias=True, conv_only=False, ode_params=None, ode_wrapper_params=None, wrappers=None,
-                           quant_params=None, **kwargs):
+                           quant_params=None, ff_gain=1.0, **kwargs):
     checkpoint_weight = torch.load(model_path, map_location=device, weights_only=False)  # weights_only=False
     model_args = checkpoint_weight["init_args"]["model_args"]
     mod_args = checkpoint_weight["init_args"]["kwargs"]
@@ -257,6 +258,13 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         net_ = net_.module
     else:
         _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path)
+
+    gain_records = apply_pcn_ff_gain(net_, ff_gain)
+    logging.warning(
+        "Applied PCN FF gain {} to {} tensors ({} elements)".format(
+            ff_gain, len(gain_records), sum(record[2] for record in gain_records)
+        )
+    )
 
     if conv_only:
         log.warning("Replacing all transposed conv with conv")

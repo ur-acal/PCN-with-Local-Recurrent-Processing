@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from mismatch_utils import ADDITIVE_SCALE_MODES  # noqa: E402
 from baseline.run_baseline import (  # noqa: E402
     FixedMismatchHelper, build_model, build_test_loader, combined_hash,
     convolution_bias_parameter_names, evaluate_once, get_baseline_config,
@@ -39,7 +40,7 @@ def parse_args():
     p.add_argument("--datasets", default="cifar10,cifar100")
     p.add_argument("--architectures", default=",".join(ARCHITECTURES))
     p.add_argument("--mismatch_types", default="additive,multiplicative")
-    p.add_argument("--additive_scale_mode", choices=["max_abs", "rms"], default="max_abs")
+    p.add_argument("--additive_scale_mode", choices=ADDITIVE_SCALE_MODES, default="max_abs")
     p.add_argument("--noise_levels", default="default")
     p.add_argument("--noisy_trials", type=int, default=10)
     p.add_argument("--seed", type=int, default=123)

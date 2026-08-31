@@ -26,6 +26,8 @@ PROJECT_ROOT = THIS_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from mismatch_utils import ADDITIVE_SCALE_MODES, apply_wrn_ff_gain  # noqa: E402
+
 from baseline.run_baseline import (  # noqa: E402
     BNRecalibrationConfig,
     FixedMismatchHelper,
@@ -56,7 +58,8 @@ def parse_args():
     p.add_argument("--datasets", default="all", help="Comma list or all.")
     p.add_argument("--architectures", default="all", help="Comma list like WRN_16_2,WRN_28_4 or all.")
     p.add_argument("--mismatch_types", default="all", help="Comma list of additive,multiplicative or all.")
-    p.add_argument("--additive_scale_mode", choices=["max_abs", "rms"], default="max_abs")
+    p.add_argument("--additive_scale_mode", choices=ADDITIVE_SCALE_MODES, default="max_abs")
+    p.add_argument("--ff_gain", type=float, default=1.0)
     p.add_argument(
         "--pcn_reference_policy",
         choices=["condition_matched_legacy", "none"],
@@ -270,6 +273,11 @@ def build_loaded_wrn_model(args, dataset: str, model_name: str, checkpoint: Path
     cfg = get_baseline_config(model_name=model_name, pretrained=False, case=args.case, prefer_resize=False, extra_overrides=None)
     model = build_model(model_name, cfg, num_classes=num_classes).to(device)
     load_model_weights(model, str(checkpoint), device)
+    gain_records = apply_wrn_ff_gain(model, args.ff_gain)
+    print(
+        f"Applied WRN FF gain {args.ff_gain:g} to {len(gain_records)} tensors "
+        f"({sum(record[2] for record in gain_records)} elements)."
+    )
     return model, cfg
 
 
@@ -391,6 +399,7 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
         "model_name": model_name,
         "checkpoint": str(checkpoint),
         "mismatch_parameter_policy": args.mismatch_parameter_policy,
+        "ff_gain": args.ff_gain,
         "excluded_mismatch_params": ";".join(sorted(getattr(model, "_mismatch_excluded_param_names", set()))),
     }
     helper.restore_clean_state()
@@ -481,6 +490,7 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
                 "checkpoint": str(checkpoint),
                 "mismatch_type": mismatch_type,
                 "additive_scale_mode": args.additive_scale_mode,
+                "ff_gain": args.ff_gain,
                 "mismatch_level": noise_level,
                 "mismatch_seed": helper.seed,
                 "trial": trial,

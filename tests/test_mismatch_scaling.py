@@ -5,7 +5,12 @@ import torch
 import torch.nn as nn
 
 from baseline.run_baseline import FixedMismatchHelper
-from mismatch_utils import additive_mismatch_scale
+from baseline.cifar_resnet import WideResNetCIFAR
+from mismatch_utils import (
+    additive_mismatch_scale,
+    apply_pcn_ff_gain,
+    apply_wrn_ff_gain,
+)
 from ode_pc import ODEBlockPC
 from pc_model import PCNet
 
@@ -18,6 +23,24 @@ class TinyBaseline(nn.Module):
         self.fc = nn.Linear(1, 2, bias=True)
 
 
+class TinyPCNFFLayout(nn.Module):
+    def __init__(self, depth, widen_factor):
+        super().__init__()
+        repeats = (depth - 4) // 6
+        widths = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
+        channels = [(3, widths[0])]
+        for stage in range(3):
+            in_channels = widths[stage]
+            out_channels = widths[stage + 1]
+            channels.append((in_channels, out_channels))
+            channels.extend((out_channels, out_channels) for _ in range(repeats - 1))
+        self.PcConvs = nn.ModuleList()
+        for in_channels, out_channels in channels:
+            block = nn.Module()
+            block.FFconv = nn.Conv2d(in_channels, out_channels, 3, padding=1, bias=False)
+            self.PcConvs.append(block)
+
+
 class MismatchScalingTests(unittest.TestCase):
     def test_additive_mismatch_scale_known_values(self):
         tensor = torch.tensor([-4.0, -1.0, 2.0, 3.0])
@@ -28,6 +51,23 @@ class MismatchScalingTests(unittest.TestCase):
         self.assertEqual(additive_mismatch_scale(torch.zeros(5), "rms").item(), 0.0)
         with self.assertRaisesRegex(ValueError, "Unsupported additive scale mode"):
             additive_mismatch_scale(torch.ones(1), "unknown")
+
+    def test_max_sqrt_uses_per_output_filter_maximum(self):
+        conv = nn.Conv2d(1, 2, 1, bias=False)
+        weight = torch.tensor([[[[4.0]]], [[[-9.0]]]])
+        scale = additive_mismatch_scale(weight, "max_sqrt", module=conv)
+        self.assertTrue(torch.equal(scale, torch.tensor([[[[2.0]]], [[[3.0]]]])))
+
+        transpose = nn.ConvTranspose2d(2, 2, 1, bias=False)
+        transpose_weight = torch.tensor([[[[1.0]], [[9.0]]], [[[4.0]], [[1.0]]]])
+        transpose_scale = additive_mismatch_scale(
+            transpose_weight, "max_sqrt", module=transpose
+        )
+        self.assertTrue(torch.equal(transpose_scale, torch.tensor([[[[2.0]], [[3.0]]]])))
+
+    def test_max_sqrt_requires_filter_weight_module(self):
+        with self.assertRaisesRegex(ValueError, "max_sqrt requires"):
+            additive_mismatch_scale(torch.ones(2), "max_sqrt")
 
     def test_baseline_additive_formula_is_exact(self):
         clean = torch.tensor([-4.0, -1.0, 2.0, 3.0])
@@ -50,6 +90,20 @@ class MismatchScalingTests(unittest.TestCase):
         torch.manual_seed(11)
         helper._apply_noise_(actual)
         self.assertTrue(torch.equal(actual, expected))
+
+    def test_baseline_max_sqrt_formula_and_selection(self):
+        model = nn.Linear(2, 2, bias=True)
+        with torch.no_grad():
+            model.weight.copy_(torch.tensor([[1.0, 4.0], [9.0, 1.0]]))
+            model.bias.copy_(torch.tensor([2.0, 3.0]))
+        clean = copy.deepcopy(model.state_dict())
+        helper = FixedMismatchHelper(
+            model, 0.2, "additive", seed=13, additive_scale_mode="max_sqrt"
+        )
+        helper.snapshot_clean_state()
+        helper.add_noise()
+        self.assertFalse(torch.equal(model.weight, clean["weight"]))
+        self.assertTrue(torch.equal(model.bias, clean["bias"]))
 
     def test_baseline_seed_restoration_and_selection_are_preserved(self):
         model = TinyBaseline()
@@ -101,6 +155,48 @@ class MismatchScalingTests(unittest.TestCase):
                 block._apply_noise(actual)
                 self.assertTrue(torch.equal(actual, expected))
 
+    def test_ode_max_sqrt_formula_uses_module_filter_axis(self):
+        module = nn.Conv2d(1, 2, 1, bias=False)
+        clean = torch.tensor([[[[4.0]]], [[[-9.0]]]])
+        block = ODEBlockPC.__new__(ODEBlockPC)
+        nn.Module.__init__(block)
+        block.noise_level = 0.2
+        block.mismatch_type = "add"
+        block.additive_scale_mode = "max_sqrt"
+        torch.manual_seed(19)
+        expected = clean + torch.randn_like(clean) * (
+            0.2 * additive_mismatch_scale(clean, "max_sqrt", module=module)
+        )
+        actual = clean.clone()
+        torch.manual_seed(19)
+        block._apply_noise(actual, module=module)
+        self.assertTrue(torch.equal(actual, expected))
+
+    def test_pcn_and_wrn_ff_gain_select_matching_weights(self):
+        for depth in (16, 28):
+            for widen_factor in (2, 4):
+                with self.subTest(depth=depth, widen_factor=widen_factor):
+                    pcn = TinyPCNFFLayout(depth, widen_factor)
+                    wrn = WideResNetCIFAR(depth=depth, widen_factor=widen_factor)
+                    pcn_before = {name: value.detach().clone() for name, value in pcn.named_parameters()}
+                    wrn_before = {name: value.detach().clone() for name, value in wrn.named_parameters()}
+                    pcn_records = apply_pcn_ff_gain(pcn, 0.9)
+                    wrn_records = apply_wrn_ff_gain(wrn, 0.9)
+
+                    self.assertEqual(len(pcn_records), len(wrn_records))
+                    self.assertEqual(
+                        sorted(record[1] for record in pcn_records),
+                        sorted(record[1] for record in wrn_records),
+                    )
+                    self.assertEqual(
+                        sum(record[2] for record in pcn_records),
+                        sum(record[2] for record in wrn_records),
+                    )
+                    for name, _, _ in pcn_records:
+                        self.assertTrue(torch.equal(dict(pcn.named_parameters())[name], pcn_before[name] * 0.9))
+                    for name, _, _ in wrn_records:
+                        self.assertTrue(torch.equal(dict(wrn.named_parameters())[name], wrn_before[name] * 0.9))
+
     def test_pcn_classifier_weight_and_bias_use_additive_formula(self):
         for mode in ("max_abs", "rms"):
             with self.subTest(mode=mode):
@@ -141,6 +237,26 @@ class MismatchScalingTests(unittest.TestCase):
         torch.manual_seed(31)
         net._apply_noise(actual, mismatch_type="mul", additive_scale_mode="rms")
         self.assertTrue(torch.equal(actual, expected))
+
+    def test_pcn_max_sqrt_noises_classifier_weight_but_not_bias(self):
+        net = PCNet.__new__(PCNet)
+        nn.Module.__init__(net)
+        net.device = torch.device("cpu")
+        net.noise_level = 0.2
+        net.clean_params = {}
+        net.PcConvs = nn.ModuleList()
+        net.linear = nn.Linear(3, 2, bias=True)
+        clean = copy.deepcopy(net.state_dict())
+
+        torch.manual_seed(41)
+        net.add_noise(
+            noise_to_linear=True,
+            mismatch_type="add",
+            additive_scale_mode="max_sqrt",
+        )
+
+        self.assertFalse(torch.equal(net.linear.weight, clean["linear.weight"]))
+        self.assertTrue(torch.equal(net.linear.bias, clean["linear.bias"]))
 
     def test_pcn_can_exclude_conv_bias_but_noise_conv_weight_and_classifier(self):
         net = PCNet.__new__(PCNet)

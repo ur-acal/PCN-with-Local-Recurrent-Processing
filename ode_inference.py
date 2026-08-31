@@ -27,6 +27,7 @@ from validation import Validator, snapshot_clean_mvm_mat_values, assert_mvm_mats
 from switch import SWITCH_CLASSES
 from ode_mismatch_analyzer import ODEMismatchAnalyzer
 from weight_range_audit import collect_pcn_ode_weight_range_audit_rows, save_audit_csv
+from mismatch_utils import ADDITIVE_SCALE_MODES
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
@@ -73,8 +74,10 @@ def parse_args():
                         help="Only useful when self.eps is set in the ODESolver class.")
     parser.add_argument("--mismatch_type", type=str, default="mul", choices=["mul", "add"],
                         help="Additive or multiplicative mismatch.")
-    parser.add_argument("--additive_scale_mode", choices=["max_abs", "rms"], default="max_abs",
-                        help="Per-tensor scale used by additive mismatch.")
+    parser.add_argument("--additive_scale_mode", choices=ADDITIVE_SCALE_MODES, default="max_abs",
+                        help="Scale rule used by additive mismatch; max_sqrt is per output filter.")
+    parser.add_argument("--ff_gain", type=float, default=1.0,
+                        help="Deterministic gain applied once to every unique PCN FFconv weight.")
     parser.add_argument("--noise_to_conv_bias", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=True, help="Apply mismatch to non-PC convolution biases.")
     parser.add_argument("--noise_level_list", type=str, default="0.0,0.01,0.02,0.05")
@@ -341,7 +344,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                                   noise_to_conv_bias=args.noise_to_conv_bias,
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                   ode_wrapper_params=wrapper_params, wrappers=saved_wrappers,
-                                  **noisy_params)
+                                  ff_gain=args.ff_gain, **noisy_params)
     logging.warning("Model input channels: {}".format(net_.ics))
     logging.warning("Model output channels: {}".format(net_.ocs))
     logging.warning("Model pooling layers: {}".format(net_.max_pool))
@@ -415,7 +418,7 @@ def run_weight_range_audit(args, ckpt_path, pc_conv, device, t_end=None, return_
                                       noise_to_conv_bias=args.noise_to_conv_bias,
                                       fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                       ode_wrapper_params=wrapper_params,
-                                      noise_level=0.0, weight=None)
+                                      noise_level=0.0, weight=None, ff_gain=args.ff_gain)
         primary_rows, nonprimary_rows = collect_pcn_ode_weight_range_audit_rows(
             net_, dataset=args.task, model_name=args.model_name
         )
@@ -452,7 +455,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                                   noise_to_conv_bias=args.noise_to_conv_bias,
                                   fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                   ode_wrapper_params=wrapper_params,
-                                  **noisy_params)
+                                  ff_gain=args.ff_gain, **noisy_params)
     logging.warning("Model Total number of parameters: {}M".format(sum(p.numel() for p in net_.parameters()) / 1e6))
     logging.warning("Model input channels: {}".format(net_.ics))
     logging.warning("Model output channels: {}".format(net_.ocs))
@@ -619,7 +622,7 @@ def run_ode_inference():
                                                       noise_to_conv_bias=args.noise_to_conv_bias,
                                                       fuse_bn=False, conv_only=args.conv_only, ode_params=ode_params,
                                                       ode_wrapper_params=wrapper_params, wrappers=saved_wrappers,
-                                                      **noisy_params)
+                                                      ff_gain=args.ff_gain, **noisy_params)
                         if args.test_expanded:
                             # Use validator to expand the weights of the model
                             valid_ins = Validator(model=net_,

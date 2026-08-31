@@ -19,7 +19,7 @@ from pc_conv import PCConvHardTanhLimit, PCConvHardTanhLimitNoisy, PCConvReLU6Li
 from pc_conv import FFFBReLU6NoLastConv, FFFBReLU6NoLastConvNoisy, FFFBReLU6NoLastConvYasX, FFFBReLU6NoLastConvYasXNoisy
 from ds_conv import PCConvDS
 from utils import expand_weights_to_matrix
-from mismatch_utils import ADDITIVE_SCALE_MODES, additive_mismatch_scale
+from mismatch_utils import ADDITIVE_SCALE_MODES, additive_mismatch_scale, is_filter_weight
 
 import logging
 log = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ class PCNet(nn.Module):
                 y_ = self.max_pool2d(y_)
             x_ = y_
 
-    def _apply_noise(self, p, mismatch_type="mul", additive_scale_mode="max_abs"):
+    def _apply_noise(self, p, mismatch_type="mul", additive_scale_mode="max_abs", module=None):
         # Todo: How to handle the final linear layer?
         noise_level = self.noise_level
         if isinstance(self.noise_level, dict):
@@ -129,7 +129,7 @@ class PCNet(nn.Module):
         if mismatch_type == "mul":
             p.mul_(1 + noise_)
         elif mismatch_type == "add":
-            p.add_(noise_ * additive_mismatch_scale(p, additive_scale_mode))
+            p.add_(noise_ * additive_mismatch_scale(p, additive_scale_mode, module=module))
         else:
             raise ValueError(f"Unsupported mismatch type: {mismatch_type}")
 
@@ -144,23 +144,32 @@ class PCNet(nn.Module):
                 pc_conv.add_noise()
         # Todo: Add noise for BN and linear
         with torch.no_grad():
+            parameter_modules = {}
+            for module_name, module in self.named_modules():
+                for local_name, _ in module.named_parameters(recurse=False):
+                    full_name = f"{module_name}.{local_name}" if module_name else local_name
+                    parameter_modules[full_name] = (module, local_name)
             for _name, _p in self.named_parameters():
+                owner, local_name = parameter_modules.get(_name, (None, ""))
+                if (mismatch_type == "add" and additive_scale_mode == "max_sqrt"
+                        and not is_filter_weight(owner, local_name)):
+                    continue
                 is_non_pc_conv = "conv" in _name.lower() and "pc" not in _name.lower()
                 is_conv_bias = is_non_pc_conv and _name.lower().endswith(".bias")
                 if is_non_pc_conv and (noise_to_conv_bias or not is_conv_bias):
                     log.info("Adding noise to conv layer: {}".format(_name))
                     self.clean_params[_name] = _p.clone()
-                    self._apply_noise(_p, mismatch_type, additive_scale_mode)
+                    self._apply_noise(_p, mismatch_type, additive_scale_mode, module=owner)
                 if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to batch norm")
                     self.clean_params[_name] = _p.clone()
-                    self._apply_noise(_p, mismatch_type, additive_scale_mode)
+                    self._apply_noise(_p, mismatch_type, additive_scale_mode, module=owner)
                 elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to linear layer")
                     self.clean_params[_name] = _p.clone()
-                    self._apply_noise(_p, mismatch_type, additive_scale_mode)
+                    self._apply_noise(_p, mismatch_type, additive_scale_mode, module=owner)
 
-            if noise_to_bn:
+            if noise_to_bn and not (mismatch_type == "add" and additive_scale_mode == "max_sqrt"):
                 # adding noise to running mean and variance of batch norm
                 for _name, _buf in self.named_buffers():
                     if _name.endswith(('running_mean', 'running_var')):

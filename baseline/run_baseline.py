@@ -30,7 +30,7 @@ import baseline.cifar_resnet  # registers custom CIFAR models into timm
 from baseline.baseline_cifar_configs import TINYIMAGENET_DEFAULTS, get_baseline_config, build_model
 from trainer import _CIFAR_STATS
 from weight_range_audit import collect_wrn_weight_range_audit_rows, save_audit_csv
-from mismatch_utils import ADDITIVE_SCALE_MODES, additive_mismatch_scale
+from mismatch_utils import ADDITIVE_SCALE_MODES, additive_mismatch_scale, is_filter_weight
 from tinyimagenet_data import (
     TINYIMAGENET_MEAN,
     TINYIMAGENET_STD,
@@ -171,7 +171,7 @@ class FixedMismatchHelper:
     def _tensor_all_zero(x: torch.Tensor) -> bool:
         return bool(torch.count_nonzero(x).item() == 0)
 
-    def _apply_noise_(self, x: torch.Tensor):
+    def _apply_noise_(self, x: torch.Tensor, module: Optional[nn.Module] = None):
         if self.noise_sigma <= 0:
             return
         if not x.is_floating_point():
@@ -181,7 +181,7 @@ class FixedMismatchHelper:
         if self.noise_type == "multiplicative":
             x.mul_(1.0 + self.noise_sigma * noise)
         elif self.noise_type == "additive":
-            scale = additive_mismatch_scale(x, self.additive_scale_mode)
+            scale = additive_mismatch_scale(x, self.additive_scale_mode, module=module)
             x.add_(self.noise_sigma * noise * scale)
         else:
             raise ValueError(f"Unsupported noise_type: {self.noise_type}")
@@ -195,12 +195,19 @@ class FixedMismatchHelper:
         module = self._param_to_module.get(name, None)
         is_norm = self._is_norm_module(module)
 
+        if self.noise_type == "additive" and self.additive_scale_mode == "max_sqrt":
+            local_name = name.rsplit(".", 1)[-1]
+            if not is_filter_weight(module, local_name):
+                return False
+
         if is_norm and not self.noise_to_norm:
             return False
 
         return True
 
     def _should_noise_buffer(self, name: str, buf: torch.Tensor) -> bool:
+        if self.noise_type == "additive" and self.additive_scale_mode == "max_sqrt":
+            return False
         if not self.include_buffers:
             return False
         if not buf.is_floating_point():
@@ -232,7 +239,7 @@ class FixedMismatchHelper:
                 should_apply = self._should_noise_param(name, p)
 
                 if should_apply and self.noise_sigma > 0:
-                    self._apply_noise_(p)
+                    self._apply_noise_(p, module=self._param_to_module.get(name))
                     changed = not torch.equal(p.detach(), clean)
                     if all_zero:
                         changed = False
@@ -246,7 +253,7 @@ class FixedMismatchHelper:
                 should_apply = self._should_noise_buffer(name, buf)
 
                 if should_apply and self.noise_sigma > 0:
-                    self._apply_noise_(buf)
+                    self._apply_noise_(buf, module=self._buffer_to_module.get(name))
                     if "running_var" in name:
                         buf.clamp_(min=1e-6)
                     changed = not torch.equal(buf.detach(), clean)
