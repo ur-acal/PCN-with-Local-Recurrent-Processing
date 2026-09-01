@@ -560,10 +560,16 @@ def write_csv(path: Path, rows: List[Dict]):
 def aggregate_rows(rows: List[Dict]) -> List[Dict]:
     groups = defaultdict(list)
     for row in rows:
-        key = (row["dataset"], row["architecture"], row["mismatch_type"], float(row["mismatch_level"]))
+        key = (
+            row["dataset"],
+            row["architecture"],
+            row["mismatch_type"],
+            float(row["mismatch_level"]),
+            float(row.get("ff_gain", 1.0)),
+        )
         groups[key].append(row)
     out = []
-    for (dataset, arch, mismatch_type, level), items in sorted(groups.items()):
+    for (dataset, arch, mismatch_type, level, ff_gain), items in sorted(groups.items()):
         frozen = np.array([float(x["frozen_bn_accuracy"]) for x in items])
         recal = np.array([float(x["recalibrated_bn_accuracy"]) for x in items])
         all_bn_before_fold_vals = [
@@ -582,6 +588,7 @@ def aggregate_rows(rows: List[Dict]) -> List[Dict]:
             "mismatch_type": mismatch_type,
             "mismatch_level": level,
             "additive_scale_mode": items[0].get("additive_scale_mode", "max_abs"),
+            "ff_gain": ff_gain,
             "num_trials": len(items),
             "pcn_node_column": pcn_vals[0]["pcn_node_best_column"] if pcn_vals else "",
             "pcn_node_mean_accuracy": pcn_mean if pcn_mean is not None else "",

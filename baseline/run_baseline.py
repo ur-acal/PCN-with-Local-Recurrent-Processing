@@ -367,12 +367,14 @@ def parse_args():
     parser.add_argument(
         "--fold_norm_mode",
         type=str,
-        choices=["sequential", "wrn_preact_no_mismatch_bias"],
+        choices=["sequential", "wrn_preact_no_mismatch_bias", "resnet_postact_no_mismatch_bias"],
         default="sequential",
         help=(
             "Norm folding implementation used when --fold_norm=true. "
             "'wrn_preact_no_mismatch_bias' folds function-preserving WRN Conv/BN pairs "
-            "and excludes only the newly induced folded Conv bias parameters from mismatch."
+            "and excludes only the newly induced folded Conv bias parameters from mismatch. "
+            "'resnet_postact_no_mismatch_bias' does the same for postactivation ResNet "
+            "stem, residual-block, and downsample Conv/BN pairs."
         ),
     )
     parser.add_argument("--results_dir", type=str, default="./results_mismatch_eval")
@@ -481,9 +483,59 @@ def fold_wrn_preact_norms_no_mismatch_bias(model: nn.Module) -> nn.Module:
     return model
 
 
+def fold_resnet_postact_norms_no_mismatch_bias(model: nn.Module) -> nn.Module:
+    """Fold postactivation ResNet Conv->BN pairs and exclude their fused biases."""
+    model.eval()
+    excluded = []
+    folded_pairs = []
+
+    def fold_pair(conv_name: str, bn_name: str):
+        bias_name = _fold_conv_bn_pair(model, conv_name, bn_name)
+        if bias_name:
+            excluded.append(bias_name)
+            folded_pairs.append((conv_name, bn_name))
+
+    if hasattr(model, "conv1") and hasattr(model, "bn1"):
+        fold_pair("conv1", "bn1")
+
+    for layer_name in ("layer1", "layer2", "layer3", "layer4"):
+        layer = getattr(model, layer_name, None)
+        if layer is None:
+            continue
+        for idx, block in enumerate(layer):
+            block_name = f"{layer_name}.{idx}"
+            for conv_leaf, bn_leaf in (("conv1", "bn1"), ("conv2", "bn2"), ("conv3", "bn3")):
+                if hasattr(block, conv_leaf) and hasattr(block, bn_leaf):
+                    fold_pair(f"{block_name}.{conv_leaf}", f"{block_name}.{bn_leaf}")
+
+            downsample = getattr(block, "downsample", None)
+            if isinstance(downsample, nn.Sequential):
+                child_names = [name for name, _ in downsample.named_children()]
+                for left, right in zip(child_names, child_names[1:]):
+                    conv = downsample[int(left)] if left.isdigit() else getattr(downsample, left)
+                    bn = downsample[int(right)] if right.isdigit() else getattr(downsample, right)
+                    if isinstance(conv, (nn.Conv1d, nn.Conv2d, nn.Conv3d)) and isinstance(
+                        bn, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
+                    ):
+                        fold_pair(f"{block_name}.downsample.{left}", f"{block_name}.downsample.{right}")
+
+    _mark_mismatch_excluded_params(model, excluded)
+    remaining_bn = [name for name, module in model.named_modules() if isinstance(module, BN_TYPES)]
+    log.warning(
+        "Postactivation ResNet norm folding finished. Folded %d Conv/BN pairs; "
+        "excluding %d fused Conv bias params; remaining BN modules=%d.",
+        len(folded_pairs),
+        len(excluded),
+        len(remaining_bn),
+    )
+    return model
+
+
 def maybe_fold_norms(model: nn.Module, mode: str = "sequential") -> nn.Module:
     if mode == "wrn_preact_no_mismatch_bias":
         return fold_wrn_preact_norms_no_mismatch_bias(model)
+    if mode == "resnet_postact_no_mismatch_bias":
+        return fold_resnet_postact_norms_no_mismatch_bias(model)
     if mode != "sequential":
         raise ValueError(f"Unsupported fold_norm_mode: {mode}")
     """

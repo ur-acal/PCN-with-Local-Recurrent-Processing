@@ -90,6 +90,43 @@ class TinyPreActWRNLike(nn.Module):
         return x.mean(dim=(2, 3))
 
 
+class TinyPostActBlock(nn.Module):
+    def __init__(self, channels=4):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu = nn.ReLU()
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.downsample = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(channels),
+        )
+
+    def forward(self, x):
+        shortcut = self.downsample(x)
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return self.relu(out + shortcut)
+
+
+class TinyPostActResNetLike(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 4, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(4)
+        self.relu = nn.ReLU()
+        self.layer1 = nn.Sequential(TinyPostActBlock(4))
+        self.layer2 = nn.Sequential()
+        self.layer3 = nn.Sequential()
+        self.layer4 = nn.Sequential()
+
+    def forward(self, x):
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.layer1(x)
+        return x.mean(dim=(2, 3))
+
+
 class TinyNoBNNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -316,6 +353,29 @@ class BNRecalibrationTests(unittest.TestCase):
         self.assertFalse(torch.equal(model.conv1.weight, before["conv1.weight"]))
         self.assertFalse(torch.equal(model.layer1[0].conv1.weight, before["layer1.0.conv1.weight"]))
         self.assertTrue(torch.equal(model.layer1[0].conv1.bias, before["layer1.0.conv1.bias"]))
+
+    def test_resnet_postact_fold_fuses_all_pairs_without_changing_logits(self):
+        torch.manual_seed(11)
+        model = TinyPostActResNetLike().eval()
+        x = torch.randn(3, 3, 8, 8)
+        with torch.no_grad():
+            logits_before = model(x)
+
+        rb.fold_resnet_postact_norms_no_mismatch_bias(model)
+        with torch.no_grad():
+            logits_after = model(x)
+
+        self.assertTrue(torch.allclose(logits_before, logits_after, atol=1e-5, rtol=1e-5))
+        self.assertEqual(sum(isinstance(module, rb.BN_TYPES) for module in model.modules()), 0)
+        self.assertEqual(
+            set(model._mismatch_excluded_param_names),
+            {
+                "conv1.bias",
+                "layer1.0.conv1.bias",
+                "layer1.0.conv2.bias",
+                "layer1.0.downsample.0.bias",
+            },
+        )
 
     def test_no_bn_model_is_documented_noop(self):
         with tempfile.TemporaryDirectory() as tmp_path:

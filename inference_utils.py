@@ -29,7 +29,7 @@ from tinyimagenet_data import (
     TINYIMAGENET_STD,
     build_tinyimagenet_datasets,
 )
-from mismatch_utils import apply_pcn_ff_gain
+from mismatch_utils import apply_pcn_ff_gain, is_filter_weight
 
 import logging
 log = logging.getLogger(__name__)
@@ -312,10 +312,23 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                            mismatch_type=mismatch_type, additive_scale_mode=additive_scale_mode)
         if isinstance(noise_level, dict) or noise_level > 0.0:
             mean_abs = []
+            parameter_modules = {}
+            for module_name, module in net_.named_modules():
+                for local_name, _ in module.named_parameters(recurse=False):
+                    full_name = f"{module_name}.{local_name}" if module_name else local_name
+                    parameter_modules[full_name] = (module, local_name)
             for _name, _p in net_.named_parameters():
-                if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
+                owner, local_name = parameter_modules.get(_name, (None, ""))
+                is_excluded_max_sqrt_parameter = (
+                    mismatch_type == "add"
+                    and additive_scale_mode == "max_sqrt"
+                    and not is_filter_weight(owner, local_name)
+                )
+                if (not is_excluded_max_sqrt_parameter and noise_to_bn
+                        and "bn" in _name.lower() and "pc" not in _name.lower()):
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
-                elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():
+                elif (not is_excluded_max_sqrt_parameter and noise_to_linear
+                      and "linear" in _name.lower() and "pc" not in _name.lower()):
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
 
                 is_excluded_conv_bias = (
@@ -324,7 +337,8 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                     and "pc" not in _name.lower()
                     and _name.lower().endswith(".bias")
                 )
-                if isinstance(ode_params, dict) and not is_excluded_conv_bias:
+                if (isinstance(ode_params, dict) and not is_excluded_conv_bias
+                        and not is_excluded_max_sqrt_parameter):
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name]), "param name: {}".format(_name)
                     logging.warning("name: {}, noisy params mean: {}, min: {}, max: {}".format(
                         _name, _p.mean(), _p.min(), _p.max()))
@@ -335,7 +349,7 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                     _name, torch.allclose(_p, clean_params[_name]), cur_mean_abs))
             logging.info("Summed abs mean change: {}".format(sum(mean_abs)))
 
-            if noise_to_bn:
+            if noise_to_bn and not (mismatch_type == "add" and additive_scale_mode == "max_sqrt"):
                 # adding noise to running mean and variance of batch norm
                 for _name, _buf in net_.named_buffers():
                     if _name.endswith(('running_mean', 'running_var')):

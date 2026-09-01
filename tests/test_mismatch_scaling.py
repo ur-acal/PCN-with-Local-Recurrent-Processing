@@ -11,6 +11,7 @@ from mismatch_utils import (
     apply_pcn_ff_gain,
     apply_wrn_ff_gain,
 )
+from baseline.run_wrn_bn_recalibration_experiment import aggregate_rows
 from ode_pc import ODEBlockPC
 from pc_model import PCNet
 
@@ -42,6 +43,23 @@ class TinyPCNFFLayout(nn.Module):
 
 
 class MismatchScalingTests(unittest.TestCase):
+    def test_wrn_aggregate_preserves_ff_gain(self):
+        row = {
+            "dataset": "cifar100",
+            "architecture": "WRN_28_2",
+            "mismatch_type": "additive",
+            "mismatch_level": 0.0,
+            "additive_scale_mode": "max_abs",
+            "ff_gain": 0.93,
+            "frozen_bn_accuracy": 77.0,
+            "recalibrated_bn_accuracy": 75.0,
+            "pcn_node_best_mean_accuracy": "",
+            "pcn_node_best_std_accuracy": "",
+            "pcn_node_best_column": "",
+            "mismatch_parameter_policy": "existing",
+        }
+        self.assertEqual(aggregate_rows([row])[0]["ff_gain"], 0.93)
+
     def test_additive_mismatch_scale_known_values(self):
         tensor = torch.tensor([-4.0, -1.0, 2.0, 3.0])
         self.assertAlmostEqual(additive_mismatch_scale(tensor, "max_abs").item(), 4.0)
