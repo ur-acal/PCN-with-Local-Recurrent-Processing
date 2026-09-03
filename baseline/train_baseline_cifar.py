@@ -13,6 +13,7 @@ This script does NOT implement a training loop. It only:
 import argparse
 import json
 import os
+import random
 import sys
 from pathlib import Path
 from pprint import pprint
@@ -186,6 +187,7 @@ def parse_args():
     parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument("--eval_every", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=4096)
     parser.add_argument('--noise_level', default=None, type=float,
                         help='noise level in noise inject training. None means normal training without noise injection')
     parser.add_argument('--noise_type', default='mul', type=str, choices=['mul', 'add'],
@@ -406,6 +408,8 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
         lr_reduce_on=cfg.get("lr_reduce_on", "80,122,150,225,262"),
         test_bs=cfg["test_batch_size"],
         max_norm=cfg.get("max_norm", None),
+        bias_lr_multiplier=cfg.get("bias_lr_multiplier", 1.0),
+        bias_weight_decay=cfg.get("bias_weight_decay", None),
         aug=False,  # transforms are handled by TrainerCiFarTimmStyle
         eval_every=(
             args.eval_every if args.eval_every is not None else
@@ -470,6 +474,11 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
 
 def main():
     args = parse_args()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     if args.physical_feedforward:
         inference_path = args.resume_checkpoint or args.output_dir
         args.input_quant_bits, args.center_student_input = resolve_preprocessing(
@@ -554,9 +563,16 @@ def main():
         cfg["test_batch_size"] = cfg["batch_size"]
 
     model = build_model(args.model_name, cfg, num_classes)
-    state_dict = (
-        checkpoint_state(args.resume_checkpoint)
+    checkpoint = (
+        torch.load(
+            args.resume_checkpoint, map_location="cpu", weights_only=False)
         if args.resume_checkpoint else None)
+    state_dict = (
+        checkpoint.get("net", checkpoint)
+        if checkpoint is not None else None)
+    checkpoint_weight_format = (
+        checkpoint.get("checkpoint_weight_format")
+        if isinstance(checkpoint, dict) else None)
 
     if args.physical_feedforward:
         from physical_feedforward import (
@@ -588,6 +604,10 @@ def main():
         checkpoint_is_qat = (
             state_dict is not None and
             is_parametrized_weight_state(state_dict))
+        checkpoint_is_unitless_physical = (
+            checkpoint_is_physical and not checkpoint_is_qat and
+            checkpoint_weight_format not in {
+                "flattened_quantized", "full_param"})
         if state_dict is not None and not checkpoint_is_physical:
             model.load_state_dict(state_dict, strict=True)
         model = convert_wide_resnet_to_physical(
@@ -648,6 +668,16 @@ def main():
                 wrapper.enable_qat_()
         if checkpoint_is_physical:
             model.load_state_dict(state_dict, strict=True)
+            if (not args.physical_pretraining and
+                    checkpoint_is_unitless_physical):
+                # Conversion already scaled BatchNorm eps, which is not part
+                # of state_dict. The unitless checkpoint overwrote only the
+                # affine parameters and running statistics, so rescale those.
+                from physical_feedforward import (
+                    scale_batchnorm_to_physical_domain)
+                scale_batchnorm_to_physical_domain(
+                    model, args.v_dd / args.one_over_q,
+                    scale_eps=False)
         if (args.physical_pretraining and args.scale_train_recipe and
                 not checkpoint_is_physical):
             scale_feedforward_initial_weights(model, ff_scale, fb_scale)

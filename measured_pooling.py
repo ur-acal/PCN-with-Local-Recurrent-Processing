@@ -264,8 +264,8 @@ def configure_feedforward_measured_pooling(
         quantity="conductance", nominal_R=1.0, seed=None,
         training_curve_mode=None, corner_range="all", curve_indices=None,
         curve_gaussian=None):
-    """Install measured pooling at feedforward global and shortcut pools."""
-    from physical_feedforward import AvgPoolChannelPad
+    """Install measured pooling at feedforward global, main and shortcut pools."""
+    from physical_feedforward import iter_physical_blocks
 
     common = dict(
         curve_path=curve_path if enable_nonideality else None,
@@ -280,13 +280,19 @@ def configure_feedforward_measured_pooling(
     model.global_pool = MeasuredAvgPool2d(
         input_scale=final_scale, seed=seed, **common)
     pool_index = 1
-    for module in model.modules():
-        if not isinstance(module, AvgPoolChannelPad):
-            continue
-        if isinstance(module.pool, nn.AvgPool2d):
-            module.pool = MeasuredAvgPool2d(
-                kernel_size=module.pool.kernel_size,
-                stride=module.pool.stride,
+    for block in iter_physical_blocks(model):
+        if isinstance(block.main_downsample, nn.AvgPool2d):
+            pool = block.main_downsample
+            block.main_downsample = MeasuredAvgPool2d(
+                kernel_size=pool.kernel_size, stride=pool.stride,
+                seed=None if seed is None else int(seed) + pool_index,
+                **common)
+            pool_index += 1
+        shortcut_pool = getattr(block.shortcut, "pool", None)
+        if isinstance(shortcut_pool, nn.AvgPool2d):
+            block.shortcut.pool = MeasuredAvgPool2d(
+                kernel_size=shortcut_pool.kernel_size,
+                stride=shortcut_pool.stride,
                 seed=None if seed is None else int(seed) + pool_index,
                 **common)
             pool_index += 1

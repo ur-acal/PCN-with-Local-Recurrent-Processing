@@ -38,6 +38,10 @@ CUSTOM_CIFAR_MODELS = {
     "resnet110_cifar",
     "preact_resnet164_cifar",
     "wrn_28_10_cifar",
+    "wrn_28_2_cifar_avgpool",
+    "wrn_28_2_cifar_avgpool_shortcut",
+    "wrn_28_2_cifar_nobn_avgpool",
+    "wrn_28_2_cifar_nobn_avgpool_shortcut",
 }
 
 
@@ -326,6 +330,14 @@ MODEL_OVERRIDES = {
     "preact_resnet164_cifar": {},
     "vgg19": {},
     "mobilenetv2_100": {},
+    "wrn_28_2_cifar_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_28_2_cifar_avgpool_shortcut": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_28_2_cifar_nobn_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_28_2_cifar_nobn_avgpool_shortcut": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
 }
 
 
@@ -389,6 +401,12 @@ def build_model(model_name: str, cfg: dict, num_classes: int):
         pretrained=cfg.get("pretrained", False),
         num_classes=num_classes,
         in_chans=cfg.get("in_chans", 3),
+        **({"dropout_rate": cfg["dropout_rate"]}
+           if "dropout_rate" in cfg else {}),
+        **({"final_dropout_rate": cfg["final_dropout_rate"]}
+           if "final_dropout_rate" in cfg else {}),
+        **({"intermediate_activation": cfg["intermediate_activation"]}
+           if "intermediate_activation" in cfg else {}),
     )
 
     if case.startswith("adapt_noresize"):

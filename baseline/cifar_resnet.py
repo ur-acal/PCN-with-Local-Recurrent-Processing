@@ -274,20 +274,85 @@ class PreActCIFARResNet(nn.Module):
 # WideResNet-28-10 for CIFAR.
 # depth = 6n + 4. WRN-28 => n = 4. Widen factor = 10.
 # -----------------------------------------------------------------------------
-class WideBasicBlock(nn.Module):
-    def __init__(self, in_planes: int, planes: int, dropout_rate: float, stride: int = 1):
+class ChannelZeroPad(nn.Module):
+    """Parameter-free channel expansion without spatial downsampling."""
+
+    def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
-        self.bn1 = nn.BatchNorm2d(in_planes)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        if out_channels < in_channels:
+            raise ValueError("ChannelZeroPad requires nondecreasing channels")
+        extra = out_channels - in_channels
+        self.pad_left = extra // 2
+        self.pad_right = extra - self.pad_left
 
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.relu2 = nn.ReLU(inplace=True)
+    def forward(self, x):
+        if self.pad_left or self.pad_right:
+            x = F.pad(x, (0, 0, 0, 0, self.pad_left, self.pad_right))
+        return x
+
+
+class AvgPoolChannelPad(nn.Module):
+    """Parameter-free average-pool shortcut with channel padding."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 2):
+        super().__init__()
+        if stride <= 1 or out_channels < in_channels:
+            raise ValueError(
+                "AvgPoolChannelPad requires stride > 1 and nondecreasing channels")
+        self.pool = nn.AvgPool2d(kernel_size=stride, stride=stride)
+        self.channel_pad = ChannelZeroPad(in_channels, out_channels)
+
+    def forward(self, x):
+        return self.channel_pad(self.pool(x))
+
+
+def _intermediate_activation(name: str):
+    name = str(name).lower()
+    if name == "relu":
+        return nn.ReLU(inplace=True)
+    if name == "relu6":
+        return nn.ReLU6(inplace=True)
+    raise ValueError("intermediate_activation must be relu or relu6.")
+
+
+class WideBasicBlock(nn.Module):
+    def __init__(
+        self,
+        in_planes: int,
+        planes: int,
+        dropout_rate: float,
+        stride: int = 1,
+        use_batchnorm: bool = True,
+        avgpool_downsample_shortcut: bool = False,
+        avgpool_main_downsample: bool = False,
+        intermediate_activation: str = "relu",
+    ):
+        super().__init__()
+        self.bn1 = nn.BatchNorm2d(in_planes) if use_batchnorm else nn.Identity()
+        self.relu1 = _intermediate_activation(intermediate_activation)
+        self.conv1 = nn.Conv2d(
+            in_planes, planes, kernel_size=3, stride=1, padding=1,
+            bias=not use_batchnorm)
+
+        self.bn2 = nn.BatchNorm2d(planes) if use_batchnorm else nn.Identity()
+        self.relu2 = _intermediate_activation(intermediate_activation)
         self.dropout_rate = float(dropout_rate)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(
+            planes, planes, kernel_size=3,
+            stride=1 if avgpool_main_downsample and stride != 1 else stride,
+            padding=1, bias=not use_batchnorm)
+        self.main_downsample = (
+            nn.AvgPool2d(kernel_size=stride, stride=stride)
+            if avgpool_main_downsample and stride != 1 else nn.Identity())
 
-        if stride != 1 or in_planes != planes:
-            self.shortcut = nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride, bias=False)
+        if avgpool_downsample_shortcut and (stride != 1 or in_planes != planes):
+            self.shortcut = (
+                AvgPoolChannelPad(in_planes, planes, stride=stride)
+                if stride != 1 else ChannelZeroPad(in_planes, planes))
+        elif stride != 1 or in_planes != planes:
+            self.shortcut = nn.Conv2d(
+                in_planes, planes, kernel_size=1, stride=stride,
+                bias=not use_batchnorm)
         else:
             self.shortcut = nn.Identity()
 
@@ -297,6 +362,7 @@ class WideBasicBlock(nn.Module):
         if self.dropout_rate > 0:
             out = F.dropout(out, p=self.dropout_rate, training=self.training)
         out = self.conv2(out)
+        out = self.main_downsample(out)
         out = out + self.shortcut(x)
         return out
 
@@ -307,9 +373,14 @@ class WideResNetCIFAR(nn.Module):
         depth: int = 28,
         widen_factor: int = 10,
         dropout_rate: float = 0.0,
+        final_dropout_rate: float = 0.0,
         num_classes: int = 10,
         in_chans: int = 3,
         base_width: int = 16,
+        use_batchnorm: bool = True,
+        avgpool_downsample_shortcut: bool = False,
+        avgpool_main_downsample: bool = False,
+        intermediate_activation: str = "relu",
         **kwargs,
     ):
         super().__init__()
@@ -321,15 +392,24 @@ class WideResNetCIFAR(nn.Module):
         self.in_chans = in_chans
         self.depth = depth
         self.widen_factor = widen_factor
-        self.dropout_rate = dropout_rate
+        self.dropout_rate = float(dropout_rate)
+        self.final_dropout_rate = float(final_dropout_rate)
+        self.use_batchnorm = bool(use_batchnorm)
+        self.avgpool_downsample_shortcut = bool(avgpool_downsample_shortcut)
+        self.avgpool_main_downsample = bool(avgpool_main_downsample)
+        self.intermediate_activation = str(intermediate_activation)
         self.out_dim = widths[3]
         self.in_planes = widths[0]
 
-        self.conv1 = nn.Conv2d(in_chans, widths[0], kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(
+            in_chans, widths[0], kernel_size=3, stride=1, padding=1,
+            bias=not self.use_batchnorm)
         self.layer1 = self._make_layer(widths[1], n, stride=1)
         self.layer2 = self._make_layer(widths[2], n, stride=2)
         self.layer3 = self._make_layer(widths[3], n, stride=2)
-        self.bn = nn.BatchNorm2d(widths[3])
+        self.bn = (
+            nn.BatchNorm2d(widths[3]) if self.use_batchnorm else nn.Identity())
+        # The final pre-GAP activation intentionally remains ideal ReLU.
         self.relu = nn.ReLU(inplace=True)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(widths[3], num_classes)
@@ -340,7 +420,12 @@ class WideResNetCIFAR(nn.Module):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for s in strides:
-            layers.append(WideBasicBlock(self.in_planes, planes, self.dropout_rate, stride=s))
+            layers.append(WideBasicBlock(
+                self.in_planes, planes, self.dropout_rate, stride=s,
+                use_batchnorm=self.use_batchnorm,
+                avgpool_downsample_shortcut=self.avgpool_downsample_shortcut,
+                avgpool_main_downsample=self.avgpool_main_downsample,
+                intermediate_activation=self.intermediate_activation))
             self.in_planes = planes
         return nn.Sequential(*layers)
 
@@ -349,7 +434,11 @@ class WideResNetCIFAR(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.relu(self.bn(x))
+        x = self.bn(x)
+        if self.final_dropout_rate > 0:
+            x = F.dropout(
+                x, p=self.final_dropout_rate, training=self.training)
+        x = self.relu(x)
         return x
 
     def forward_head(self, x, pre_logits: bool = False):
@@ -455,6 +544,71 @@ def wrn_28_2_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: in
     if pretrained:
         raise ValueError("No registered pretrained weights for wrn_28_2_cifar.")
     return WideResNetCIFAR(depth=28, widen_factor=2, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+def _new_hardware_wrn_kwargs(kwargs):
+    kwargs = dict(kwargs)
+    kwargs.setdefault("intermediate_activation", "relu6")
+    return kwargs
+
+
+@register_model
+def wrn_28_2_cifar_avgpool(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError(
+            "No registered pretrained weights for wrn_28_2_cifar_avgpool.")
+    return WideResNetCIFAR(
+        depth=28, widen_factor=2, num_classes=num_classes,
+        in_chans=in_chans, avgpool_downsample_shortcut=True,
+        avgpool_main_downsample=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_28_2_cifar_avgpool_shortcut(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError(
+            "No registered pretrained weights for "
+            "wrn_28_2_cifar_avgpool_shortcut.")
+    return WideResNetCIFAR(
+        depth=28, widen_factor=2, num_classes=num_classes,
+        in_chans=in_chans, avgpool_downsample_shortcut=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+def _build_wrn_nobn(
+        depth: int, widen_factor: int, pretrained: bool,
+        num_classes: int, in_chans: int, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for BN-free WRNs.")
+    return WideResNetCIFAR(
+        depth=depth, widen_factor=widen_factor, num_classes=num_classes,
+        in_chans=in_chans, use_batchnorm=False, **kwargs)
+
+
+@register_model
+def wrn_28_2_cifar_nobn_avgpool(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(
+        28, 2, pretrained, num_classes, in_chans,
+        avgpool_downsample_shortcut=True,
+        avgpool_main_downsample=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_28_2_cifar_nobn_avgpool_shortcut(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(
+        28, 2, pretrained, num_classes, in_chans,
+        avgpool_downsample_shortcut=True,
+        **_new_hardware_wrn_kwargs(kwargs))
 
 
 @register_model

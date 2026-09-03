@@ -33,7 +33,15 @@ if [[ "${WEIGHT_QUANT_FACTOR_BITS,,}" == "none" ]]; then
 fi
 TOGGLE_TIMING_MODE="${TOGGLE_TIMING_MODE:-derived}"
 TOGGLE_Y_TIME="${TOGGLE_Y_TIME:-5e-9}"
-EXTRA_OVERRIDE="${EXTRA_OVERRIDE:-lr=${FT_LEARNING_RATE:-0.005},num_epochs=${FT_NUM_EPOCHS:-140},warmup_epoch=${WARMUP_FT:-0},weight_decay=${WEIGHT_DECAY:-0.001},batch_size=${BATCH_SIZE:-128}}"
+_DEFAULT_OVERRIDE="lr=${FT_LEARNING_RATE:-0.005},num_epochs=${FT_NUM_EPOCHS:-140},warmup_epoch=${WARMUP_FT:-0},weight_decay=${WEIGHT_DECAY:-0.001},batch_size=${BATCH_SIZE:-128}"
+case "${MODEL_NAME}" in
+  wrn_28_2_cifar_nobn_avgpool|wrn_28_2_cifar_nobn_avgpool_shortcut)
+    if [[ "${TASK}" == "cifar10" ]]; then
+      _DEFAULT_OVERRIDE+=",dropout_rate=${DROPOUT_RATE:-0.1},max_norm=${MAX_NORM:-2.0},bias_lr_multiplier=${BIAS_LR_MULTIPLIER:-0.5},bias_weight_decay=${BIAS_WEIGHT_DECAY:-0.0}"
+    fi
+    ;;
+esac
+EXTRA_OVERRIDE="${EXTRA_OVERRIDE:-${_DEFAULT_OVERRIDE}}"
 NONLINEAR_R_TABLE="${NONLINEAR_R_TABLE:-coupler_monte}"
 if [[ "${NONLINEAR_R_TABLE}" != */* ]]; then
   NONLINEAR_R_TABLE="./hardware_data/mc_45_corners/${NONLINEAR_R_TABLE}"
@@ -52,6 +60,7 @@ cmd=(
   --data_dir "${DATA_DIR}"
   --output_dir "${OUTPUT_DIR}"
   --case custom_noresize
+  --seed "${TRAINING_SEED:-4096}"
   --eval_every "${FT_EVAL_EVERY:-2}"
   --img_type "${IMG_TYPE}"
   --resume_checkpoint "${MODEL_CKPT}"

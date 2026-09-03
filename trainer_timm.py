@@ -6,7 +6,6 @@ import copy
 import random
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.nn.utils.parametrize as P
 import torch.nn.functional as F
@@ -147,6 +146,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         num_workers=2,
         pin_memory=True,
         persistent_workers=False,
+        bias_lr_multiplier=1.0,
+        bias_weight_decay=None,
 
         is_timm_model=True,
         save_flattened_and_full_param=False,
@@ -197,6 +198,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         self.interpolation = interpolation
 
         self.timm_opt = timm_opt
+        self.bias_lr_multiplier = float(bias_lr_multiplier)
+        self.bias_weight_decay = bias_weight_decay
         self.opt_eps = opt_eps
         self.opt_betas = opt_betas
         self.momentum = momentum
@@ -259,6 +262,93 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
     # ------------------------------------------------------------------
     # Optimizer
     # ------------------------------------------------------------------
+    def _composed_optimizer_parameters(self, lr, weight_decay):
+        """Compose physical, BatchNorm, and bias optimizer transforms."""
+        skip = set()
+        if hasattr(self.model, "no_weight_decay"):
+            skip = set(self.model.no_weight_decay())
+
+        bn_parameter_ids = {
+            id(parameter)
+            for module in self.model.modules()
+            if isinstance(module, nn.modules.batchnorm._BatchNorm)
+            for parameter in module.parameters(recurse=False)
+        }
+        physical_q = float(
+            getattr(self.model, "_physical_state_scale", 1.0))
+        physical_bn = bool(bn_parameter_ids) and physical_q != 1.0
+        bn_lr_scale = physical_q * physical_q
+
+        grouped = {}
+        for name, parameter in self.model.named_parameters():
+            if not parameter.requires_grad:
+                continue
+
+            if self.scale_train_recipe and ".FFconv." in name:
+                stage, stage_scale = "ff", self.ff_train_scale
+            elif self.scale_train_recipe and ".FBconv." in name:
+                stage, stage_scale = "fb", self.fb_train_scale
+            elif (self.scale_train_recipe and
+                  ".ode_block.conv2." in name):
+                stage, stage_scale = "ff", self.ff_train_scale
+            elif (self.scale_train_recipe and
+                  ".ode_block.conv1." in name):
+                stage, stage_scale = "fb", self.fb_train_scale
+            else:
+                stage, stage_scale = "other", 1.0
+
+            is_bias = name.endswith(".bias")
+            is_bn = id(parameter) in bn_parameter_ids
+            no_decay = parameter.ndim <= 1 or is_bias or name in skip
+
+            parameter_lr = lr / (stage_scale * stage_scale)
+            parameter_weight_decay = (
+                0.0 if no_decay else
+                weight_decay * stage_scale * stage_scale)
+
+            if is_bias:
+                parameter_lr *= self.bias_lr_multiplier
+                if self.bias_weight_decay is not None:
+                    parameter_weight_decay = (
+                        float(self.bias_weight_decay) *
+                        stage_scale * stage_scale)
+
+            # BatchNorm affine parameters are stored in the physical q-domain:
+            # gamma'=q*gamma and beta'=q*beta.  For SGD, lr'=q^2*lr
+            # preserves the corresponding update in the unitless domain.
+            if physical_bn and is_bn:
+                parameter_lr *= bn_lr_scale
+                if parameter_weight_decay:
+                    parameter_weight_decay /= bn_lr_scale
+
+            key = (stage, no_decay, is_bias, is_bn,
+                   parameter_lr, parameter_weight_decay)
+            grouped.setdefault(key, []).append(parameter)
+
+        parameter_groups = []
+        stage_order = {"other": 0, "ff": 1, "fb": 2}
+        ordered_groups = sorted(
+            grouped.items(),
+            key=lambda item: (
+                stage_order[item[0][0]], item[0][1],
+                item[0][3], item[0][2]))
+        for (stage, no_decay, is_bias, is_bn,
+             group_lr, group_weight_decay), params in ordered_groups:
+            qualifiers = []
+            if no_decay:
+                qualifiers.append("no_decay")
+            if is_bn:
+                qualifiers.append("bn_q_domain")
+            if is_bias:
+                qualifiers.append("bias")
+            parameter_groups.append({
+                "params": params,
+                "lr": group_lr,
+                "weight_decay": group_weight_decay,
+                "group_name": "_".join([stage] + qualifiers),
+            })
+        return parameter_groups
+
     def _get_optimizer(self, optim_type, lr, weight_decay):
         """
         Called inside TrainerCiFar.__init__.
@@ -278,10 +368,19 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         if self.opt_betas is not None:
             opt_kwargs["betas"] = self.opt_betas
 
+        has_physical_bn = (
+            float(getattr(
+                self.model, "_physical_state_scale", 1.0)) != 1.0 and
+            any(isinstance(module, nn.modules.batchnorm._BatchNorm)
+                for module in self.model.modules()))
+        needs_composed_groups = (
+            self.scale_train_recipe or
+            self.bias_lr_multiplier != 1.0 or
+            self.bias_weight_decay is not None or
+            has_physical_bn)
         optimizer_target = (
-            self._optimizer_parameters(
-                lr, weight_decay, filter_bias_and_bn=True)
-            if self.scale_train_recipe else self.model)
+            self._composed_optimizer_parameters(lr, weight_decay)
+            if needs_composed_groups else self.model)
         return create_optimizer_v2(optimizer_target, **opt_kwargs)
 
     # ------------------------------------------------------------------

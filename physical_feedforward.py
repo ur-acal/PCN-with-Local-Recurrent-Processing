@@ -66,6 +66,28 @@ class StateScale(nn.Module):
         return x * self.scale
 
 
+@torch.no_grad()
+def scale_batchnorm_to_physical_domain(
+        model: nn.Module, q: float, *, scale_eps: bool = True):
+    """Convert BatchNorm state so q-scaled inputs produce q-scaled outputs."""
+    q = float(q)
+    if q <= 0.0:
+        raise ValueError("The physical state scale q must be positive.")
+    q_sq = q * q
+    for module in model.modules():
+        if not isinstance(module, nn.modules.batchnorm._BatchNorm):
+            continue
+        if module.affine:
+            module.weight.mul_(q)
+            module.bias.mul_(q)
+        if module.track_running_stats:
+            module.running_mean.mul_(q)
+            module.running_var.mul_(q_sq)
+        if scale_eps:
+            module.eps *= q_sq
+    return model
+
+
 class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
     """Level-2 averaged-current feedforward basic block.
 
@@ -85,6 +107,7 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
             norm2: Optional[nn.Module] = None,
             act2: Optional[nn.Module] = None,
             between: Optional[nn.Module] = None,
+            main_downsample: Optional[nn.Module] = None,
             shortcut: Optional[nn.Module] = None,
             *, layer_idx: int = 0,
             R: float = 50e3, C: float = 500e-15, v_dd: float = 0.5,
@@ -129,6 +152,8 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         self.norm2 = nn.Identity() if norm2 is None else norm2
         self.act2 = nn.Identity() if act2 is None else act2
         self.between = nn.Identity() if between is None else between
+        self.main_downsample = (
+            nn.Identity() if main_downsample is None else main_downsample)
         self.shortcut = shortcut
 
         self.layer_idx = int(layer_idx)
@@ -206,6 +231,12 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         self._dtc_fixed_variation = {}
         self._dtc_timing_generators = {}
         self._last_dtc_window = {}
+        # Keep the dense bias parameters available after Validator replaces a
+        # Conv2d with its bias-free expanded MVM representation.
+        self._stage_biases = {
+            "conv1": self.conv1.bias,
+            "conv2": None if self.conv2 is None else self.conv2.bias,
+        }
         self.clean_params = {
             "conv1": nn.Parameter(
                 self.conv1.weight.detach().clone(), requires_grad=False)}
@@ -224,10 +255,13 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
     def _stage_capacitance(self, stage: str):
         return self.capacitance1 if stage == "z" else self.capacitance2
 
+    def _effective_stage_scale(self, ref: torch.Tensor, stage: str):
+        scale = self._stage_scale(stage).to(ref)
+        return (scale if self._uses_quantized_weight_scale else
+                torch.ones_like(scale))
+
     def _stage_duration(self, source: torch.Tensor, stage: str):
-        scale = self._stage_scale(stage).to(source)
-        if not self._uses_quantized_weight_scale:
-            scale = torch.ones_like(scale)
+        scale = self._effective_stage_scale(source, stage)
         # TogglePulseBlk's reusable helpers call the first stored convolution
         # "z" and the second "y".  Feedforward semantics are the opposite:
         # conv1 is the y computation and conv2 is the z computation.  Keep the
@@ -267,6 +301,9 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         if module is self.conv2:
             return "conv2"
         raise ValueError("Unknown feedforward physical convolution.")
+
+    def _module_bias(self, module):
+        return self._stage_biases[self._module_key(module)]
 
     def _nonlinear_R_training_module_key(self, module):
         return self._module_key(module)
@@ -311,10 +348,16 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         self._training_pulse_mismatch = mismatch
 
     def _apply_averaged_module(self, module, source):
+        stage = "z" if module is self.conv1 else "y"
+        scale = self._effective_stage_scale(source, stage)
+        bias = self._module_bias(module)
+        if bias is not None:
+            bias = bias * scale * (self.q if self.physical else 1.0)
         if hasattr(module, "mat"):
-            return module(source)
+            out = module(source)
+            return (out if bias is None else
+                    out + bias.view(1, -1, 1, 1))
         source = self._averaged_nonlinear_R_source(module, source)
-        scale = self._stage_scale("z" if module is self.conv1 else "y")
         weight = module.weight
         mismatch = self._training_pulse_mismatch
         if mismatch is not None:
@@ -323,10 +366,26 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
                 weight = weight * perturbation
             else:
                 weight = weight + weight.abs() * perturbation
-        bias = None if module.bias is None else module.bias * scale
         return F.conv2d(
             source, weight, bias, module.stride, module.padding,
             module.dilation, module.groups)
+
+    def _add_post_mvm_bias(self, module, state, stage, duration):
+        """Add the Level-2-equivalent total bias after a pulse MVM stage."""
+        bias = self._module_bias(module)
+        if bias is None:
+            return state
+        scale = self._effective_stage_scale(state, stage)
+        gain = duration * scale
+        if self.physical:
+            gain = gain * self.q / (
+                self.R * self._stage_capacitance(stage))
+        bias_update = gain * bias.view(1, -1, 1, 1)
+        spin_factor = self._spin_factor(stage, state)
+        if spin_factor is not None:
+            bias_update = spin_factor * bias_update
+        updated = state + bias_update
+        return self.project_state(updated) if self.physical else updated
 
     def _run_averaged_stage(self, module, source, stage, duration):
         state = self._output_zeros(module, source)
@@ -362,6 +421,7 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         if self.conv2 is not None:
             out = self.between(self.act2(self.norm2(out)))
             out = self._run_stage(self.conv2, out, "y")
+            out = self.main_downsample(out)
             if self.shortcut is not None:
                 out = out + self.shortcut(residual)
                 if self.physical and not self._capture_dense_modules:
@@ -398,10 +458,6 @@ class PulsePhysicalBasicBlock(AveragedPhysicalBasicBlock, TogglePulseBlk):
                 rhs + slow_current / self._stage_capacitance(stage))
 
     def _run_pulse_stage(self, module, source, stage, duration):
-        if getattr(module, "bias", None) is not None:
-            raise NotImplementedError(
-                "Level-3 physical feedforward convolution bias requires a "
-                "dedicated constant-input coupler stage. Use bias-free convs.")
         state = self._output_zeros(module, source)
         num_slices = self._num_slices(stage)
         dt = duration / float(num_slices)
@@ -430,7 +486,8 @@ class PulsePhysicalBasicBlock(AveragedPhysicalBasicBlock, TogglePulseBlk):
                 state, dt, rhs_fn, stage, slice_idx,
                 constant_rhs=constant_rhs,
                 active_coupler_count=active_coupler_count)
-        return state
+        return self._add_post_mvm_bias(
+            module, state, stage, duration)
 
     def _run_stage(self, module, source, stage):
         if self._capture_dense_modules:
@@ -724,6 +781,14 @@ def _hardware_shortcut(conv1, conv2):
     return AvgPoolChannelPad(in_channels, out_channels, stride=stride)
 
 
+def _converted_shortcut(block):
+    """Keep parameter-free shortcuts; replace learned projections."""
+    shortcut = getattr(block, "shortcut", None)
+    if isinstance(shortcut, nn.Conv2d):
+        return _hardware_shortcut(block.conv1, block.conv2)
+    return shortcut
+
+
 def convert_wide_resnet_to_physical(
         model: nn.Module, activation_factory=None, **physical_kwargs):
     """Convert a registered pre-activation WideResNet in place.
@@ -781,7 +846,9 @@ def convert_wide_resnet_to_physical(
                 norm1=block.bn1, act1=act1,
                 norm2=block.bn2, act2=act2,
                 between=between,
-                shortcut=_hardware_shortcut(block.conv1, block.conv2),
+                main_downsample=getattr(
+                    block, "main_downsample", nn.Identity()),
+                shortcut=_converted_shortcut(block),
                 layer_idx=layer_idx, **physical_kwargs)
             group[block_idx] = wrap(replacement)
             layer_idx += 1
@@ -790,6 +857,7 @@ def convert_wide_resnet_to_physical(
     if physical_kwargs.get("physical", True):
         q = float(physical_kwargs.get("v_dd", 0.5)) / float(
             physical_kwargs.get("one_over_q", 1.0))
+        scale_batchnorm_to_physical_domain(model, q)
         blocks[0].input_scale = q
         model._physical_state_scale = q
         model.relu = nn.Sequential(model.relu, StateScale(1.0 / q))

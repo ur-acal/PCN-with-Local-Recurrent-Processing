@@ -24,7 +24,15 @@ DATA_DIR="${DATA_DIR:-../data}"
 TIMM_AUG_LEVEL="${TIMM_AUG_LEVEL:-none}"
 TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
 DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
-EXTRA_OVERRIDE="${EXTRA_OVERRIDE:-lr=${PRETRAIN_LEARNING_RATE:-0.01},num_epochs=${PRETRAIN_NUM_EPOCHS:-300},warmup_epoch=${WARMUP_PRETRAIN:-0},weight_decay=${WEIGHT_DECAY:-0.001},batch_size=${BATCH_SIZE:-128}}"
+_DEFAULT_OVERRIDE="lr=${PRETRAIN_LEARNING_RATE:-0.1},num_epochs=${PRETRAIN_NUM_EPOCHS:-300},warmup_epoch=${WARMUP_PRETRAIN:-0},weight_decay=${WEIGHT_DECAY:-0.001},batch_size=${BATCH_SIZE:-128}"
+case "${MODEL_NAME}" in
+  wrn_28_2_cifar_nobn_avgpool|wrn_28_2_cifar_nobn_avgpool_shortcut)
+    if [[ "${TASK}" == "cifar10" ]]; then
+      _DEFAULT_OVERRIDE+=",dropout_rate=${DROPOUT_RATE:-0.1},max_norm=${MAX_NORM:-2.0},bias_lr_multiplier=${BIAS_LR_MULTIPLIER:-0.5},bias_weight_decay=${BIAS_WEIGHT_DECAY:-0.0}"
+    fi
+    ;;
+esac
+EXTRA_OVERRIDE="${EXTRA_OVERRIDE:-${_DEFAULT_OVERRIDE}}"
 ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-${ONE_OVER_Q:-1}}"
 ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
 if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
@@ -46,6 +54,7 @@ cmd=(
   --data_dir "${DATA_DIR}"
   --output_dir "${OUTPUT_DIR}"
   --case custom_noresize
+  --seed "${TRAINING_SEED:-4096}"
   --eval_every "${PRETRAIN_EVAL_EVERY:-5}"
   --img_type "${IMG_TYPE}"
   --timm_aug_level "${TIMM_AUG_LEVEL}"
