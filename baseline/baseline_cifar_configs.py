@@ -42,6 +42,8 @@ CUSTOM_CIFAR_MODELS = {
     "wrn_16_4_cifar",
     "wrn_16_8_cifar",
     "wrn_28_2_cifar",
+    "wrn_28_2_cifar_avgpool",
+    "wrn_28_2_cifar_avgpool_shortcut",
     "wrn_28_4_cifar",
     "wrn_40_2_cifar",
     "wrn_16_2_cifar_nobn",
@@ -49,6 +51,8 @@ CUSTOM_CIFAR_MODELS = {
     "wrn_16_4_cifar_nobn",
     "wrn_16_8_cifar_nobn",
     "wrn_28_2_cifar_nobn",
+    "wrn_28_2_cifar_nobn_avgpool",
+    "wrn_28_2_cifar_nobn_avgpool_shortcut",
     "wrn_28_4_cifar_nobn",
     "wrn_40_2_cifar_nobn",
 }

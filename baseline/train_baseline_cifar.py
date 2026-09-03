@@ -257,6 +257,8 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
         validation_seed=args.validation_seed,
         bias_lr_multiplier=cfg.get("bias_lr_multiplier", 1.0),
         bias_weight_decay=cfg.get("bias_weight_decay", None),
+        collapse_monitor_enabled=cfg.get("collapse_monitor_enabled", False),
+        collapse_loss_ema_alpha=cfg.get("collapse_loss_ema_alpha", 0.3),
     )
 
     return trainer_kwargs

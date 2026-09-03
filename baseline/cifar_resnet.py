@@ -291,6 +291,37 @@ class MaxPoolChannelPad(nn.Module):
         return x
 
 
+class ChannelZeroPad(nn.Module):
+    """Parameter-free channel expansion without spatial downsampling."""
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        if out_channels < in_channels:
+            raise ValueError("ChannelZeroPad requires nondecreasing channels")
+        extra = out_channels - in_channels
+        self.pad_left = extra // 2
+        self.pad_right = extra - self.pad_left
+
+    def forward(self, x):
+        if self.pad_left or self.pad_right:
+            x = F.pad(x, (0, 0, 0, 0, self.pad_left, self.pad_right))
+        return x
+
+
+class AvgPoolChannelPad(nn.Module):
+    """Parameter-free average-pool shortcut with symmetric channel padding."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 2):
+        super().__init__()
+        if stride <= 1 or out_channels < in_channels:
+            raise ValueError("AvgPoolChannelPad requires stride > 1 and nondecreasing channels")
+        self.pool = nn.AvgPool2d(kernel_size=stride, stride=stride)
+        self.channel_pad = ChannelZeroPad(in_channels, out_channels)
+
+    def forward(self, x):
+        return self.channel_pad(self.pool(x))
+
+
 class WideBasicBlock(nn.Module):
     def __init__(
         self,
@@ -300,6 +331,8 @@ class WideBasicBlock(nn.Module):
         stride: int = 1,
         use_batchnorm: bool = True,
         maxpool_downsample_shortcut: bool = False,
+        avgpool_downsample_shortcut: bool = False,
+        avgpool_main_downsample: bool = False,
     ):
         super().__init__()
         self.bn1 = nn.BatchNorm2d(in_planes) if use_batchnorm else nn.Identity()
@@ -312,10 +345,26 @@ class WideBasicBlock(nn.Module):
         self.relu2 = nn.ReLU(inplace=True)
         self.dropout_rate = float(dropout_rate)
         self.conv2 = nn.Conv2d(
-            planes, planes, kernel_size=3, stride=stride, padding=1, bias=not use_batchnorm
+            planes,
+            planes,
+            kernel_size=3,
+            stride=1 if avgpool_main_downsample and stride != 1 else stride,
+            padding=1,
+            bias=not use_batchnorm,
+        )
+        self.main_downsample = (
+            nn.AvgPool2d(kernel_size=stride, stride=stride)
+            if avgpool_main_downsample and stride != 1
+            else nn.Identity()
         )
 
-        if stride != 1 and maxpool_downsample_shortcut:
+        if avgpool_downsample_shortcut and (stride != 1 or in_planes != planes):
+            self.shortcut = (
+                AvgPoolChannelPad(in_planes, planes, stride=stride)
+                if stride != 1
+                else ChannelZeroPad(in_planes, planes)
+            )
+        elif stride != 1 and maxpool_downsample_shortcut:
             self.shortcut = MaxPoolChannelPad(in_planes, planes, stride=stride)
         elif stride != 1 or in_planes != planes:
             self.shortcut = nn.Conv2d(
@@ -330,6 +379,7 @@ class WideBasicBlock(nn.Module):
         if self.dropout_rate > 0:
             out = F.dropout(out, p=self.dropout_rate, training=self.training)
         out = self.conv2(out)
+        out = self.main_downsample(out)
         out = out + self.shortcut(x)
         return out
 
@@ -346,6 +396,8 @@ class WideResNetCIFAR(nn.Module):
         base_width: int = 16,
         use_batchnorm: bool = True,
         maxpool_downsample_shortcut: bool = False,
+        avgpool_downsample_shortcut: bool = False,
+        avgpool_main_downsample: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -361,6 +413,8 @@ class WideResNetCIFAR(nn.Module):
         self.final_dropout_rate = float(final_dropout_rate)
         self.use_batchnorm = bool(use_batchnorm)
         self.maxpool_downsample_shortcut = bool(maxpool_downsample_shortcut)
+        self.avgpool_downsample_shortcut = bool(avgpool_downsample_shortcut)
+        self.avgpool_main_downsample = bool(avgpool_main_downsample)
         self.out_dim = widths[3]
         self.in_planes = widths[0]
 
@@ -389,6 +443,8 @@ class WideResNetCIFAR(nn.Module):
                     stride=s,
                     use_batchnorm=self.use_batchnorm,
                     maxpool_downsample_shortcut=self.maxpool_downsample_shortcut,
+                    avgpool_downsample_shortcut=self.avgpool_downsample_shortcut,
+                    avgpool_main_downsample=self.avgpool_main_downsample,
                 )
             )
             self.in_planes = planes
@@ -509,6 +565,37 @@ def wrn_28_2_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: in
 
 
 @register_model
+def wrn_28_2_cifar_avgpool(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_28_2_cifar_avgpool.")
+    return WideResNetCIFAR(
+        depth=28,
+        widen_factor=2,
+        num_classes=num_classes,
+        in_chans=in_chans,
+        avgpool_downsample_shortcut=True,
+        avgpool_main_downsample=True,
+        **kwargs,
+    )
+
+
+@register_model
+def wrn_28_2_cifar_avgpool_shortcut(
+    pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs
+):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_28_2_cifar_avgpool_shortcut.")
+    return WideResNetCIFAR(
+        depth=28,
+        widen_factor=2,
+        num_classes=num_classes,
+        in_chans=in_chans,
+        avgpool_downsample_shortcut=True,
+        **kwargs,
+    )
+
+
+@register_model
 def wrn_28_4_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
     if pretrained:
         raise ValueError("No registered pretrained weights for wrn_28_4_cifar.")
@@ -567,6 +654,37 @@ def wrn_16_8_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chan
 @register_model
 def wrn_28_2_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
     return _build_wrn_nobn(28, 2, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_2_cifar_nobn_avgpool(
+    pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs
+):
+    return _build_wrn_nobn(
+        28,
+        2,
+        pretrained,
+        num_classes,
+        in_chans,
+        avgpool_downsample_shortcut=True,
+        avgpool_main_downsample=True,
+        **kwargs,
+    )
+
+
+@register_model
+def wrn_28_2_cifar_nobn_avgpool_shortcut(
+    pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs
+):
+    return _build_wrn_nobn(
+        28,
+        2,
+        pretrained,
+        num_classes,
+        in_chans,
+        avgpool_downsample_shortcut=True,
+        **kwargs,
+    )
 
 
 @register_model

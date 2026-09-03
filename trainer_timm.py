@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import tempfile
 import sys
@@ -34,6 +35,84 @@ from distillation import SimKD, SRRLLoss, TeacherFeatureExtractor
 
 
 from trainer import TrainerCiFar, _normalize_dataset_name, _CIFAR_STATS
+
+
+class SuddenCollapseMonitor:
+    """Detect catastrophic collapse only after a run has demonstrated learning."""
+
+    def __init__(self, num_classes, ema_alpha=0.3):
+        self.random_loss = math.log(num_classes)
+        self.arm_accuracy = 0.50 if num_classes == 10 else 0.20
+        self.collapse_accuracy = 0.20 if num_classes == 10 else 0.05
+        self.ema_alpha = float(ema_alpha)
+        self.armed = False
+        self.loss_ema = None
+        self.best_loss_ema = None
+
+    def observe(self, epoch, train_loss, val_accuracy=None):
+        if not math.isfinite(float(train_loss)):
+            return self._event(epoch, "nonfinite_train_loss", train_loss, val_accuracy)
+        if val_accuracy is not None and not math.isfinite(float(val_accuracy)):
+            return self._event(epoch, "nonfinite_validation_accuracy", train_loss, val_accuracy)
+
+        previous_ema = self.loss_ema
+        if previous_ema is None:
+            current_ema = float(train_loss)
+        else:
+            current_ema = (
+                self.ema_alpha * float(train_loss)
+                + (1.0 - self.ema_alpha) * previous_ema
+            )
+
+        if self.armed:
+            if val_accuracy is not None and float(val_accuracy) <= self.collapse_accuracy:
+                self.loss_ema = current_ema
+                return self._event(
+                    epoch, "validation_accuracy_returned_near_chance", train_loss,
+                    val_accuracy,
+                )
+            if (
+                previous_ema is not None
+                and self.best_loss_ema is not None
+                and current_ema >= 0.90 * self.random_loss
+                and current_ema >= 1.50 * self.best_loss_ema
+                and current_ema >= 1.25 * previous_ema
+            ):
+                self.loss_ema = current_ema
+                return self._event(
+                    epoch, "smoothed_loss_returned_near_random", train_loss,
+                    val_accuracy,
+                )
+
+        self.loss_ema = current_ema
+        if self.best_loss_ema is None or current_ema < self.best_loss_ema:
+            self.best_loss_ema = current_ema
+        if (
+            current_ema < 0.70 * self.random_loss
+            or (val_accuracy is not None and float(val_accuracy) > self.arm_accuracy)
+        ):
+            self.armed = True
+        return None
+
+    def _event(self, epoch, reason, train_loss, val_accuracy):
+        return {
+            "epoch": int(epoch),
+            "reason": reason,
+            "train_loss": float(train_loss),
+            "loss_ema": self.loss_ema,
+            "best_loss_ema": self.best_loss_ema,
+            "validation_accuracy": (
+                None if val_accuracy is None else float(val_accuracy)
+            ),
+            "monitor_armed": self.armed,
+        }
+
+
+class _NonfiniteTrainingLoss(RuntimeError):
+    def __init__(self, event):
+        super().__init__(event["reason"])
+        self.event = event
+
 
 class TrainerCiFarTimmStyle(TrainerCiFar):
     """
@@ -145,6 +224,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         validation_seed=20240826,
         bias_lr_multiplier=1.0,
         bias_weight_decay=None,
+        collapse_monitor_enabled=False,
+        collapse_loss_ema_alpha=0.3,
 
         is_timm_model=True,
 
@@ -227,6 +308,11 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         self.persistent_workers = persistent_workers
         self.validation_samples = int(validation_samples)
         self.validation_seed = int(validation_seed)
+        self.collapse_monitor_enabled = bool(collapse_monitor_enabled)
+        self.collapse_monitor = (
+            SuddenCollapseMonitor(num_classes, collapse_loss_ema_alpha)
+            if self.collapse_monitor_enabled else None
+        )
 
         # Parent receives lr_reduce_on but does not store it.
         self.lr_reduce_on = kwargs.get("lr_reduce_on", "80,122,150,225,262")
@@ -763,18 +849,27 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         best_top5 = None
         val_top5 = None
         best_model_path = None
+        collapse_path = Path(self.save_path) / "training_collapse.json"
+        if self.collapse_monitor_enabled and collapse_path.exists():
+            collapse_path.unlink()
 
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
 
-            train_loss = self.train_one_epoch(epoch)
+            try:
+                train_loss = self.train_one_epoch(epoch)
+            except _NonfiniteTrainingLoss as exc:
+                self._record_training_collapse(collapse_path, exc.event)
+                return train_loss_list, val_acc_list
 
+            evaluated_val_acc = None
             if (epoch + 1) % self.eval_every == 0 and epoch >= self.skip_eval_epochs:
                 train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
 
                 train_loss_list.append(train_loss)
                 val_acc_list.append(val_acc)
+                evaluated_val_acc = val_acc
 
                 if self.dataset_name == "cifar100":
                     print(
@@ -797,6 +892,14 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                         epoch + 1,
                         "_best_ckpt.pth",
                     )
+
+            if self.collapse_monitor is not None:
+                event = self.collapse_monitor.observe(
+                    epoch + 1, train_loss, evaluated_val_acc
+                )
+                if event is not None:
+                    self._record_training_collapse(collapse_path, event)
+                    return train_loss_list, val_acc_list
 
             self.scheduler.step(epoch + 1)
 
@@ -824,6 +927,12 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         print("--------------------------------------------------------------------------")
 
         return train_loss_list, val_acc_list
+
+    @staticmethod
+    def _record_training_collapse(path, event):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(event, indent=2, sort_keys=True) + "\n")
+        print("----- Training collapsed: {} -----".format(json.dumps(event, sort_keys=True)))
 
     def train_one_epoch(self, epoch):
         """
@@ -907,6 +1016,12 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                 loss = (1.0 - self.distill_alpha) * ce_loss + self.distill_alpha * kd_loss
             else:
                 loss = ce_loss
+
+            if self.collapse_monitor is not None and not torch.isfinite(loss).all():
+                event = self.collapse_monitor._event(
+                    epoch + 1, "nonfinite_batch_loss", float(loss.detach().item()), None
+                )
+                raise _NonfiniteTrainingLoss(event)
 
             loss.backward()
 

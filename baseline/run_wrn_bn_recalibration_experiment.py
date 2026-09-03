@@ -54,6 +54,8 @@ def parse_args():
     p.add_argument("--output_dir", default="logs/wrn_bn_recalibration")
     p.add_argument("--data_dir", default="../data")
     p.add_argument("--checkpoint_root", default="checkpoint/baselines")
+    p.add_argument("--checkpoint_override", default="")
+    p.add_argument("--model_name_override", default="")
     p.add_argument("--mode", choices=["preflight", "full"], default="preflight")
     p.add_argument("--datasets", default="all", help="Comma list or all.")
     p.add_argument("--architectures", default="all", help="Comma list like WRN_16_2,WRN_28_4 or all.")
@@ -341,8 +343,12 @@ def run_one_spec(args, spec: Dict, rows: List[Dict], clean_rows: List[Dict], pre
     dataset = spec["dataset"]
     mismatch_type = spec["mismatch_type"]
     architecture = spec["architecture"]
-    model_name = wrn_label_to_model_name(architecture)
-    checkpoint = model_name_to_checkpoint(Path(args.checkpoint_root), dataset, args.case, model_name)
+    model_name = args.model_name_override or wrn_label_to_model_name(architecture)
+    checkpoint = (
+        Path(args.checkpoint_override)
+        if args.checkpoint_override
+        else model_name_to_checkpoint(Path(args.checkpoint_root), dataset, args.case, model_name)
+    )
     if not checkpoint.exists():
         raise FileNotFoundError(f"Missing checkpoint: {checkpoint}")
 
@@ -722,6 +728,8 @@ def main():
     specs = select_specs(args, specs)
     if not specs:
         raise SystemExit("No comparison CSV specs selected.")
+    if (args.checkpoint_override or args.model_name_override) and len(specs) != 1:
+        raise ValueError("Checkpoint/model overrides require exactly one selected comparison spec.")
 
     rows = []
     clean_rows = []
