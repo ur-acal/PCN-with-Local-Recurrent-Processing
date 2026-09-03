@@ -78,58 +78,6 @@ def _paired_curve_count(path):
     return data.shape[1] // 2
 
 
-# BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-# This loader exists only to map the temporary 45-curve mean table onto the
-# established MC45 corner IDs. Remove it together with
-# patched_nonlinearity_data once updated per-corner MC banks are available.
-def _load_aug4_patched_nonlinearity_data(path):
-    with open(path, newline="") as handle:
-        header = next(csv.reader(handle))
-    if len(header) != 90:
-        raise ValueError(
-            "Patched nonlinear-R data must contain exactly 45 X/Y pairs.")
-
-    records = []
-    pattern = re.compile(
-        r"modelFiles=toplevel\.scs:([^,]+),.*?VDD=([-+0-9.eE]+),"
-        r".*?temperature=([-+0-9.eE]+)\) X\Z")
-    for column_index in range(0, len(header), 2):
-        match = pattern.search(header[column_index])
-        if match is None:
-            raise ValueError(
-                "Cannot parse patched nonlinear-R column: {}".format(
-                    header[column_index]))
-        model, voltage, temperature = match.groups()
-        process = (
-            "tt" if model == "LocalMCOnly"
-            else _canonical_process(model))
-        records.append((
-            column_index // 2, process, float(voltage), float(temperature)))
-
-    voltages = sorted({record[2] for record in records})
-    temperatures = sorted({record[3] for record in records})
-    if len(voltages) != 3 or len(temperatures) != 3:
-        raise ValueError(
-            "Patched nonlinear-R data must contain three V and three T levels.")
-
-    output = {}
-    for curve_index, process, voltage, temperature in records:
-        key = (process, voltages.index(voltage), temperatures.index(temperature))
-        if key in output:
-            raise ValueError(
-                "Patched nonlinear-R data contains a duplicate corner: {}."
-                .format(key))
-        output[key] = {
-            "path": path,
-            "curve_index": curve_index,
-            "quantity": "conductance",
-        }
-    if len(output) != 45:
-        raise ValueError("Patched nonlinear-R data does not cover 45 corners.")
-    return output
-# END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-
-
 class MC45CornerData:
     """Align the repository MC data by process and ordered V/T levels."""
 
@@ -140,8 +88,7 @@ class MC45CornerData:
                  relu_monte_carlo_source="relu_monteCarlo",
                  coupler_nonlinear_variation_source="coupler_monte",
                  coupler_nonlinear_variation_quantity=None,
-                 coupler_nominal_R=67e3,
-                 patched_nonlinearity_data=False):
+                 coupler_nominal_R=67e3):
         self.root = os.path.abspath(os.fspath(root))
         spin_source = os.fspath(spin_variation_source)
         dtc_source = os.fspath(dtc_pulse_width_variation_source)
@@ -180,26 +127,6 @@ class MC45CornerData:
             raise FileNotFoundError(
                 "Coupler nonlinear-variation source not found: {}".format(
                     self.coupler_source_path))
-
-        # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-        if patched_nonlinearity_data:
-            if not os.path.isdir(self.coupler_source_path):
-                raise ValueError(
-                    "patched_nonlinearity_data requires the old coupler_monte "
-                    "folder as the covariance source.")
-            if self.coupler_quantity not in {None, "conductance"}:
-                raise ValueError(
-                    "patched_nonlinearity_data requires conductance curves.")
-            patched_path = os.path.join(
-                self.root, "aug4_2026_45_cu_nonlinear.csv")
-            patched = _load_aug4_patched_nonlinearity_data(patched_path)
-            if set(patched) != set(self.coupler):
-                raise ValueError(
-                    "Patched nonlinear-R corners do not align with coupler_monte.")
-            for key, entry in self.coupler.items():
-                entry["patched_mean_path"] = patched[key]["path"]
-                entry["patched_mean_curve_index"] = patched[key]["curve_index"]
-        # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
 
         expected = set(self.spin)
         for name, values in (

@@ -257,3 +257,37 @@ def configure_measured_pooling(model, wrappers, enable_nonideality=False,
             **common).to(device)
         model.max_pool2d.train(model.training)
     return model
+
+
+def configure_feedforward_measured_pooling(
+        model, *, enable_nonideality=False, curve_path=None,
+        quantity="conductance", nominal_R=1.0, seed=None,
+        training_curve_mode=None, corner_range="all", curve_indices=None,
+        curve_gaussian=None):
+    """Install measured pooling at feedforward global and shortcut pools."""
+    from physical_feedforward import AvgPoolChannelPad
+
+    common = dict(
+        curve_path=curve_path if enable_nonideality else None,
+        curve_gaussian=curve_gaussian if enable_nonideality else None,
+        quantity=quantity, nominal_R=nominal_R,
+        curve_indices=curve_indices,
+        training_curve_mode=training_curve_mode,
+        corner_range=corner_range)
+    if not isinstance(getattr(model, "global_pool", None), nn.AdaptiveAvgPool2d):
+        raise TypeError("Expected model.global_pool to be AdaptiveAvgPool2d.")
+    final_scale = float(getattr(model, "_physical_state_scale", 1.0))
+    model.global_pool = MeasuredAvgPool2d(
+        input_scale=final_scale, seed=seed, **common)
+    pool_index = 1
+    for module in model.modules():
+        if not isinstance(module, AvgPoolChannelPad):
+            continue
+        if isinstance(module.pool, nn.AvgPool2d):
+            module.pool = MeasuredAvgPool2d(
+                kernel_size=module.pool.kernel_size,
+                stride=module.pool.stride,
+                seed=None if seed is None else int(seed) + pool_index,
+                **common)
+            pool_index += 1
+    return model

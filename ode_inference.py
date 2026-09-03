@@ -91,15 +91,6 @@ def parse_args():
         "--nonlinear_R_curve_sampling",
         choices=("empirical_with_replacement", "multivariate_gaussian"),
         default="empirical_with_replacement")
-    # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-    parser.add_argument(
-        "--patched_nonlinearity_data",
-        type=lambda v: v.lower() in ("yes", "true", "t", "1"),
-        default=False)
-    parser.add_argument("--patched_nonlinearity_mean_table", default=None)
-    parser.add_argument(
-        "--patched_nonlinearity_mean_curve_index", type=int, default=None)
-    # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
     parser.add_argument(
         "--nonlinear_R_curve_seed",
         type=lambda s: None if s.lower() in {"none", ""} else int(s),
@@ -478,11 +469,6 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
                       "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
                       "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
-                      "patched_nonlinearity_data": args.patched_nonlinearity_data,
-                      "patched_nonlinearity_mean_table": (
-                          args.patched_nonlinearity_mean_table),
-                      "patched_nonlinearity_mean_curve_index": (
-                          args.patched_nonlinearity_mean_curve_index),
                       "nonlinear_R_curve_bank_indices": (
                           nonlinear_R_curve_bank_indices),
                       "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
@@ -617,11 +603,6 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
                       "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
                       "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
-                      "patched_nonlinearity_data": args.patched_nonlinearity_data,
-                      "patched_nonlinearity_mean_table": (
-                          args.patched_nonlinearity_mean_table),
-                      "patched_nonlinearity_mean_curve_index": (
-                          args.patched_nonlinearity_mean_curve_index),
                       "nonlinear_R_curve_bank_indices": (
                           nonlinear_R_curve_bank_indices),
                       "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
@@ -865,11 +846,6 @@ def run_ode_inference():
                           "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
                           "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
                           "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
-                          "patched_nonlinearity_data": args.patched_nonlinearity_data,
-                          "patched_nonlinearity_mean_table": (
-                              args.patched_nonlinearity_mean_table),
-                          "patched_nonlinearity_mean_curve_index": (
-                              args.patched_nonlinearity_mean_curve_index),
                           "nonlinear_R_curve_bank_indices": (
                               nonlinear_R_curve_bank_indices),
                           "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
@@ -1029,12 +1005,14 @@ def run_ode_inference():
                     correct = 0
 
                     if args.ablation_single_case:
-                        # Keep the evaluated dataset identical while hardware seeds advance.
-                        random.seed(args.data_seed)
-                        np.random.seed(args.data_seed)
-                        torch.manual_seed(args.data_seed)
+                        # Advance the on-the-fly sensor-noise realization together
+                        # with the hardware realization for each accuracy trial.
+                        trial_data_seed = args.data_seed + t
+                        random.seed(trial_data_seed)
+                        np.random.seed(trial_data_seed)
+                        torch.manual_seed(trial_data_seed)
                         if torch.cuda.is_available():
-                            torch.cuda.manual_seed_all(args.data_seed)
+                            torch.cuda.manual_seed_all(trial_data_seed)
                     pbar = tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False)
                     for batch_idx, (inputs, targets) in pbar:
                         inputs, targets = inputs.to(device), targets.to(device)

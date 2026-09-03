@@ -793,3 +793,71 @@ def configure_measured_activation_corner_mode(
     model._measured_activation_corner_hook = model.register_forward_pre_hook(
         _sample_corner_before_forward)
     return len(activations)
+
+
+def feedforward_measured_activation_factory(
+        curve_path, v_dd, corner="TT", curve_sharing="per_model",
+        curve_seed=None, normalize_positive_endpoint=False,
+        interpolation="piecewise_linear", spline_parameters=10,
+        fit_constraint="auto", compile_evaluator=False):
+    """Build measured activations for the stages of a feedforward CNN."""
+    sharing = str(curve_sharing).lower()
+
+    def factory(layer_idx, stage):
+        seed = curve_seed
+        if seed is not None and sharing != "per_model":
+            stage_offset = 0 if stage == "conv1" else 104729
+            seed = int(seed) + 1009 * int(layer_idx) + stage_offset
+        common = dict(
+            curve_path=curve_path, v_dd=v_dd, corner=corner,
+            normalize_positive_endpoint=normalize_positive_endpoint,
+            curve_sharing=sharing, curve_seed=seed)
+        if interpolation == "cubic_bspline":
+            return CubicBSplineActivation(
+                num_parameters=spline_parameters,
+                fit_constraint=fit_constraint,
+                compile_evaluator=compile_evaluator, **common)
+        if interpolation != "piecewise_linear":
+            raise ValueError("Unknown measured-activation interpolation.")
+        return PiecewiseLinearActivation(**common)
+
+    return factory
+
+
+def configure_feedforward_measured_activation(model, factory):
+    """Replace residual-block activations while keeping the final ReLU ideal."""
+    from physical_feedforward import iter_physical_blocks
+
+    blocks = list(iter_physical_blocks(model))
+    for block in blocks:
+        if block.conv2 is None:
+            continue
+        block.act1 = factory(block.layer_idx, "conv1")
+        block.act2 = factory(block.layer_idx, "conv2")
+    return model
+
+
+def configure_feedforward_activation_pullback(model, mode="none", q=None):
+    """Apply the unitless feedforward pullback ``Phi(q*x)/q``."""
+    mode = str(mode).lower()
+    if mode not in ("none", "direct"):
+        raise ValueError(
+            "Feedforward unitless measured pullback must be none or direct.")
+    activations = [
+        module for module in model.modules()
+        if isinstance(module, MEASURED_ACTIVATION_TYPES)
+    ]
+    if mode == "direct":
+        if q is None:
+            raise ValueError(
+                "Direct feedforward pullback requires positive q.")
+        q = torch.as_tensor(q)
+        if q.numel() != 1 or not torch.isfinite(q) or q <= 0:
+            raise ValueError(
+                "Direct feedforward pullback requires positive q.")
+        for activation in activations:
+            activation.set_coordinate_pullback_scale(float(q))
+    else:
+        for activation in activations:
+            activation.set_coordinate_pullback_scale(None)
+    return len(activations)

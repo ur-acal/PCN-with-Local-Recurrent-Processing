@@ -8,6 +8,7 @@
 R_VAL="${R_VAL:-67e3}"
 R_MAX="${R_MAX:-none}"
 C_VAL="${C_VAL:-282e-15}"
+V_DD="${V_DD:-0.1}"
 MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.0}"
 
 declare -A NOISE_LEVELS=(
@@ -238,7 +239,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --R_max         "${R_max}" \
             --C             "${C_VAL}" \
             --k             "${K_VAL}" \
-            --v_dd          "0.1" \
+            --v_dd          "${V_DD}" \
             --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}" \
             --enable_measured_pooling "${ENABLE_MEASURED_POOLING}" \
             --activation_curve_path "${ACTIVATION_CURVE_PATH}" \

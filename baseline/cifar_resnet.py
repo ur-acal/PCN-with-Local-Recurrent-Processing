@@ -255,10 +255,12 @@ class PreActCIFARResNet(nn.Module):
             return x
         return self.fc(x)
 
-    def forward(self, x):
-        x = self.forward_features(x)
-        x = self.forward_head(x)
-        return x
+    def forward(self, x, is_feat: bool = False):
+        features = self.forward_features(x)
+        outputs = self.forward_head(features)
+        if is_feat:
+            return [features], outputs
+        return outputs
 
     def get_classifier(self):
         return self.fc
@@ -356,10 +358,12 @@ class WideResNetCIFAR(nn.Module):
             return x
         return self.fc(x)
 
-    def forward(self, x):
-        x = self.forward_features(x)
-        x = self.forward_head(x)
-        return x
+    def forward(self, x, is_feat: bool = False):
+        features = self.forward_features(x)
+        outputs = self.forward_head(features)
+        if is_feat:
+            return [features], outputs
+        return outputs
 
     def get_classifier(self):
         return self.fc

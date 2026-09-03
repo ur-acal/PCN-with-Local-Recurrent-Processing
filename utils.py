@@ -401,60 +401,6 @@ def load_mc_res_curve_gaussian(path, quantity="conductance",
     }
 
 
-# BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-# Delete this helper, its two wrapper arguments, and the MC45 launch flag once
-# every corner has enough updated Monte Carlo curves to fit both moments from
-# one data source.
-def patch_mc_res_curve_gaussian_mean(curve_gaussian, mean_curve_path,
-                                     mean_curve_index):
-    """Replace only a fitted Gaussian's mean with one characterized curve."""
-    if str(curve_gaussian["quantity"]).lower() != "conductance":
-        raise ValueError(
-            "patched_nonlinearity_data currently contains conductance curves.")
-
-    data = np.loadtxt(mean_curve_path, delimiter=",", skiprows=1)
-    if data.ndim != 2 or data.shape[1] % 2 != 0:
-        raise ValueError(
-            "Patched nonlinear-R data must contain paired X/Y columns.")
-    curve_index = int(mean_curve_index)
-    n_curves = data.shape[1] // 2
-    if curve_index < 0 or curve_index >= n_curves:
-        raise IndexError("Patched nonlinear-R curve index is out of range.")
-
-    grid = data[:, 2 * curve_index]
-    curve = data[:, 2 * curve_index + 1]
-    valid = np.isfinite(grid) & np.isfinite(curve)
-    grid, curve = grid[valid], curve[valid]
-    order = np.argsort(grid)
-    grid, curve = grid[order], curve[order]
-    if grid.size < 2 or np.any(np.diff(grid) <= 0):
-        raise ValueError(
-            "The patched nonlinear-R mean must use a strictly increasing grid.")
-    if np.any(curve <= 0):
-        raise ValueError(
-            "The patched nonlinear-R conductance mean must be positive.")
-
-    reference_grid = curve_gaussian["v_grid"].detach().cpu().numpy()
-    endpoint_tolerance = (
-        10 * np.finfo(reference_grid.dtype).eps *
-        max(1.0, abs(grid[0]), abs(grid[-1])))
-    if (reference_grid[0] < grid[0] - endpoint_tolerance or
-            reference_grid[-1] > grid[-1] + endpoint_tolerance):
-        raise ValueError(
-            "The patched nonlinear-R mean does not cover the covariance grid.")
-    interpolation_grid = np.clip(reference_grid, grid[0], grid[-1])
-    patched_mean = np.interp(interpolation_grid, grid, curve)
-    value_scale = float(curve_gaussian["value_scale"])
-
-    output = dict(curve_gaussian)
-    output["mean"] = torch.tensor(
-        patched_mean / value_scale,
-        dtype=curve_gaussian["mean"].dtype,
-        device=curve_gaussian["mean"].device)
-    return output
-# END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-
-
 def load_res_vs_vin(dir_path=os.path.dirname(os.path.abspath(__file__)), R=50e3, R_max=180e3,
                     dtype=torch.float32, device="cpu", nonlinear_R_table=None,
                     nonlinear_R_mc_curve_index=None,
@@ -676,5 +622,4 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
-
 

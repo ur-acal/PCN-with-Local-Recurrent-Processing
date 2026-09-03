@@ -149,10 +149,13 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         persistent_workers=False,
 
         is_timm_model=True,
+        save_flattened_and_full_param=False,
 
         **kwargs,
     ):
         self.is_timm_model = is_timm_model
+        self.save_flattened_and_full_param = bool(
+            save_flattened_and_full_param)
         # ------------------------------------------------------------
         # Disable CRD in this trainer.
         # ------------------------------------------------------------
@@ -942,8 +945,33 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         if hasattr(self.model, "init_args"):
             state["init_args"] = self.model.init_args
 
-        torch.save(state, save_pth_path)
-        return save_pth_path
+        has_weight_parametrizations = any(
+            P.is_parametrized(module, "weight")
+            for module in self.model.modules())
+        if (not self.save_flattened_and_full_param or
+                not has_weight_parametrizations):
+            torch.save(state, save_pth_path)
+            return save_pth_path
+
+        # Match the PCN checkpoint convention: the ordinary checkpoint has
+        # the effective quantized weights baked in, while the sibling
+        # full_param checkpoint preserves the latent trainable weights and
+        # parametrizations required to continue QAT.
+        flat_model = copy.deepcopy(self.model)
+        for module in flat_model.modules():
+            if P.is_parametrized(module, "weight"):
+                P.remove_parametrizations(
+                    module, "weight", leave_parametrized=True)
+        flat_state = dict(state)
+        flat_state["net"] = flat_model.state_dict()
+        flat_state["checkpoint_weight_format"] = "flattened_quantized"
+        torch.save(flat_state, save_pth_path)
+
+        full_param_path = os.path.join(
+            str(save_to), self.model_name + "_full_param" + suffix)
+        state["checkpoint_weight_format"] = "full_param"
+        torch.save(state, full_param_path)
+        return full_param_path
 
 
 class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):

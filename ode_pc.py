@@ -19,8 +19,7 @@ from pc_conv import PCConv, PCConvNoisy, PCConvHardTanhLimit, PCConvHardTanhLimi
 from pc_conv import ReLUX, HardTanhByX
 from utils import (expand_weights_to_matrix, interpolate_R_eff,
                    load_mc_res_curve_bank, load_mc_res_curve_gaussian,
-                   load_mc_res_training_curve_bank,
-                   patch_mc_res_curve_gaussian_mean, load_res_vs_vin)
+                   load_mc_res_training_curve_bank, load_res_vs_vin)
 from torchdiffeq import odeint
 from TorchDiffEqPack.odesolver import odesolve as aca_ode_solve
 from measured_activation import (
@@ -3159,27 +3158,12 @@ class WrapQuantizeW(ODEWrapperRC):
             "nonlinear_R_curve_edge_chunk_size", 65536)
         self.nonlinear_R_curve_sampling = kwargs.pop(
             "nonlinear_R_curve_sampling", "empirical_with_replacement")
-        # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-        self.patched_nonlinearity_data = kwargs.pop(
-            "patched_nonlinearity_data", False)
-        self.patched_nonlinearity_mean_table = kwargs.pop(
-            "patched_nonlinearity_mean_table", None)
-        self.patched_nonlinearity_mean_curve_index = kwargs.pop(
-            "patched_nonlinearity_mean_curve_index", None)
-        # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
         self.nonlinear_R_train_mode = str(kwargs.pop(
             "nonlinear_R_train_mode", "none")).lower()
         self.nonlinear_R_corner_range = kwargs.pop(
             "nonlinear_R_corner_range", "all")
         if self.nonlinear_R_train_mode not in {"none", "exact_curve", "mean"}:
             raise ValueError("Unknown nonlinear_R_train_mode.")
-        if self.patched_nonlinearity_data and not self.nonlinear_R:
-            raise ValueError(
-                "patched_nonlinearity_data requires nonlinear_R=True.")
-        if (self.patched_nonlinearity_data and
-                self.nonlinear_R_train_mode != "none"):
-            raise ValueError(
-                "patched_nonlinearity_data is inference-only.")
         self.nonlinear_R_curve_bank = None
         self.nonlinear_R_curve_gaussian = None
         self.R_code_round_base = kwargs.pop("R_code_round_base", 1)
@@ -3355,12 +3339,6 @@ class WrapQuantizeW(ODEWrapperRC):
         # R_table: Actual resistance value at different voltage; (N, M)
         if not self.nonlinear_R:
             return False
-        if (self.patched_nonlinearity_data and
-                self.nonlinear_R_curve_sampling != "multivariate_gaussian"):
-            raise ValueError(
-                "patched_nonlinearity_data requires multivariate_gaussian "
-                "curve sampling.")
-
         if (self.nonlinear_R_curve_sharing != "shared" or
                 self.nonlinear_R_curve_bank_indices is not None):
             if self.nonlinear_R_table is None:
@@ -3372,19 +3350,6 @@ class WrapQuantizeW(ODEWrapperRC):
                     quantity=self.nonlinear_R_mc_quantity,
                     curve_indices=self.nonlinear_R_curve_bank_indices,
                     device=self.ode_block.FFconv.weight.device)
-                # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-                if self.patched_nonlinearity_data:
-                    if (self.patched_nonlinearity_mean_table is None or
-                            self.patched_nonlinearity_mean_curve_index is None):
-                        raise ValueError(
-                            "Patched nonlinear-R mean table and curve index "
-                            "are required.")
-                    self.nonlinear_R_curve_gaussian = (
-                        patch_mc_res_curve_gaussian_mean(
-                            self.nonlinear_R_curve_gaussian,
-                            self.patched_nonlinearity_mean_table,
-                            self.patched_nonlinearity_mean_curve_index))
-                # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
             else:
                 self.nonlinear_R_curve_bank = load_mc_res_curve_bank(
                     self.nonlinear_R_table,

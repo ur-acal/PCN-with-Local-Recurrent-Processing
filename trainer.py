@@ -903,6 +903,12 @@ class TrainerCiFar(object):
                 stage = "ff"
             elif ".FBconv." in name:
                 stage = "fb"
+            elif ".ode_block.conv2." in name:
+                # Feedforward conv2 uses the legacy FF training-scale slot.
+                stage = "ff"
+            elif ".ode_block.conv1." in name:
+                # Feedforward conv1 uses the legacy FB training-scale slot.
+                stage = "fb"
             else:
                 stage = "other"
             no_decay = (
@@ -1228,7 +1234,11 @@ class WrappedNoisyPulseModel(WrappedNoisyModel):
                 "post-quantization-mismatch block.")
         self.pulse_parameter_ids = set()
         for block in self.pulse_blocks:
-            for module in (block.FFconv, block.FBconv):
+            modules = (
+                block.active_convolutions()
+                if hasattr(block, "active_convolutions") else
+                (block.FFconv, block.FBconv))
+            for module in modules:
                 if P.is_parametrized(module, "weight"):
                     parameter = module.parametrizations.weight.original
                 else:

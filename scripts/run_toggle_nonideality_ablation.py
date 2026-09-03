@@ -105,12 +105,6 @@ def parse_args():
         "--mc_coupler_nonlinear_variation_quantity",
         choices=("conductance", "resistance"), default=None)
     parser.add_argument("--mc_coupler_nominal_R", type=float, default=67e3)
-    # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-    parser.add_argument(
-        "--patched_nonlinearity_data",
-        type=lambda v: v.lower() in ("yes", "true", "t", "1"),
-        default=False)
-    # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
     parser.add_argument(
         "--full_45_corner_enable_spin_variation",
         type=lambda v: v.lower() in ("yes", "true", "t", "1"),
@@ -329,8 +323,6 @@ def build_command(args, case_name):
         "--nonlinear_R_mc_quantity", "conductance",
         "--nonlinear_R_curve_sharing", args.nonlinear_R_curve_sharing,
         "--nonlinear_R_curve_sampling", args.nonlinear_R_curve_sampling,
-        "--patched_nonlinearity_data",
-        bool_arg(args.patched_nonlinearity_data),
         "--nonlinear_R_curve_seed", str(args.base_seed),
         "--nonlinear_R_curve_edge_chunk_size",
         str(args.nonlinear_R_curve_edge_chunk_size),
@@ -464,15 +456,6 @@ def build_corner_command(args, corner, corner_index):
         command, "--nonlinear_R",
         bool_arg(args.full_45_corner_enable_nonlinear_R))
     _set_command_arg(command, "--nonlinear_R_table", corner["coupler"]["path"])
-    # BEGIN TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
-    if args.patched_nonlinearity_data:
-        command.extend([
-            "--patched_nonlinearity_mean_table",
-            corner["coupler"]["patched_mean_path"],
-            "--patched_nonlinearity_mean_curve_index",
-            str(corner["coupler"]["patched_mean_curve_index"]),
-        ])
-    # END TEMPORARY PATCH: Aug-4 single-curve nonlinear-R means.
     _set_command_arg(
         command, "--R", corner["coupler"].get("nominal_R", args.R))
     _set_command_arg(
@@ -699,11 +682,6 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     if args.full_45_corner_test:
-        if (args.patched_nonlinearity_data and
-                args.nonlinear_R_curve_sampling != "multivariate_gaussian"):
-            raise ValueError(
-                "patched_nonlinearity_data requires "
-                "nonlinear_R_curve_sampling=multivariate_gaussian.")
         catalog = MC45CornerData(
             args.mc_45_corner_dir,
             spin_variation_source=args.mc_spin_variation_source,
@@ -714,8 +692,7 @@ def main():
                 args.mc_coupler_nonlinear_variation_source),
             coupler_nonlinear_variation_quantity=(
                 args.mc_coupler_nonlinear_variation_quantity),
-            coupler_nominal_R=args.mc_coupler_nominal_R,
-            patched_nonlinearity_data=args.patched_nonlinearity_data)
+            coupler_nominal_R=args.mc_coupler_nominal_R)
         corners = list(catalog.corners)
         if args.corner_ids is not None:
             requested = {name.upper() for name in args.corner_ids}

@@ -52,8 +52,6 @@ ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
 ENABLE_DIFF_MISMATCH="${ENABLE_DIFF_MISMATCH:-false}"
 NONLINEAR_R_CURVE_SHARING="${NONLINEAR_R_CURVE_SHARING:-per_coupler}"
 NONLINEAR_R_CURVE_SAMPLING="${NONLINEAR_R_CURVE_SAMPLING:-empirical_with_replacement}"
-# Temporary Aug-4 mean-table patch; remove when updated MC banks arrive.
-PATCHED_NONLINEARITY_DATA="${PATCHED_NONLINEARITY_DATA:-false}"
 NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE="${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE:-65536}"
 # Spin variation
 MC_SPIN_VARIATION_SOURCE="${MC_SPIN_VARIATION_SOURCE:-PVT_Monte_Carlo_Results_SPIN.csv}"
@@ -131,7 +129,6 @@ mkdir -p "${OUTPUT_DIR}"
   echo "enable_diff_mismatch=${ENABLE_DIFF_MISMATCH}"
   echo "nonlinear_R_curve_sharing=${NONLINEAR_R_CURVE_SHARING}"
   echo "nonlinear_R_curve_sampling=${NONLINEAR_R_CURVE_SAMPLING}"
-  echo "patched_nonlinearity_data=${PATCHED_NONLINEARITY_DATA}"
   echo "nonlinear_R_curve_edge_chunk_size=${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE}"
   echo "spin_source=${MC_SPIN_VARIATION_SOURCE}"
   echo "enable_spin_variation=${ENABLE_SPIN_VARIATION}"
@@ -208,7 +205,6 @@ python scripts/run_toggle_nonideality_ablation.py \
   --dtc_falling_edge_jitter_std "${DTC_FALLING_EDGE_JITTER_STD}" \
   --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING}" \
   --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING}" \
-  --patched_nonlinearity_data "${PATCHED_NONLINEARITY_DATA}" \
   --nonlinear_R_curve_edge_chunk_size "${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE}" \
   --activation_interpolation "${ACTIVATION_INTERPOLATION}" \
   --activation_curve_sharing "${ACTIVATION_CURVE_SHARING}" \

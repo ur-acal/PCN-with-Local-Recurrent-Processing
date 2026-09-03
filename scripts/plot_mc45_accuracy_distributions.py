@@ -24,6 +24,9 @@ BASE_LABEL = "No measured pooling\n(train and inference)"
 PATCH_LABEL = "Patched-Gaussian measured pooling\n(no pooling-aware training)"
 IDEAL_POOLING_LABEL = "Ideal pooling"
 NONIDEAL_POOLING_LABEL = "Gaussian-based non-ideal pooling"
+OUTPUT_FORMAT = "pdf"
+ACCURACY_MIN = None
+ACCURACY_MAX = None
 
 
 def load_corner_results(root):
@@ -33,9 +36,9 @@ def load_corner_results(root):
             rows.extend(csv.DictReader(handle))
 
     keys = [(row["corner"], int(row["trial_index"])) for row in rows]
-    if len(rows) != 225 or len(set(keys)) != 225:
+    if not rows or len(set(keys)) != len(rows):
         raise ValueError(
-            "{} must contain 225 unique corner/trial results; found {}/{}."
+            "{} must contain unique corner/trial results; found {}/{}."
             .format(root, len(rows), len(set(keys))))
 
     grouped = {}
@@ -43,8 +46,11 @@ def load_corner_results(root):
         grouped.setdefault(row["corner"], []).append(
             (int(row["trial_index"]), float(row["accuracy"])))
 
-    if len(grouped) != 45 or any(len(values) != 5 for values in grouped.values()):
-        raise ValueError("{} must contain five trials for each of 45 corners.".format(root))
+    trial_counts = {len(values) for values in grouped.values()}
+    if len(grouped) != 45 or len(trial_counts) != 1:
+        raise ValueError(
+            "{} must contain the same nonzero number of trials for each of "
+            "45 corners.".format(root))
 
     output = {}
     for corner, values in grouped.items():
@@ -59,10 +65,19 @@ def load_corner_results(root):
 
 
 def save_figure(fig, output_dir, name):
+    name = os.path.splitext(name)[0] + "." + OUTPUT_FORMAT
     path = os.path.join(output_dir, name)
-    fig.savefig(path, bbox_inches="tight")
+    fig.savefig(path, format=OUTPUT_FORMAT, bbox_inches="tight")
     plt.close(fig)
     print(path)
+
+
+def accuracy_limits(lower, upper):
+    if ACCURACY_MIN is not None:
+        lower = ACCURACY_MIN
+    if ACCURACY_MAX is not None:
+        upper = ACCURACY_MAX
+    return lower, upper
 
 
 def normal_pdf(x, mean, std):
@@ -103,6 +118,7 @@ def plot_histogram(base, patch, output_dir):
     upper = np.ceil(max(base_means.max(), patch_means.max()))
     bins = np.linspace(lower, upper, 14)
     x = np.linspace(lower, upper, 500)
+    view_lower, view_upper = accuracy_limits(lower, upper)
 
     configurations = (
         (base_means, BASE_COLOR, BASE_LABEL.replace("\n", " "),
@@ -119,7 +135,7 @@ def plot_histogram(base, patch, output_dir):
                 label="Gaussian fit: μ={:.2f}, σ={:.2f}".format(mean, std))
         ax.plot(means, np.full_like(means, -0.002), "|", color=color,
                 markersize=8, markeredgewidth=1.0)
-        ax.set_xlim(lower, upper)
+        ax.set_xlim(view_lower, view_upper)
         ax.set_title("Corner Accuracy Distribution")
         ax.set_xlabel("Corner mean accuracy (%)")
         ax.set_ylabel("Probability density")
@@ -137,7 +153,7 @@ def plot_histogram(base, patch, output_dir):
                 label="{}: μ={:.2f}, σ={:.2f}".format(label, mean, std))
         ax.plot(means, np.full_like(means, -0.002), "|", color=color,
                 markersize=8, markeredgewidth=1.0)
-    ax.set_xlim(lower, upper)
+    ax.set_xlim(view_lower, view_upper)
     ax.set_title("Corner Accuracy Distribution")
     ax.set_xlabel("Corner mean accuracy (%)")
     ax.set_ylabel("Probability density")
@@ -174,6 +190,7 @@ def plot_violin(base, patch, output_dir):
     patch_values = np.array([entry["mean"] for entry in patch.values()])
     lower = min(base_values.min(), patch_values.min()) - 1.0
     upper = max(base_values.max(), patch_values.max()) + 1.0
+    view_lower, view_upper = accuracy_limits(lower, upper)
     rng = np.random.default_rng(20260806)
 
     configurations = (
@@ -198,7 +215,7 @@ def plot_violin(base, patch, output_dir):
         draw_mean_std(ax, 1, values)
 
         ax.set_xlim(0.5, 1.5)
-        ax.set_ylim(lower, upper)
+        ax.set_ylim(view_lower, view_upper)
         ax.set_xticks(())
         ax.set_ylabel("Corner mean accuracy (%)")
         ax.set_title("Corner Accuracy Distribution")
@@ -219,7 +236,7 @@ def plot_violin(base, patch, output_dir):
                    edgecolors="white", linewidths=0.35)
         draw_mean_std(ax, position, values)
 
-    ax.set_ylim(lower, upper)
+    ax.set_ylim(view_lower, view_upper)
     ax.set_xticks((1, 2), (IDEAL_POOLING_LABEL, NONIDEAL_POOLING_LABEL))
     ax.set_ylabel("Corner mean accuracy (%)")
     ax.set_title("Corner Accuracy Distribution")
@@ -292,11 +309,29 @@ def plot_ranked_errorbars(base, patch, output_dir):
 
 
 def main():
+    global ACCURACY_MAX, ACCURACY_MIN, OUTPUT_FORMAT
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline_dir", required=True)
     parser.add_argument("--patched_dir", required=True)
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--output_format", choices=("pdf", "svg"),
+                        default="pdf")
+    parser.add_argument("--plot_kind",
+                        choices=("all", "histogram", "violin"),
+                        default="all")
+    parser.add_argument("--accuracy_min", type=float)
+    parser.add_argument("--accuracy_max", type=float)
     args = parser.parse_args()
+
+    if (args.accuracy_min is not None and
+            args.accuracy_max is not None and
+            args.accuracy_min >= args.accuracy_max):
+        parser.error("--accuracy_min must be less than --accuracy_max")
+
+    OUTPUT_FORMAT = args.output_format
+    ACCURACY_MIN = args.accuracy_min
+    ACCURACY_MAX = args.accuracy_max
 
     os.makedirs(args.output_dir, exist_ok=True)
     plt.rcParams.update({
@@ -309,8 +344,10 @@ def main():
 
     baseline = load_corner_results(args.baseline_dir)
     patched = load_corner_results(args.patched_dir)
-    plot_histogram(baseline, patched, args.output_dir)
-    plot_violin(baseline, patched, args.output_dir)
+    if args.plot_kind in ("all", "histogram"):
+        plot_histogram(baseline, patched, args.output_dir)
+    if args.plot_kind in ("all", "violin"):
+        plot_violin(baseline, patched, args.output_dir)
 
 
 if __name__ == "__main__":
