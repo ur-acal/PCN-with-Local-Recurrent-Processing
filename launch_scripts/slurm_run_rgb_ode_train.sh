@@ -1,8 +1,9 @@
 #!/bin/bash
 #set -euo pipefail
 
-REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
-SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_rgb_ode_train.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+SBATCH_SCRIPT="${SBATCH_SCRIPT:-${REPO_ROOT}/launch_scripts/run_rgb_ode_train.sh}"
 
 ###############################################################################################
 # running with
@@ -13,6 +14,8 @@ SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_rgb_ode_train.sh"
 
 MAX_TASKS_PER_GPU="${MAX_TASKS_PER_GPU:-1}"
 GPUS_PER_JOB="${GPUS_PER_JOB:-1}"
+
+mkdir -p "${REPO_ROOT}/logs/slurm_jobs"
 
 PCNS=( "PCNetNoBatchNorm" )
 ODE_BLOCK_LIST=( "ODEBlockXInit" )
@@ -66,8 +69,10 @@ for dataset_name in "${DATASET_LIST[@]}"; do
                 for is_timm in "${TIMM_TRAINER[@]}"; do
                   jid=$(
                     sbatch --parsable \
+                      --chdir="${REPO_ROOT}" \
+                      --output="${REPO_ROOT}/logs/slurm_jobs/slurm_%j.out" \
                       --gres=gpu:${GPUS_PER_JOB} \
-                      --export=ALL,IS_SLURM=1,DATASET_NAME="${dataset_name}",PCN="${pcn}",ODE_BLOCK="${ode_block}",T_END="${t_end}",WARMUP_EPOCH="${warmup_epoch}",IS_TIMM="${is_timm}",TIMM_SCHED="${timm_sched}",PCCONV="${pc_conv}",INP_CHANNELS="${inp_channels}",OUT_CHANNELS="${out_channels}",MAX_POOL="${max_pool}" \
+                      --export=ALL,IS_SLURM=1,REPO_ROOT="${REPO_ROOT}",DATASET_NAME="${dataset_name}",PCN="${pcn}",ODE_BLOCK="${ode_block}",T_END="${t_end}",WARMUP_EPOCH="${warmup_epoch}",IS_TIMM="${is_timm}",TIMM_SCHED="${timm_sched}",PCCONV="${pc_conv}",INP_CHANNELS="${inp_channels}",OUT_CHANNELS="${out_channels}",MAX_POOL="${max_pool}" \
                       "${SBATCH_SCRIPT}"
                   )
                   echo "submitted job ${jid}: dataset_name=${dataset_name}, architecture=${architecture}, pcn=${pcn}, ode_block=${ode_block}, t_end=${t_end}, warmup_epoch=${warmup_epoch}, is_timm=${is_timm}, timm_sched=${timm_sched}, pc_conv=${pc_conv}, inp=${inp_channels}, out=${out_channels}, pool=${max_pool}"

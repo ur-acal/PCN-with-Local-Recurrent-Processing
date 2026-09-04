@@ -6,12 +6,13 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH -t 72:10:00
-#SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
+#SBATCH -o logs/slurm_jobs/slurm_%j.out
 
 source activate base
 conda activate scanbase
 
-REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 cd "${REPO_ROOT}"
 
 export PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"

@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH -t 90:10:00
-#SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
+#SBATCH -o logs/slurm_jobs/slurm_%j.out
 
 IS_SLURM="${IS_SLURM:-0}"
 
@@ -15,7 +15,8 @@ if [[ "${IS_SLURM}" == 1 ]]; then
   conda activate scanbase
 fi
 
-REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 MODEL_DIR="${MODEL_DIR:-${REPO_ROOT}/saved_ckpt}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 MODEL_SET="${MODEL_SET:-existing}"

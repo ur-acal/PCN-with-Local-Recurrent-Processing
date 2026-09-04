@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
 #SBATCH --gres=gpu:1                  # exactly ONE GPU; allows packing on 4-GPU nodes
 #SBATCH -t 90:10:00
-#SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
+#SBATCH -o logs/slurm_jobs/slurm_%j.out
 
 # OpenMP settings:
 #export OMP_NUM_THREADS=1
@@ -14,6 +14,10 @@
 #export OMP_PROC_BIND=spread
 
 IS_SLURM="${IS_SLURM:-0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+
+cd "${REPO_ROOT}"
 
 if [[ "${IS_SLURM}" == 1 ]]; then
   source activate base

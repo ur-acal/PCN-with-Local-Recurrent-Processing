@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 DATA_ROOT="${DATA_ROOT:-/scratch/rzeng7/repos/data}"
 PARALLELISM="${PARALLELISM:-4}"
 SBATCH_SCRIPT="${SBATCH_SCRIPT:-${REPO_ROOT}/launch_scripts/run_wrn28_2_nobn_pool_hparam_search.sbatch}"
@@ -15,6 +16,8 @@ submit_study() {
   local job_id
 
   job_id=$(sbatch --parsable \
+    --chdir="${REPO_ROOT}" \
+    --output="${REPO_ROOT}/logs/slurm_jobs/slurm_%j.out" \
     --export=ALL,REPO_ROOT="${REPO_ROOT}",DATA_ROOT="${DATA_ROOT}",PARALLELISM="${PARALLELISM}",DATASET_NAME="${dataset_name}",STUDY_NAME="${study_name}",SEARCH_ROOT="${search_root}" \
     "${SBATCH_SCRIPT}")
   echo "submitted job ${job_id}: dataset=${dataset_name}, study=${study_name}, parallelism=${PARALLELISM}, output=${search_root}"

@@ -1,7 +1,9 @@
 #!/bin/bash
 
-REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
-SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_rgb_ode_mismatch_eval.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+SBATCH_SCRIPT="${SBATCH_SCRIPT:-${REPO_ROOT}/launch_scripts/run_rgb_ode_mismatch_eval.sh}"
+MODEL_DIR="${MODEL_DIR:-${REPO_ROOT}/saved_ckpt}"
 
 ###############################################################################################
 # Existing six checkpoints: submits four one-GPU jobs.
@@ -37,6 +39,8 @@ NOISY_TRIALS="${NOISY_TRIALS:-10}"
 
 export CONDITIONS DATASETS MUL_LEVELS MAX_ADD_LEVELS RMS_ADD_LEVELS MAX_SQRT_LEVELS FF_GAIN_LIST NOISY_TRIALS
 
+mkdir -p "${REPO_ROOT}/logs/slurm_jobs"
+
 if [[ -n "${MODEL_NAME}" ]]; then
   NUM_JOBS=1
 elif [[ "${MODEL_SET}" == "pending" ]]; then
@@ -50,8 +54,10 @@ fi
 for ((shard_id=0; shard_id<NUM_JOBS; shard_id++)); do
   jid=$(
     sbatch --parsable \
+      --chdir="${REPO_ROOT}" \
+      --output="${REPO_ROOT}/logs/slurm_jobs/slurm_%j.out" \
       --gres=gpu:${GPUS_PER_JOB} \
-      --export=ALL,IS_SLURM=1,MODEL_SET="${MODEL_SET}",EVAL_MODE="${EVAL_MODE}",SHARD_ID="${shard_id}",MODEL_NAME="${MODEL_NAME}",MODEL_INDEX="${MODEL_INDEX}",ARCHITECTURE="${ARCHITECTURE}",RESULT_TAG="${RESULT_TAG}",ODE_BLOCK="${ODE_BLOCK}",PC_CONV="${PC_CONV}",OUTPUT_ROOT="${OUTPUT_ROOT}" \
+      --export=ALL,IS_SLURM=1,REPO_ROOT="${REPO_ROOT}",MODEL_DIR="${MODEL_DIR}",MODEL_SET="${MODEL_SET}",EVAL_MODE="${EVAL_MODE}",SHARD_ID="${shard_id}",MODEL_NAME="${MODEL_NAME}",MODEL_INDEX="${MODEL_INDEX}",ARCHITECTURE="${ARCHITECTURE}",RESULT_TAG="${RESULT_TAG}",ODE_BLOCK="${ODE_BLOCK}",PC_CONV="${PC_CONV}",OUTPUT_ROOT="${OUTPUT_ROOT}" \
       "${SBATCH_SCRIPT}"
   )
   echo "submitted job ${jid}: model_set=${MODEL_SET}, eval_mode=${EVAL_MODE}, conditions=${CONDITIONS}, model_name=${MODEL_NAME:-mapped}, shard_id=${shard_id}"
