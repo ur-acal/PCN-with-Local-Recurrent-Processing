@@ -59,7 +59,7 @@ class ODESolver(nn.Module):
         :param atol: float
                 absolute error tolerance
         :param neval_max: int
-                maximum number of evaluations, typically set as an extermely large number, e.g. 500,000
+                maximum retry attempts for one adaptive integration step
         :param print_neval: bool
                 print number of evaluations or not
         :param print_direction: bool

@@ -21,12 +21,15 @@ class AdaptiveGridSolver(ODESolver):
     def __init__(self, func, t0, y0, t1=1.0, h=0.1, rtol=1e-3, atol=1e-6, neval_max=500000,
                  print_neval=False, print_direction=False, step_dif_ratio=1e-3, safety=SAFETY,
                  regenerate_graph=False, dense_output=True, interpolation_method = 'cubic', print_time = False,
-                 end_point_mode = False, eps=None, noise_type="mul"):
+                 end_point_mode = False, eps=None, noise_type="mul", max_steps=5000):
         '''
         If end_point_mode is set as True, evaluated at t0 <= s1, s2, s3, ..., sn = t1, return value at t1 without interpolation
         '''
         if safety is None:
             safety = SAFETY
+        if max_steps <= 0:
+            raise ValueError("max_steps must be positive")
+        self.max_steps = max_steps
 
         self.end_point_mode = end_point_mode
         if end_point_mode:
@@ -260,7 +263,10 @@ class AdaptiveGridSolver(ODESolver):
 
             delete_local_computation_graph(flatten([y0_clone, _f0]))
 
-        self.neval = 0  # number of evaluation steps
+        self.neval = 0  # number of adaptive integration steps
+        h_floor = max(abs((self.t1 - self.t0).item()) / self.max_steps,
+                      torch.finfo(y_current[0].dtype).eps)
+        h_current = max(float(h_current), h_floor)
 
         if reload_state:
             self.func.load_state_dict(state0)
@@ -275,9 +281,9 @@ class AdaptiveGridSolver(ODESolver):
 
         # keep advancing a small step in time
         # merge two types of conditions, first for non end_point mode, second for end_point mode
-        while ( (self.t_end is not None) and self.neval < self.neval_max and not self.end_point_mode) or \
+        while ( (self.t_end is not None) and self.neval < self.max_steps and not self.end_point_mode) or \
                 (abs(t_current-self.t0) <= abs(self.t1-self.t0) and abs(t_current + h_current * self.time_direction -self.t0) < abs(self.t1-self.t0)
-                 and self.neval < self.neval_max and self.end_point_mode):
+                 and self.neval < self.max_steps and self.end_point_mode):
             # if not self.keep_small_step:
             step_accepted = False
             step_rejected = False
@@ -310,7 +316,7 @@ class AdaptiveGridSolver(ODESolver):
 
                     y_detach = tuple( Variable(_y_current.clone().detach(), requires_grad = False) for _y_current in y_current)
 
-                    h_current = h_new  # .clone().detach()
+                    h_current = max(float(h_new), h_floor)  # .clone().detach()
 
                     _y_new, _error, _variables = self.step(self.func, t_current, h_current * self.time_direction,
                                                            y_detach, return_variables=True)
@@ -366,7 +372,7 @@ class AdaptiveGridSolver(ODESolver):
             t_current = t_current + h_current * self.time_direction
             steps.append(t_current)
             # update stepsize
-            h_current = h_new
+            h_current = max(float(h_new), h_floor)
 
             # print current time
             # print(t_current)

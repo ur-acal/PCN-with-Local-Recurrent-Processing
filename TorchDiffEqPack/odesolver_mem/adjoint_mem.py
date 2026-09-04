@@ -199,7 +199,8 @@ def odesolve_adjoint_sym12(func, y0, options = None):
     options.update({'rtol': rtol}) # float or list of floats (must be same length as y0), relative tolerance for integration, typically set as 1e-2 or 1e-3 for MALI\n
     options.update({'atol': atol}) # float or list of floats (must be same length as y0), absolute tolerance for integration, typically set as 1e-3 for MALI\n
     options.update({'print_neval': print_neval}) # bool, when print number of function evaluations, recommended to set as False\n
-    options.update({'neval_max': neval_max}) # int, maximum number of evaluations when encountering stiff problems, typically set as 5e5\n
+    options.update({'neval_max': neval_max}) # int, maximum retry attempts for one adaptive integration step\n
+    options.update({'max_steps': max_steps}) # int, maximum number of adaptive integration steps; defaults to 5000\n
     options.update({'t_eval': [t0, t0 + (t1-t0)/10, ...  ,t1]}) # list of float; if is None, then the output is the value at time t1\n
 
     out = odesolve_adjoint_sym12(func, y0, options = options) # func is the ODE; y0 is the initial condition, could be either a tensor or a tuple of tensors\n

@@ -27,6 +27,9 @@ def extract_keys(options):
         hyperparams.update({'atol': options['atol']})
     if 'neval_max' in options.keys():
         hyperparams.update({'neval_max': options['neval_max']})
+    if 'max_steps' in options.keys() and options['method'].lower() in [
+            'rk12', 'rk23', 'dopri5', 'ode23s', 'sym12async']:
+        hyperparams.update({'max_steps': options['max_steps']})
     if 'print_neval' in options.keys():
         hyperparams.update({'print_neval': options['print_neval']})
     if 'print_direction' in options.keys():
