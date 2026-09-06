@@ -330,15 +330,18 @@ class WideBasicBlock(nn.Module):
         dropout_rate: float,
         stride: int = 1,
         use_batchnorm: bool = True,
+        conv_bias: bool | None = None,
         maxpool_downsample_shortcut: bool = False,
         avgpool_downsample_shortcut: bool = False,
         avgpool_main_downsample: bool = False,
     ):
         super().__init__()
+        if conv_bias is None:
+            conv_bias = not use_batchnorm
         self.bn1 = nn.BatchNorm2d(in_planes) if use_batchnorm else nn.Identity()
         self.relu1 = nn.ReLU(inplace=True)
         self.conv1 = nn.Conv2d(
-            in_planes, planes, kernel_size=3, stride=1, padding=1, bias=not use_batchnorm
+            in_planes, planes, kernel_size=3, stride=1, padding=1, bias=conv_bias
         )
 
         self.bn2 = nn.BatchNorm2d(planes) if use_batchnorm else nn.Identity()
@@ -350,7 +353,7 @@ class WideBasicBlock(nn.Module):
             kernel_size=3,
             stride=1 if avgpool_main_downsample and stride != 1 else stride,
             padding=1,
-            bias=not use_batchnorm,
+            bias=conv_bias,
         )
         self.main_downsample = (
             nn.AvgPool2d(kernel_size=stride, stride=stride)
@@ -368,7 +371,7 @@ class WideBasicBlock(nn.Module):
             self.shortcut = MaxPoolChannelPad(in_planes, planes, stride=stride)
         elif stride != 1 or in_planes != planes:
             self.shortcut = nn.Conv2d(
-                in_planes, planes, kernel_size=1, stride=stride, bias=not use_batchnorm
+                in_planes, planes, kernel_size=1, stride=stride, bias=conv_bias
             )
         else:
             self.shortcut = nn.Identity()
@@ -395,6 +398,7 @@ class WideResNetCIFAR(nn.Module):
         in_chans: int = 3,
         base_width: int = 16,
         use_batchnorm: bool = True,
+        conv_bias: bool | None = None,
         maxpool_downsample_shortcut: bool = False,
         avgpool_downsample_shortcut: bool = False,
         avgpool_main_downsample: bool = False,
@@ -412,6 +416,7 @@ class WideResNetCIFAR(nn.Module):
         self.dropout_rate = float(dropout_rate)
         self.final_dropout_rate = float(final_dropout_rate)
         self.use_batchnorm = bool(use_batchnorm)
+        self.conv_bias = not self.use_batchnorm if conv_bias is None else bool(conv_bias)
         self.maxpool_downsample_shortcut = bool(maxpool_downsample_shortcut)
         self.avgpool_downsample_shortcut = bool(avgpool_downsample_shortcut)
         self.avgpool_main_downsample = bool(avgpool_main_downsample)
@@ -419,7 +424,7 @@ class WideResNetCIFAR(nn.Module):
         self.in_planes = widths[0]
 
         self.conv1 = nn.Conv2d(
-            in_chans, widths[0], kernel_size=3, stride=1, padding=1, bias=not self.use_batchnorm
+            in_chans, widths[0], kernel_size=3, stride=1, padding=1, bias=self.conv_bias
         )
         self.layer1 = self._make_layer(widths[1], n, stride=1)
         self.layer2 = self._make_layer(widths[2], n, stride=2)
@@ -442,6 +447,7 @@ class WideResNetCIFAR(nn.Module):
                     self.dropout_rate,
                     stride=s,
                     use_batchnorm=self.use_batchnorm,
+                    conv_bias=self.conv_bias,
                     maxpool_downsample_shortcut=self.maxpool_downsample_shortcut,
                     avgpool_downsample_shortcut=self.avgpool_downsample_shortcut,
                     avgpool_main_downsample=self.avgpool_main_downsample,
@@ -636,6 +642,25 @@ def _build_wrn_nobn(depth: int, widen_factor: int, pretrained: bool, num_classes
     )
 
 
+def _build_wrn_nobn_no_bias(
+    depth: int,
+    widen_factor: int,
+    pretrained: bool,
+    num_classes: int,
+    in_chans: int,
+    **kwargs,
+):
+    return _build_wrn_nobn(
+        depth,
+        widen_factor,
+        pretrained,
+        num_classes,
+        in_chans,
+        conv_bias=False,
+        **kwargs,
+    )
+
+
 @register_model
 def wrn_16_2_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
     return _build_wrn_nobn(16, 2, pretrained, num_classes, in_chans, **kwargs)
@@ -690,6 +715,34 @@ def wrn_28_2_cifar_nobn_avgpool_shortcut(
 @register_model
 def wrn_28_4_cifar_nobn(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
     return _build_wrn_nobn(28, 4, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_2_cifar_nobn_no_bias(
+    pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs
+):
+    return _build_wrn_nobn_no_bias(16, 2, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_4_cifar_nobn_no_bias(
+    pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs
+):
+    return _build_wrn_nobn_no_bias(16, 4, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_2_cifar_nobn_no_bias(
+    pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs
+):
+    return _build_wrn_nobn_no_bias(28, 2, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_28_4_cifar_nobn_no_bias(
+    pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs
+):
+    return _build_wrn_nobn_no_bias(28, 4, pretrained, num_classes, in_chans, **kwargs)
 
 
 @register_model

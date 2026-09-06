@@ -8,6 +8,8 @@
 #SBATCH -t 90:10:00
 #SBATCH -o logs/slurm_jobs/slurm_%j.out
 
+set -o pipefail
+
 # OpenMP settings:
 #export OMP_NUM_THREADS=1
 #export OMP_PLACES=threads

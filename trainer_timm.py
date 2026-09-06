@@ -40,11 +40,19 @@ from trainer import TrainerCiFar, _normalize_dataset_name, _CIFAR_STATS
 class SuddenCollapseMonitor:
     """Detect catastrophic collapse only after a run has demonstrated learning."""
 
-    def __init__(self, num_classes, ema_alpha=0.3):
+    def __init__(
+        self,
+        num_classes,
+        ema_alpha=0.3,
+        not_learned_deadline_epoch=None,
+        not_learned_loss_ratio=0.9,
+    ):
         self.random_loss = math.log(num_classes)
         self.arm_accuracy = 0.50 if num_classes == 10 else 0.20
         self.collapse_accuracy = 0.20 if num_classes == 10 else 0.05
         self.ema_alpha = float(ema_alpha)
+        self.not_learned_deadline_epoch = not_learned_deadline_epoch
+        self.not_learned_loss_ratio = float(not_learned_loss_ratio)
         self.armed = False
         self.loss_ema = None
         self.best_loss_ema = None
@@ -84,9 +92,25 @@ class SuddenCollapseMonitor:
                     val_accuracy,
                 )
 
+        best_loss_ema = (
+            current_ema
+            if self.best_loss_ema is None
+            else min(self.best_loss_ema, current_ema)
+        )
+        if (
+            not self.armed
+            and self.not_learned_deadline_epoch is not None
+            and epoch >= self.not_learned_deadline_epoch
+            and best_loss_ema >= self.not_learned_loss_ratio * self.random_loss
+        ):
+            self.loss_ema = current_ema
+            return self._event(
+                epoch, "training_loss_never_left_near_random", train_loss,
+                val_accuracy,
+            )
+
         self.loss_ema = current_ema
-        if self.best_loss_ema is None or current_ema < self.best_loss_ema:
-            self.best_loss_ema = current_ema
+        self.best_loss_ema = best_loss_ema
         if (
             current_ema < 0.70 * self.random_loss
             or (val_accuracy is not None and float(val_accuracy) > self.arm_accuracy)
@@ -226,6 +250,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         bias_weight_decay=None,
         collapse_monitor_enabled=False,
         collapse_loss_ema_alpha=0.3,
+        collapse_not_learned_deadline_epoch=None,
+        collapse_not_learned_loss_ratio=0.9,
 
         is_timm_model=True,
 
@@ -310,7 +336,12 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         self.validation_seed = int(validation_seed)
         self.collapse_monitor_enabled = bool(collapse_monitor_enabled)
         self.collapse_monitor = (
-            SuddenCollapseMonitor(num_classes, collapse_loss_ema_alpha)
+            SuddenCollapseMonitor(
+                num_classes,
+                collapse_loss_ema_alpha,
+                collapse_not_learned_deadline_epoch,
+                collapse_not_learned_loss_ratio,
+            )
             if self.collapse_monitor_enabled else None
         )
 

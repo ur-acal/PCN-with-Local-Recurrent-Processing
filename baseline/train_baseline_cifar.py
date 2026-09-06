@@ -259,6 +259,12 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
         bias_weight_decay=cfg.get("bias_weight_decay", None),
         collapse_monitor_enabled=cfg.get("collapse_monitor_enabled", False),
         collapse_loss_ema_alpha=cfg.get("collapse_loss_ema_alpha", 0.3),
+        collapse_not_learned_deadline_epoch=cfg.get(
+            "collapse_not_learned_deadline_epoch"
+        ),
+        collapse_not_learned_loss_ratio=cfg.get(
+            "collapse_not_learned_loss_ratio", 0.9
+        ),
     )
 
     return trainer_kwargs

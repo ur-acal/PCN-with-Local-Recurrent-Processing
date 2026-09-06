@@ -30,6 +30,24 @@ class SuddenCollapseMonitorTests(unittest.TestCase):
         event = monitor.observe(1, float("nan"))
         self.assertEqual(event["reason"], "nonfinite_train_loss")
 
+    def test_never_learned_run_stops_at_opt_in_deadline(self):
+        monitor = SuddenCollapseMonitor(
+            100, ema_alpha=1.0, not_learned_deadline_epoch=3
+        )
+        self.assertIsNone(monitor.observe(1, math.log(100)))
+        self.assertIsNone(monitor.observe(2, math.log(100)))
+        event = monitor.observe(3, math.log(100))
+        self.assertEqual(event["reason"], "training_loss_never_left_near_random")
+
+    def test_deadline_does_not_stop_run_that_learns_on_deadline(self):
+        monitor = SuddenCollapseMonitor(
+            100, ema_alpha=1.0, not_learned_deadline_epoch=3
+        )
+        self.assertIsNone(monitor.observe(1, math.log(100)))
+        self.assertIsNone(monitor.observe(2, math.log(100)))
+        self.assertIsNone(monitor.observe(3, 3.0))
+        self.assertTrue(monitor.armed)
+
 
 if __name__ == "__main__":
     unittest.main()

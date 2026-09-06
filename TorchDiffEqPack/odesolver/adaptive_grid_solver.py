@@ -303,7 +303,9 @@ class AdaptiveGridSolver(ODESolver):
                     is_stiff = True
 
                 if is_stiff:
-                    h_new = min(self.h, abs(self.t1 - t_current))
+                    fallback_h = self.h if self.h is not None else h_new
+                    h_new = min(max(float(fallback_h), h_floor),
+                                float(abs(self.t1 - t_current)))
                     step_accepted = True
                     print('Stiff problem, please use other solvers')
 

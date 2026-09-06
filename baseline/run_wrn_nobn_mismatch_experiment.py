@@ -105,10 +105,7 @@ def validate_model(model):
     bn = [m for m in model.modules() if isinstance(m, nn.modules.batchnorm._BatchNorm)]
     if bn:
         raise AssertionError(f"BN-free WRN contains {len(bn)} BatchNorm modules")
-    excluded = convolution_bias_parameter_names(model)
-    if not excluded:
-        raise AssertionError("BN-free WRN has no convolution biases to protect")
-    return excluded
+    return convolution_bias_parameter_names(model)
 
 
 def run(args):

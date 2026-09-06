@@ -54,6 +54,10 @@ CUSTOM_CIFAR_MODELS = {
     "wrn_28_2_cifar_nobn_avgpool",
     "wrn_28_2_cifar_nobn_avgpool_shortcut",
     "wrn_28_4_cifar_nobn",
+    "wrn_16_2_cifar_nobn_no_bias",
+    "wrn_16_4_cifar_nobn_no_bias",
+    "wrn_28_2_cifar_nobn_no_bias",
+    "wrn_28_4_cifar_nobn_no_bias",
     "wrn_40_2_cifar_nobn",
 }
 
