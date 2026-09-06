@@ -96,6 +96,13 @@ cmd=(
   --print_only "${PRINT_ONLY:-false}"
 )
 
+if [[ -n "${WRN_DEPTH:-}" ]]; then
+  cmd+=(--wrn_depth "${WRN_DEPTH}")
+fi
+if [[ -n "${WRN_FIRST_STAGE_CHANNELS:-}" ]]; then
+  cmd+=(--wrn_first_stage_channels "${WRN_FIRST_STAGE_CHANNELS}")
+fi
+
 if [[ -n "${TEACHER_CKPT:-}" ]]; then
   cmd+=(--teacher_ckpt "${TEACHER_CKPT}")
 fi

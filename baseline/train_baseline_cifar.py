@@ -12,6 +12,7 @@ This script does NOT implement a training loop. It only:
 
 import argparse
 import json
+import logging
 import os
 import random
 import sys
@@ -184,6 +185,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train CIFAR baseline using TrainerCiFarTimmStyle.")
 
     parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--wrn_depth", type=int, default=None)
+    parser.add_argument("--wrn_first_stage_channels", type=int, default=None)
     parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument("--eval_every", type=int, default=None)
@@ -511,6 +514,8 @@ def main():
         prefer_resize=args.prefer_resize,
         extra_overrides=extra_overrides,
     )
+    cfg["wrn_depth"] = args.wrn_depth
+    cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
 
     if args.img_type != "rgb" and args.rggb_to_rgb:
         cfg.update(RGGB_TO_RGB_EXTRAS)

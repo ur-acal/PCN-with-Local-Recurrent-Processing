@@ -40,6 +40,8 @@ def optional_bool(value):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model_name", required=True)
+    p.add_argument("--wrn_depth", type=int, default=None)
+    p.add_argument("--wrn_first_stage_channels", type=int, default=None)
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar100")
     p.add_argument("--img_type", default="CiFAIR")
@@ -99,6 +101,9 @@ def parse_args():
     p.add_argument("--dtc_leading_edge_variation_std", type=float, default=0.0)
     p.add_argument("--dtc_leading_edge_jitter_std", type=float, default=0.005)
     p.add_argument("--dtc_falling_edge_jitter_std", type=float, default=0.005)
+    p.add_argument("--bn_recalibrate", type=str2bool, default=False)
+    p.add_argument("--bn_calibration_batch_size", type=int, default=128)
+    p.add_argument("--bn_calibration_samples", type=optional_int, default=None)
     return p.parse_args()
 
 
@@ -188,7 +193,19 @@ def run_corner(args, corner, relu_indices):
         "--dtc_falling_edge_jitter_std", str(args.dtc_falling_edge_jitter_std),
         "--dtc_timing_seed", str(args.base_seed),
         "--data_seed", str(args.base_seed),
+        "--bn_recalibrate", bool_text(args.bn_recalibrate),
+        "--bn_calibration_batch_size", str(args.bn_calibration_batch_size),
+        "--bn_calibration_samples", (
+            "none" if args.bn_calibration_samples is None
+            else str(args.bn_calibration_samples)),
     ]
+    if args.wrn_depth is not None:
+        command.extend(["--wrn_depth", str(args.wrn_depth)])
+    if args.wrn_first_stage_channels is not None:
+        command.extend([
+            "--wrn_first_stage_channels",
+            str(args.wrn_first_stage_channels),
+        ])
     if relu_indices[0] is not None:
         command.extend([
             "--activation_mc_curve_indices",

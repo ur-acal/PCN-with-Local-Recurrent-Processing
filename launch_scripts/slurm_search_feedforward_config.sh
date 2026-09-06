@@ -18,7 +18,6 @@ case "${IMG_TYPE,,}" in
 esac
 export EXP_PREFIX="${EXP_PREFIX:-feedforward_physical}"
 export DATA_DIR="${DATA_DIR:-../data}"
-export TIMM_AUG_LEVEL="${TIMM_AUG_LEVEL:-none}"
 
 # Teacher and distillation.
 if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then

@@ -24,8 +24,9 @@ from baseline.baseline_cifar_configs import (
     get_baseline_config,
 )
 from feedforward_validation import FeedForwardCNNValidator
+from bn_recalibration import recalibrate_batchnorm
 from data_utils import MISMATCH_LEVELS_5b
-from inference_utils import get_test_data
+from inference_utils import get_bn_calibration_data, get_test_data
 from input_preprocessing import resolve_preprocessing
 from measured_activation import (
     configure_feedforward_measured_activation,
@@ -62,6 +63,8 @@ def index_list(value):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model_name", required=True)
+    p.add_argument("--wrn_depth", type=int, default=None)
+    p.add_argument("--wrn_first_stage_channels", type=int, default=None)
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar100")
     p.add_argument("--img_type", default="CiFAIR")
@@ -135,6 +138,13 @@ def parse_args():
     p.add_argument("--mul_mismatch_mode", default="static_mismatch")
     p.add_argument("--enable_measured_pooling", type=str2bool, default=True)
     p.add_argument("--data_seed", type=int, default=None)
+    p.add_argument("--bn_recalibrate", type=str2bool, default=False)
+    p.add_argument("--bn_calibration_batch_size", type=int, default=128)
+    p.add_argument("--bn_calibration_samples", type=optional_int, default=None)
+    p.add_argument("--use_expanded_weights", type=str2bool, default=True)
+    p.add_argument("--nonlinear_R_train_mode", default="none",
+                   choices=("none", "exact_curve", "mean"))
+    p.add_argument("--nonlinear_R_corner_range", default="all")
     return p.parse_args()
 
 
@@ -161,6 +171,8 @@ def evaluate_once(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     cfg = get_baseline_config(
         args.model_name, case="custom_noresize")
+    cfg["wrn_depth"] = args.wrn_depth
+    cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
     if args.img_type.lower() != "rgb":
         cfg.update(RGGB_DEFAULTS)
     model = build_model(
@@ -224,7 +236,21 @@ def evaluate_once(args):
             compile_evaluator=args.compile_measured_activation)
         configure_feedforward_measured_activation(model, activation_factory)
     nonlinear_R_package = None
-    if args.enable_nonlinear_R:
+    if args.enable_nonlinear_R and args.nonlinear_R_train_mode != "none":
+        if args.physical_level != 2:
+            raise ValueError(
+                "nonlinear_R_train_mode is only valid for Level-2 evaluation.")
+        wrappers = list(iter_physical_wrappers(model))
+        nonlinear_R_package = wrappers[0].configure_nonlinear_R_training(
+            args.nonlinear_R_table,
+            mode=args.nonlinear_R_train_mode,
+            corner_range=args.nonlinear_R_corner_range,
+            quantity=args.nonlinear_R_mc_quantity,
+            curve_seed=args.nonlinear_R_curve_seed)
+        for wrapper in wrappers[1:]:
+            wrapper.install_nonlinear_R_training_package(
+                nonlinear_R_package)
+    elif args.enable_nonlinear_R:
         wrappers = list(iter_physical_wrappers(model))
         nonlinear_R_package = wrappers[0].configure_nonlinear_R_inference(
             args.nonlinear_R_table,
@@ -241,7 +267,16 @@ def evaluate_once(args):
     if args.enable_measured_pooling:
         pooling_curve_path = args.nonlinear_R_table
         pooling_curve_gaussian = None
-        if args.nonlinear_R_curve_sampling == "multivariate_gaussian":
+        if args.nonlinear_R_train_mode != "none":
+            configure_feedforward_measured_pooling(
+                model, enable_nonideality=True,
+                curve_path=pooling_curve_path,
+                quantity=args.nonlinear_R_mc_quantity,
+                nominal_R=args.R,
+                seed=args.nonlinear_R_curve_seed,
+                training_curve_mode=args.nonlinear_R_train_mode,
+                corner_range=args.nonlinear_R_corner_range)
+        elif args.nonlinear_R_curve_sampling == "multivariate_gaussian":
             pooling_curve_path = None
             pooling_curve_gaussian = (
                 None if nonlinear_R_package is None
@@ -250,14 +285,15 @@ def evaluate_once(args):
                 raise ValueError(
                     "Gaussian measured pooling requires nonlinear-R "
                     "Gaussian curve sampling.")
-        configure_feedforward_measured_pooling(
-            model, enable_nonideality=True,
-            curve_path=pooling_curve_path,
-            curve_gaussian=pooling_curve_gaussian,
-            quantity=args.nonlinear_R_mc_quantity,
-            nominal_R=args.R,
-            seed=args.nonlinear_R_curve_seed,
-            curve_indices=args.nonlinear_R_curve_bank_indices)
+        if args.nonlinear_R_train_mode == "none":
+            configure_feedforward_measured_pooling(
+                model, enable_nonideality=True,
+                curve_path=pooling_curve_path,
+                curve_gaussian=pooling_curve_gaussian,
+                quantity=args.nonlinear_R_mc_quantity,
+                nominal_R=args.R,
+                seed=args.nonlinear_R_curve_seed,
+                curve_indices=args.nonlinear_R_curve_bank_indices)
 
     model.to(device).eval()
 
@@ -267,9 +303,23 @@ def evaluate_once(args):
         input_quant_bits=args.input_quant_bits,
         center_student_input=args.center_student_input)
     os.makedirs(args.result_path, exist_ok=True)
-    FeedForwardCNNValidator(
-        model, args.expanded_weight_dir, device, loader,
-        args.result_path)
+    if args.use_expanded_weights:
+        FeedForwardCNNValidator(
+            model, args.expanded_weight_dir, device, loader,
+            args.result_path)
+    if args.bn_recalibrate:
+        calibration_loader = get_bn_calibration_data(
+            bs=args.bn_calibration_batch_size,
+            n_samples=args.bn_calibration_samples,
+            img_type=args.img_type,
+            task=args.dataset,
+            input_quant_bits=args.input_quant_bits,
+            center_student_input=args.center_student_input)
+        stats = recalibrate_batchnorm(model, calibration_loader, device)
+        print(
+            "BN recalibration: batchnorms={num_batchnorms}, "
+            "batches={num_batches}, samples={num_samples}".format(**stats),
+            flush=True)
     if args.data_seed is not None:
         random.seed(args.data_seed)
         np.random.seed(args.data_seed)

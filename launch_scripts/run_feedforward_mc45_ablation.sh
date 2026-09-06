@@ -73,7 +73,17 @@ cmd=(
   --dtc_leading_edge_variation_std "${DTC_LEADING_EDGE_VARIATION_STD:-0.0}"
   --dtc_leading_edge_jitter_std "${DTC_LEADING_EDGE_JITTER_STD:-0.005}"
   --dtc_falling_edge_jitter_std "${DTC_FALLING_EDGE_JITTER_STD:-0.005}"
+  --bn_recalibrate "${ENABLE_BN_RECALIBRATION:-false}"
+  --bn_calibration_batch_size "${BN_CALIBRATION_BATCH_SIZE:-128}"
+  --bn_calibration_samples "${BN_CALIBRATION_SAMPLES:-none}"
 )
+
+if [[ -n "${WRN_DEPTH:-}" ]]; then
+  cmd+=(--wrn_depth "${WRN_DEPTH}")
+fi
+if [[ -n "${WRN_FIRST_STAGE_CHANNELS:-}" ]]; then
+  cmd+=(--wrn_first_stage_channels "${WRN_FIRST_STAGE_CHANNELS}")
+fi
 
 if [[ -n "${CORNER_IDS:-}" ]]; then
   read -r -a corner_array <<< "${CORNER_IDS}"

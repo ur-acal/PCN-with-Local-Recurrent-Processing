@@ -462,6 +462,77 @@ class WideResNetCIFAR(nn.Module):
         self.fc = nn.Linear(self.out_dim, num_classes) if num_classes > 0 else nn.Identity()
 
 
+class StageWidthWideResNetCIFAR(WideResNetCIFAR):
+    """CIFAR pre-activation WRN with a fixed 16-channel stem.
+
+    ``first_stage_channels`` controls the three residual-stage widths
+    ``C, 2C, 4C``.  The stem remains at the canonical CIFAR WRN width of 16.
+    ``stage_blocks`` permits the fixed PCN-equivalent block schedule without
+    changing the standard :class:`WideResNetCIFAR` implementation.
+    """
+
+    def __init__(
+        self,
+        depth: int = 28,
+        first_stage_channels: int = 32,
+        stage_blocks=None,
+        dropout_rate: float = 0.0,
+        final_dropout_rate: float = 0.0,
+        num_classes: int = 10,
+        in_chans: int = 3,
+        stem_width: int = 16,
+        use_batchnorm: bool = True,
+        avgpool_downsample_shortcut: bool = False,
+        avgpool_main_downsample: bool = False,
+        intermediate_activation: str = "relu",
+        **kwargs,
+    ):
+        nn.Module.__init__(self)
+        if stage_blocks is None:
+            if (depth - 4) % 6 != 0:
+                raise ValueError("WideResNet depth must have the form 6n + 4.")
+            n = (depth - 4) // 6
+            stage_blocks = (n, n, n)
+        if len(stage_blocks) != 3 or any(int(n) <= 0 for n in stage_blocks):
+            raise ValueError("stage_blocks must contain three positive counts.")
+        if int(first_stage_channels) <= 0:
+            raise ValueError("first_stage_channels must be positive.")
+
+        widths = (
+            int(first_stage_channels),
+            2 * int(first_stage_channels),
+            4 * int(first_stage_channels),
+        )
+        self.num_classes = num_classes
+        self.in_chans = in_chans
+        self.depth = depth
+        self.widen_factor = None
+        self.first_stage_channels = widths[0]
+        self.stage_blocks = tuple(map(int, stage_blocks))
+        self.dropout_rate = float(dropout_rate)
+        self.final_dropout_rate = float(final_dropout_rate)
+        self.use_batchnorm = bool(use_batchnorm)
+        self.avgpool_downsample_shortcut = bool(avgpool_downsample_shortcut)
+        self.avgpool_main_downsample = bool(avgpool_main_downsample)
+        self.intermediate_activation = str(intermediate_activation)
+        self.out_dim = widths[2]
+        self.in_planes = int(stem_width)
+
+        self.conv1 = nn.Conv2d(
+            in_chans, self.in_planes, kernel_size=3, stride=1, padding=1,
+            bias=not self.use_batchnorm)
+        self.layer1 = self._make_layer(widths[0], self.stage_blocks[0], stride=1)
+        self.layer2 = self._make_layer(widths[1], self.stage_blocks[1], stride=2)
+        self.layer3 = self._make_layer(widths[2], self.stage_blocks[2], stride=2)
+        self.bn = (
+            nn.BatchNorm2d(widths[2]) if self.use_batchnorm else nn.Identity())
+        self.relu = nn.ReLU(inplace=True)
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(widths[2], num_classes)
+
+        _init_cifar_model(self)
+
+
 # Register Timm models
 @register_model
 def resnet20_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
@@ -550,6 +621,56 @@ def _new_hardware_wrn_kwargs(kwargs):
     kwargs = dict(kwargs)
     kwargs.setdefault("intermediate_activation", "relu6")
     return kwargs
+
+
+@register_model
+def pcn_16l96c_cnn_avgpool(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    """Feedforward CNN matching the 16L96C PCN channel schedule."""
+    if pretrained:
+        raise ValueError(
+            "No registered pretrained weights for pcn_16l96c_cnn_avgpool.")
+    kwargs.pop("depth", None)
+    kwargs.pop("first_stage_channels", None)
+    return StageWidthWideResNetCIFAR(
+        depth=34, first_stage_channels=24, stage_blocks=(4, 6, 5),
+        stem_width=24, num_classes=num_classes, in_chans=in_chans,
+        avgpool_downsample_shortcut=True, avgpool_main_downsample=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_flexible_cifar_avgpool(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, depth: int = 28,
+        first_stage_channels: int = 32, **kwargs):
+    """Flexible-depth WRN with stride-1 transition convs plus AvgPool."""
+    if pretrained:
+        raise ValueError(
+            "No registered pretrained weights for wrn_flexible_cifar_avgpool.")
+    return StageWidthWideResNetCIFAR(
+        depth=depth, first_stage_channels=first_stage_channels,
+        num_classes=num_classes, in_chans=in_chans,
+        avgpool_downsample_shortcut=True, avgpool_main_downsample=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_flexible_cifar_avgpool_shortcut(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, depth: int = 28,
+        first_stage_channels: int = 32, **kwargs):
+    """Flexible-depth WRN with stride-2 convs and AvgPool shortcuts."""
+    if pretrained:
+        raise ValueError(
+            "No registered pretrained weights for "
+            "wrn_flexible_cifar_avgpool_shortcut.")
+    return StageWidthWideResNetCIFAR(
+        depth=depth, first_stage_channels=first_stage_channels,
+        num_classes=num_classes, in_chans=in_chans,
+        avgpool_downsample_shortcut=True,
+        **_new_hardware_wrn_kwargs(kwargs))
 
 
 @register_model

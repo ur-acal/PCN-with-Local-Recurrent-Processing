@@ -93,6 +93,64 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
     return test_loader
 
 
+def get_bn_calibration_data(bs=128, n_samples=None, img_type="rgb",
+                            task="cifar10", input_quant_bits=None,
+                            center_student_input=False):
+    """Return clean, augmentation-free training data for BN recalibration."""
+    img_type_lower = img_type.lower()
+    if img_type_lower in {"rgb", "rggb"}:
+        if img_type_lower == "rgb":
+            mean, std = _CIFAR_STATS[task]
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ])
+        else:
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                ToPackedRGGB(return_orig=False),
+            ])
+        dataset_cls = (
+            torchvision.datasets.CIFAR100
+            if task == "cifar100" else torchvision.datasets.CIFAR10)
+        train_set = dataset_cls(
+            root="../data", train=True, download=True, transform=transform)
+    elif img_type_lower in {"scangfi", "cifair"}:
+        data_root, input_name = _get_scangfi_location(task, img_type)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conf_file = os.path.join(tmpdir, "config.json")
+            subprocess.run(
+                "uv run scangen create-config --dataset {} {}".format(
+                    task, conf_file), shell=True, check=True)
+            with open(conf_file) as fp:
+                scangen_config = json.load(fp)
+        train_set = MyNoiseCIFARDataset(
+            root=data_root,
+            input_name=input_name,
+            train=True,
+            noisy_inp=False,
+            augment=False,
+            noise_config=scangen_config["noise"],
+            device=torch.device(
+                "cuda:0" if torch.cuda.is_available() else "cpu"),
+        )
+    else:
+        transform = transforms.Compose([transforms.ToTensor()])
+        train_set = RawImgDataset(
+            root=os.path.join("../cifar-10-data", img_type),
+            train=True, transform=transform)
+
+    if input_quant_bits is not None or center_student_input:
+        train_set = InputPreprocessedDataset(
+            train_set, input_quant_bits, center_student_input)
+    if n_samples is not None:
+        n_samples = min(int(n_samples), len(train_set))
+        train_set = Subset(train_set, range(n_samples))
+    return torch.utils.data.DataLoader(
+        train_set, batch_size=bs, shuffle=False, num_workers=2,
+        drop_last=False)
+
+
 def get_calib_loader(bs=128, n_samples=None, img_type="rgb", task="cifar10"):
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":

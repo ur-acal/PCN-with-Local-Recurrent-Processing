@@ -16,6 +16,7 @@ cmd=(
   --batch_size "${TEST_BATCH_SIZE:-128}"
   --expanded_weight_dir "${EXPANDED_WEIGHT_DIR:-./expanded_weights/feedforward}"
   --result_path "${RESULT_PATH:-./results/feedforward_physical_eval}"
+  --n_trials "${N_TRIALS:-1}"
   --physical_level "${PHYSICAL_LEVEL:-3}"
   --R "${R_VAL:-50e3}"
   --C "${C_VAL:-500e-15}"
@@ -62,7 +63,20 @@ cmd=(
   --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING:-empirical_with_replacement}"
   --nonlinear_R_curve_edge_chunk_size "${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE:-65536}"
   --enable_measured_pooling "${ENABLE_MEASURED_POOLING:-true}"
+  --bn_recalibrate "${ENABLE_BN_RECALIBRATION:-false}"
+  --bn_calibration_batch_size "${BN_CALIBRATION_BATCH_SIZE:-128}"
+  --bn_calibration_samples "${BN_CALIBRATION_SAMPLES:-none}"
+  --use_expanded_weights "${USE_EXPANDED_WEIGHTS:-true}"
+  --nonlinear_R_train_mode "${NONLINEAR_R_TRAIN_MODE:-none}"
+  --nonlinear_R_corner_range "${NONLINEAR_R_CORNER_RANGE:-all}"
 )
+
+if [[ -n "${WRN_DEPTH:-}" ]]; then
+  cmd+=(--wrn_depth "${WRN_DEPTH}")
+fi
+if [[ -n "${WRN_FIRST_STAGE_CHANNELS:-}" ]]; then
+  cmd+=(--wrn_first_stage_channels "${WRN_FIRST_STAGE_CHANNELS}")
+fi
 
 for pair in \
   "SPIN_VARIATION_SEED:spin_variation_seed" \
@@ -70,7 +84,8 @@ for pair in \
   "COUPLER_NOISE_SEED:coupler_noise_seed" \
   "DTC_TIMING_SEED:dtc_timing_seed" \
   "ACTIVATION_CURVE_SEED:activation_curve_seed" \
-  "NONLINEAR_R_CURVE_SEED:nonlinear_R_curve_seed"; do
+  "NONLINEAR_R_CURVE_SEED:nonlinear_R_curve_seed" \
+  "DATA_SEED:data_seed"; do
   env_name="${pair%%:*}"
   arg_name="${pair##*:}"
   if [[ -n "${!env_name:-}" ]]; then

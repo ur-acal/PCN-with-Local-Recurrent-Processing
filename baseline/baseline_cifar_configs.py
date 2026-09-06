@@ -42,6 +42,9 @@ CUSTOM_CIFAR_MODELS = {
     "wrn_28_2_cifar_avgpool_shortcut",
     "wrn_28_2_cifar_nobn_avgpool",
     "wrn_28_2_cifar_nobn_avgpool_shortcut",
+    "pcn_16l96c_cnn_avgpool",
+    "wrn_flexible_cifar_avgpool",
+    "wrn_flexible_cifar_avgpool_shortcut",
 }
 
 
@@ -338,6 +341,12 @@ MODEL_OVERRIDES = {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_nobn_avgpool_shortcut": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "pcn_16l96c_cnn_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_flexible_cifar_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_flexible_cifar_avgpool_shortcut": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
 }
 
 
@@ -407,6 +416,10 @@ def build_model(model_name: str, cfg: dict, num_classes: int):
            if "final_dropout_rate" in cfg else {}),
         **({"intermediate_activation": cfg["intermediate_activation"]}
            if "intermediate_activation" in cfg else {}),
+        **({"depth": cfg["wrn_depth"]}
+           if cfg.get("wrn_depth") is not None else {}),
+        **({"first_stage_channels": cfg["wrn_first_stage_channels"]}
+           if cfg.get("wrn_first_stage_channels") is not None else {}),
     )
 
     if case.startswith("adapt_noresize"):

@@ -132,6 +132,13 @@ cmd=(
 )
 cmd+=("${INPUT_PREPROCESS_ARGS[@]}")
 
+if [[ -n "${WRN_DEPTH:-}" ]]; then
+  cmd+=(--wrn_depth "${WRN_DEPTH}")
+fi
+if [[ -n "${WRN_FIRST_STAGE_CHANNELS:-}" ]]; then
+  cmd+=(--wrn_first_stage_channels "${WRN_FIRST_STAGE_CHANNELS}")
+fi
+
 if [[ -n "${ACTIVATION_CURVE_SEED:-}" ]]; then
   cmd+=(--activation_curve_seed "${ACTIVATION_CURVE_SEED}")
 fi

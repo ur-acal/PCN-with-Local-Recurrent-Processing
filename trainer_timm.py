@@ -1056,13 +1056,24 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         # the effective quantized weights baked in, while the sibling
         # full_param checkpoint preserves the latent trainable weights and
         # parametrizations required to continue QAT.
-        flat_model = copy.deepcopy(self.model)
-        for module in flat_model.modules():
-            if P.is_parametrized(module, "weight"):
-                P.remove_parametrizations(
-                    module, "weight", leave_parametrized=True)
+        # Do not remove parametrizations from a deepcopy of the live model.
+        # PyTorch parametrized modules use a dynamically generated class that
+        # can be shared by the copy; removing its ``weight`` property from the
+        # copy can therefore also break the live training model.  Flatten the
+        # state dictionary directly instead.
+        flat_net = copy.deepcopy(state["net"])
+        for module_name, module in self.model.named_modules():
+            if not P.is_parametrized(module, "weight"):
+                continue
+            prefix = (
+                f"{module_name}.parametrizations.weight."
+                if module_name else "parametrizations.weight.")
+            for key in [key for key in flat_net if key.startswith(prefix)]:
+                del flat_net[key]
+            weight_key = f"{module_name}.weight" if module_name else "weight"
+            flat_net[weight_key] = module.weight.detach().clone()
         flat_state = dict(state)
-        flat_state["net"] = flat_model.state_dict()
+        flat_state["net"] = flat_net
         flat_state["checkpoint_weight_format"] = "flattened_quantized"
         torch.save(flat_state, save_pth_path)
 
