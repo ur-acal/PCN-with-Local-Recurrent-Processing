@@ -14,6 +14,8 @@ from baseline.cifar_resnet import (
     wrn_28_2_cifar_avgpool_shortcut,
     wrn_28_2_cifar_nobn_avgpool,
     wrn_28_2_cifar_nobn_avgpool_shortcut,
+    wrn_28_2_cifar_nobn_no_bias_avgpool,
+    wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut,
 )
 from feedforward_validation import FeedForwardCNNValidator
 from measured_activation import (
@@ -475,12 +477,15 @@ def test_feedforward_measured_pooling_accepts_gaussian_package():
 
 def test_hardware_wrn_variants_preserve_activation_bn_and_downsampling():
     variants = (
-        (wrn_28_2_cifar_avgpool, True, True),
-        (wrn_28_2_cifar_avgpool_shortcut, True, False),
-        (wrn_28_2_cifar_nobn_avgpool, False, True),
-        (wrn_28_2_cifar_nobn_avgpool_shortcut, False, False),
+        (wrn_28_2_cifar_avgpool, True, True, False),
+        (wrn_28_2_cifar_avgpool_shortcut, True, False, False),
+        (wrn_28_2_cifar_nobn_avgpool, False, True, True),
+        (wrn_28_2_cifar_nobn_avgpool_shortcut, False, False, True),
+        (wrn_28_2_cifar_nobn_no_bias_avgpool, False, True, False),
+        (wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut,
+         False, False, False),
     )
-    for factory, uses_bn, pools_main in variants:
+    for factory, uses_bn, pools_main, uses_conv_bias in variants:
         model = factory(num_classes=100, in_chans=4)
         transition = model.layer2[0]
         assert isinstance(transition.relu1, torch.nn.ReLU6)
@@ -491,7 +496,9 @@ def test_hardware_wrn_variants_preserve_activation_bn_and_downsampling():
             torch.nn.AvgPool2d if pools_main else torch.nn.Identity))
         assert isinstance(transition.bn1, (
             torch.nn.BatchNorm2d if uses_bn else torch.nn.Identity))
-        assert (transition.conv1.bias is None) is uses_bn
+        convs = [module for module in model.modules()
+                 if isinstance(module, torch.nn.Conv2d)]
+        assert all((conv.bias is not None) is uses_conv_bias for conv in convs)
 
 
 def test_avgpool_main_path_survives_physical_conversion_and_is_measured():
@@ -547,7 +554,7 @@ def test_feedforward_random_per_forward_activation_and_direct_pullback(
         model, mode="direct", q=0.1)
     assert count > 1
     configure_measured_activation_corner_mode(
-        model, mode="random_per_forward")
+        model, mode="random_per_forward", sharing="per_model")
 
     activations = [
         module for module in model.modules()
@@ -565,6 +572,5 @@ def test_feedforward_random_per_forward_activation_and_direct_pullback(
 
     model.eval()
     model(torch.randn(2, 4, 8, 8))
-    assert model._last_measured_activation_corner is None
-    assert all(module.active_corner == module.default_corner
-               for module in activations)
+    assert model._last_measured_activation_corner == selected
+    assert all(module.active_corner == selected for module in activations)

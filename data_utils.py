@@ -190,14 +190,37 @@ class MC45CornerData:
         output = {}
         paths = sorted(glob.glob(os.path.join(
             self.relu_source_path, "*.csv")))
+        pvt_temperatures = sorted({
+            float(match.group(2))
+            for path in paths
+            for match in [re.match(
+                r"([a-z]+)_(-?[0-9.]+)_([0-2])\.csv\Z",
+                os.path.basename(path))]
+            if match is not None
+        })
         for path in paths:
             match = re.match(
                 r"relu_([a-z]+)([0-8])\.csv\Z", os.path.basename(path))
-            process = _canonical_process(match.group(1))
-            voltage_level, temperature_level = divmod(int(match.group(2)), 3)
+            if match is not None:
+                process = _canonical_process(match.group(1))
+                voltage_level, temperature_level = divmod(
+                    int(match.group(2)), 3)
+            else:
+                match = re.match(
+                    r"([a-z]+)_(-?[0-9.]+)_([0-2])\.csv\Z",
+                    os.path.basename(path))
+                if match is None:
+                    raise ValueError(
+                        "Cannot parse ReLU Monte Carlo file name: {}".format(
+                            os.path.basename(path)))
+                process = _canonical_process(match.group(1))
+                temperature = float(match.group(2))
+                voltage_level = int(match.group(3))
+                temperature_level = pvt_temperatures.index(temperature)
             with open(path) as handle:
                 header = handle.readline()
-            vdd_match = re.search(r"VDD_VALUE=([-+0-9.eE]+)", header)
+            vdd_match = re.search(
+                r"(?:VDD_VALUE|VDD)=([-+0-9.eE]+)", header)
             temp_match = re.search(r"temperature=([-+0-9.eE]+)", header)
             count = _paired_curve_count(path)
             output[(process, voltage_level, temperature_level)] = {

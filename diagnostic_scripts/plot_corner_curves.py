@@ -67,12 +67,20 @@ def mean_curve(curves):
     return reference_x, np.mean(np.stack(outputs, axis=0), axis=0)
 
 
-def relu_path(corner):
+def relu_path(corner, source="relu_monteCarlo"):
     process, voltage, temperature = corner.lower().split("_")
+    source_path = Path(source)
+    if not source_path.is_absolute():
+        source_path = MC45_ROOT / source_path
+    temperatures = (-20, 25, 85)
+    pvt_named_path = source_path / "{}_{}_{}.csv".format(
+        process, temperatures[int(temperature[1:])], int(voltage[1:]))
+    if pvt_named_path.is_file():
+        return pvt_named_path
     index = int(voltage[1:]) * 3 + int(temperature[1:])
     process_name = {"tt": "ttg", "ff": "ffg", "ss": "ssg",
                     "fs": "fsg", "sf": "sfg"}[process]
-    return MC45_ROOT / "relu_monteCarlo" / "relu_{}{}.csv".format(process_name, index)
+    return source_path / "relu_{}{}.csv".format(process_name, index)
 
 
 def nonlinear_r_path(corner):
@@ -90,6 +98,10 @@ def header_metadata(path):
     return (
         None if vdd is None else float(vdd.group(1)),
         None if temperature is None else float(temperature.group(1)))
+
+
+def relu_output_reference(path):
+    return 0.6 if Path(path).parent.name == "0906_RELU_Voltage" else 0.0
 
 
 def style_axes():
@@ -121,9 +133,11 @@ def draw_curves(curves, xlabel, ylabel, title, output_path, x_scale=1.0,
     print(output_path)
 
 
-def plot_one_relu(corner, output_dir):
-    path = relu_path(corner)
+def plot_one_relu(corner, output_dir, relu_source):
+    path = relu_path(corner, relu_source)
     curves = load_paired_curves(path)
+    output_reference = relu_output_reference(path)
+    curves = [(x, y - output_reference) for x, y in curves]
     vdd, temperature = header_metadata(path)
     v_char = max(np.max(np.abs(curve[0])) for curve in curves)
     scale = V_DD / v_char
@@ -162,11 +176,16 @@ def all_corner_ids():
     ]
 
 
-def plot_all(curve_type, output_dir, corner_means=False):
+def plot_all(curve_type, output_dir, corner_means=False,
+             relu_source="relu_monteCarlo"):
     curves = []
     for corner in all_corner_ids():
-        path = relu_path(corner) if curve_type == "relu" else nonlinear_r_path(corner)
+        path = (relu_path(corner, relu_source) if curve_type == "relu"
+                else nonlinear_r_path(corner))
         loaded = load_paired_curves(path)
+        if curve_type == "relu":
+            output_reference = relu_output_reference(path)
+            loaded = [(x, y - output_reference) for x, y in loaded]
         if corner_means:
             loaded = [mean_curve(loaded)]
         if curve_type == "relu":
@@ -205,6 +224,9 @@ def main():
                         help="Selects the documented top/bottom reference-corner set.")
     parser.add_argument("--nonlinear_R", action="store_true")
     parser.add_argument("--relu", action="store_true")
+    parser.add_argument(
+        "--relu_source", default="relu_monteCarlo",
+        help="ReLU folder name under hardware_data/mc_45_corners, or an absolute path.")
     parser.add_argument("--corners", default=None,
                         help="Case-insensitive comma-separated corner IDs.")
     parser.add_argument(
@@ -229,16 +251,17 @@ def main():
         raise ValueError("--corner_means plots all 45 corners and cannot use --corners")
     if corners is None:
         for curve_type in selected_types:
-            plot_all(curve_type, output_dir, corner_means=args.corner_means)
+            plot_all(
+                curve_type, output_dir, corner_means=args.corner_means,
+                relu_source=args.relu_source)
         return
 
     for corner in sorted(corners, key=corner_sort_key):
         if "nonlinear_R" in selected_types:
             plot_one_nonlinear_r(corner, output_dir)
         if "relu" in selected_types:
-            plot_one_relu(corner, output_dir)
+            plot_one_relu(corner, output_dir, args.relu_source)
 
 
 if __name__ == "__main__":
     main()
-

@@ -42,6 +42,9 @@ CUSTOM_CIFAR_MODELS = {
     "wrn_28_2_cifar_avgpool_shortcut",
     "wrn_28_2_cifar_nobn_avgpool",
     "wrn_28_2_cifar_nobn_avgpool_shortcut",
+    "wrn_28_2_cifar_nobn_no_bias",
+    "wrn_28_2_cifar_nobn_no_bias_avgpool",
+    "wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut",
     "pcn_16l96c_cnn_avgpool",
     "wrn_flexible_cifar_avgpool",
     "wrn_flexible_cifar_avgpool_shortcut",
@@ -340,6 +343,10 @@ MODEL_OVERRIDES = {
     "wrn_28_2_cifar_nobn_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_nobn_avgpool_shortcut": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_28_2_cifar_nobn_no_bias_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "pcn_16l96c_cnn_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},

@@ -722,7 +722,8 @@ def main():
                     model, mode=args.unitless_measured_pullback_mode,
                     q=pullback_q)
             configure_measured_activation_corner_mode(
-                model, mode=args.activation_corner_mode)
+                model, mode=args.activation_corner_mode,
+                sharing=args.activation_curve_sharing)
         if (args.nonlinear_R_train_mode != "none" and
                 not args.physical_pretraining):
             wrappers = list(iter_physical_wrappers(model))

@@ -89,7 +89,18 @@ ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
 ENABLE_PRETRAIN_MEASURED_ACTIVATION="${ENABLE_PRETRAIN_MEASURED_ACTIVATION:-false}"
 SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
 ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
-if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+ACTIVATION_RANDOM_CURVE_SHARING="${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}"
+MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
+if [[ "${MC_RELU_MONTE_CARLO_SOURCE%/}" == "0906_RELU_Voltage" ]]; then
+  if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT_25_1_MC18}"
+  else
+    # MC18 is the TT/V1/T1 realization closest to this corner's 100-curve mean.
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
+    ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
+  fi
+elif [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
 else
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_finer.csv}"
@@ -102,6 +113,7 @@ MEASURED_ACTIVATION_CONFIG_ARGS=(
   --activation_curve_path "${ACTIVATION_CURVE_PATH}"
   --activation_corner "${ACTIVATION_CORNER}"
   --activation_corner_mode "${ACTIVATION_CORNER_MODE}"
+  --activation_random_curve_sharing "${ACTIVATION_RANDOM_CURVE_SHARING}"
   --activation_interpolation "${ACTIVATION_INTERPOLATION}"
   --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS}"
   --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT}"
@@ -518,7 +530,7 @@ eval_one_combo_model() {
       --mc_45_corner_dir hardware_data/mc_45_corners \
       --mc_spin_variation_source PVT_Monte_Carlo_Results_SPIN.csv \
       --mc_dtc_pulse_width_variation_source PVT_45corner_DTC_pulse_width.csv \
-      --mc_relu_monte_carlo_source relu_monteCarlo \
+      --mc_relu_monte_carlo_source "${MC_RELU_MONTE_CARLO_SOURCE}" \
       --mc_coupler_nonlinear_variation_source "${NONLINEAR_R_TABLE}" \
       --mc_coupler_nonlinear_variation_quantity "${NONLINEAR_R_MC_QUANTITY}" \
       --mc_coupler_nominal_R "${R_VAL}" \

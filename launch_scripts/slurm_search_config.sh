@@ -94,7 +94,18 @@ ENABLE_PRETRAIN_MEASURED_ACTIVATION="${ENABLE_PRETRAIN_MEASURED_ACTIVATION:-fals
 SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
 # This controls if we are using different measure activation curves per forward pass in training.
 ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
-if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+ACTIVATION_RANDOM_CURVE_SHARING="${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}"
+MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
+if [[ "${MC_RELU_MONTE_CARLO_SOURCE%/}" == "0906_RELU_Voltage" ]]; then
+  if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT_25_1_MC18}"
+  else
+    # MC18 is the TT/V1/T1 realization closest to this corner's 100-curve mean.
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
+    ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
+  fi
+elif [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
 else
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_finer.csv}"
@@ -623,9 +634,11 @@ submit_chunk() {
   sbatch_exports+=",ACTIVATION_CURVE_PATH=${ACTIVATION_CURVE_PATH}"
   sbatch_exports+=",ACTIVATION_CORNER=${ACTIVATION_CORNER}"
   sbatch_exports+=",ACTIVATION_CORNER_MODE=${ACTIVATION_CORNER_MODE}"
+  sbatch_exports+=",ACTIVATION_RANDOM_CURVE_SHARING=${ACTIVATION_RANDOM_CURVE_SHARING}"
   sbatch_exports+=",ACTIVATION_INTERPOLATION=${ACTIVATION_INTERPOLATION}"
   sbatch_exports+=",ACTIVATION_SPLINE_PARAMETERS=${ACTIVATION_SPLINE_PARAMETERS}"
   sbatch_exports+=",ACTIVATION_FIT_CONSTRAINT=${ACTIVATION_FIT_CONSTRAINT}"
+  sbatch_exports+=",MC_RELU_MONTE_CARLO_SOURCE=${MC_RELU_MONTE_CARLO_SOURCE}"
   sbatch_exports+=",UNITLESS_MEASURED_PULLBACK_MODE=${UNITLESS_MEASURED_PULLBACK_MODE}"
   sbatch_exports+=",UNITLESS_PULLBACK_Q=${UNITLESS_PULLBACK_Q}"
   sbatch_exports+=",UNITLESS_PULLBACK_K=${UNITLESS_PULLBACK_K},UNITLESS_PULLBACK_R=${UNITLESS_PULLBACK_R}"

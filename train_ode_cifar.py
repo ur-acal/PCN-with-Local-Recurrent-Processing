@@ -279,8 +279,12 @@ def get_args():
     p.add_argument(
         "--activation_corner_mode",
         choices=("fixed", "random_per_forward"), default="fixed",
-        help="Use one configured measured curve or sample one shared curve "
+        help="Use one configured measured curve or resample measured curves "
              "once per top-level training forward.")
+    p.add_argument(
+        "--activation_random_curve_sharing",
+        choices=("per_model", "per_layer", "per_spin"), default="per_layer",
+        help="Training-only granularity used by random_per_forward.")
     p.add_argument(
         "--activation_interpolation", type=str,
         choices=["cubic_bspline", "piecewise_linear"],
@@ -1046,10 +1050,13 @@ def main():
     if (args.activation_corner_mode == "random_per_forward" and
             args.enable_measured_activation):
         activation_count = configure_measured_activation_corner_mode(
-            model, mode=args.activation_corner_mode)
+            model, mode=args.activation_corner_mode,
+            sharing=args.activation_random_curve_sharing)
         logging.warning(
-            "Measured activation corner mode=%s across %d activation modules",
-            args.activation_corner_mode, activation_count)
+            "Measured activation corner mode=%s, sharing=%s across %d "
+            "activation modules",
+            args.activation_corner_mode, args.activation_random_curve_sharing,
+            activation_count)
 
     # Get trainer
     logging.warning("Training task: {}".format(args.dataset))

@@ -76,15 +76,27 @@ PULSE_MISMATCH_TRAINING_MODE="${PULSE_MISMATCH_TRAINING_MODE:-post_quant_amplitu
 WEIGHT_QUANT_FACTOR_BITS="${WEIGHT_QUANT_FACTOR_BITS:-none}"
 # This controls if we are using different measure activation curves per forward pass in training.
 ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
+ACTIVATION_RANDOM_CURVE_SHARING="${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}"
+MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
 ENABLE_MEASURED_POOLING="${ENABLE_MEASURED_POOLING:-false}"
 NONLINEAR_R_TABLE="${NONLINEAR_R_TABLE:-coupler_monte}"
 NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-exact_curve}"
 ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
-if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+if [[ "${MC_RELU_MONTE_CARLO_SOURCE%/}" == "0906_RELU_Voltage" ]]; then
+  if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT_25_1_MC18}"
+  else
+    # MC18 is the TT/V1/T1 realization closest to this corner's 100-curve mean.
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
+    ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
+  fi
+elif [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
 else
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_finer.csv}"
 fi
+ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
 VARIATION_AWARE_ARGS=(
   --enable_spin_variation "${ENABLE_SPIN_VARIATION:-true}"
   --sigma_spin "${SIGMA_SPIN:-0.10}"
@@ -245,6 +257,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
             --activation_corner "${ACTIVATION_CORNER:-TT}" \
             --activation_corner_mode "${ACTIVATION_CORNER_MODE}" \
+            --activation_random_curve_sharing "${ACTIVATION_RANDOM_CURVE_SHARING}" \
             --activation_interpolation "${ACTIVATION_INTERPOLATION:-piecewise_linear}" \
             --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS:-10}" \
             --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT:-auto}" \

@@ -1,4 +1,5 @@
 import csv
+import os
 import re
 
 import numpy as np
@@ -15,6 +16,18 @@ _RAW_CURVE_COLUMN_RE = re.compile(
     r"temperature=(?P<temperature>[-+0-9.eE]+)\)\s*"
     r"(?P<axis>[XY])\s*\Z",
     re.IGNORECASE)
+
+
+_ABSOLUTE_VOUT_REFERENCE = 0.6
+_ABSOLUTE_VOUT_SOURCE = "0906_RELU_Voltage"
+
+
+def _absolute_vout_reference(path):
+    """Return the fixed reference used only by the 0906 absolute-Vout bank."""
+    source = os.path.basename(os.path.dirname(os.path.abspath(os.fspath(path))))
+    return (
+        _ABSOLUTE_VOUT_REFERENCE
+        if source == _ABSOLUTE_VOUT_SOURCE else 0.0)
 
 
 def _metadata_token(value):
@@ -116,6 +129,10 @@ class _CurveSharingMixin:
                     ", ".join(sorted(_CURVE_SHARING_MODES))))
         self.curve_sharing = curve_sharing
         self.curve_seed = None if curve_seed is None else int(curve_seed)
+        self._curve_generator = None
+        if self.curve_seed is not None:
+            self._curve_generator = torch.Generator(device="cpu")
+            self._curve_generator.manual_seed(self.curve_seed)
         self.register_buffer("_sampled_curve_indices", None, persistent=False)
 
     def _curve_indices_for(self, x):
@@ -125,13 +142,9 @@ class _CurveSharingMixin:
             torch.Size([]) if self.curve_sharing == "per_layer"
             else torch.Size((1,) + tuple(x.shape[1:])))
         if self._sampled_curve_indices is None:
-            generator = None
-            if self.curve_seed is not None:
-                generator = torch.Generator(device="cpu")
-                generator.manual_seed(self.curve_seed)
             sampled = torch.randint(
                 len(self.corner_names), expected_shape,
-                generator=generator, device="cpu")
+                generator=self._curve_generator, device="cpu")
             self._sampled_curve_indices = sampled.to(device=x.device)
         elif self._sampled_curve_indices.shape != expected_shape:
             raise RuntimeError(
@@ -165,11 +178,13 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
     """Cubic B-spline activation fitted once from characterized voltage curves.
 
     The CSV axes are in volts. Runtime scaling uses s = v_dd / max(abs(Vin)),
-    evaluates the spline at clamp(x / s), and returns s * Vout. There is no
-    offset, so the voltage origin is preserved exactly. Fitted coefficients are
-    fixed non-persistent buffers, not trainable parameters; gradients still
-    propagate through the activation input during training. The buffers are
-    rebuilt from the fixed CSV instead of being stored in model checkpoints.
+    evaluates the spline at clamp(x / s), and returns s * Vout. Curves in the
+    0906_RELU_Voltage bank are first referred to the fixed 0.6 V output
+    reference; this is deliberately not adapted per PVT corner. Other tables
+    preserve their existing zero reference. Fitted coefficients are fixed
+    non-persistent buffers, not trainable parameters; gradients still propagate
+    through the activation input during training. The buffers are rebuilt from
+    the fixed CSV instead of being stored in model checkpoints.
     """
 
     degree = 3
@@ -267,6 +282,37 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
 
     @classmethod
     def _load_csv(cls, path):
+        path = os.fspath(path)
+        if os.path.isdir(path):
+            csv_paths = sorted(
+                os.path.join(path, name)
+                for name in os.listdir(path)
+                if name.lower().endswith(".csv"))
+            if not csv_paths:
+                raise ValueError(
+                    "Measured-activation directory contains no CSV files: {}"
+                    .format(path))
+
+            shared_vin = None
+            curves = {}
+            column_names = {}
+            for csv_path in csv_paths:
+                vin, file_curves, _ = cls._load_csv(csv_path)
+                if shared_vin is None:
+                    shared_vin = vin
+                elif (vin.shape != shared_vin.shape or
+                      not torch.allclose(vin, shared_vin, rtol=1e-6, atol=1e-12)):
+                    raise ValueError(
+                        "Measured-activation directory curves must share one "
+                        "Vin grid.")
+                file_prefix = os.path.splitext(
+                    os.path.basename(csv_path))[0].upper()
+                for name, values in file_curves.items():
+                    qualified_name = "{}_{}".format(file_prefix, name)
+                    curves[qualified_name] = values
+                    column_names[qualified_name] = qualified_name
+            return shared_vin, curves, column_names
+
         with open(path) as handle:
             header = handle.readline()
         if "mcparamset=" in header:
@@ -285,7 +331,8 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
                         "Measured-activation MC curves must share one Vin grid.")
                 name = "MC{}".format(index + 1)
                 curves[name] = torch.tensor(
-                    data[:, 2 * index + 1], dtype=torch.float32)
+                    data[:, 2 * index + 1] -
+                    _absolute_vout_reference(path), dtype=torch.float32)
                 column_names[name] = name
             order = torch.argsort(vin)
             return (
@@ -736,19 +783,22 @@ MEASURED_ACTIVATION_TYPES = (
 
 
 def configure_measured_activation_corner_mode(
-        model, mode="fixed"):
+        model, mode="fixed", sharing="per_layer"):
     """Configure fixed or once-per-top-level-forward corner selection.
 
-    Random selection is active only while ``model.training`` is true. Every
-    measured activation in the model receives the same selected curve for the
-    complete top-level forward. Evaluation restores each module to the corner
-    selected at construction.
+    Training and training-time evaluation both resample per top-level forward
+    using the same per-model, per-layer, or per-spin granularity.
     """
     mode = str(mode).lower()
+    sharing = str(sharing).lower()
     if mode not in _CORNER_MODES:
         raise ValueError(
             "Measured activation corner mode must be one of {}.".format(
                 ", ".join(sorted(_CORNER_MODES))))
+    if sharing not in _CURVE_SHARING_MODES:
+        raise ValueError(
+            "Random measured-activation curve sharing must be one of {}."
+            .format(", ".join(sorted(_CURVE_SHARING_MODES))))
 
     previous_hook = getattr(
         model, "_measured_activation_corner_hook", None)
@@ -768,8 +818,12 @@ def configure_measured_activation_corner_mode(
     for activation in activations:
         activation.select_corner(activation.default_corner)
     model._measured_activation_corner_mode = mode
+    model._measured_activation_random_curve_sharing = sharing
     model._last_measured_activation_corner = None
     if mode == "fixed":
+        for activation in activations:
+            activation.curve_sharing = "per_model"
+            activation._sampled_curve_indices = None
         return len(activations)
 
     corner_names = activations[0].corner_names
@@ -778,17 +832,30 @@ def configure_measured_activation_corner_mode(
         raise ValueError(
             "All randomly sampled measured activations must load the same corners.")
 
-    def _sample_corner_before_forward(module, inputs):
-        if not module.training:
+    def _sample_curve_assignment(module):
+        if sharing == "per_spin":
             for activation in activations:
-                activation.select_corner(activation.default_corner)
-            module._last_measured_activation_corner = None
+                activation.curve_sharing = "per_spin"
+                activation._sampled_curve_indices = None
+            module._last_measured_activation_corner = "per_spin"
             return
-        corner_index = int(torch.randint(len(corner_names), (1,)).item())
-        selected = corner_names[corner_index]
+
         for activation in activations:
-            activation.select_corner(selected)
-        module._last_measured_activation_corner = selected
+            activation.curve_sharing = "per_model"
+            activation._sampled_curve_indices = None
+        sample_count = 1 if sharing == "per_model" else len(activations)
+        corner_indices = torch.randint(len(corner_names), (sample_count,))
+        selected = tuple(
+            corner_names[int(index)] for index in corner_indices)
+        if sharing == "per_model":
+            selected = selected * len(activations)
+        for activation, corner in zip(activations, selected):
+            activation.select_corner(corner)
+        module._last_measured_activation_corner = (
+            selected[0] if sharing == "per_model" else selected)
+
+    def _sample_corner_before_forward(module, inputs):
+        _sample_curve_assignment(module)
 
     model._measured_activation_corner_hook = model.register_forward_pre_hook(
         _sample_corner_before_forward)
