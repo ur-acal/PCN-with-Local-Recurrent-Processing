@@ -881,6 +881,9 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         val_top5 = None
         best_model_path = None
         collapse_path = Path(self.save_path) / "training_collapse.json"
+        if isinstance(self.model, PCNet):
+            # PCN jobs share save_path; baseline controllers use their existing paths.
+            collapse_path = Path(self.save_path) / self.model_name / "training_collapse.json"
         if self.collapse_monitor_enabled and collapse_path.exists():
             collapse_path.unlink()
 

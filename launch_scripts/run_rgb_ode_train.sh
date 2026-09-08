@@ -72,13 +72,31 @@ MAX_POOL="${MAX_POOL:-0 0 1 0 1 0 0 0}"
 #STRIDE=(1 1 1 2 1 2 1)
 #MAX_POOL="${MAX_POOL:-0 0 0 1 0 1 0}"
 
-# Change exp name here
-EXP_SUFFIX="${ODE_BLOCK}_9L256C_${DATASET_NAME}_${NEG_SAMPLE}_${CONTRAST_METHOD}_${DISTILL_ALPHA}_${DISTILL_TEMPERATURE}_INP_${INP_CHANNELS// /-}_OUT_${OUT_CHANNELS// /-}_POOL_${MAX_POOL// /-}"
-
-
 read -r -a INP <<< "${INP_CHANNELS}"
 read -r -a OUT <<< "${OUT_CHANNELS}"
 read -r -a POOL <<< "${MAX_POOL}"
+
+# Consecutive output-channel groups, including the stem; full arrays remain in training args.
+CHANNEL_GROUPS=""
+PREV_CHANNEL=""
+CHANNEL_COUNT=0
+for CHANNEL in "${OUT[@]}"; do
+  if [[ "${CHANNEL}" != "${PREV_CHANNEL}" && ${CHANNEL_COUNT} -gt 0 ]]; then
+    CHANNEL_GROUPS+="${CHANNEL_COUNT}x${PREV_CHANNEL}_"
+    CHANNEL_COUNT=0
+  fi
+  PREV_CHANNEL="${CHANNEL}"
+  CHANNEL_COUNT=$((CHANNEL_COUNT + 1))
+done
+CHANNEL_GROUPS+="${CHANNEL_COUNT}x${PREV_CHANNEL}"
+POOL_COUNT=0
+for POOL_FLAG in "${POOL[@]}"; do
+  if [[ "${POOL_FLAG}" -ne 0 ]]; then
+    POOL_COUNT=$((POOL_COUNT + 1))
+  fi
+done
+EXP_SUFFIX="${PCN}_${ODE_BLOCK}_${T_END}TEnd_${DATASET_NAME}_${CHANNEL_GROUPS}_${POOL_COUNT}P"
+EXP_SUFFIX="${EXP_SUFFIX}_job${SLURM_JOB_ID:-local_${BASHPID}}"
 
 #INP=(3  64 64  128 128 128 256 256) # ~0.73 on CiFar-100
 #OUT=(64 64 128 128 128 256 256 256)
