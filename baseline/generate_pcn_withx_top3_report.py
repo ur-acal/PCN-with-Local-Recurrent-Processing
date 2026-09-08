@@ -203,7 +203,7 @@ def build_report(rows, ranking, withx):
         "",
         f"The input-driven `ODEBlockXInit` PCN is available for seven of eight dataset/architecture pairs and wins **{sum(gap > 0 for gap in withx_gaps)}/{len(withx_gaps)}** matched nonzero points against the best WRN, with a mean gap of **{mean(withx_gaps):+.2f} points**. On exactly those same points, the legacy PCN wins **{sum(gap > 0 for gap in legacy_common_gaps)}/{len(legacy_common_gaps)}** with a mean gap of **{mean(legacy_common_gaps):+.2f} points**.",
         "",
-        f"Relative to the legacy PCN itself, `ODEBlockXInit` changes mean nonzero accuracy by **{mean(withx_legacy_deltas):+.2f} points** and is higher at **{sum(delta > 0 for delta in withx_legacy_deltas)}/{len(withx_legacy_deltas)}** matched points. CIFAR-10 WRN-28-4 is `N/A` because its input-driven checkpoint failed during training; no result was inferred or substituted.",
+        f"Relative to the legacy PCN itself, `ODEBlockXInit` changes mean nonzero accuracy by **{mean(withx_legacy_deltas):+.2f} points** and is higher at **{sum(delta > 0 for delta in withx_legacy_deltas)}/{len(withx_legacy_deltas)}** matched points. CIFAR-10 WRN-28-4 (`ODEBlockXInit`, t_end=1.75) is **TRAINING FAILED**, not pending evaluation. The latest remote retry also failed with CUDA OOM, as reported by the user; five warmup epochs were configured. Excessive solver steps/graph memory after numerical instability are a suspected mechanism, not a confirmed OOM diagnosis. Its accuracy remains `N/A`; no result was inferred or substituted.",
         "",
         "## Architecture differences",
         "",

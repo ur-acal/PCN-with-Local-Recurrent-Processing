@@ -256,6 +256,35 @@ class PCNetNoBatchNorm(PCNet):
         return out
 
 
+class PCNetBoundaryBN(PCNet):
+    """Boundary-only BN with a BN -> dropout -> ReLU classifier head."""
+
+    def __init__(self, **kwargs):
+        # Match PCNetNoBatchNorm initialization; never normalize the raw input.
+        kwargs.update({"zero_init": False, "first_bn": False})
+        super().__init__(**kwargs)
+
+    def forward(self, x, clamp=False, is_feat=False):
+        for i in range(self.num_layers):
+            x = self.BNs[i](x)
+            x = self.PcConvs[i](x, i)
+            if self.max_pool[i]:
+                x = self.max_pool2d(x)
+            if clamp:
+                x = torch.clamp(x, -1, 1)
+
+        x = self.BNend(x)
+        if self.dropout > 0.0:
+            x = F.dropout(input=x, p=self.dropout, training=self.training)
+        feat = F.relu(x)
+        out = F.avg_pool2d(feat, feat.size(-1))
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        if is_feat:
+            return [feat], out
+        return out
+
+
 class PCNetWithMiddleConv(PCNet):
     def __init__(self, mid_kernel=3, **kwargs):
         super().__init__(**kwargs)
@@ -393,6 +422,7 @@ PCN_CLASSES = {
     "PCNet": PCNet,
     "PCNetWithMiddleConv": PCNetWithMiddleConv,
     "PCNetNoBatchNorm": PCNetNoBatchNorm,
+    "PCNetBoundaryBN": PCNetBoundaryBN,
     "PCNetSeparable": PCNetSeparable,
     "PCNetSepBN": PCNetSepBN,
     "PCNetSepBNRes": PCNetSepBNRes,
