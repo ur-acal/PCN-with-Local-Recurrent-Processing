@@ -69,14 +69,39 @@ def test_0906_directory_loads_curves_from_every_file(tmp_path):
     curve_dir = tmp_path / "0906_RELU_Voltage"
     first_curve = _write_mc_curve(curve_dir)
     second_curve = curve_dir / "ff_-20_0.csv"
-    second_curve.write_text(first_curve.read_text())
+    second_curve.write_text(first_curve.read_text().replace('VDD=1.2,', 'VDD=1.176,'))
 
     activation = PiecewiseLinearActivation(
         curve_dir, v_dd=0.5, corner="TT_25_1_MC1")
 
     assert activation.corner_names == ("FF_-20_0_MC1", "TT_25_1_MC1")
     assert torch.allclose(
-        activation.curves["FF_-20_0_MC1"], torch.tensor([0.0, 0.03, 0.5]))
+        activation.curves["FF_-20_0_MC1"], torch.tensor([0.012, 0.042, 0.512]))
+
+
+def test_0906_supply_offsets_and_explicit_legacy_mode(tmp_path):
+    curve_dir = tmp_path / "0906_RELU_Voltage"
+    template = _write_mc_curve(curve_dir).read_text()
+    x = torch.tensor([-0.5, 0.0, 0.5])
+    for voltage, supply, offset in ((0, 1.176, 0.588), (1, 1.2, 0.600),
+                                    (2, 1.224, 0.612)):
+        path = curve_dir / f"tt_25_{voltage}.csv"
+        path.write_text(template.replace('VDD=1.2,', f'VDD={supply},'))
+        default = PiecewiseLinearActivation(path, v_dd=0.5, corner="MC1")
+        adapted = PiecewiseLinearActivation(
+            path, v_dd=0.5, corner="MC1", adapt_relu_offset=True)
+        legacy = PiecewiseLinearActivation(
+            path, v_dd=0.5, corner="MC1", adapt_relu_offset=False)
+        expected = torch.tensor([0.6 - offset, 0.63 - offset, 1.1 - offset])
+        assert torch.allclose(adapted.curves["MC1"], expected, atol=1e-7)
+        assert torch.equal(default(x), adapted(x))
+        assert torch.allclose(legacy.curves["MC1"], torch.tensor([0., 0.03, 0.5]))
+        assert torch.allclose(adapted(x), expected * (0.5 / 0.6), atol=1e-7)
+
+    other = _write_mc_curve(tmp_path / "other_bank")
+    enabled = PiecewiseLinearActivation(other, v_dd=0.5, corner="MC1", adapt_relu_offset=True)
+    disabled = PiecewiseLinearActivation(other, v_dd=0.5, corner="MC1", adapt_relu_offset=False)
+    assert torch.equal(enabled(x), disabled(x))
 
 
 def test_piecewise_linear_gradient_is_local_segment_slope(tmp_path):

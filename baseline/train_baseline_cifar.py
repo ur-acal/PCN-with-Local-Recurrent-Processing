@@ -190,6 +190,7 @@ def parse_args():
     parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument("--eval_every", type=int, default=None)
+    parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=4096)
     parser.add_argument('--noise_level', default=None, type=float,
                         help='noise level in noise inject training. None means normal training without noise injection')
@@ -410,6 +411,7 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
         warmup_epoch=cfg["warmup_epoch"],
         lr_reduce_on=cfg.get("lr_reduce_on", "80,122,150,225,262"),
         test_bs=cfg["test_batch_size"],
+        num_workers=args.num_workers,
         max_norm=cfg.get("max_norm", None),
         bias_lr_multiplier=cfg.get("bias_lr_multiplier", 1.0),
         bias_weight_decay=cfg.get("bias_weight_decay", None),
@@ -853,6 +855,8 @@ def main():
             ckpt_path=args.resume_checkpoint)
     if teacher_model is not None:
         evaluate_teacher(teacher_model, trainer)
+    trainer.recovery_checkpoint = args.resume_checkpoint
+    trainer.recovery_config = vars(args).copy()
     trainer.train()
 
 

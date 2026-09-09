@@ -1,4 +1,8 @@
 # PCN repository for Image classification
+
+Current physical PCN commands and non-ideality settings:
+[Pinned training and evaluation reference](docs/current_pcn_reference.md).
+
 ## Dependency
 Enumerate a list of extra dependencies other than normal ML settings.
 ```bash

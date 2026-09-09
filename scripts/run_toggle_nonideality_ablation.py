@@ -168,6 +168,9 @@ def parse_args():
     parser.add_argument("--test_bs", type=int, default=128)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--toggle_level", type=int, choices=(2, 3), default=3)
+    parser.add_argument("--toggle_n_cycles", type=int, default=5)
+    parser.add_argument("--toggle_time_split", type=float, default=0.5)
+    parser.add_argument("--toggle_fast_path", type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=True)
     parser.add_argument("--odexinit_scaling_mode",
                         choices=("approx", "direct"), default="approx")
     parser.add_argument("--toggle_timing_mode",
@@ -307,9 +310,9 @@ def build_command(args, case_name):
         "--fold_scalar", "1",
         "--tie_cap", "false",
         "--one_over_q", str(args.one_over_q),
-        "--toggle_n_cycles", "5",
-        "--toggle_time_split", "0.5",
-        "--toggle_fast_path", "true",
+        "--toggle_n_cycles", str(args.toggle_n_cycles),
+        "--toggle_time_split", str(args.toggle_time_split),
+        "--toggle_fast_path", bool_arg(args.toggle_fast_path),
         "--odexinit_scaling_mode", args.odexinit_scaling_mode,
         "--toggle_timing_mode", args.toggle_timing_mode,
         "--toggle_y_time", str(args.toggle_y_time),

@@ -174,6 +174,8 @@ def parse_args():
                         choices=["none", "nonnegative", "auto"], default="auto")
     parser.add_argument("--activation_normalize_positive_endpoint",
                         type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
+    parser.add_argument("--adapt_relu_offset",
+                        type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=True)
     parser.add_argument("--compile_measured_activation",
                         type=lambda v: v.lower() in ('yes', 'true', 't', '1'), default=False)
     parser.add_argument("--enable_summing_current_noise",
@@ -486,6 +488,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "activation_spline_parameters": args.activation_spline_parameters,
                       "activation_fit_constraint": args.activation_fit_constraint,
                       "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
+                      "adapt_relu_offset": args.adapt_relu_offset,
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     saved_wrappers = {}
@@ -620,6 +623,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "activation_spline_parameters": args.activation_spline_parameters,
                       "activation_fit_constraint": args.activation_fit_constraint,
                       "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
+                      "adapt_relu_offset": args.adapt_relu_offset,
                       # offset_eps None means using Johnson noise
                       "offset_eps": None, "w_perc": args.w_perc} if args.ode_wrapper is not None else None
     net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
@@ -863,6 +867,7 @@ def run_ode_inference():
                           "activation_spline_parameters": args.activation_spline_parameters,
                           "activation_fit_constraint": args.activation_fit_constraint,
                           "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
+                          "adapt_relu_offset": args.adapt_relu_offset,
                           "compile_measured_activation": args.compile_measured_activation,
                           "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                           "w_perc": args.w_perc} if args.ode_wrapper is not None else None
@@ -954,7 +959,10 @@ def run_ode_inference():
                                 curve_gaussian=pooling_curve_gaussian,
                                 quantity=args.nonlinear_R_mc_quantity,
                                 curve_indices=nonlinear_R_curve_bank_indices,
-                                nominal_R=args.R, seed=pooling_seed)
+                                nominal_R=args.R, seed=pooling_seed,
+                                training_curve_mode=(args.nonlinear_R_train_mode
+                                    if args.nonlinear_R_train_mode != "none" else None),
+                                corner_range=args.nonlinear_R_corner_range)
                             logging.warning(
                                 "Measured physical-domain average pooling enabled.")
                         if args.test_expanded:

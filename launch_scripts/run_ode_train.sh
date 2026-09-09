@@ -21,6 +21,12 @@ if [[ "${IS_SLURM}" == 1 ]]; then
   conda activate scanbase
 fi
 
+if [[ "${IS_SLURM}" == 1 || -n "${SLURM_JOB_ID:-}" ]]; then
+  NUM_WORKERS="${NUM_WORKERS:-2}"
+else
+  NUM_WORKERS="${NUM_WORKERS:-0}"
+fi
+
 ORIG_T_INP="${ORIG_T_INP:-false}"
 DATASET_NAME="${DATASET_NAME:-cifar10}"
 IMG_TYPE="${IMG_TYPE:-scanGFI}"
@@ -152,6 +158,7 @@ python train_ode_cifar.py \
   --tie_bp        "false" \
   --bypass        "false" \
   --batch_size    128 \
+  --num_workers   "${NUM_WORKERS}" \
   --method        "dopri5" \
   --n_steps       5 \
   --tol           "0.0001" \

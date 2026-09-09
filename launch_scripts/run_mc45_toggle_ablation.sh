@@ -14,6 +14,12 @@ if [[ "${IS_SLURM}" == 1 ]]; then
   conda activate scanbase
 fi
 
+if [[ "${IS_SLURM}" == 1 ]]; then
+  export DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-2}"
+else
+  export DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-0}"
+fi
+
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
 
@@ -28,6 +34,9 @@ OUTPUT_DIR="${OUTPUT_DIR:-results/coupler_monte_v2_cifar100_qf1}"
 WEIGHT_QUANT_FACTOR_BITS="${WEIGHT_QUANT_FACTOR_BITS:-1}"
 ENOB="${ENOB:-8}"
 TOGGLE_TIMING_MODE="${TOGGLE_TIMING_MODE:-derived}"
+TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
+TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
+TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
 TOGGLE_Y_TIME="${TOGGLE_Y_TIME:-5e-9}"
 Z_OVER_Y_TIME="${Z_OVER_Y_TIME:-3}"
 V_DD="${V_DD:-0.1}"
@@ -110,9 +119,13 @@ mkdir -p "${OUTPUT_DIR}"
   echo "weight_quant_factor_bits=${WEIGHT_QUANT_FACTOR_BITS}"
   echo "enob=${ENOB}"
   echo "toggle_timing_mode=${TOGGLE_TIMING_MODE}"
+  echo "toggle_n_cycles=${TOGGLE_N_CYCLES}"
+  echo "toggle_time_split=${TOGGLE_TIME_SPLIT}"
+  echo "toggle_fast_path=${TOGGLE_FAST_PATH}"
   echo "toggle_y_time=${TOGGLE_Y_TIME}"
   echo "z_over_y_time=${Z_OVER_Y_TIME}"
   echo "n_trials=${N_TRIALS}"
+  echo "dataloader_num_workers=${DATALOADER_NUM_WORKERS}"
   echo "base_seed=${BASE_SEED}"
   echo "corner_ids=${CORNER_IDS:-all}"
   echo "fixed_relu_mc_index=${FIXED_RELU_MC_INDEX:-none}"
@@ -186,6 +199,9 @@ python scripts/run_toggle_nonideality_ablation.py \
   --test_bs 128 \
   --jobs 1 \
   --toggle_level 3 \
+  --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
+  --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
+  --toggle_fast_path "${TOGGLE_FAST_PATH}" \
   --odexinit_scaling_mode direct \
   --toggle_timing_mode "${TOGGLE_TIMING_MODE}" \
   --toggle_y_time "${TOGGLE_Y_TIME}" \

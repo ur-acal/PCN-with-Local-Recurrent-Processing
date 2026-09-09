@@ -23,6 +23,7 @@ from pc_model import PCNet
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions
+from training_recovery import restore_latest, save_latest, remove_latest
 
 
 class DatasetWithIndex(torch.utils.data.Dataset):
@@ -613,7 +614,14 @@ class TrainerCiFar(object):
         best_top5 = None
         val_top5 = None
         best_model_path = None
-        for epoch in range(self.num_epochs):
+        recovered = restore_latest(self)
+        start_epoch = 0
+        if recovered is not None:
+            start_epoch, history = recovered
+            train_loss_list, val_acc_list = history['train_loss_list'], history['val_acc_list']
+            best_acc, val_acc, best_epoch = history['best_acc'], history['val_acc'], history['best_epoch']
+            best_top5, val_top5, best_model_path = history['best_top5'], history['val_top5'], history['best_model_path']
+        for epoch in range(start_epoch, self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch(epoch)
             if (epoch + 1) % self.eval_every == 0 and epoch >= self.skip_eval_epochs:
@@ -635,7 +643,9 @@ class TrainerCiFar(object):
                     best_top5 = val_top5
                     best_model_path = self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
             self.scheduler.step()
+            save_latest(self, epoch + 1, locals())
         _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
+        remove_latest(self)
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
         print("----- Total number of parameters: {} M -----".format(sum(p.numel() for p in self.model.parameters()) / 1e6))
         if self.dataset_name == "cifar100":
@@ -1088,7 +1098,7 @@ class TrainerCiFar(object):
                 teacher_dataset,
                 batch_size=self.test_batch_size,
                 shuffle=False,
-                num_workers=2,
+                num_workers=getattr(self, "num_workers", 2),
             )
         else:
             transform_train = transforms.Compose([
@@ -1137,10 +1147,11 @@ class TrainerCiFar(object):
 
         # Get dataloader
         self.train_dataloader = torch.utils.data.DataLoader(
-            self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=2
+            self.train_set, batch_size=self.batch_size, shuffle=True,
+            num_workers=getattr(self, "num_workers", 2)
         )
         self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False,
-                                                          num_workers=2)
+                                                          num_workers=getattr(self, "num_workers", 2))
         if self.teacher_eval_loader is None:
             self.teacher_eval_loader = self.val_dataloader
 

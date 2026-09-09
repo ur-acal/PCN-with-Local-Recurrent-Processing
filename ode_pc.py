@@ -3188,6 +3188,7 @@ class WrapQuantizeW(ODEWrapperRC):
         self.activation_fit_constraint = kwargs.pop("activation_fit_constraint", "auto")
         self.activation_normalize_positive_endpoint = kwargs.pop(
             "activation_normalize_positive_endpoint", False)
+        self.adapt_relu_offset = kwargs.pop("adapt_relu_offset", True)
         self.compile_measured_activation = kwargs.pop("compile_measured_activation", False)
 
         self.v_grid, self.R_codes, self.R_table = None, None, None
@@ -3230,6 +3231,7 @@ class WrapQuantizeW(ODEWrapperRC):
         activation_kwargs = dict(
             curve_path=curve_path, v_dd=self.v_dd, corner=self.activation_corner,
             normalize_positive_endpoint=self.activation_normalize_positive_endpoint,
+            adapt_relu_offset=self.adapt_relu_offset,
             curve_sharing=self.activation_curve_sharing,
             curve_seed=(
                 None if self.activation_curve_seed is None else

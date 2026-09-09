@@ -834,7 +834,15 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         val_top5 = None
         best_model_path = None
 
-        for epoch in range(self.num_epochs):
+        from training_recovery import restore_latest, save_latest, remove_latest
+        recovered = restore_latest(self)
+        start_epoch = 0
+        if recovered is not None:
+            start_epoch, history = recovered
+            train_loss_list, val_acc_list = history['train_loss_list'], history['val_acc_list']
+            best_acc, val_acc, best_epoch = history['best_acc'], history['val_acc'], history['best_epoch']
+            best_top5, val_top5, best_model_path = history['best_top5'], history['val_top5'], history['best_model_path']
+        for epoch in range(start_epoch, self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
 
             train_loss = self.train_one_epoch(epoch)
@@ -870,7 +878,9 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
             self.scheduler.step(epoch + 1)
 
+            save_latest(self, epoch + 1, locals())
         _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
+        remove_latest(self)
 
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
         print(

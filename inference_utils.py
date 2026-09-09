@@ -89,7 +89,12 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
         test_set = InputPreprocessedDataset(
             test_set, input_quant_bits, center_student_input)
     # Create a DataLoader
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_bs, shuffle=shuffle, num_workers=2)
+    test_loader = torch.utils.data.DataLoader(
+        test_set,
+        batch_size=test_bs,
+        shuffle=shuffle,
+        num_workers=int(os.environ.get("DATALOADER_NUM_WORKERS", "2")),
+    )
     return test_loader
 
 
@@ -313,12 +318,14 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
     if isinstance(quant_params, dict):
         quant_scheme = get_quant_model(net_, device=device, **quant_params)
         logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))
+    recovery_weights = ("training_recovery" in checkpoint_weight and
+                        checkpoint_weight.get("checkpoint_weight_format") == "full_param")
     if data_parallel:
         net_ = nn.DataParallel(net_)
-        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path)
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path or recovery_weights)
         net_ = net_.module
     else:
-        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path)
+        _ = load_and_register_buffer(net_, checkpoint_weight['net'], device, load_weight_only="full_param" in model_path or recovery_weights)
 
     if conv_only:
         log.warning("Replacing all transposed conv with conv")

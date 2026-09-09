@@ -21,6 +21,11 @@ if [[ -n "${CENTER_STUDENT_INPUT+x}" ]]; then
   INPUT_PREPROCESS_ARGS+=(--center_student_input "${CENTER_STUDENT_INPUT}")
 fi
 DATA_DIR="${DATA_DIR:-../data}"
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+  NUM_WORKERS="${NUM_WORKERS:-2}"
+else
+  NUM_WORKERS="${NUM_WORKERS:-0}"
+fi
 PHYSICAL_LEVEL="${PHYSICAL_LEVEL:-2}"
 R_VAL="${R_VAL:-67e3}"
 C_VAL="${C_VAL:-282e-15}"
@@ -62,6 +67,7 @@ cmd=(
   --case custom_noresize
   --seed "${TRAINING_SEED:-4096}"
   --eval_every "${FT_EVAL_EVERY:-2}"
+  --num_workers "${NUM_WORKERS}"
   --img_type "${IMG_TYPE}"
   --resume_checkpoint "${MODEL_CKPT}"
   --physical_feedforward true

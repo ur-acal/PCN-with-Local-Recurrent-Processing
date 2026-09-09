@@ -175,9 +175,9 @@ run_model(){
     --thermal_noise   "false" \
     --conv_only       "true" \
     --hw_validate     "true" \
-    --test_expanded   "true" \
+    --test_expanded   "false" \
     --rec_full_traj   "true" \
-    --t_end_sf        "1" \
+    --t_end_sf        "5" \
     --pvt_to_origin   "false" \
     --hw_val_path     "./hw_validation_data" \
     --hw_val_inp      "" \

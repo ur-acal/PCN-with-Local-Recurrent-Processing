@@ -556,6 +556,9 @@ eval_one_combo_model() {
       --test_bs "${test_bs}" \
       --jobs 1 \
       --toggle_level 3 \
+      --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
+      --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
+      --toggle_fast_path "${TOGGLE_FAST_PATH}" \
       --odexinit_scaling_mode direct \
       --toggle_timing_mode "${TOGGLE_TIMING_MODE}" \
       --toggle_y_time "${TOGGLE_Y_TIME}" \

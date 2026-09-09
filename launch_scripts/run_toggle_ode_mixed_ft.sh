@@ -10,6 +10,11 @@ R_MAX="${R_MAX:-none}"
 C_VAL="${C_VAL:-282e-15}"
 V_DD="${V_DD:-0.1}"
 MISMATCH_LEVEL="${MISMATCH_LEVEL:-0.0}"
+if [[ "${IS_SLURM:-0}" == 1 || -n "${SLURM_JOB_ID:-}" ]]; then
+  NUM_WORKERS="${NUM_WORKERS:-2}"
+else
+  NUM_WORKERS="${NUM_WORKERS:-0}"
+fi
 
 declare -A NOISE_LEVELS=(
   [mul]="${MISMATCH_LEVEL}"
@@ -243,6 +248,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --tie_bp        "false" \
             --bypass        "false" \
             --batch_size    128 \
+            --num_workers   "${NUM_WORKERS}" \
             --method        "${train_solver}" \
             --n_steps       5 \
             --tol           "1e-6" \

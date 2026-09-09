@@ -22,12 +22,15 @@ _ABSOLUTE_VOUT_REFERENCE = 0.6
 _ABSOLUTE_VOUT_SOURCE = "0906_RELU_Voltage"
 
 
-def _absolute_vout_reference(path):
-    """Return the fixed reference used only by the 0906 absolute-Vout bank."""
+def _absolute_vout_reference(path, adapt_relu_offset=True):
+    """0906 only: fixed 0.6 V, or one reference per supply category."""
     source = os.path.basename(os.path.dirname(os.path.abspath(os.fspath(path))))
-    return (
-        _ABSOLUTE_VOUT_REFERENCE
-        if source == _ABSOLUTE_VOUT_SOURCE else 0.0)
+    if source != _ABSOLUTE_VOUT_SOURCE:
+        return 0.0
+    if adapt_relu_offset:
+        voltage_index = int(os.path.splitext(os.path.basename(path))[0].rsplit('_', 1)[1])
+        return {0: 0.588, 1: 0.600, 2: 0.612}[voltage_index]
+    return _ABSOLUTE_VOUT_REFERENCE
 
 
 def _metadata_token(value):
@@ -192,7 +195,7 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
     def __init__(self, curve_path, v_dd, corner="TT", num_parameters=10,
                  normalize_positive_endpoint=False, compile_evaluator=False,
                  fit_constraint="auto", curve_sharing="per_model",
-                 curve_seed=None):
+                 curve_seed=None, adapt_relu_offset=True):
         super().__init__()
         if num_parameters <= self.degree:
             raise ValueError("A cubic B-spline needs at least four control coefficients.")
@@ -202,7 +205,7 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
                 "fit_constraint must be one of {}.".format(
                     ", ".join(sorted(_FIT_CONSTRAINTS))))
 
-        vin, curves, column_names = self._load_csv(curve_path)
+        vin, curves, column_names = self._load_csv(curve_path, adapt_relu_offset)
         self.curve_path = str(curve_path)
         self.num_parameters = int(num_parameters)
         self.normalize_positive_endpoint = bool(normalize_positive_endpoint)
@@ -281,7 +284,7 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
         return name.upper()
 
     @classmethod
-    def _load_csv(cls, path):
+    def _load_csv(cls, path, adapt_relu_offset=True):
         path = os.fspath(path)
         if os.path.isdir(path):
             csv_paths = sorted(
@@ -297,7 +300,7 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
             curves = {}
             column_names = {}
             for csv_path in csv_paths:
-                vin, file_curves, _ = cls._load_csv(csv_path)
+                vin, file_curves, _ = cls._load_csv(csv_path, adapt_relu_offset)
                 if shared_vin is None:
                     shared_vin = vin
                 elif (vin.shape != shared_vin.shape or
@@ -332,7 +335,7 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
                 name = "MC{}".format(index + 1)
                 curves[name] = torch.tensor(
                     data[:, 2 * index + 1] -
-                    _absolute_vout_reference(path), dtype=torch.float32)
+                    _absolute_vout_reference(path, adapt_relu_offset), dtype=torch.float32)
                 column_names[name] = name
             order = torch.argsort(vin)
             return (
@@ -596,9 +599,9 @@ class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
 
     def __init__(self, curve_path, v_dd, corner="TT",
                  normalize_positive_endpoint=False,
-                 curve_sharing="per_model", curve_seed=None):
+                 curve_sharing="per_model", curve_seed=None, adapt_relu_offset=True):
         super().__init__()
-        vin, curves, column_names = CubicBSplineActivation._load_csv(curve_path)
+        vin, curves, column_names = CubicBSplineActivation._load_csv(curve_path, adapt_relu_offset)
         if vin.numel() < 2:
             raise ValueError(
                 "Piecewise-linear activation needs at least two Vin samples.")

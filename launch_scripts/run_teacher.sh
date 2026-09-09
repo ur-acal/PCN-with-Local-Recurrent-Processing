@@ -17,6 +17,11 @@ MATCH_DISTILL_AUG_ORDER="${MATCH_DISTILL_AUG_ORDER:-${match_distill_aug_order:-f
 USE_DIRECT_RESIZE_FOR_TIMM_AUGS="${USE_DIRECT_RESIZE_FOR_TIMM_AUGS:-false}"
 MATCH_DISTILL_PREPROCESS="${MATCH_DISTILL_PREPROCESS:-${match_distill_preprocess:-false}}"
 INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-${input_quant_bits:-}}"
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+  NUM_WORKERS="${NUM_WORKERS:-4}"
+else
+  NUM_WORKERS="${NUM_WORKERS:-0}"
+fi
 case "${IMG_TYPE,,}" in
   cifair)
     IMG_TYPE="CiFAIR"
@@ -67,7 +72,7 @@ if [[ "${USE_TIMM,,}" == "true" ]]; then
     --use_direct_resize_for_timm_augs "${USE_DIRECT_RESIZE_FOR_TIMM_AUGS}" \
     --match_distill_aug_order "${MATCH_DISTILL_AUG_ORDER}" \
     --batch_size "${TIMM_BATCH_SIZE:-32}" \
-    --num_workers "${NUM_WORKERS:-4}" \
+    --num_workers "${NUM_WORKERS}" \
     --eval_every "${EVAL_EVERY:-5}" \
     "${TIMM_CONFIG_ARGS[@]}" \
     "${TIMM_RE_ARGS[@]}" \
@@ -102,6 +107,7 @@ else
     --nsc 10 \
     --batch_split 1 \
     --batch 32 \
+    --num_workers "${NUM_WORKERS}" \
     --alpha 0 \
     --train_transform cifar \
     --train_size 224 \

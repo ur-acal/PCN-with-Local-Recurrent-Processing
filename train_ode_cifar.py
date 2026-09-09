@@ -147,6 +147,7 @@ def get_args():
              "Random Erasing is disabled by default for PCN training.")
     p.add_argument("--timm_sched", type=str, default="multistep", choices=["multistep", "cosine"])
     p.add_argument("--batch_size",    type=int,   default=512)
+    p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
     p.add_argument("--weight_decay",  type=float, default=1e-3)
@@ -1114,6 +1115,7 @@ def main():
             model_name=model_name,
             save_path=args.output_save_path or args.save_path,
             batch_size=cfg["batch_size"],
+            num_workers=args.num_workers,
             optim_type="sgd",  # ignored by TrainerCiFarTimmStyle._get_optimizer
             weight_decay=cfg["weight_decay"],
             learning_rate=cfg["lr"],
@@ -1246,6 +1248,8 @@ def main():
     if args.test_only:
         logging.warning("Test only. Run 2 epochs.")
 
+    trainer.recovery_checkpoint = ckpt_path if args.model_name is not None else None
+    trainer.recovery_config = vars(args).copy()
     trainer.train()
 
 if __name__ == "__main__":

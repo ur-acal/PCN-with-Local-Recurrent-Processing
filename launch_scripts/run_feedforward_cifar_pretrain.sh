@@ -21,6 +21,11 @@ if [[ "${CENTER_STUDENT_INPUT,,}" == "true" && "${OUTPUT_DIR,,}" != *"_ctr"* ]];
   OUTPUT_DIR+="_ctr"
 fi
 DATA_DIR="${DATA_DIR:-../data}"
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+  NUM_WORKERS="${NUM_WORKERS:-2}"
+else
+  NUM_WORKERS="${NUM_WORKERS:-0}"
+fi
 TIMM_AUG_LEVEL="${TIMM_AUG_LEVEL:-none}"
 TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
 DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
@@ -56,6 +61,7 @@ cmd=(
   --case custom_noresize
   --seed "${TRAINING_SEED:-4096}"
   --eval_every "${PRETRAIN_EVAL_EVERY:-5}"
+  --num_workers "${NUM_WORKERS}"
   --img_type "${IMG_TYPE}"
   --timm_aug_level "${TIMM_AUG_LEVEL}"
   --timm_re_prob "${TIMM_RE_PROB}"
