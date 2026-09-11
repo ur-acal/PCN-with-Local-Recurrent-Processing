@@ -72,6 +72,8 @@ def parse_args():
         ),
     )
     p.add_argument("--noise_levels", default="csv", help="csv for all levels from files, or comma list.")
+    p.add_argument("--standalone", action="store_true",
+                   help="Use explicit dataset/architecture/mismatch/levels without historical comparison CSVs.")
     p.add_argument("--noisy_trials", type=int, default=10)
     p.add_argument("--seed", type=int, default=123)
     p.add_argument("--device", default="cuda")
@@ -205,6 +207,17 @@ def select_specs(args, specs: List[Dict]) -> List[Dict]:
         }
         out = [s for s in out if (s["dataset"], s["architecture"], s["mismatch_type"]) in wanted]
     return out
+
+
+def standalone_specs(args):
+    if args.mode != 'full' or args.pcn_reference_policy != 'none' or args.noise_levels == 'csv':
+        raise ValueError('Standalone evaluation requires full mode, explicit levels, and PCN references disabled')
+    if args.datasets not in {'cifar10', 'cifar100'} or args.architectures not in {
+        'WRN_16_2', 'WRN_16_4', 'WRN_28_2', 'WRN_28_4'
+    } or args.mismatch_types not in {'additive', 'multiplicative'}:
+        raise ValueError('Standalone evaluation requires one explicit CIFAR dataset, WRN size, and mismatch type')
+    return [dict(dataset=args.datasets, architecture=args.architectures,
+                 mismatch_type=args.mismatch_types, compare=dict(levels=[], by_level={}))]
 
 
 def levels_for_spec(args, spec: Dict) -> List[float]:
@@ -724,7 +737,7 @@ def main():
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    specs = discover_compare_specs(Path(args.compare_dir))
+    specs = standalone_specs(args) if args.standalone else discover_compare_specs(Path(args.compare_dir))
     specs = select_specs(args, specs)
     if not specs:
         raise SystemExit("No comparison CSV specs selected.")

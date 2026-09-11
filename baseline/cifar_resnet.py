@@ -402,6 +402,7 @@ class WideResNetCIFAR(nn.Module):
         maxpool_downsample_shortcut: bool = False,
         avgpool_downsample_shortcut: bool = False,
         avgpool_main_downsample: bool = False,
+        init_mode: str = "wrn",
         **kwargs,
     ):
         super().__init__()
@@ -434,7 +435,11 @@ class WideResNetCIFAR(nn.Module):
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(widths[3], num_classes)
 
-        _init_cifar_model(self)
+        if init_mode not in {"wrn", "pytorch"}:
+            raise ValueError(f"Unknown WRN initialization: {init_mode}")
+        self.init_mode = init_mode
+        if init_mode == "wrn":
+            _init_cifar_model(self)
 
     def _make_layer(self, planes: int, num_blocks: int, stride: int):
         strides = [stride] + [1] * (num_blocks - 1)
@@ -760,3 +765,29 @@ def wrn_16_2_cifar_nobn_maxpool_shortcut(
     return _build_wrn_nobn(
         16, 2, pretrained, num_classes, in_chans, maxpool_downsample_shortcut=True, **kwargs
     )
+
+
+def _register_wrn_control(row, size):
+    from baseline.wrn_control_specs import model_name, model_options
+    depth, width = map(int, size.split('_'))
+    options = model_options(row)
+
+    def factory(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+        if pretrained:
+            raise ValueError('WRN controls require a locally trained checkpoint')
+        for key, value in options.items():
+            if key in kwargs and kwargs[key] != value:
+                raise ValueError(f'{factory.__name__} fixes {key}={value}')
+        kwargs.update(options)
+        return WideResNetCIFAR(depth=depth, widen_factor=width, num_classes=num_classes,
+                              in_chans=in_chans, **kwargs)
+
+    factory.__name__ = model_name(row, size)
+    globals()[factory.__name__] = register_model(factory)
+
+
+from baseline.wrn_control_specs import ROWS as _CONTROL_ROWS, SIZES as _CONTROL_SIZES
+
+for _row in _CONTROL_ROWS:
+    for _size in _CONTROL_SIZES:
+        _register_wrn_control(_row, _size)

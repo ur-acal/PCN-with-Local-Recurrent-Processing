@@ -39,6 +39,8 @@ RMS_ADD_LEVELS="${RMS_ADD_LEVELS:-0.25,0.5,0.75,1.0,1.25}"
 MAX_SQRT_LEVELS="${MAX_SQRT_LEVELS:-0,0.02,0.03,0.05,0.07,0.09,0.1}"
 FF_GAIN_LIST="${FF_GAIN_LIST:-0.90,0.91,0.92,0.93,0.94,0.95,0.96,0.97,0.98,0.99,1.00,1.01,1.02,1.03,1.04,1.05,1.06,1.07,1.08,1.09,1.10}"
 FORCE_RERUN="${FORCE_RERUN:-false}"
+BN_EVAL_MODE="${BN_EVAL_MODE:-legacy}"
+NOISE_TO_BN="${NOISE_TO_BN:-false}"
 
 cd "${REPO_ROOT}"
 
@@ -137,6 +139,9 @@ for entry in "${MODELS[@]}"; do
     trials="$6"
     output_dir="${OUTPUT_ROOT}/${task}/${result_tag}/${condition}"
     output_pickle="${output_dir}/result.pkl"
+    if [[ "${BN_EVAL_MODE}" == "paired" ]]; then
+      output_pickle="${output_dir}/paired_complete.json"
+    fi
     log_file="${output_dir}/run.log"
     mkdir -p "${output_dir}"
 
@@ -148,6 +153,8 @@ for entry in "${MODELS[@]}"; do
     echo "Running ${task} ${architecture} ${condition}, ff_gain=${ff_gain}, shard=${SHARD_ID}"
     python -u ode_inference.py \
       --model_name "${model_name}" \
+      --bn_eval_mode "${BN_EVAL_MODE}" \
+      --noise_to_bn "${NOISE_TO_BN}" \
       --ckpt best \
       --task "${task}" \
       --img_type rgb \

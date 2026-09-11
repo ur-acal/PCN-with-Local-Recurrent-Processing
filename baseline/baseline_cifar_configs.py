@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import timm
+from baseline.wrn_control_specs import ROWS, SIZES, model_name as control_model_name
 from copy import deepcopy
 from baseline.adapt_model_cifar import adapt_timm_model_to_cifar, is_supported_cifar_adapt_model
 
@@ -61,6 +62,8 @@ CUSTOM_CIFAR_MODELS = {
     "wrn_40_2_cifar_nobn",
 }
 
+
+CUSTOM_CIFAR_MODELS.update(control_model_name(row, size) for row in ROWS for size in SIZES)
 
 ADAPT_NORESIZE_TIMM_MODELS = {
     "resnet18",
