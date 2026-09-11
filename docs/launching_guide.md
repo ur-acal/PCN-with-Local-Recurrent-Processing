@@ -29,24 +29,34 @@ From the remote mismatch-analysis repository root:
 
 ```bash
 mkdir -p logs/scheduler_slurm logs/slurm_jobs
-DRY_RUN=1 bash launch_scripts/slurm_run_wrn_controls.sh
+( export DRY_RUN=1; source ./launch_scripts/slurm_run_wrn_controls.sh )
 ```
 
 This prints **eight submissions without submitting**: rows 2,4,5,6,7,8,9,10, each containing eight model/dataset pairs. Then launch:
 
 ```bash
-conda activate scanbase
-STAGE=train-test PARALLELISM=4 EVAL_PARALLELISM=8 \
-  CONDITIONS=max_additive,multiplicative,rms_additive \
-  bash launch_scripts/slurm_run_wrn_controls.sh \
-  > logs/scheduler_slurm/wrn_controls_train_test.log 2>&1
+(
+  export STAGE=train-test PARALLELISM=4 EVAL_PARALLELISM=8
+  export CONDITIONS=max_additive,multiplicative,rms_additive
+  source ./launch_scripts/slurm_run_wrn_controls.sh
+) > logs/scheduler_slurm/wrn_controls_train_test.log 2>&1 < /dev/null &
 ```
 
 Each sbatch job runs its eight-model row on one GPU: `ising`, 16 CPUs, 72:10:00, `scanbase`, matching the baseline worker resources. SLURM decides placement and simultaneous GPU count. Submission returns after scheduling; jobs survive terminal logout.
 
+The WRN scheduler changes into `REPO_ROOT` before calling `sbatch`, and the shared worker wrapper also changes into `REPO_ROOT`. The redundant `--chdir` option is omitted for compatibility with older submission executables.
+
+### Preserve the working submission environment
+
+Use the existing interactive submission shell (base in the successful examples), with `( source ... )`, not `bash script.sh`. Two references are the posted inline `PCNetBoundaryBN` eight-model loop and the "running with" comment in `slurm_run_rgb_ode_train.sh`. Both call `sbatch` without starting a fresh Bash or activating scanbase first. The latter also documents `module swap slurm slurm/24.05.0.b1` when needed; inspect the selected executable before changing modules.
+
+Observed on BlueHive: the interactive shell selected `/software/slurm/24.05.0.b1/bin/sbatch` (24.05), but `bash -c` selected `/software/slurm/current/bin/sbatch` (16.05.9), which recognizes `--workdir` rather than `--chdir`. This was a shell-environment difference, not a demonstrated Conda problem. Copying only resource headers is insufficient: preserve where and how submission occurs.
+
+The scheduler resolves and logs the absolute `sbatch` executable and version before submission. Real submissions explicitly export `IS_SLURM=1`. Inside each worker, `source activate base` then `conda activate scanbase` runs before selecting its Python; an inherited `PYTHON_BIN` cannot bypass this. The inventory uses the submission shell's Python and does not require activating scanbase. Simulations bypass actual SLURM and therefore cannot validate the university's shell/module setup. Future launcher changes must check this boundary separately.
+
 - `train-test` is the SLURM default. Train up to four models concurrently until the row's training phase finishes. Then evaluate successfully trained models, up to eight concurrently, under max-additive; wait for that condition to finish before multiplicative, then RMS. No training/evaluation overlap, second submission or manual trigger. Set `STAGE=train` explicitly for training only.
 - `PARALLELISM=4` controls training processes and `EVAL_PARALLELISM=8` controls evaluation processes per GPU, not per model. Each condition uses the exact standalone evaluator command. Frozen/recalibrated BN are paired within that condition. Failures remain recorded, while other models and conditions continue. GPU capacity and completion within the unchanged 72:10:00 allocation limit are not established by simulation.
-- The scheduler records all expected tasks in `submissions/*.json` before submitting, then records each returned job ID. Activate Python on the submission host too; the workers still activate `scanbase` themselves.
+- The scheduler records all expected tasks in `submissions/*.json` before submitting, then records each returned job ID. Keep the submission shell environment; the workers activate `scanbase` themselves.
 - Filters: e.g. `ROWS=4 DATASETS=cifar100 SIZES=28_2`. Rows 1 and 3 are rejected by this scheduler.
 - Default output: `logs/wrn_controls_slurm/row<row>/<dataset>/<size>/`.
 - Training command/recipe, code revision, dirty status and SLURM ID: `manifest.json`; resolved trainer settings: `checkpoints/<dataset>/custom_noresize/<model>/baseline_config.json`.
@@ -86,8 +96,8 @@ Boundary-BN PCN uses `PCN=PCNetBoundaryBN`, `ODE_BLOCK=ODEXInitFFFB`, `T_END=1.7
 After training, use the same WRN `OUTPUT_ROOT`, training seed, and filters:
 
 ```bash
-STAGE=test bash launch_scripts/slurm_run_wrn_controls.sh \
-  > logs/scheduler_slurm/wrn_controls_test.log 2>&1
+( export STAGE=test; source ./launch_scripts/slurm_run_wrn_controls.sh ) \
+  > logs/scheduler_slurm/wrn_controls_test.log 2>&1 < /dev/null &
 ```
 
 SLURM defaults to max-absolute additive `0:0.01:0.10`, multiplicative `0:0.05:0.40`, then RMS additive `0.25,0.5,0.75,1,1.25`; 10 trials, mismatch seed 123, test batch 128. Conditions execute sequentially, with up to eight models evaluated concurrently per condition. Evaluation reuses the existing [BN](../baseline/run_wrn_bn_recalibration_experiment.py) and [BN-free](../baseline/run_wrn_nobn_mismatch_experiment.py) evaluators, not a new noise implementation.

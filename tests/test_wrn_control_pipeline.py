@@ -12,6 +12,27 @@ from baseline.wrn_control_artifacts import collect, create_plan, pack
 
 
 class PipelineTests(unittest.TestCase):
+    def test_sourced_scheduler_uses_selected_sbatch_and_forces_worker_activation(self):
+        with tempfile.TemporaryDirectory() as root:
+            fake = Path(root) / 'sbatch'
+            fake.write_text('#!/bin/bash\n'
+                            'if [[ "$1" == --version ]]; then echo "slurm MOCK"; exit 0; fi\n'
+                            'printf "%s\\n" "$@" >> "$SUBMIT_ARGS"\n'
+                            'echo 12345\n')
+            fake.chmod(0o755)
+            env = dict(os.environ, SIMULATE='0', DRY_RUN='0', ROWS='4',
+                       OUTPUT_ROOT=root, PYTHON_BIN=sys.executable,
+                       SBATCH_BIN=str(fake), SUBMIT_ARGS=str(Path(root) / 'args'),
+                       IS_SLURM='0')
+            result = subprocess.run(['bash', '-c', 'source ./launch_scripts/slurm_run_wrn_controls.sh'],
+                                    cwd=Path(__file__).resolve().parents[1], env=env,
+                                    capture_output=True, text=True, check=True)
+            self.assertIn('slurm MOCK', result.stdout)
+            self.assertIn(str(fake), result.stdout)
+            flags = (Path(root) / 'args').read_text()
+            self.assertIn('--export=ALL,IS_SLURM=1', flags)
+            self.assertNotIn('--chdir', flags)
+
     def test_slurm_row_four_training_eight_evaluations_sequential_conditions(self):
         with tempfile.TemporaryDirectory() as root:
             env = dict(os.environ, SIMULATE='1', DRY_RUN='0', ROWS='4',

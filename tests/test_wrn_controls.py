@@ -114,6 +114,7 @@ class WRNControlTests(unittest.TestCase):
                                 capture_output=True, text=True, check=True)
         lines = result.stdout.splitlines()
         self.assertEqual(len(lines), 8)
+        self.assertNotIn('--chdir', result.stdout)
         self.assertTrue(all('DATASETS=cifar10,cifar100 SIZES=16_2,16_4,28_2,28_4' in line for line in lines))
         self.assertFalse(any(line.startswith('ROW=3 ') or line.startswith('ROW=1 ') for line in lines))
         self.assertEqual(sum(line.startswith('ROW=10 ') for line in lines), 1)

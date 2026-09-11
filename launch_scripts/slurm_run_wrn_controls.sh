@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Run from the existing submission shell, as in slurm_run_rgb_ode_train.sh:
+# ( source ./launch_scripts/slurm_run_wrn_controls.sh ) \
+#   > ./logs/scheduler_slurm/wrn_controls_train_test.log 2>&1 < /dev/null &
+# Do not activate scanbase before submission or start a fresh Bash: the remote
+# startup environment can select SLURM 16.05 instead of the interactive 24.05.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 cd "${REPO_ROOT}" || exit 1
@@ -29,6 +35,12 @@ for size in "${sizes[@]}"; do
   case "$size" in 16_2|16_4|28_2|28_4) ;; *) echo "Invalid size: $size" >&2; exit 2 ;; esac
 done
 if [[ "${DRY_RUN:-0}" != 1 ]]; then
+  if [[ "${SIMULATE}" != 1 ]]; then
+    SBATCH_BIN="${SBATCH_BIN:-$(command -v sbatch)}"
+    [[ -x "${SBATCH_BIN}" ]] || { echo "Cannot resolve sbatch executable: ${SBATCH_BIN}" >&2; exit 1; }
+    echo "Submission executable: ${SBATCH_BIN}"
+    "${SBATCH_BIN}" --version || exit 1
+  fi
   mkdir -p "${REPO_ROOT}/logs/slurm_jobs" || exit 1
   plan_args=(plan --output-root "${OUTPUT_ROOT}" --rows "${ROWS:-2,4,5,6,7,8,9,10}"
     --datasets "${DATASETS:-cifar10,cifar100}" --sizes "${SIZES:-16_2,16_4,28_2,28_4}"
@@ -40,10 +52,10 @@ fi
 failures=0
 for ROW in "${rows[@]}"; do
       export ROW
-      command=(sbatch --parsable --chdir="${REPO_ROOT}"
+      command=("${SBATCH_BIN:-sbatch}" --parsable
         --output="${REPO_ROOT}/logs/slurm_jobs/slurm_%j.out"
         --job-name="wrn-r${ROW}-${STAGE}"
-        --gres=gpu:1 --export=ALL "${REPO_ROOT}/launch_scripts/run_wrn_controls.sbatch")
+        --gres=gpu:1 --export=ALL,IS_SLURM=1 "${REPO_ROOT}/launch_scripts/run_wrn_controls.sbatch")
       if [[ "${DRY_RUN:-0}" == 1 ]]; then
         printf 'ROW=%s DATASETS=%s SIZES=%s STAGE=%s ' "$ROW" "$DATASETS" "$SIZES" "$STAGE"
         printf '%q ' "${command[@]}"

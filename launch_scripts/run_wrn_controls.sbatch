@@ -11,6 +11,8 @@ IS_SLURM="${IS_SLURM:-1}"
 if [[ "${IS_SLURM}" == 1 ]]; then
   source activate base
   conda activate scanbase || exit 1
+  # Use the activated environment, not a Python override from the submit host.
+  export PYTHON_BIN="$(command -v python)"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
