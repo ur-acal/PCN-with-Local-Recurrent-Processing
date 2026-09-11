@@ -15,6 +15,9 @@ args=(--rows "${ROWS:-3}" --datasets "${DATASETS:-cifar10,cifar100}"
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
   args+=(--dry-run)
 fi
+if [[ "${PHASED:-0}" == 1 ]]; then
+  args+=(--phased)
+fi
 if [[ "${SIMULATE:-0}" == 1 ]]; then
   args+=(--simulate --simulate-failure "${SIMULATE_FAILURE:-}")
 fi

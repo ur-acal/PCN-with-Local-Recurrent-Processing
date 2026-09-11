@@ -2,7 +2,7 @@
 
 Work in the `mismatch_analysis` worktree. Commands below are manual launch instructions, not evidence that a job has run. Updated 2026-09-11.
 
-The pinned WRN study is **64 SLURM runs plus deferred local row 3**, not the exhaustive 288-combination search. Every row spans sizes `16_2,16_4,28_2,28_4` and datasets `cifar10,cifar100` unless filtered.
+The pinned WRN study is **64 model training runs in eight SLURM jobs plus deferred local row 3**, not the exhaustive 288-combination search. Each SLURM job owns one row and all sizes `16_2,16_4,28_2,28_4` across datasets `cifar10,cifar100` unless filtered.
 
 | Row | Main downsampling | Shortcuts | BN | Conv bias | Location |
 |---|---|---|---|---|---|
@@ -32,20 +32,20 @@ mkdir -p logs/scheduler_slurm logs/slurm_jobs
 DRY_RUN=1 bash launch_scripts/slurm_run_wrn_controls.sh
 ```
 
-This prints **64 submissions without submitting**: rows 2,4,5,6,7,8,9,10 x eight pairs. Then launch:
+This prints **eight submissions without submitting**: rows 2,4,5,6,7,8,9,10, each containing eight model/dataset pairs. Then launch:
 
 ```bash
 conda activate scanbase
-STAGE=train-test EVAL_PARALLELISM=3 \
+STAGE=train-test PARALLELISM=4 EVAL_PARALLELISM=8 \
   CONDITIONS=max_additive,multiplicative,rms_additive \
   bash launch_scripts/slurm_run_wrn_controls.sh \
   > logs/scheduler_slurm/wrn_controls_train_test.log 2>&1
 ```
 
-Each sbatch job runs one model on one GPU: `ising`, 16 CPUs, 72:10:00, `scanbase`, matching the baseline worker resources. SLURM decides placement and simultaneous GPU count. Submission returns after scheduling; jobs survive terminal logout.
+Each sbatch job runs its eight-model row on one GPU: `ising`, 16 CPUs, 72:10:00, `scanbase`, matching the baseline worker resources. SLURM decides placement and simultaneous GPU count. Submission returns after scheduling; jobs survive terminal logout.
 
-- `train-test` is the SLURM default: after each model finishes training successfully, its mismatch conditions run concurrently inside the same allocation. No second submission or manual trigger is needed. Set `STAGE=train` explicitly for training only.
-- `EVAL_PARALLELISM=3` caps concurrent evaluation subprocesses per GPU; each condition uses the exact standalone evaluator command. Frozen/recalibrated BN are paired within that condition, not separate concurrent processes. Reduce this limit if GPU memory requires it; simulation does not establish GPU capacity. The allocation time limit covers training plus evaluation.
+- `train-test` is the SLURM default. Train up to four models concurrently until the row's training phase finishes. Then evaluate successfully trained models, up to eight concurrently, under max-additive; wait for that condition to finish before multiplicative, then RMS. No training/evaluation overlap, second submission or manual trigger. Set `STAGE=train` explicitly for training only.
+- `PARALLELISM=4` controls training processes and `EVAL_PARALLELISM=8` controls evaluation processes per GPU, not per model. Each condition uses the exact standalone evaluator command. Frozen/recalibrated BN are paired within that condition. Failures remain recorded, while other models and conditions continue. GPU capacity and completion within the unchanged 72:10:00 allocation limit are not established by simulation.
 - The scheduler records all expected tasks in `submissions/*.json` before submitting, then records each returned job ID. Activate Python on the submission host too; the workers still activate `scanbase` themselves.
 - Filters: e.g. `ROWS=4 DATASETS=cifar100 SIZES=28_2`. Rows 1 and 3 are rejected by this scheduler.
 - Default output: `logs/wrn_controls_slurm/row<row>/<dataset>/<size>/`.
@@ -90,7 +90,7 @@ STAGE=test bash launch_scripts/slurm_run_wrn_controls.sh \
   > logs/scheduler_slurm/wrn_controls_test.log 2>&1
 ```
 
-Default conditions: max-absolute additive `0:0.01:0.10` and multiplicative `0:0.05:0.40`; 10 trials, mismatch seed 123, test batch 128. Optional RMS: `CONDITIONS=max_additive,multiplicative,rms_additive`, levels `0.25,0.5,0.75,1,1.25`. Evaluation reuses the existing [BN](../baseline/run_wrn_bn_recalibration_experiment.py) and [BN-free](../baseline/run_wrn_nobn_mismatch_experiment.py) evaluators, not a new noise implementation.
+SLURM defaults to max-absolute additive `0:0.01:0.10`, multiplicative `0:0.05:0.40`, then RMS additive `0.25,0.5,0.75,1,1.25`; 10 trials, mismatch seed 123, test batch 128. Conditions execute sequentially, with up to eight models evaluated concurrently per condition. Evaluation reuses the existing [BN](../baseline/run_wrn_bn_recalibration_experiment.py) and [BN-free](../baseline/run_wrn_nobn_mismatch_experiment.py) evaluators, not a new noise implementation.
 
 BN controls produce **unfused frozen-BN and unfused recalibrated-BN** results using the same perturbed weights per pair. Calibration uses 5120 training samples, seed 20240618, batch 128; dropout and BN mismatch are off. BN-free models have one result per trial. Convolution biases are excluded; classifier weight/bias are included. No folding is requested here. Standalone WRN evaluation reads no old PCN comparison CSVs.
 
@@ -167,6 +167,8 @@ nohup env ROWS=3 STAGE=test PARALLELISM=4 \
 Keep the same `OUTPUT_ROOT`/filters/seed as training. Use `STAGE=train-test` during training to have each model's tests follow its successful training automatically. Conditions, exclusions, result paths and completion checks are identical to section 2. A failure is recorded per model; other models continue and the controller ultimately exits nonzero if any failed. No partial log is considered a completed run.
 
 Local evaluation concurrency can reach `PARALLELISM * EVAL_PARALLELISM` processes. With four model slots, use `EVAL_PARALLELISM=1` to cap this at four; the default three allows up to twelve. Choose based on available memory, not the simulation results.
+
+To use the SLURM row-style ordering locally, set `PHASED=1 PARALLELISM=4 EVAL_PARALLELISM=8 CONDITIONS=max_additive,multiplicative,rms_additive`. This replaces the preceding per-model concurrency behavior with a training barrier and sequential conditions, capped at eight evaluation processes total.
 
 For PCN, retain section 2's explicit exports, set `IS_SLURM=0`, and run `bash launch_scripts/run_rgb_ode_mismatch_eval.sh`. This evaluates that selected model sequentially; it does not submit SLURM jobs. Use `nohup` and a unique outer log for logout-safe local execution.
 

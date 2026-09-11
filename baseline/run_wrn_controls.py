@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import sys
 import time
+from copy import copy
 
 from baseline.wrn_control_specs import DATASETS, ROWS, SIZES, model_name, model_options, training_override
 
@@ -32,6 +33,7 @@ def parse_args(argv=None):
     p.add_argument('--stage', choices=('train', 'test', 'train-test'), default='train')
     p.add_argument('--parallelism', type=int, default=4)
     p.add_argument('--eval-parallelism', type=int, default=3)
+    p.add_argument('--phased', action='store_true', help='Train group first, then evaluate models concurrently one condition at a time')
     p.add_argument('--data-dir', type=Path, default=ROOT.parent / 'data')
     p.add_argument('--output-root', type=Path, default=ROOT / 'logs/wrn_controls_local')
     p.add_argument('--seed', type=int, default=4096)
@@ -253,14 +255,37 @@ def main():
         from baseline.wrn_control_artifacts import create_plan
         create_plan(args.output_root, args.rows, args.datasets, args.sizes, args.conditions, args.stage, args.simulate)
     failures = 0
-    with ThreadPoolExecutor(max_workers=args.parallelism) as pool:
-        futures = {pool.submit(run_one, args, *job): job for job in jobs}
-        for future in as_completed(futures):
-            try:
-                print(json.dumps(future.result()), flush=True)
-            except Exception as exc:
-                failures += 1
-                print(f'FAILED {futures[future]}: {exc}', flush=True)
+    phases = [(args.stage, args.conditions)]
+    if args.phased:
+        phases = ([('train', [])] if args.stage != 'test' else [])
+        if args.stage != 'train':
+            phases += [('test', [condition]) for condition in args.conditions]
+    failed_jobs = set()
+    for phase, conditions in phases:
+        phase_args = copy(args)
+        phase_args.stage = phase
+        phase_args.conditions = conditions
+        successful = []
+        workers = args.eval_parallelism if args.phased and phase == 'test' else args.parallelism
+        if args.phased:
+            phase_args.eval_parallelism = 1
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(run_one, phase_args, *job): job for job in jobs}
+            for future in as_completed(futures):
+                try:
+                    print(json.dumps(future.result()), flush=True)
+                    successful.append(futures[future])
+                except Exception as exc:
+                    failures += 1
+                    failed_jobs.add(futures[future])
+                    print(f'FAILED {futures[future]}: {exc}', flush=True)
+        if phase == 'train':
+            jobs = successful
+    for job in failed_jobs:
+        directory, _ = paths(args, *job)
+        if not args.dry_run:
+            write_json(directory / 'state.json', dict(status='failed', updated=time.time(),
+                       error='One or more stages failed; inspect train.log and evaluation condition states'))
     return 1 if failures else 0
 
 

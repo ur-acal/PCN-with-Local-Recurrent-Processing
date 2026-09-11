@@ -106,16 +106,17 @@ class WRNControlTests(unittest.TestCase):
                 self.assertEqual(standalone_specs(parsed)[0]['compare']['by_level'], {})
                 self.assertEqual(parsed.mismatch_parameter_policy, 'existing')
 
-    def test_slurm_schedule_exactly_64_and_row3_local(self):
+    def test_slurm_schedule_eight_rows_covering_64_models_and_row3_local(self):
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run(['bash', 'launch_scripts/slurm_run_wrn_controls.sh'], cwd=root,
                                 env=dict(os.environ, DRY_RUN='1', ROWS=','.join(map(str, SLURM_ROWS)),
                                          DATASETS='cifar10,cifar100', SIZES=','.join(SIZES)),
                                 capture_output=True, text=True, check=True)
         lines = result.stdout.splitlines()
-        self.assertEqual(len(lines), 64)
+        self.assertEqual(len(lines), 8)
+        self.assertTrue(all('DATASETS=cifar10,cifar100 SIZES=16_2,16_4,28_2,28_4' in line for line in lines))
         self.assertFalse(any(line.startswith('ROW=3 ') or line.startswith('ROW=1 ') for line in lines))
-        self.assertEqual(sum(line.startswith('ROW=10 ') for line in lines), 8)
+        self.assertEqual(sum(line.startswith('ROW=10 ') for line in lines), 1)
         args = parse_args(['--dry-run'])
         self.assertEqual(args.rows, [3])
         self.assertEqual(len(args.datasets) * len(args.sizes), 8)

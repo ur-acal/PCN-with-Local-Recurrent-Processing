@@ -3,12 +3,45 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+import os
+import subprocess
+import sys
 
 from baseline.run_wrn_controls import parse_args, paths, run_one, test_command
 from baseline.wrn_control_artifacts import collect, create_plan, pack
 
 
 class PipelineTests(unittest.TestCase):
+    def test_slurm_row_four_training_eight_evaluations_sequential_conditions(self):
+        with tempfile.TemporaryDirectory() as root:
+            env = dict(os.environ, SIMULATE='1', DRY_RUN='0', ROWS='4',
+                       DATASETS='cifar10,cifar100', SIZES='16_2,16_4,28_2,28_4',
+                       PARALLELISM='4', EVAL_PARALLELISM='8', STAGE='train-test',
+                       CONDITIONS='max_additive,multiplicative,rms_additive',
+                       OUTPUT_ROOT=root, PYTHON_BIN=sys.executable, SIMULATE_FAILURE='')
+            subprocess.run(['bash', 'launch_scripts/slurm_run_wrn_controls.sh'],
+                           cwd=Path(__file__).resolve().parents[1], env=env,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            output = Path(root) / 'SIMULATED'
+            inventory = collect(output)
+            self.assertEqual(inventory['complete_tasks'], 8)
+            training = [json.loads(p.read_text()) for p in output.glob('row4/*/*/checkpoints/simulation_lifecycle.json')]
+            def peak(lives):
+                events = sorted([(v['started'], 1) for v in lives] + [(v['finished'], -1) for v in lives])
+                current = maximum = 0
+                for _, delta in events:
+                    current += delta
+                    maximum = max(maximum, current)
+                return maximum
+            self.assertEqual(peak(training), 4)
+            previous_end = max(v['finished'] for v in training)
+            for condition in env['CONDITIONS'].split(','):
+                lives = [json.loads(p.read_text()) for p in output.glob(f'row4/*/*/evaluation/{condition}/simulation_lifecycle.json')]
+                self.assertEqual(len(lives), 8)
+                self.assertGreaterEqual(min(v['started'] for v in lives), previous_end)
+                self.assertEqual(peak(lives), 8)
+                previous_end = max(v['finished'] for v in lives)
+
     def args(self, root, *extra):
         return parse_args(['--output-root', str(root), '--simulate', '--stage', 'train-test',
                            '--rows', '4', '--datasets', 'cifar100', '--sizes', '16_2',
