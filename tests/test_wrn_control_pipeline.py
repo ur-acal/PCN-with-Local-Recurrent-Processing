@@ -12,6 +12,14 @@ from baseline.wrn_control_artifacts import collect, create_plan, pack
 
 
 class PipelineTests(unittest.TestCase):
+    def test_worker_calls_python_without_another_shell(self):
+        script = (Path(__file__).resolve().parents[1] / 'launch_scripts/run_wrn_controls.sbatch').read_text()
+        self.assertIn('source activate base', script)
+        self.assertIn('conda activate scanbase', script)
+        self.assertIn('python -u -m baseline.run_wrn_controls', script)
+        self.assertNotIn('exec bash', script)
+        self.assertNotIn('PYTHON_BIN', script)
+
     def test_sourced_scheduler_uses_selected_sbatch_and_forces_worker_activation(self):
         with tempfile.TemporaryDirectory() as root:
             fake = Path(root) / 'sbatch'
@@ -39,7 +47,8 @@ class PipelineTests(unittest.TestCase):
                        DATASETS='cifar10,cifar100', SIZES='16_2,16_4,28_2,28_4',
                        PARALLELISM='4', EVAL_PARALLELISM='8', STAGE='train-test',
                        CONDITIONS='max_additive,multiplicative,rms_additive',
-                       OUTPUT_ROOT=root, PYTHON_BIN=sys.executable, SIMULATE_FAILURE='')
+                       OUTPUT_ROOT=root, PYTHON_BIN=sys.executable, SIMULATE_FAILURE='',
+                       PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
             subprocess.run(['bash', 'launch_scripts/slurm_run_wrn_controls.sh'],
                            cwd=Path(__file__).resolve().parents[1], env=env,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)

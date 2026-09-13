@@ -1,5 +1,11 @@
 # Launching Guide
 
+Quick commands and the required university SLURM environment pattern are in
+[Common Launch Commands](common_launch_commands.md). The WRN worker calls the
+Python controller directly after Conda activation, with no additional Bash wrapper.
+
+Scientific handoff, comparison reports and pending records now live in the [paper evidence package](../../papers/hardware-native-neural-ode/shared/evidence/generic-mismatch/README.md). This guide stays with the implementation code. Old report/document locations redirect to their canonical paper-folder files.
+
 Work in the `mismatch_analysis` worktree. Commands below are manual launch instructions, not evidence that a job has run. Updated 2026-09-11.
 
 The pinned WRN study is **64 model training runs in eight SLURM jobs plus deferred local row 3**, not the exhaustive 288-combination search. Each SLURM job owns one row and all sizes `16_2,16_4,28_2,28_4` across datasets `cifar10,cifar100` unless filtered.
@@ -23,7 +29,9 @@ All new scripts derive the repository from their own location; explicitly settin
 
 ## 1. SLURM Training
 
-Scripts: [scheduler](../launch_scripts/slurm_run_wrn_controls.sh), [one-GPU worker](../launch_scripts/run_wrn_controls.sbatch), [shared wrapper](../launch_scripts/run_wrn_controls.sh), [controller](../baseline/run_wrn_controls.py).
+The latest reported WRN submission and outstanding checks are pinned in [pending WRN controls](wrn_controls_pending.md).
+
+Scripts: [scheduler](../launch_scripts/slurm_run_wrn_controls.sh), [one-GPU worker](../launch_scripts/run_wrn_controls.sbatch), [local-only wrapper](../launch_scripts/run_wrn_controls.sh), [controller](../baseline/run_wrn_controls.py).
 
 From the remote mismatch-analysis repository root:
 
@@ -44,7 +52,7 @@ This prints **eight submissions without submitting**: rows 2,4,5,6,7,8,9,10, eac
 
 Each sbatch job runs its eight-model row on one GPU: `ising`, 16 CPUs, 72:10:00, `scanbase`, matching the baseline worker resources. SLURM decides placement and simultaneous GPU count. Submission returns after scheduling; jobs survive terminal logout.
 
-The WRN scheduler changes into `REPO_ROOT` before calling `sbatch`, and the shared worker wrapper also changes into `REPO_ROOT`. The redundant `--chdir` option is omitted for compatibility with older submission executables.
+The WRN scheduler changes into `REPO_ROOT` before calling `sbatch`, and the batch worker also changes into `REPO_ROOT` before activating Conda and calling Python directly. The redundant `--chdir` option is omitted for compatibility with older submission executables.
 
 ### Preserve the working submission environment
 
@@ -77,6 +85,8 @@ SIMULATE=1 ROWS=4,6 DATASETS=cifar100 SIZES=16_2 \
 All outputs go under `OUTPUT_ROOT/SIMULATED`, with explicit simulated markers and placeholder accuracies. Fake training emits the expected checkpoint path and completion log; fake evaluations create the expected result files through the same completion checks. It validates orchestration, not numerical accuracy or cluster resources. Omit the row/dataset/size filters to exercise all 64 tasks. Tests also cover failed training, missing/wrong checkpoints, failed/incomplete evaluation, concurrent evaluation, and safe reruns. Never merge simulation results into research tables.
 
 ### Existing PCN training
+
+The eight submitted Boundary-BN jobs (1874361-1874368), expected settings and outstanding verification are pinned in [pending PCN experiments](pcn_boundary_bn_pending.md).
 
 [PCN scheduler](../launch_scripts/slurm_run_rgb_ode_train.sh) -> [RGB worker](../launch_scripts/run_rgb_ode_train.sh) -> [train_ode_cifar.py](../train_ode_cifar.py). Review the scheduler's dataset/architecture and ODE/t_end maps before sourcing it; its current defaults are not a universal eight-model plan.
 
@@ -183,3 +193,12 @@ To use the SLURM row-style ordering locally, set `PHASED=1 PARALLELISM=4 EVAL_PA
 For PCN, retain section 2's explicit exports, set `IS_SLURM=0`, and run `bash launch_scripts/run_rgb_ode_mismatch_eval.sh`. This evaluates that selected model sequentially; it does not submit SLURM jobs. Use `nohup` and a unique outer log for logout-safe local execution.
 
 Historical WRN launch paths are indexed in the [paper handoff](../logs/pcn_wrn_robustness_summary/paper_handoff_max_mul.md). The new WRN controller delegates training to [train_baseline_cifar.py](../baseline/train_baseline_cifar.py), with [configs](../baseline/baseline_cifar_configs.py) and shared `TrainerCiFarTimmStyle`; models use [WideResNetCIFAR](../baseline/cifar_resnet.py). Row definitions and override strings are in [wrn_control_specs.py](../baseline/wrn_control_specs.py). This guide does not authorize regenerating or overwriting historical reports.
+# Compute-node Git availability
+
+The September 13 log for WRN job 1891478 showed all eight model tasks failing
+before training because `git` was absent from the worker PATH. Git is now
+optional for provenance: the controller records unavailable commit/status as
+null, preserves the error, and records source SHA-256 hashes in the manifest.
+Do not require a Git module or alter the Conda/training environment merely to
+collect this metadata. A regression test simulates missing Git through the
+fake-training and all-three-condition evaluation pipeline.

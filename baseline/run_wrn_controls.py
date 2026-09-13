@@ -25,6 +25,24 @@ LEVELS = {
 }
 
 
+def source_provenance():
+    metadata = dict(git_commit=None, git_status=None)
+    try:
+        metadata['git_commit'] = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        metadata['git_status'] = subprocess.check_output(
+            ['git', 'status', '--porcelain'], cwd=ROOT, text=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        metadata['git_error'] = str(exc)
+        print(f'WARNING: Git provenance unavailable: {exc}; recording source hashes instead.',
+              flush=True)
+    files = sorted(set(ROOT.glob('*.py')) | set((ROOT / 'baseline').rglob('*.py'))
+                   | set((ROOT / 'launch_scripts').glob('*wrn_controls*')))
+    metadata['source_sha256'] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+                                 for p in files if p.is_file()}
+    return metadata
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--rows', default='3')
@@ -206,9 +224,7 @@ def run_one(args, row, dataset, size):
             if existing['identity'] != identity or existing.get('simulated', False) != args.simulate:
                 raise ValueError(f'Configuration differs from existing run: {manifest}')
         else:
-            revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-            dirty = subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)
-            write_json(manifest, dict(identity=identity, git_commit=revision, git_status=dirty,
+            write_json(manifest, dict(identity=identity, **source_provenance(),
                                      repo_root=str(ROOT), slurm_job_id=os.environ.get('SLURM_JOB_ID'),
                                      simulated=args.simulate))
         def state(status, **extra):
