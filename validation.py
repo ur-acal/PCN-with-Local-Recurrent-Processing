@@ -423,7 +423,7 @@ class MVMConv(nn.Module):
                    nonlinear_R_curve_edge_chunk_size=65536,
                    nonlinear_R_curve_assignment=None,
                    nonlinear_R_curve_sampling="empirical_with_replacement",
-                   curve_gaussian=None):
+                   curve_gaussian=None, tc_curve_package=None):
         self.csv_enabled = True
 
         self.v_grid = v_grid
@@ -432,6 +432,25 @@ class MVMConv(nn.Module):
         self.R_slope = R_slope
         self.proj_fn = proj_fn
         self.R = R
+
+        if tc_curve_package is not None:
+            if nonlinear_R_curve_edge_chunk_size <= 0:
+                raise ValueError("TC curve chunk size must be positive.")
+            self._tc_curve_package = tc_curve_package
+            self.nonlinear_R_curve_sharing = "per_coupler"
+            self.nonlinear_R_curve_sampling = "multivariate_gaussian"
+            self.nonlinear_R_curve_seed = nonlinear_R_curve_seed
+            self.nonlinear_R_curve_edge_chunk_size = int(nonlinear_R_curve_edge_chunk_size)
+            self.R_codes = tc_curve_package.programmed_resistances.to(self.mat)
+            self.nonlinear_R_curve_gaussian_v_grid = tc_curve_package.v_grid.to(self.mat)
+            self._build_nonlinear_R_curve_groups()
+            # Keep CSR connectivity/ordering, but encode magnitude only in R(V).
+            self._tc_signed_mat = torch.sparse_csr_tensor(
+                self.mat.crow_indices(), self.mat.col_indices(),
+                self.mat.values().sign(), size=self.mat.shape,
+                device=self.mat.device, dtype=self.mat.dtype)
+            self.sample_nonlinear_R_gaussian_curves()
+            return
 
         self.mul_mismatch_mode = mul_mismatch_mode
         assert self.mul_mismatch_mode in {"scale_mismatch", "static_mismatch"}
@@ -521,6 +540,20 @@ class MVMConv(nn.Module):
 
     def sample_nonlinear_R_gaussian_curves(self):
         """Sample one independent, fixed full curve for every sharing group."""
+        if getattr(self, "_tc_curve_package", None) is not None:
+            package = self._tc_curve_package
+            # Existing resistance-code lookup; zero codes become sampler code 0.
+            codes = self._values_to_code_idx(self.mat.values()) + 1
+            generator = None
+            if self.nonlinear_R_curve_seed is not None:
+                generator = torch.Generator(device=package.means.device).manual_seed(
+                    int(self.nonlinear_R_curve_seed))
+            curves = package.sample(codes.to(package.means.device), generator=generator,
+                                    chunk_size=self.nonlinear_R_curve_edge_chunk_size)
+            # Existing interpolation multiplies by nominal_R. Normalize only
+            # for that interface, not by each code's mean or nominal value.
+            self.nonlinear_R_curve_gaussian_R_normalized = curves.to(self.mat) / self.R
+            return self.nonlinear_R_curve_gaussian_R_normalized
         n_groups = self.nonlinear_R_curve_group_count
         n_points = self.nonlinear_R_curve_gaussian_v_grid.numel()
         generator = None
@@ -752,6 +785,9 @@ class MVMConv(nn.Module):
             return
         if not isinstance(noise_level, dict) and noise_level <= 0:
             return
+
+        if getattr(self, "_tc_curve_package", None) is not None:
+            raise ValueError("TC sampled curves replace separate scalar weight mismatch.")
 
         self.mismatch_type = mismatch_type
 
@@ -996,6 +1032,10 @@ class MVMConv(nn.Module):
         if not self.csv_enabled:
             return torch.sparse.mm(self.mat, x).t().view(batch_size, self.meta["out_chan"], output_h, output_w)
 
+        if getattr(self, "_tc_curve_package", None) is not None:
+            out = self._forward_pulse_per_edge(x, self._tc_signed_mat, self.R)
+            return out.t().reshape(batch_size, self.meta["out_chan"], output_h, output_w)
+
         if self.nonlinear_R_curve_sharing == "shared":
             if self.nonlinear_R_curve_gaussian_R_normalized is not None:
                 group = torch.zeros(
@@ -1222,7 +1262,17 @@ class Validator(nn.Module):
             self._register_hook_for_unroll(_idx, _layer)
 
         # One forward pass to trigger the hooks and unroll the weights
-        _ = self.model(self._unroll_sample_inputs)
+        tc_layers = [layer for layer in self.model.PcConvs
+                     if getattr(layer, "_tc_current_mode", False)]
+        # The dense masked-convolution path uses F.conv2d, which intentionally
+        # bypasses module hooks. This shape-only pass must trigger those hooks.
+        for layer in tc_layers:
+            layer._tc_unrolling = True
+        try:
+            _ = self.model(self._unroll_sample_inputs)
+        finally:
+            for layer in tc_layers:
+                layer._tc_unrolling = False
         self._unroll_sample_inputs = None
 
         # If record full trajectory, use forward_full_steps of odeblocks.

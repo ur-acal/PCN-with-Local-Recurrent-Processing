@@ -272,6 +272,14 @@ def get_args():
         "--enable_measured_pooling", type=str2bool, default=False,
         help="Use measured conductance curves for intermediate and global "
              "average pooling during wrapped fine-tuning and evaluation.")
+    p.add_argument("--tc_nonidealities", type=str2bool, default=False,
+                   help="Opt into TC measured components and code-aware dense nonlinear resistance.")
+    p.add_argument("--tc_covariance_table", type=str, default=None,
+                   help="TC pooled resistance-curve CSV, separate from nonlinear_R_table means.")
+    p.add_argument("--measured_pooling_curve_path", type=str, default=None,
+                   help="Independent pooling source; required for TC measured pooling.")
+    p.add_argument("--measured_pooling_nominal_R", type=float, default=None,
+                   help="Pooling reference resistance; TC defaults to 10k, legacy defaults to R.")
     p.add_argument(
         "--activation_curve_path", type=str,
         default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -425,7 +433,11 @@ def get_args():
     p.add_argument("--rggb_to_rgb", type=str2bool, default=False,
                    help="Convert RGGB (16x16x4) input to RGB (32x32x3) before model. "
                         "This will automatically adjust inp_channels[0] from 4 to 3.")
-    return p.parse_args()
+    from tc_cli import add_tc_arguments, validate_tc
+    add_tc_arguments(p)
+    args = p.parse_args()
+    validate_tc(args)
+    return args
 
 
 def evaluate_teacher(model: torch.nn.Module, trainer: TrainerCiFar) -> float:
@@ -1025,6 +1037,9 @@ def main():
                           "activation_fit_constraint": args.activation_fit_constraint,
                           "activation_normalize_positive_endpoint":
                               args.activation_normalize_positive_endpoint}
+        if args.tc_nonidealities:
+            from tc_cli import wrapper_options
+            wrapper_params.update(wrapper_options(args))
         model, wrappers = wrap_ode_block(model, **wrapper_params)
         logging.warning("ODEBlock in network wrapped, ode_wrapper_params={}".format(wrapper_params))
 
@@ -1032,11 +1047,20 @@ def main():
         if not wrappers:
             raise ValueError(
                 "Measured pooling training requires a wrapped ODE model.")
+        pooling_source = args.measured_pooling_curve_path or args.nonlinear_R_table
+        if args.tc_nonidealities and args.measured_pooling_curve_path is None:
+            raise ValueError("TC measured pooling requires measured_pooling_curve_path, not the coupler means.")
+        pooling_R = args.measured_pooling_nominal_R
+        if pooling_R is None:
+            pooling_R = 10e3 if args.tc_nonidealities else args.R
+        pooling_kwargs = dict(curve_path=pooling_source, nominal_R=pooling_R)
+        if args.tc_nonidealities:
+            from tc_cli import pooling_options
+            pooling_kwargs = pooling_options(args, wrappers)
         configure_measured_pooling(
             model, wrappers, enable_nonideality=True,
-            curve_path=args.nonlinear_R_table,
+            **pooling_kwargs,
             quantity=args.nonlinear_R_mc_quantity,
-            nominal_R=args.R,
             seed=args.nonlinear_R_curve_seed,
             training_curve_mode=(
                 args.nonlinear_R_train_mode
@@ -1046,7 +1070,7 @@ def main():
         logging.warning(
             "Measured average-pooling training enabled: table=%s, "
             "quantity=%s, nominal_R=%s",
-            args.nonlinear_R_table, args.nonlinear_R_mc_quantity, args.R)
+            pooling_source, args.nonlinear_R_mc_quantity, pooling_R)
 
     if (args.activation_corner_mode == "random_per_forward" and
             args.enable_measured_activation):

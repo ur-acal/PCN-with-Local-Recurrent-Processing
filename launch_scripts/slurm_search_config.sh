@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
+  source ./launch_scripts/tc_nonideality_args.sh ft || return 2
+fi
 #set -euo pipefail
 
 # Pack how many combos to run within ONE sbatch job (one GPU)
@@ -666,6 +669,20 @@ submit_chunk() {
   sbatch_exports+=",CHUNK_ID=${chunk_id},CHUNK_TAG=${chunk_tag},COMB_LIST=${comb_list}"
 
   echo "Submitting: C${chan0} N${num_layers} chunk=${chunk_id} tag=${chunk_tag} combos_in_job=${MAX_TASKS_PER_GPU}"
+  if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
+    for key in TC_EVAL_ACTIVATION_CURVE_PATH TC_EVAL_ACTIVATION_CORNER; do
+      [[ ! -v "$key" ]] || sbatch_exports+=",${key}=${!key}"
+    done
+    [[ ! -v TC_CONV_METHOD ]] || sbatch_exports+=",TC_CONV_METHOD=${TC_CONV_METHOD}"
+    [[ ! -v TC_CURVE_SAMPLING ]] || sbatch_exports+=",TC_CURVE_SAMPLING=${TC_CURVE_SAMPLING}"
+    for key in TC_NONIDEALITIES TC_STATE TC_EVAL_METHOD TC_MEAN_TABLE TC_COVARIANCE_TABLE TC_FB_ASD_PATH TC_NOISE_REFERENCE_R TC_ASD_REFERENCE_P TC_METADATA_PATH MEASURED_POOLING_CURVE_PATH MEASURED_POOLING_NOMINAL_R SPIN_VARIATION_MEAN SPIN_VARIATION_SEED SUMMING_NOISE_SEED COUPLER_NOISE_SEED ACTIVATION_CURVE_SEED HARDWARE_SEED DATA_SEED N_TRIALS; do
+      [[ ! -v "$key" ]] || sbatch_exports+=",${key}=${!key}"
+    done
+  fi
+  if [[ "${TC_DRY_RUN:-false}" == true ]]; then
+    printf 'sbatch --parsable --gres=gpu:%q --export=%q %q\n' "$GPUS_PER_JOB" "$sbatch_exports" "$SBATCH_SCRIPT"
+    return 0
+  fi
   jid=$(
     BLOCKS_LIST="${BLOCKS_LIST}" \
     sbatch --parsable \

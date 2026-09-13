@@ -226,6 +226,8 @@ def parse_args():
                         help="Period of the switch validator. (Use switch_iter instead).")
     parser.add_argument("--switch_iter", type=int, default=2,
                         help="Number of iterations for the time interleaving method.")
+    parser.add_argument("--switch_block_size", type=int, default=1,
+                        help="Coupled active spatial block side length for switching (default: one pixel).")
     parser.add_argument("--i_leak", type=lambda s: None if s.lower() in {"none", ""} else float(s),
                         default=1e-9,
                         help="The leak current when the spin voltage is v_dd. Use with switched inference.")
@@ -269,7 +271,11 @@ def parse_args():
                         help="Number of samples used for validation")
     parser.add_argument("--valid_select_layer", type=int, default=6,
                         help="Layer used to rank validation samples by trajectory change")
-    return parser.parse_args()
+    from tc_cli import add_tc_arguments, validate_tc
+    add_tc_arguments(parser)
+    args = parser.parse_args()
+    validate_tc(args, inference=True)
+    return args
 
 
 def _parse_index_list(value):
@@ -428,6 +434,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "t_end_sf": args.t_end_sf,
                   "method": args.method,
                   "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
+                  **({"block_size": args.switch_block_size} if args.switch_block_size != 1 else {}),
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps,
                   "sde_noise_type": args.sde_noise_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
@@ -565,6 +572,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
     ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                   "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
                   "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
+                  **({"block_size": args.switch_block_size} if args.switch_block_size != 1 else {}),
                   "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                   "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
@@ -787,6 +795,8 @@ def run_ode_inference():
             noise_level_list_ = [0, 0.15, 0.25]
     if args.ablation_single_case:
         noise_level_list_ = [MISMATCH_LEVELS_5b if args.diff_mismatch else 0.0]
+    if args.tc_nonidealities:
+        noise_level_list_ = [0.0]  # TC curve covariance replaces the legacy mismatch sweep.
     gt_t_end = get_t_end(args)
 
     # Get t_end_list for experiments
@@ -810,6 +820,7 @@ def run_ode_inference():
         ode_params = {"ode_block": ODEBLOCK_CLASSES[args.ode_block], "t_end": t_end, "method": args.method,
                       "tol": args.tol, "ts_scale": args.ts_scale, "n_steps": args.n_steps, "return_init": return_init,
                       "switch_period": args.switch_period, "n_iters": args.switch_iter, "i_leak": args.i_leak,
+                      **({"block_size": args.switch_block_size} if args.switch_block_size != 1 else {}),
                       "sde_noise_type": args.sde_noise_type, "mismatch_type": args.mismatch_type,
                       "patch_node": args.patch_node, "patch_stride": args.patch_stride, "patch_cycle": args.patch_cycle,
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
@@ -885,6 +896,8 @@ def run_ode_inference():
                                              args.enable_slow_coupler_noise or args.enable_dtc_nonideality) else 1
                     trials = min(5, trials) if noise_level <= 0 and args.thermal_noise and args.test_expanded else trials
                 acc_list = []
+                if args.tc_nonidealities:
+                    trials = noisy_trials  # Includes curve-only stochastic trials.
                 for t in range(trials):
                     trial_seed = None
                     noisy_params = {"noise_level": noise_level, "weight": None}
@@ -926,6 +939,10 @@ def run_ode_inference():
                             nonlinear_R_mc_curve_indices[t])
                     with torch.no_grad():
                         saved_wrappers = {}
+                        if args.tc_nonidealities:
+                            from tc_cli import wrapper_options
+                            trial_wrapper_params = dict(trial_wrapper_params)
+                            trial_wrapper_params.update(wrapper_options(args,t))
                         net_ = load_and_prepare_model(model_path=ckpt_path, device=device, model_struct=PCNet,
                                                       pc_conv_layer=pc_conv, data_parallel=False,
                                                       noise_to_bn=True, noise_to_linear=True,
@@ -934,13 +951,16 @@ def run_ode_inference():
                                                       **noisy_params)
                         if args.enable_measured_pooling:
                             pooling_seed = trial_seed
+                            if args.tc_nonidealities and pooling_seed is None:
+                                pooling_seed = args.data_seed + t
                             if pooling_seed is None:
                                 pooling_seed = args.nonlinear_R_curve_seed
                                 if pooling_seed is not None:
                                     pooling_seed += t
-                            pooling_curve_path = args.nonlinear_R_table
+                            pooling_curve_path = (args.measured_pooling_curve_path
+                                if args.tc_nonidealities else args.nonlinear_R_table)
                             pooling_curve_gaussian = None
-                            if (args.nonlinear_R_curve_sampling ==
+                            if (not args.tc_nonidealities and args.nonlinear_R_curve_sampling ==
                                     "multivariate_gaussian"):
                                 pooling_curve_path = None
                                 pooling_curve_gaussian = next((
@@ -952,16 +972,21 @@ def run_ode_inference():
                                     raise ValueError(
                                         "Gaussian measured pooling requires "
                                         "nonlinear_R Gaussian curve sampling.")
+                            pooling_kwargs = dict(curve_path=pooling_curve_path,
+                                curve_gaussian=pooling_curve_gaussian, nominal_R=args.R)
+                            if args.tc_nonidealities:
+                                from tc_cli import pooling_options
+                                pooling_kwargs = pooling_options(args, saved_wrappers["wrappers"])
                             configure_measured_pooling(
                                 net_, saved_wrappers["wrappers"],
                                 enable_nonideality=True,
-                                curve_path=pooling_curve_path,
-                                curve_gaussian=pooling_curve_gaussian,
+                                **pooling_kwargs,
                                 quantity=args.nonlinear_R_mc_quantity,
                                 curve_indices=nonlinear_R_curve_bank_indices,
-                                nominal_R=args.R, seed=pooling_seed,
+                                seed=pooling_seed,
                                 training_curve_mode=(args.nonlinear_R_train_mode
-                                    if args.nonlinear_R_train_mode != "none" else None),
+                                    if args.nonlinear_R_train_mode != "none" else
+                                    ("exact_curve" if args.tc_nonidealities else None)),
                                 corner_range=args.nonlinear_R_corner_range)
                             logging.warning(
                                 "Measured physical-domain average pooling enabled.")
@@ -1012,7 +1037,10 @@ def run_ode_inference():
                     total = 0
                     correct = 0
 
-                    if args.ablation_single_case:
+                    if args.tc_nonidealities:
+                        from tc_cli import reset_after_probe
+                        reset_after_probe(net_)
+                    if args.ablation_single_case or args.tc_nonidealities:
                         # Advance the on-the-fly sensor-noise realization together
                         # with the hardware realization for each accuracy trial.
                         trial_data_seed = args.data_seed + t
@@ -1036,9 +1064,15 @@ def run_ode_inference():
 
                         running_acc = 100.0 * correct / total
                         pbar.set_postfix(acc=f"{running_acc:.2f}%")
+                        if (args.tc_nonidealities and args.tc_max_eval_batches > 0
+                                and batch_idx + 1 >= args.tc_max_eval_batches):
+                            break
 
                     # Calculate the accuracy
                     accuracy = 100 * correct / total
+                    if args.tc_nonidealities:
+                        from tc_cli import record_trial
+                        record_trial(args,net_,t,accuracy,ckpt_path)
                     acc_list.append(accuracy)
                     if args.ablation_single_case:
                         print("ABLATION_RESULT case={} trial_index={} accuracy={:.8f}".format(

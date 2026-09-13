@@ -37,7 +37,10 @@ class FixedGridSolver(ODESolver):
             steps = [self.t0 + (n + 1) * torch.abs(self.h) * self.time_direction for n in range(self.Nt)]
             # This solves the warning "Evaluation points outside integration range." caused by numerical issues
             # steps[-1] = self.t1
-            steps = torch.stack(steps).view(-1).float()
+            if not steps and getattr(self, "tc_context", None) is not None:
+                steps = self.t1.reshape(1)
+            else:
+                steps = torch.stack(steps).view(-1).float()
         else:
             steps = predefine_steps
 

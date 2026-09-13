@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
+  exec bash "$(dirname "${BASH_SOURCE[0]}")/run_tc_nonidealities.sh" ft
+fi
 
 #######################################################
 # An example launch

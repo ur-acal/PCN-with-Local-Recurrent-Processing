@@ -774,6 +774,11 @@ class TrainerCiFar(object):
     def reset_spin_variation_for_inference(self):
         """Clear cached sample-once factors before full-dataset evaluation."""
         for module in self.model.modules():
+            if getattr(module, "_tc_current_mode", False):
+                # New validation realization; retain RNG progression rather
+                # than replaying the same realization each epoch.
+                module.reset_tc_spin()
+                module.reset_tc_curves()
             reset = getattr(module, "reset_spin_variation", None)
             if callable(reset):
                 reset()

@@ -71,8 +71,11 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
     only inference / validation-side usage is intended
     """
 
-    def __init__(self, switch_period=None, **kwargs):
+    def __init__(self, switch_period=None, block_size=1, **kwargs):
         super().__init__(**kwargs)
+        if isinstance(block_size, bool) or int(block_size) != block_size or block_size < 1:
+            raise ValueError('block_size must be a positive integer')
+        self.block_size = int(block_size)
 
         assert isinstance(self.FFconv, nn.Conv2d), \
             "ODEXInitFFFBPixelSwitch currently expects FFconv to be nn.Conv2d."
@@ -121,6 +124,168 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
         self.FBconv_copies = [_clone_conv_like(self.FBconv) for _ in range(self.ff_kh * self.ff_kw)]
         self._sync_fb_copies_from_base()
 
+        # A shared FB site is evaluated once for the union of FF receptive fields.
+        # Keep the historical nine-copy bank for the single-pixel specialization.
+        self.block_FBconv_copies = []
+        if self.block_size > 1:
+            sites = self.block_geometry((0, 0, self.block_size, self.block_size),
+                                        (self.block_size, self.block_size))['fb_sites']
+            self.block_FBconv_copies = [_clone_conv_like(self.FBconv) for _ in sites]
+
+    def iter_spatial_blocks(self, h, w):
+        """Raster partition; end coordinates are exclusive, edge tiles may shrink."""
+        m = getattr(self, 'block_size', 1)
+        return [(i, j, min(i+m, h), min(j+m, w))
+                for i in range(0, h, m) for j in range(0, w, m)]
+
+    def block_geometry(self, block, shape):
+        """Count spatial FF/FB operators from convolution geometry, not m formulas.
+
+        fb_sites includes virtual padding positions; valid_fb_sites excludes
+        those positions because zero padding requires no physical FB operator.
+        Counts are spatial operator copies, not individual scalar couplers.
+        """
+        h, w = shape
+        i0,j0,i1,j1 = block
+        if not (0 <= i0 < i1 <= h and 0 <= j0 < j1 <= w):
+            raise ValueError('active block must be a nonempty rectangle inside the state')
+        if max(i1-i0,j1-j0) > self.block_size:
+            raise ValueError('active rectangle exceeds block_size')
+        for conv in (self.FFconv,self.FBconv):
+            if conv.stride != (1,1) or conv.groups != 1 or conv.padding_mode != 'zeros':
+                raise ValueError('coupled switching requires stride-one, ungrouped, zero-padded convolutions')
+        fb = self.FBconv
+        if isinstance(fb,nn.ConvTranspose2d):
+            fh = h-2*fb.padding[0]+fb.dilation[0]*(fb.kernel_size[0]-1)
+            fw = w-2*fb.padding[1]+fb.dilation[1]*(fb.kernel_size[1]-1)
+        else:
+            fh = h+2*fb.padding[0]-fb.dilation[0]*(fb.kernel_size[0]-1)
+            fw = w+2*fb.padding[1]-fb.dilation[1]*(fb.kernel_size[1]-1)
+        ff=self.FFconv
+        if (fh+2*ff.padding[0]-ff.dilation[0]*(ff.kernel_size[0]-1),
+            fw+2*ff.padding[1]-ff.dilation[1]*(ff.kernel_size[1]-1)) != (h,w):
+            raise ValueError('FF(FB(state)) must preserve the state spatial shape')
+        sites=sorted({(i-ff.padding[0]+kh*ff.dilation[0],j-ff.padding[1]+kw*ff.dilation[1])
+                      for i in range(i0,i1) for j in range(j0,j1)
+                      for kh in range(ff.kernel_size[0]) for kw in range(ff.kernel_size[1])})
+        valid=[s for s in sites if 0<=s[0]<fh and 0<=s[1]<fw]
+        return {'ff_count':(i1-i0)*(j1-j0),'fb_count':len(valid),
+                'fb_sites':sites,'valid_fb_sites':valid,'fb_shape':(fh,fw)}
+
+    def _make_coupled_block_ode_fn(self, block):
+        """Raw local current calculation; constructed *inside* the installed wrapper."""
+        def rhs(t,y):
+            h,w=y.shape[-2:]
+            geometry=self.block_geometry(block,(h,w))
+            sites=geometry['fb_sites']; lookup={s:k for k,s in enumerate(sites)}
+            fb=self.FBconv
+            ph,pw=fb.padding
+            if isinstance(fb,nn.ConvTranspose2d):
+                ph,pw=fb.kernel_size[0]-1-ph,fb.kernel_size[1]-1-pw
+            coords=y.new_tensor(sites,dtype=torch.long)
+            ih=coords[:,0,None,None]-ph+torch.arange(self.fb_kh,device=y.device)[None,:,None]*fb.dilation[0]
+            iw=coords[:,1,None,None]-pw+torch.arange(self.fb_kw,device=y.device)[None,None,:]*fb.dilation[1]
+            valid_input=(ih>=0)&(ih<h)&(iw>=0)&(iw<w)
+            patches=y[:,:,ih.clamp(0,h-1),iw.clamp(0,w-1)]*valid_input
+            patches=patches.permute(0,2,1,3,4).flatten(2)
+            bank=self.FBconv_copies if self.block_size==1 else self.block_FBconv_copies
+            if len(bank)<len(sites):
+                raise ValueError('requested block exceeds the configured hardware block_size')
+            weights=torch.stack([self._fb_weight_to_site_matrix(c) for c in bank[:len(sites)]])
+            z=torch.einsum('bsi,soi->bso',patches,weights)
+            if fb.bias is not None:
+                z=z+torch.stack([c.bias for c in bank[:len(sites)]])[None]
+            fh,fw=geometry['fb_shape']
+            valid_site=(coords[:,0]>=0)&(coords[:,0]<fh)&(coords[:,1]>=0)&(coords[:,1]<fw)
+            # Apply activation before masking virtual FF padding, including f(0)!=0.
+            z=self.act_fn(z)*valid_site[None,:,None]
+            i0,j0,i1,j1=block;ff=self.FFconv
+            gather=[lookup[(i-ff.padding[0]+kh*ff.dilation[0],j-ff.padding[1]+kw*ff.dilation[1])]
+                    for i in range(i0,i1) for j in range(j0,j1)
+                    for kh in range(self.ff_kh) for kw in range(self.ff_kw)]
+            z=z[:,gather].reshape(y.shape[0],-1,self.ff_kh*self.ff_kw,z.shape[-1])
+            z=z.permute(0,1,3,2).reshape(-1,ff.in_channels,self.ff_kh,self.ff_kw)
+            values=self._eval_ff_center(z).reshape(y.shape[0],i1-i0,j1-j0,ff.out_channels).permute(0,3,1,2)
+            out=torch.zeros_like(y);out[:,:,i0:i1,j0:j1]=values
+            return out*(h*w if getattr(self,'scale_RHS',False) else 1)
+        return rhs
+
+    def local_block_flow(self, x, y, block, duration):
+        """Phi_B^duration: a coupled flow, independent of sweep/composition order.
+
+        x and y are in the wrapper's input/state domains. Negative duration
+        negates the installed, physically transformed RHS on a positive interval.
+        Outside values are frozen even if projection or noise touches the full state.
+        """
+        if hasattr(self, 'FBconv'):
+            self.block_geometry(block,y.shape[-2:])
+        if not np.isfinite(float(duration)):
+            raise ValueError('duration must be finite')
+        if float(duration)==0:return y.clone()
+        i0,j0,i1,j1=block
+        mask=torch.zeros_like(y,dtype=torch.bool);mask[:,:,i0:i1,j0:j1]=True
+        previous=getattr(self,'_active_spatial_block',None)
+        old_pins = {name: getattr(self, name) for name in
+                    ('_explicit_active_pixel', '_strang_active_pixel') if hasattr(self, name)}
+        self._active_spatial_block=block
+        try:
+            # Never call a class's raw factory: this may be QATTester1State-patched.
+            if i1-i0 == j1-j0 == 1 and hasattr(self, '_make_fixed_pixel_ode_fn'):
+                installed=self._make_fixed_pixel_ode_fn(x, i0, j0)
+            else:
+                installed=self._make_ode_fn(x)
+            sign=1. if duration>0 else -1.
+            def rhs(t,state):
+                state=torch.where(mask,state,y)
+                if sign < 0 and getattr(self, '_track_yoshida_diagnostics', False):
+                    self._yoshida_negative_max_abs = max(
+                        getattr(self, '_yoshida_negative_max_abs', 0.),
+                        float(state.detach().abs().max()))
+                return torch.where(mask,sign*installed(t,state),torch.zeros_like(state))
+            scale=y.shape[-2]*y.shape[-1] if getattr(self,'scale_RHS',False) else 1
+            opts=self._build_interval_option_aca(0., abs(float(duration))/scale, y)
+            if opts.get('proj_fn') is not None:
+                project=opts['proj_fn']
+                opts['proj_fn']=lambda state:torch.where(mask,project(state),y)
+            return torch.where(mask,aca_ode_solve(rhs,y,opts)[-1],y)
+        finally:
+            for name in ('_explicit_active_pixel', '_strang_active_pixel'):
+                if name in old_pins:
+                    setattr(self, name, old_pins[name])
+                elif hasattr(self, name):
+                    delattr(self, name)
+            if previous is None:del self._active_spatial_block
+            else:self._active_spatial_block=previous
+
+    def _build_interval_option_aca(self, t0, t1, ref_tensor):
+        option_aca = dict(self.option_aca)
+        option_aca['t0'] = ref_tensor.new_tensor(t0)
+        option_aca['t1'] = ref_tensor.new_tensor(t1)
+        option_aca['t_eval'] = [option_aca['t0'], option_aca['t1']]
+        if option_aca.get('h') is not None:
+            option_aca['h'] = min(float(option_aca['h']), float(t1-t0))
+        return option_aca
+
+    def _run_coupled_sweep(self, x, full_traj=False, frozen=False):
+        """Lie or Jacobi scheduling; local_block_flow itself has no ordering."""
+        y = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+        t0, t1, total = self._get_total_horizon()
+        blocks = self.iter_spatial_blocks(*y.shape[-2:])
+        states, times = [y], [y.new_tensor(t0)]
+        for iteration in range(self.n_iters):
+            base = y
+            for block in blocks:
+                out = self.local_block_flow(x, base if frozen else y, block,
+                                            total / self.n_iters)
+                i0, j0, i1, j1 = block
+                y = y.clone()
+                y[:, :, i0:i1, j0:j1] = out[:, :, i0:i1, j0:j1]
+            if full_traj:
+                states.append(y)
+                times.append(y.new_tensor(t0 + (iteration + 1)*total/self.n_iters))
+        return (torch.stack(states), torch.stack(times)) if full_traj else y
+
     def _fb_weight_to_site_matrix(self, conv):
         """
         Return a flattened weight matrix of shape [Cout, Cin * kh * kw]
@@ -146,7 +311,7 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
         return weight_site.reshape(weight_site.shape[0], -1)
 
     def _sync_fb_copies_from_base(self):
-        for conv in self.FBconv_copies:
+        for conv in self.FBconv_copies + getattr(self, 'block_FBconv_copies', []):
             conv.weight.data.copy_(self.FBconv.weight.detach())
             if conv.bias is not None and self.FBconv.bias is not None:
                 conv.bias.data.copy_(self.FBconv.bias.detach())
@@ -165,6 +330,8 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
         return float(self.integration_time[-1].item() - self.integration_time[0].item())
 
     def _time_to_active_pixel(self, t, h, w):
+        if getattr(self, '_active_spatial_block', None) is not None:
+            return self._active_spatial_block[:2]
         n_pix = h * w
         T_s = self._get_switch_period(t)
         if T_s <= 0:
@@ -289,6 +456,10 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
         return z_local
 
     def _make_ode_fn(self, x, noisy_cu=None):
+        if hasattr(self,'_active_spatial_block'):
+            i0,j0,i1,j1 = self._active_spatial_block
+            if (i1-i0, j1-j0) != (1,1) or self.block_size > 1:
+                return self._make_coupled_block_ode_fn(self._active_spatial_block)
         def ode_func(t, y):
             bsz, _, h, w = y.shape
             active_h, active_w = self._time_to_active_pixel(t, h, w)
@@ -308,7 +479,9 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
                 dtype=y.dtype,
             )
             out[:, :, active_h, active_w] = out_site
-            return n_pix * out
+            if getattr(self, "scale_RHS", True):
+                return n_pix * out
+            return out
 
         return ode_func
 
@@ -333,6 +506,9 @@ class ODEXInitFFFBPixelSwitch(ODEXInitFFFB):
             self._sync_fb_copies_from_base()
             for _fb_conv in self.FBconv_copies:
                 self._apply_noise(_fb_conv.weight)
+            for conv in getattr(self,'block_FBconv_copies',[]):
+                conv.load_state_dict(self.FBconv.state_dict())
+                self._apply_noise(conv.weight)
 
         if not self.tie_bp and self.bypass is not None:
             self._apply_noise(self.bypass.weight)
@@ -360,6 +536,11 @@ class ODEXInitFFFBPixelSwitchExplicit(ODEXInitFFFBPixelSwitch):
         assert n_iters is not None and int(n_iters) >= 1, \
             "n_iters must be an integer >= 1."
         self.n_iters = int(n_iters)
+        # Lie and its Strang subclass use the natural local-flow clock by
+        # default: integrate F_p for T / n_iters (or half of that for each
+        # Strang subflow).  The older equivalent formulation integrated
+        # n_pix * F_p over an interval shorter by n_pix.
+        self.scale_RHS = False
 
     @staticmethod
     def _pixel_idx_to_active_hw(pix_idx, w):
@@ -367,16 +548,9 @@ class ODEXInitFFFBPixelSwitchExplicit(ODEXInitFFFBPixelSwitch):
         active_w = pix_idx % w
         return active_h, active_w
 
-    def _build_interval_option_aca(self, t0, t1, ref_tensor):
-        option_aca = dict(self.option_aca)
-        option_aca["t0"] = torch.as_tensor(t0, device=ref_tensor.device, dtype=ref_tensor.dtype)
-        option_aca["t1"] = torch.as_tensor(t1, device=ref_tensor.device, dtype=ref_tensor.dtype)
-        option_aca["t_eval"] = [option_aca["t0"], option_aca["t1"]]
-        if option_aca["h"] is not None:
-            option_aca["h"] = min(float(option_aca["h"]), float(t1 - t0))
-        return option_aca
-
     def _time_to_active_pixel(self, t, h, w):
+        if hasattr(self, "_explicit_active_pixel"):
+            return self._explicit_active_pixel
         n_pix = h * w
         t0, t1, T_total = self._get_total_horizon()
 
@@ -403,6 +577,10 @@ class ODEXInitFFFBPixelSwitchExplicit(ODEXInitFFFBPixelSwitch):
         t1 = float(t1.item()) if torch.is_tensor(t1) else float(t1)
         return t0, t1, (t1 - t0)
 
+    def _make_fixed_pixel_ode_fn(self, x, active_h, active_w):
+        self._explicit_active_pixel = (active_h, active_w)
+        return self._make_ode_fn(x)
+
     def _run_explicit_pixel_switch(self, x, full_traj=False):
         y = self.init_y(x)
         self.integration_time = self.integration_time.type_as(x)
@@ -410,22 +588,20 @@ class ODEXInitFFFBPixelSwitchExplicit(ODEXInitFFFBPixelSwitch):
         t0, t1, T_total = self._get_total_horizon()
 
         _, _, h, w = y.shape
-        n_pix = h * w
-        n_total_intervals = self.n_iters * n_pix
-        delta = T_total / n_total_intervals
+        blocks = self.iter_spatial_blocks(h, w)
+        n_total_intervals = self.n_iters * len(blocks)
+        bookkeeping_delta = T_total / n_total_intervals
+        local_duration = T_total / self.n_iters
 
         t_cur = t0
         step_states = [y]
         step_times = [torch.as_tensor(t_cur, device=y.device, dtype=y.dtype)]
 
         for interval_idx in range(n_total_intervals):
-            t_next = t1 if interval_idx == n_total_intervals - 1 else (t_cur + delta)
-
-            option_aca = self._build_interval_option_aca(t_cur, t_next, y)
-            out = aca_ode_solve(self._make_ode_fn(x), y, option_aca)
-            y = out[-1]
-
-            t_cur = t_next
+            block = blocks[interval_idx % len(blocks)]
+            y = self.local_block_flow(x, y, block, local_duration)
+            t_cur = (t1 if interval_idx == n_total_intervals - 1
+                     else t_cur + bookkeeping_delta)
 
             if full_traj:
                 step_states.append(y)
@@ -550,6 +726,160 @@ class ODEXInitFFFBPixelSwitchExplicitStatic(ODEXInitFFFBPixelSwitchExplicit):
         return y
 
 
+class ODEXInitFFFBPixelSwitchStrang(ODEXInitFFFBPixelSwitchExplicit):
+    """Symmetric forward/reverse sequential pixel sweep.
+
+    Each iteration performs a raster-order pass followed by its reverse.  A
+    pixel is integrated for half the duration used by one pixel in the
+    ordinary sequential sweep, so the total integration budget per iteration
+    is unchanged.  Unlike the static/parallel classes, every subsequent pixel
+    reads the state committed by the preceding pixel update.
+
+    This is a Strang-type symmetric composition of pixel-local flows.  With an
+    Euler mini-solver it should not be described as an exact second-order
+    Strang method.
+    """
+
+    @staticmethod
+    def _symmetric_pixel_order(n_pix):
+        return (range(n_pix), range(n_pix - 1, -1, -1))
+
+    def _make_fixed_pixel_ode_fn(self, x, active_h, active_w):
+        # Reuse the currently installed switched RHS.  In hardware-wrapped
+        # models ``self._make_ode_fn`` is patched with the physical source and
+        # derivative scaling, so calling the class implementation directly
+        # here would silently bypass the wrapper.  Pinning the lookup is enough
+        # to make the installed RHS select the requested reverse/forward pixel.
+        self._strang_active_pixel = (active_h, active_w)
+        return self._make_ode_fn(x)
+
+    def _make_signed_fixed_pixel_ode_fn(
+            self, x, active_h, active_w, flow_sign=1.0):
+        """Construct a wrapper-aware local RHS and optionally reverse it.
+
+        The installed ``self._make_ode_fn`` may include physical-domain input
+        and derivative transformations. Build that function first, then apply
+        the Yoshida sign to its final derivative. A negative stage therefore
+        negates the FF/output contribution, not the FB transform inside it.
+        """
+        inner = self._make_fixed_pixel_ode_fn(x, active_h, active_w)
+        flow_sign = float(flow_sign)
+        if flow_sign == 1.0:
+            return inner
+
+        def signed_ode_fn(t, y):
+            if (flow_sign < 0.0 and
+                    getattr(self, "_track_yoshida_diagnostics", False)):
+                value = float(y.detach().abs().max().item())
+                self._yoshida_negative_max_abs = max(
+                    self._yoshida_negative_max_abs, value)
+            return flow_sign * inner(t, y)
+
+        return signed_ode_fn
+
+    def _time_to_active_pixel(self, t, h, w):
+        if hasattr(self, "_strang_active_pixel"):
+            return self._strang_active_pixel
+        return super()._time_to_active_pixel(t, h, w)
+
+    def _run_strang_macro_step(
+            self, x, y, macro_duration, on_subflow=None):
+        """Symmetric ordering of generic signed block flows (no local physics)."""
+        blocks = self.iter_spatial_blocks(*y.shape[-2:])
+        for order in self._symmetric_pixel_order(len(blocks)):
+            for index in order:
+                y = self.local_block_flow(x, y, blocks[index], macro_duration / 2)
+                if on_subflow is not None:
+                    on_subflow(y)
+        return y
+
+    def _run_explicit_pixel_switch(self, x, full_traj=False):
+        y = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        t0, t1, T_total = self._get_total_horizon()
+        _, _, h, w = y.shape
+        n_pix = h * w
+        n_total_intervals = self.n_iters * 2 * len(self.iter_spatial_blocks(h, w))
+        bookkeeping_delta = T_total / n_total_intervals
+
+        t_cur = t0
+        step_states = [y]
+        step_times = [torch.as_tensor(t_cur, device=y.device, dtype=y.dtype)]
+        completed = 0
+
+        def record_subflow(state):
+            nonlocal completed, t_cur
+            completed += 1
+            t_cur = (t1 if completed == n_total_intervals
+                     else t_cur + bookkeeping_delta)
+            if full_traj:
+                step_states.append(state)
+                step_times.append(torch.as_tensor(
+                    t_cur, device=state.device, dtype=state.dtype))
+
+        for _ in range(self.n_iters):
+            y = self._run_strang_macro_step(
+                x, y, T_total / self.n_iters, record_subflow)
+
+        if full_traj:
+            return torch.stack(step_states, dim=0), torch.stack(step_times, dim=0)
+        return y
+
+
+class ODEXInitFFFBPixelSwitchYoshida4(ODEXInitFFFBPixelSwitchStrang):
+    """Fourth-order Yoshida composition of validated Strang pixel flows.
+
+    Each macro-step applies S2(a*h), S2(b*h), S2(a*h). The middle coefficient
+    is represented by a positive solver interval and a negated wrapper-aware
+    local vector field. The inherited direct local-time (stretchT) convention
+    is the default.
+    """
+
+    YOSHIDA_A = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
+    YOSHIDA_B = -(2.0 ** (1.0 / 3.0)) / (2.0 - 2.0 ** (1.0 / 3.0))
+
+    @classmethod
+    def _yoshida_coefficients(cls):
+        return cls.YOSHIDA_A, cls.YOSHIDA_B, cls.YOSHIDA_A
+
+    def _run_explicit_pixel_switch(self, x, full_traj=False):
+        y = self.init_y(x)
+        self.integration_time = self.integration_time.type_as(x)
+
+        t0, t1, T_total = self._get_total_horizon()
+        _, _, h, w = y.shape
+        n_pix = h * w
+        n_total_intervals = self.n_iters * 3 * 2 * len(self.iter_spatial_blocks(h, w))
+        bookkeeping_delta = T_total / n_total_intervals
+        macro_duration = T_total / self.n_iters
+
+        self._yoshida_negative_max_abs = 0.0
+        t_cur = t0
+        completed = 0
+        step_states = [y]
+        step_times = [torch.as_tensor(t_cur, device=y.device, dtype=y.dtype)]
+
+        def record_subflow(state):
+            nonlocal completed, t_cur
+            completed += 1
+            t_cur = (t1 if completed == n_total_intervals
+                     else t_cur + bookkeeping_delta)
+            if full_traj:
+                step_states.append(state)
+                step_times.append(torch.as_tensor(
+                    t_cur, device=state.device, dtype=state.dtype))
+
+        for _ in range(self.n_iters):
+            for coefficient in self._yoshida_coefficients():
+                y = self._run_strang_macro_step(
+                    x, y, coefficient * macro_duration, record_subflow)
+
+        if full_traj:
+            return torch.stack(step_states, dim=0), torch.stack(step_times, dim=0)
+        return y
+
+
 class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
     """
     Jacobi-style explicit pixel-switch with efficient chunked parallel updates.
@@ -568,6 +898,10 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
     """
     def __init__(self, n_iters=1, max_pixels=None, use_cached_patches=True, **kwargs):
         super().__init__(n_iters=n_iters, **kwargs)
+
+        # Preserve the established Efficient/Jacobi default.  StretchT below
+        # selects the equivalent direct local-time formulation explicitly.
+        self.scale_RHS = True
 
         self.use_cached_patches = use_cached_patches
         if max_pixels is not None:
@@ -663,6 +997,8 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
             ode_func(t, y): full-state RHS with nonzero entries only at the
                             selected chunk pixels.
         """
+        if getattr(self, '_active_spatial_block', None) is not None:
+            return self._make_coupled_block_ode_fn(self._active_spatial_block)
         # Get parameter needed
         device = y_ref.device
         dtype = y_ref.dtype
@@ -774,6 +1110,14 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
         _, _, h, w = y.shape
         n_pix = h * w
 
+        if self.block_size > 1:
+            if getattr(self, 'i_leak', None):
+                raise NotImplementedError('coupled blocks do not yet model per-pixel read leakage')
+            return self._run_coupled_sweep(x, full_traj, frozen=True)
+
+        # Optimized singleton Jacobi flow: batch independent one-pixel blocks.
+        # This is NOT used for m>1, whose pixels must evolve mutually coupled.
+
         # One full iteration corresponds to one full scan over all pixels.
         T_iter = T_total / self.n_iters
 
@@ -869,6 +1213,8 @@ class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
             ode_func(t, y): full-state RHS with nonzero entries only at the
                             selected chunk pixels.
         """
+        if getattr(self, '_active_spatial_block', None) is not None:
+            return self._make_coupled_block_ode_fn(self._active_spatial_block)
         # Get parameter needed
         device = y_ref.device
         dtype = y_ref.dtype
@@ -1304,6 +1650,8 @@ SWITCH_CLASSES = {
     "ODEXInitFFFBPixelSwitch": ODEXInitFFFBPixelSwitch,
     "ODEXInitFFFBPixelSwitchExplicit": ODEXInitFFFBPixelSwitchExplicit,
     "ODEXInitFFFBPixelSwitchExplicitStatic": ODEXInitFFFBPixelSwitchExplicitStatic,
+    "ODEXInitFFFBPixelSwitchStrang": ODEXInitFFFBPixelSwitchStrang,
+    "ODEXInitFFFBPixelSwitchYoshida4": ODEXInitFFFBPixelSwitchYoshida4,
     "ODEXInitFFFBPixelSwitchParallel": ODEXInitFFFBPixelSwitchParallel,
     "ODEXInitFFFBPixelSwitchEfficient": ODEXInitFFFBPixelSwitchEfficient,
     "ODEXInitFFFBPixelSwitchStretchT": ODEXInitFFFBPixelSwitchStretchT,

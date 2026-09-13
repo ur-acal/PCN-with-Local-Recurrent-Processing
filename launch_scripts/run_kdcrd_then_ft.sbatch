@@ -9,6 +9,7 @@
 #SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
 #set -euo pipefail
+source ./launch_scripts/tc_nonideality_args.sh ft || exit 2
 
 # ---- Conda activation (non-interactive safe) ----
 source activate base
@@ -507,6 +508,25 @@ mkdir -p "${EVAL_BASE}"
 : > "${MASTER_LOG}"
 
 eval_one_combo_model() {
+  if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
+    # FT's shared activation settings must not restrict the evaluation bank.
+    # Function-local values also leave the next model's FT settings intact.
+    local ACTIVATION_CURVE_PATH="${TC_EVAL_ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    local ACTIVATION_CORNER="${TC_EVAL_ACTIVATION_CORNER:-TT_25_1_MC18}"
+  fi
+  source ./launch_scripts/tc_nonideality_args.sh eval || return 2
+  if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
+    # These two switches configure training resampling, not the evaluator.
+    local -a eval_activation_args=()
+    local i
+    for ((i=0; i<${#MEASURED_ACTIVATION_ARGS[@]}; i+=2)); do
+      case "${MEASURED_ACTIVATION_ARGS[i]}" in
+        --activation_corner_mode|--activation_random_curve_sharing) continue ;;
+      esac
+      eval_activation_args+=("${MEASURED_ACTIVATION_ARGS[i]}" "${MEASURED_ACTIVATION_ARGS[i+1]}")
+    done
+    local -a MEASURED_ACTIVATION_ARGS=("${eval_activation_args[@]}")
+  fi
   local comb_tag="$1"
   local name="$2"
   local tag="$3"         # pre_ft or post_ft
@@ -667,11 +687,13 @@ eval_one_combo_model() {
     --diff_mismatch   "true" \
     --nonlinear_R     "false" \
     --mem_frac        "${MEM_FRAC}" \
+    "${TC_ARGS[@]}" \
     2>&1 | tee -a "$dir/job.log"
 }
 
 # ------------------------ FINETUNE ONE MODEL ------------------------
 finetune_one_combo_model() {
+  source ./launch_scripts/tc_nonideality_args.sh ft || return 2
   local comb_tag="$1"
   local name="$2"
   local train_block="$3"
@@ -777,6 +799,7 @@ finetune_one_combo_model() {
     --contrast_method "memory" \
     --test_only     "false" \
     --mem_frac      "${MEM_FRAC}" \
+    "${TC_ARGS[@]}" \
     2>&1 | tee "${logfile}"
 }
 

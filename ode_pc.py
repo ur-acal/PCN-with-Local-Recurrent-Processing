@@ -202,6 +202,182 @@ class ODEBlockPC(nn.Module):
         level_idx = dist.argmin(dim=1).to(torch.long) # [nnz]
         return level_idx.reshape_as(values)
 
+    def reset_tc_curves(self):
+        """Start a new dense TC realization; evaluation callers reset per trial."""
+        self._tc_curve_samples = None
+
+    def reset_tc_spin(self):
+        """Reset static spin gains at a new evaluation trial."""
+        if hasattr(self, "_tc_spin_state"):
+            self._tc_spin_state._spin_factor_y = None
+            self._tc_spin_state._spin_factor_z = None
+
+    def _tc_generator(self, ref, key, seed):
+        cache = self._tc_generators
+        identity = (str(ref.device), key)
+        if identity not in cache:
+            # Independent named streams, even when no user seed was supplied.
+            import hashlib
+            offset = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "little")
+            cache[identity] = torch.Generator(device=ref.device).manual_seed(
+                (int(seed) + 1009 * int(self.layer_idx) + offset) % (2**63-1))
+        return cache[identity]
+
+    def _tc_nominal_sum(self, module, source):
+        """Sum clean normalized conductances, excluding padding and open circuits."""
+        with torch.no_grad():
+            ones = torch.ones_like(source[:1])
+            if hasattr(module, "mat"):
+                mat = module.mat
+                values = getattr(module, "clean_mat_values", mat.values()).abs()
+                clean = torch.sparse_csr_tensor(mat.crow_indices(), mat.col_indices(), values,
+                    size=mat.shape, device=mat.device, dtype=mat.dtype)
+                meta = module.meta
+                h = (source.shape[-2]+2*meta['padding']-meta['ker_h'])//meta['stride']+1
+                w = (source.shape[-1]+2*meta['padding']-meta['ker_w'])//meta['stride']+1
+                return torch.sparse.mm(clean, ones.flatten().view(-1,1)).view(1,meta['out_chan'],h,w)
+            weight = module.weight.detach().abs()
+            if isinstance(module, nn.ConvTranspose2d):
+                return F.conv_transpose2d(ones, weight, None, module.stride, module.padding,
+                                         module.output_padding, module.groups, module.dilation)
+            return F.conv2d(ones, weight, None, module.stride, module.padding, module.dilation, module.groups)
+
+    def _tc_spin_generator(self, ref, stage):
+        return self._tc_generator(ref, 'spin:'+stage, self._tc_noise_cfg['spin_variation_seed'])
+
+    def _tc_prepare_noise(self, x, two=False):
+        from tc_nonidealities import TCNoiseLifecycle
+        cfg = self._tc_noise_cfg
+        if not any(cfg[k] for k in ("enable_spin_variation", "enable_summing_current_noise", "enable_coupler_noise")):
+            self.option_aca['eps'] = 0.
+            return None, 1., 1.
+        initial = self.init_y(x)
+        y = initial[0] if two else initial
+        fb = self._tc_nominal_sum(self.FBconv, y)
+        ff = self._tc_nominal_sum(self.FFconv, fb)
+        if self.training:
+            self.reset_tc_spin()
+        # Reuse toggle's distribution, shape check and per-spin cache verbatim.
+        sy = ToggleAveragedPhysicalFFFB._spin_factor(self._tc_spin_state, 'y', ff)
+        sz = ToggleAveragedPhysicalFFFB._spin_factor(self._tc_spin_state, 'z', fb)
+        sy, sz = (1. if sy is None else sy), (1. if sz is None else sz)
+        cap_ff, cap_fb = self._tc_capacitances()
+        if any(not math.isfinite(float(c)) or float(c) <= 0 for c in (cap_ff, cap_fb)):
+            raise ValueError('TC diffusion requires positive finite capacitances.')
+        ratio = cfg['tc_noise_reference_R'] / self.R
+        a = cfg['summing_current_p'] if cfg['enable_summing_current_noise'] else 0.
+        b = cfg['coupler_noise_p'] if cfg['enable_coupler_noise'] else 0.
+        coefficients = [(torch.full_like(ff, a*math.sqrt(ratio)/cap_ff), ff.sqrt()*b*math.sqrt(ratio)/cap_ff)]
+        if two:
+            coefficients.append((torch.full_like(fb, a*math.sqrt(ratio)/cap_fb), fb.sqrt()*b*math.sqrt(ratio)/cap_fb))
+        generators = {}
+        for branch in list(range(len(coefficients))) + ['fb']:
+            for source in ('sum','coupler'):
+                seed = cfg['summing_noise_seed' if source=='sum' else 'coupler_noise_seed']
+                generators[(branch,source)] = self._tc_generator(x, f'{branch}:{source}', seed)
+        fb_coeff = None
+        if not two and (a or b):
+            scale = self._tc_fb_integral.std_A / cfg['tc_asd_reference_p'] * math.sqrt(ratio)
+            fb_coeff = (torch.full_like(fb, a*scale), fb.sqrt()*b*scale)
+        context = TCNoiseLifecycle(coefficients, generators, fb_coeff,
+                                   fb.expand(x.shape[0],*fb.shape[1:]))
+        eps = tuple((a.square()+b.square()).sqrt() for a,b in coefficients)
+        self.option_aca.update(eps=eps if two else eps[0], noise_type='addi')
+        return context, sy, sz
+
+    def _tc_curves_for_solve(self):
+        """Sample independently across FF/FB and codes, hold over every RHS call."""
+        if all(getattr(module, "_tc_curve_package", None) is not None
+               for module in (self.FFconv, self.FBconv)):
+            return None  # Expanded modules own their fixed per-coupler draws.
+        package = getattr(self, "_tc_curve_package", None)
+        if package is None:
+            return None
+        if self.training or getattr(self, "_tc_curve_samples", None) is None:
+            if getattr(self, '_tc_conv_method', 'loop') == 'shared':
+                self._tc_curve_samples = {
+                    name: package.sample_shared(
+                        self._values_to_level_idx(getattr(self, name).weight.detach()),
+                        sampling=self._tc_curve_sampling, generator=self._tc_curve_generator)
+                    for name in ("FFconv", "FBconv")}
+            else:
+                self._tc_curve_samples = {
+                    name: package.sample_levels(generator=self._tc_curve_generator)
+                    for name in ("FFconv", "FBconv")}
+        # Capture this dictionary in the solve closure, including backward replay.
+        return self._tc_curve_samples
+
+    def _tc_dense_conv(self, module, source, curves):
+        """Dense QAT input correction, summed over programmed resistance codes.
+
+        Codes select kernels but never replace the differentiable weight tensor.
+        This is the dense reference path, not per-edge unrolled inference.
+        """
+        if (curves is None or getattr(self, "_tc_unrolling", False)
+                or getattr(module, "_tc_curve_package", None) is not None):
+            return module(source)
+        if not isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
+            raise TypeError("TC dense nonlinear-R requires an unexpanded convolution.")
+        if module.bias is not None or module.padding_mode != "zeros":
+            raise ValueError("TC nonlinear-R expects bias-free, zero-padded convolutions.")
+        from tc_nonidealities import positive_resistance, TCSharedCurve
+        package = self._tc_curve_package
+        weight = module.weight
+        if isinstance(curves, TCSharedCurve):
+            from tc_shared_correction import shared_correction
+            corrected = shared_correction(source, curves, package.v_grid,
+                                          self.v_dd, package.floor_ohms)
+            # Keep the ordinary differentiable QAT weights, including their
+            # existing zero-code STE behavior. No detached amplitude/sign path.
+            if isinstance(module, nn.ConvTranspose2d):
+                return F.conv_transpose2d(corrected, weight, None, module.stride,
+                    module.padding, module.output_padding, module.groups, module.dilation)
+            return F.conv2d(corrected, weight, None, module.stride,
+                            module.padding, module.dilation, module.groups)
+        codes = self._values_to_level_idx(weight.detach())
+        grid = package.v_grid.to(source)
+        table = curves.to(source).T.contiguous()
+        slope = (table[1:] - table[:-1]) / (grid[1:] - grid[:-1])[:, None]
+        # Match toggle level-2's rail + characterized-grid clamp for R queries.
+        query = source.clamp(-self.v_dd, self.v_dd).clamp(grid[0], grid[-1])
+        if getattr(self, '_tc_conv_method', 'loop') == 'grouped':
+            # One input/kernel group per resistance code; retain the original
+            # convolution groups inside each code. QAT weights stay attached.
+            count = package.means.shape[0]
+            intervals = (torch.bucketize(query, grid)-1).clamp(0, grid.numel()-2)
+            resistance = (table[intervals] + slope[intervals]*(query-grid[intervals]).unsqueeze(-1))
+            resistance = positive_resistance(resistance, package.floor_ohms)
+            corrected = source.unsqueeze(-1)*package.programmed_resistances.to(source)/resistance
+            packed_input = corrected.permute(0,4,1,2,3).reshape(
+                source.shape[0],count*source.shape[1],*source.shape[2:])
+            mask = codes.unsqueeze(0) == torch.arange(1,count+1,device=weight.device).reshape(-1,1,1,1,1)
+            packed_weight = (weight.unsqueeze(0)*mask).reshape(
+                count*weight.shape[0],*weight.shape[1:])
+            if isinstance(module, nn.ConvTranspose2d):
+                result = F.conv_transpose2d(packed_input,packed_weight,None,module.stride,module.padding,
+                    module.output_padding,count*module.groups,module.dilation)
+            else:
+                result = F.conv2d(packed_input,packed_weight,None,module.stride,module.padding,
+                    module.dilation,count*module.groups)
+            return result.reshape(source.shape[0],count,module.out_channels,*result.shape[-2:]).sum(1)
+        output = None
+        for index in range(package.means.shape[0]):
+            resistance = interpolate_R_eff(
+                query, grid, package.programmed_resistances, table[:-1],
+                slope, index)
+            corrected = source * package.programmed_resistances[index].to(source) / positive_resistance(
+                resistance, package.floor_ohms)
+            masked_weight = weight * (codes == index + 1)
+            if isinstance(module, nn.ConvTranspose2d):
+                value = F.conv_transpose2d(
+                    corrected, masked_weight, None, module.stride, module.padding,
+                    module.output_padding, module.groups, module.dilation)
+            else:
+                value = F.conv2d(corrected, masked_weight, None, module.stride,
+                                 module.padding, module.dilation, module.groups)
+            output = value if output is None else output + value
+        return output
+
     def _get_sparse_sigma_tensor(self, values):
         if not isinstance(self.noise_level, dict):
             return self.noise_level
@@ -607,6 +783,16 @@ class ODEXInitFFFB(ODEBlockXInit):
         super().__init__(**kwargs)
 
     def _make_ode_fn(self, x, noisy_cu=None):
+        if getattr(self, "_tc_current_mode", False):
+            curves = self._tc_curves_for_solve()
+            context, sy, sz = self._tc_prepare_noise(x)
+            def tc_func(t, y):
+                z = self._tc_dense_conv(self.FBconv, y, None if curves is None else curves["FBconv"])
+                noise = 0. if context is None else context.fb_current()
+                h = self.act_fn(sz * (z * self._tc_fb_gain + noise * self._tc_fb_gain * self.R))
+                return sy * self._tc_dense_conv(self.FFconv, h, None if curves is None else curves["FFconv"])
+            tc_func.tc_context = context
+            return tc_func
         def ode_func(t, y):
             return self.FFconv(self.act_fn(self.FBconv(y)))
         return ode_func
@@ -2642,6 +2828,20 @@ class S2NoisyIYAsXZAs0(State2NoMinusZ):
         self._set_eps(x)
         return super().forward(x, layer_idx)
 
+    def _make_ode_fn(self, x):
+        if not getattr(self, "_tc_current_mode", False):
+            return super()._make_ode_fn(x)
+        curves = self._tc_curves_for_solve()
+        context, sy, sz = self._tc_prepare_noise(x, two=True)
+        def tc_func(t, yz):
+            y, z = yz
+            return (
+                sy * self._tc_dense_conv(self.FFconv, self.act_fn(z), None if curves is None else curves["FFconv"]),
+                sz * self._tc_dense_conv(self.FBconv, y, None if curves is None else curves["FBconv"]))
+        result = _FuncWrapper(tc_func)
+        result.tc_context = context
+        return result
+
 
 class S2Circ(State2NoMinusZ):
     def __init__(self, patch_node=8, patch_stride=4, patch_cycle=5, patch_pad=0, fold_scalar=None,
@@ -3142,6 +3342,29 @@ class WrapQuantizeW(ODEWrapperRC):
         patch = kwargs.get("patch", True)
         kwargs.update({"patch": False})
 
+        self.tc_nonidealities = kwargs.pop("tc_nonidealities", False)
+        self.tc_covariance_table = kwargs.pop("tc_covariance_table", None)
+        self.tc_conv_method = kwargs.pop('tc_conv_method', 'loop')
+        self.tc_curve_sampling = kwargs.pop('tc_curve_sampling', 'histogram')
+        if self.tc_nonidealities and self.tc_conv_method not in ('loop','grouped','shared'):
+            raise ValueError('tc_conv_method must be loop, grouped or shared.')
+        if self.tc_nonidealities and self.tc_curve_sampling not in ('histogram','uniform'):
+            raise ValueError('tc_curve_sampling must be histogram or uniform.')
+        self._tc_noise_options = None
+        if self.tc_nonidealities:
+            defaults = dict(enable_spin_variation=False, sigma_spin=.1, spin_variation_mean=1.,
+                spin_variation_seed=None, enable_summing_current_noise=False,
+                summing_current_p=.6e-12, summing_noise_seed=None, enable_coupler_noise=False,
+                coupler_noise_p=.6e-12, coupler_noise_seed=None, tc_noise_reference_R=50e3,
+                tc_asd_reference_p=.6e-12, tc_fb_asd_path=os.path.join(
+                    os.path.dirname(__file__), 'hardware_data', 'coupler_asd_vs_freq.csv'))
+            self._tc_noise_options = {key:kwargs.pop(key, value) for key,value in defaults.items()}
+        if self.tc_nonidealities:
+            if type(kwargs.get("ode_block")) not in (ODEXInitFFFB, S2NoisyIYAsXZAs0):
+                raise TypeError("TC options require ODEXInitFFFB or S2NoisyIYAsXZAs0; not toggle.")
+            if kwargs.get("weight_quant_factor_bits") is not None:
+                raise ValueError("TC uses existing weight QAT, not weight-scale-factor quantization.")
+
         self.nonlinear_R = kwargs.pop("nonlinear_R", False)
         self.nonlinear_R_table = kwargs.pop("nonlinear_R_table", None)
         self.nonlinear_R_mc_curve_index = kwargs.pop(
@@ -3389,7 +3612,81 @@ class WrapQuantizeW(ODEWrapperRC):
         self.R_left = self.R_table[:-1, :]  # (N-1, M)
         self.R_slope = (self.R_table[1:, :] - self.R_left) / dv[:, None] # (N-1,M)
 
+    def _tc_capacitances(self):
+        return (self.C, self.C) if isinstance(self, ODEWrapper1State) else (self.C_ff, self.C_fb)
+
+    def _configure_tc_noise(self):
+        from types import SimpleNamespace
+        from tc_nonidealities import integrate_current_asd
+        block, cfg = self.ode_block, dict(self._tc_noise_options)
+        for key in ('sigma_spin','summing_current_p','coupler_noise_p'):
+            if not math.isfinite(float(cfg[key])) or float(cfg[key]) < 0:
+                raise ValueError(f'{key} must be finite and nonnegative.')
+        for key in ('tc_noise_reference_R','tc_asd_reference_p'):
+            if not math.isfinite(float(cfg[key])) or float(cfg[key]) <= 0:
+                raise ValueError(f'{key} must be positive and finite.')
+        if not math.isfinite(float(cfg['spin_variation_mean'])):
+            raise ValueError('spin_variation_mean must be finite.')
+        for key in ('spin_variation_seed','summing_noise_seed','coupler_noise_seed'):
+            if cfg[key] is None:
+                cfg[key] = torch.initial_seed()
+        block._tc_noise_cfg = cfg
+        block._tc_generators = {}
+        block._tc_capacitances = self._tc_capacitances
+        block._tc_spin_state = SimpleNamespace(
+            enable_spin_variation=cfg['enable_spin_variation'], sigma_spin=cfg['sigma_spin'],
+            spin_variation_mean=cfg['spin_variation_mean'], _spin_factor_y=None, _spin_factor_z=None,
+            _spin_variation_generator=block._tc_spin_generator)
+        if (type(block) is ODEXInitFFFB and
+                (cfg['enable_coupler_noise'] or cfg['enable_summing_current_noise'])):
+            block._tc_fb_integral = integrate_current_asd(cfg['tc_fb_asd_path'],
+                                                         reference_R=cfg['tc_noise_reference_R'])
+        # Never stack legacy thermal noise on the new TC sources.
+        block.eps_scale, block.offset_eps = None, 0.
+        block.option_aca['eps'] = 0.
+
     def _ship_nonlinear_R_pkg(self):
+        if self.tc_nonidealities:
+            if type(self.ode_block) not in (ODEXInitFFFB, S2NoisyIYAsXZAs0):
+                raise TypeError("TC options require ODEXInitFFFB or S2NoisyIYAsXZAs0; not toggle.")
+            self.ode_block._tc_current_mode = True
+            self.ode_block._tc_conv_method = self.tc_conv_method
+            self.ode_block._tc_curve_sampling = self.tc_curve_sampling
+            self.ode_block._tc_fb_gain = getattr(self, "k", 1.) / self.R
+            self._configure_tc_noise()
+            if not self.nonlinear_R:
+                if self.nonlinear_R_train_mode != "none":
+                    raise ValueError("nonlinear_R_train_mode requires nonlinear_R=True.")
+                return
+            if (self.nonlinear_R_curve_sharing != "shared" and
+                    not (self.nonlinear_R_curve_sharing == "per_coupler" and
+                         self.nonlinear_R_train_mode == "none")):
+                raise ValueError("Dense TC training uses one curve per tensor/resistance code.")
+            if self.nonlinear_R_train_mode == "mean":
+                raise ValueError("TC covariance sampling does not support mean-only training.")
+            if self.tc_covariance_table is None or self.nonlinear_R_table is None:
+                raise ValueError("TC nonlinear-R requires separate mean and covariance tables.")
+            from tc_nonidealities import prepare_tc_resistance_curves
+            block = self.ode_block
+            ref = block.FFconv.weight
+            block._tc_curve_package = prepare_tc_resistance_curves(
+                self.nonlinear_R_table, self.tc_covariance_table,
+                levels=block._get_quant_magnitude_levels(ref), R=self.R,
+                R_max=self.R_max, dtype=ref.dtype, device=ref.device)
+            block._tc_curve_generator = None
+            if self.nonlinear_R_curve_seed is not None:
+                block._tc_curve_generator = torch.Generator(device=ref.device).manual_seed(
+                    int(self.nonlinear_R_curve_seed) + 1009 * int(block.layer_idx))
+            block.reset_tc_curves()
+            # Validator supplies independent layer/module seed offsets and
+            # installs this package only on the expanded physical couplers.
+            block._nonlinear_R_pkg = dict(
+                v_grid=None, R_codes=None, R_left=None, R_slope=None,
+                proj_fn=self.proj_fn, R=self.R,
+                tc_curve_package=block._tc_curve_package,
+                nonlinear_R_curve_seed=self.nonlinear_R_curve_seed,
+                nonlinear_R_curve_edge_chunk_size=self.nonlinear_R_curve_edge_chunk_size)
+            return
         if not self.nonlinear_R:
             if self.nonlinear_R_train_mode != "none":
                 raise ValueError(
@@ -3625,7 +3922,10 @@ class ODEWrapper2State(WrapQuantizeW):
         def scaled(*f_args, **f_kwargs):
             y_, z_ = inner_fn(*f_args, **f_kwargs)
             return y_ / self.C_ff / self.R, z_ / self.C_fb / self.R
-        return _FuncWrapper(scaled)
+        result = _FuncWrapper(scaled)
+        if self.tc_nonidealities:
+            result.tc_context = getattr(inner_fn, 'tc_context', None)
+        return result
 
     def wrap_input(self, x):
         x = self.inp_scale * x
@@ -3686,6 +3986,9 @@ class ODEWrapper2State(WrapQuantizeW):
         if self._has_init_ode:
             self._patch_make_z_fn()
         self._ship_nonlinear_R_pkg()
+
+        if self.tc_nonidealities:
+            self._configure_measured_activation()
 
     @staticmethod
     def _round(x, n):
@@ -3866,7 +4169,9 @@ class ODEWrapper1State(ODEWrapper2State):
     def transform(self, inner_fn):
         @wraps(inner_fn)
         def scaled(t, y, *f_args, **f_kwargs):
-            y_ = inner_fn(t, y * self.k / self.R, *f_args, **f_kwargs)
+            # TC queries R at the physical voltage, then applies the I/V gain.
+            source = y if self.tc_nonidealities else y * self.k / self.R
+            y_ = inner_fn(t, source, *f_args, **f_kwargs)
             return y_ / self.C / self.R
         return scaled
 

@@ -336,7 +336,9 @@ class ODESolver(nn.Module):
             return torch.count_nonzero(_sigma) == 0
         return _sigma == 0.0
 
-    def _randn_like(self, ref):
+    def _randn_like(self, ref, branch=0):
+        if getattr(self, "tc_context", None) is not None:
+            return self.tc_context.normal(ref, branch)
         if self.noise_generator is None:
             return torch.randn_like(ref, requires_grad=False, device=ref.device)
         return torch.randn(
@@ -348,8 +350,8 @@ class ODESolver(nn.Module):
             if isinstance(self.eps, tuple):
                 _std = tuple((h ** 0.5) * _eps for _eps in self.eps)
                 y_current = tuple(_y if self._all_zero(_sigma)
-                                  else _y + _sigma * self._randn_like(_y)
-                                  for _y, _sigma in zip(y_current, _std))
+                                  else _y + _sigma * self._randn_like(_y, branch)
+                                  for branch, (_y, _sigma) in enumerate(zip(y_current, _std)))
             elif not self._all_zero(self.eps):
                 _std = (h ** 0.5) * self.eps
                 y_current = tuple(_y + _std * self._randn_like(_y)
@@ -381,6 +383,9 @@ class ODESolver(nn.Module):
 
     def integrate_predefined_grids(self, y0, t0, predefine_steps=None, return_steps=False, t_eval=None, full_traj=False):
 
+        if getattr(self, "tc_context", None) is not None:
+            self.tc_context.restart()
+
         if torch.is_tensor(y0):
             y0 = (y0,)
             self.tensor_input = True
@@ -411,6 +416,12 @@ class ODESolver(nn.Module):
         self.before_integrate(y0, t_eval)
 
         time_points = predefine_steps # time points to evaluate, not the step
+        if getattr(self, "tc_context", None) is not None:
+            # Cover a final partial interval with noise, not extrapolation.
+            distance = (time_points-self.t0)*self.time_direction
+            time_points = time_points[(distance > 0) &
+                (distance < (self.t1-self.t0)*self.time_direction)]
+            time_points = torch.cat((time_points, self.t1.reshape(1)))
 
         # advance a small step in time
         t_current = self.t0
@@ -430,6 +441,9 @@ class ODESolver(nn.Module):
                 y_current = self.mult_noisy_update_and_proj(h=point-t_current, y_current=y_current)
             else:
                 y_current = self.addi_noisy_update_and_proj(h=point-t_current, y_current=y_current)
+
+            if getattr(self, "tc_context", None) is not None:
+                self.tc_context.accepted()
 
             if full_traj:
                 # Append non-interpolated points for fixed grid only.

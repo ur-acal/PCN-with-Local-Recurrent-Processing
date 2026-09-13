@@ -231,6 +231,8 @@ class AdaptiveGridSolver(ODESolver):
             return out
 
     def integrate_search_grids(self, y0, t0, return_steps=True, t_eval=None, full_traj=False, *args,**kwargs):
+        if getattr(self, "tc_context", None) is not None:
+            self.tc_context.restart()
         self.t0 = t0
         self.y0 = y0
         ###############################################################################
@@ -310,6 +312,10 @@ class AdaptiveGridSolver(ODESolver):
 
                     y_detach = tuple( Variable(_y_current.clone().detach(), requires_grad = False) for _y_current in y_current)
 
+                    if getattr(self, "tc_context", None) is not None:
+                        # adapt_stepsize mutates tensor h_abs in place; a Python
+                        # scalar keeps that proposal separate from accepted h.
+                        h_new = min(float(h_new), float(abs(self.t1-t_current)))
                     h_current = h_new  # .clone().detach()
 
                     _y_new, _error, _variables = self.step(self.func, t_current, h_current * self.time_direction,
@@ -350,11 +356,17 @@ class AdaptiveGridSolver(ODESolver):
                 # if regenerate computation graph, do not save dense states at this step.
                 self.update_dense_state(t_current, t_current + h_current * self.time_direction, y_old, y_current)
 
-                while (self.t_end is not None) and torch.abs(t_current + h_current * self.time_direction - self.t0) > torch.abs(
-                        self.t_end - self.t0) and torch.abs(t_current - self.t0) <= torch.abs(self.t_end - self.t0):  # if next step is beyond integration time
+                while (self.t_end is not None) and (
+                        torch.abs(t_current + h_current * self.time_direction - self.t0) > torch.abs(self.t_end - self.t0)
+                        or (getattr(self, "tc_context", None) is not None and
+                            torch.abs(t_current + h_current * self.time_direction - self.t0) >= torch.abs(self.t_end - self.t0))
+                        ) and torch.abs(t_current - self.t0) <= torch.abs(self.t_end - self.t0):
                     # interpolate and record output
                     interp_y_eval = self.interpolate(t_current, t_current + h_current * self.time_direction,
                                                      self.t_end, y_old, y_current, variables)
+                    if (getattr(self, "tc_context", None) is not None and
+                            self.t_end == t_current + h_current * self.time_direction):
+                        interp_y_eval = y_current
                     all_evaluations.append(
                         interp_y_eval
                     )
@@ -365,6 +377,8 @@ class AdaptiveGridSolver(ODESolver):
 
             t_current = t_current + h_current * self.time_direction
             steps.append(t_current)
+            if getattr(self, "tc_context", None) is not None:
+                self.tc_context.accepted()
             # update stepsize
             h_current = h_new
 
@@ -377,6 +391,9 @@ class AdaptiveGridSolver(ODESolver):
                 step_current = self.t1 - t_current
                 y_current, error, variables = self.step(self.func, t_current, step_current,
                                                         y_current, return_variables=True)
+                if getattr(self, "tc_context", None) is not None:
+                    y_current = self.addi_noisy_update_and_proj(h=abs(step_current), y_current=y_current)
+                    self.tc_context.accepted()
                 # self.delete_local_computation_graph([_error] + list(_variables))
 
                 t_current = self.t1
