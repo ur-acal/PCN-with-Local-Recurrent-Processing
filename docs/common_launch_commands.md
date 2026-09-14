@@ -83,6 +83,11 @@ python -m baseline.wrn_control_artifacts pack \
 
 Add `--allow-incomplete` when collecting failures for diagnosis.
 
+## New WRN Pooling Campaign
+
+See the new WRN pooling campaign in [launching guide](launching_guide.md#new-pooling-controls-rows-11-18)
+for the explicit `ROWS=11,12,13,14,15,16,17,18` command. Old default rows remain unchanged.
+
 ## PCN Boundary-BN Training: Eight Models
 
 Historical launch settings; re-running submits another eight jobs.

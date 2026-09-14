@@ -1,5 +1,72 @@
 # Launching Guide
 
+## New Pooling Controls: Rows 11-18
+
+These are additional identities, not changes to rows 2-10. Each row covers
+16-2, 16-4, 28-2, 28-4 on CIFAR-10 and CIFAR-100: eight rows, 64 new models.
+
+| Row | Reference | Main downsampling | Shortcut | BN | Conv bias | LR / init |
+|---|---|---|---|---|---|---|
+| 11 | 4 | Stride-2 conv | MaxPool + channel padding | On | Off | 0.1 / WRN |
+| 12 | 5 | Stride-2 conv | MaxPool + channel padding | Off | On | 0.1 / WRN |
+| 13 | 6 | Stride-2 conv | MaxPool + channel padding | Off | Off | 0.1 / WRN |
+| 14 | 7 | Stride-1 conv; shared MaxPool after addition | Channel padding before addition | On | Off | 0.1 / WRN |
+| 15 | 8 | Stride-1 conv; shared MaxPool after addition | Channel padding before addition | Off | On | 0.1 / WRN |
+| 16 | 9 | Stride-1 conv; shared MaxPool after addition | Channel padding before addition | Off | Off | 0.1 / WRN |
+| 17 | Combined control | Stride-1 conv; shared AvgPool after addition | Channel padding before addition | On | Off | 0.01 / PyTorch default |
+| 18 | Combined control | Stride-1 conv; shared MaxPool after addition | Channel padding before addition | On | Off | 0.01 / PyTorch default |
+
+All retain WD=1e-3, final dropout=0.25, block dropout=0, 300 epochs, seed 4096,
+and the existing WRN-control training recipe. Classifier bias stays enabled;
+global average pooling stays unchanged. All learned shortcut convolutions are
+removed in these rows, including the first stage's channel-expansion shortcut.
+
+`pool_type=avg|max` selects downsampling, not global pooling. The existing
+`WideResNetPoolAfterAddCIFAR` / `WideBasicBlockPoolAfterAdd` implementation is
+reused for rows 14-18, exposing `block.pre_pool` after addition and before pooling
+for later Claim 1/2 instrumentation. No running diagnostic cohort is changed.
+Old `avgpool_*` flags retain their historical layout meaning; `pool_type`
+defaults to avg so existing registrations/checkpoints retain their behavior.
+The old transition-only `maxpool_downsample_shortcut` mode is unchanged.
+
+From the remote mismatch_analysis root after pulling the committed code:
+
+```bash
+module swap slurm slurm/24.05.0.b1
+mkdir -p logs/scheduler_slurm logs/slurm_jobs
+(
+  export ROWS=11,12,13,14,15,16,17,18
+  export DATASETS=cifar10,cifar100 SIZES=16_2,16_4,28_2,28_4
+  export STAGE=train-test PARALLELISM=4 EVAL_PARALLELISM=8
+  export CONDITIONS=max_additive,multiplicative,rms_additive
+  export OUTPUT_ROOT="$PWD/logs/wrn_pool_controls_slurm"
+  export SIMULATE=0 DRY_RUN=0
+  source ./launch_scripts/slurm_run_wrn_controls.sh
+) > logs/scheduler_slurm/wrn_pool_controls_train_test.log 2>&1 < /dev/null &
+```
+
+The working submission and activation chain is unchanged. Only the scheduler's
+allowed row list is extended. Train four at a time; after training, evaluate
+eight at a time, with mismatch types sequential. Ten trials at the existing
+levels: max 0:0.01:0.10, mul 0:0.05:0.40, RMS 0.25/0.5/0.75/1/1.25.
+BN rows have unfused frozen/recalibrated evaluations; BN-free rows have one
+branch. Noise excludes BN and conv biases, includes classifier weight/bias.
+
+Outputs: `logs/wrn_pool_controls_slurm/row<11-18>/<dataset>/<size>/`, using
+the same manifest/config/checkpoint/evaluation structure as the first campaign.
+Submission inventory is under this root's `submissions/`.
+
+```bash
+python -m baseline.wrn_control_artifacts pack \
+  --output-root "$PWD/logs/wrn_pool_controls_slurm" \
+  --archive "$PWD/logs/wrn_pool_controls_results.tar.gz" --allow-incomplete
+```
+
+This result archive excludes checkpoints. Best checkpoint files remain under
+each row/dataset/size's `checkpoints/` for separate transfer. No real jobs are
+launched by unit tests; full-campaign simulation verifies 64 fake training runs,
+192 evaluations and packaging under a temporary `SIMULATED` directory.
+
 Quick commands and the required university SLURM environment pattern are in
 [Common Launch Commands](common_launch_commands.md). The WRN worker calls the
 Python controller directly after Conda activation, with no additional Bash wrapper.

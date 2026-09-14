@@ -26,7 +26,7 @@ IFS=',' read -ra datasets <<< "${DATASETS:-cifar10,cifar100}"
 IFS=',' read -ra sizes <<< "${SIZES:-16_2,16_4,28_2,28_4}"
 case "${STAGE}" in train|test|train-test) ;; *) echo "Invalid STAGE" >&2; exit 2 ;; esac
 for row in "${rows[@]}"; do
-  case "$row" in 2|4|5|6|7|8|9|10) ;; *) echo "SLURM excludes rows 1 and 3; invalid row: $row" >&2; exit 2 ;; esac
+  case "$row" in 2|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18) ;; *) echo "SLURM excludes rows 1 and 3; invalid row: $row" >&2; exit 2 ;; esac
 done
 for dataset in "${datasets[@]}"; do
   case "$dataset" in cifar10|cifar100) ;; *) echo "Invalid dataset: $dataset" >&2; exit 2 ;; esac

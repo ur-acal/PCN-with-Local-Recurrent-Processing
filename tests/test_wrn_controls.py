@@ -46,7 +46,7 @@ class WRNControlTests(unittest.TestCase):
                         self.assertEqual(sum(m.stride == (2, 2) for m in convs),
                                          0 if main else (2 if shortcuts else 4))
                         self.assertIsNotNone(model.fc.bias)
-                        self.assertEqual(model.init_mode, 'pytorch' if row == 10 else 'wrn')
+                        self.assertEqual(model.init_mode, 'pytorch' if row in (10, 17, 18) else 'wrn')
                         model.eval()
                         output = model(torch.randn(2, 3, 8, 8))
                         self.assertEqual(tuple(output.shape), (2, classes))

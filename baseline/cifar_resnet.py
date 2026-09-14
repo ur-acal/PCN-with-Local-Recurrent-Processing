@@ -334,8 +334,12 @@ class WideBasicBlock(nn.Module):
         maxpool_downsample_shortcut: bool = False,
         avgpool_downsample_shortcut: bool = False,
         avgpool_main_downsample: bool = False,
+        pool_type: str = "avg",
     ):
         super().__init__()
+        if pool_type not in {"avg", "max"}:
+            raise ValueError(f"Unknown downsampling pool: {pool_type}")
+        pool = nn.AvgPool2d if pool_type == "avg" else nn.MaxPool2d
         if conv_bias is None:
             conv_bias = not use_batchnorm
         self.bn1 = nn.BatchNorm2d(in_planes) if use_batchnorm else nn.Identity()
@@ -356,14 +360,15 @@ class WideBasicBlock(nn.Module):
             bias=conv_bias,
         )
         self.main_downsample = (
-            nn.AvgPool2d(kernel_size=stride, stride=stride)
+            pool(kernel_size=stride, stride=stride)
             if avgpool_main_downsample and stride != 1
             else nn.Identity()
         )
 
         if avgpool_downsample_shortcut and (stride != 1 or in_planes != planes):
             self.shortcut = (
-                AvgPoolChannelPad(in_planes, planes, stride=stride)
+                (AvgPoolChannelPad if pool_type == "avg" else MaxPoolChannelPad)(
+                    in_planes, planes, stride=stride)
                 if stride != 1
                 else ChannelZeroPad(in_planes, planes)
             )
@@ -403,6 +408,7 @@ class WideResNetCIFAR(nn.Module):
         avgpool_downsample_shortcut: bool = False,
         avgpool_main_downsample: bool = False,
         init_mode: str = "wrn",
+        pool_type: str = "avg",
         **kwargs,
     ):
         super().__init__()
@@ -421,6 +427,9 @@ class WideResNetCIFAR(nn.Module):
         self.maxpool_downsample_shortcut = bool(maxpool_downsample_shortcut)
         self.avgpool_downsample_shortcut = bool(avgpool_downsample_shortcut)
         self.avgpool_main_downsample = bool(avgpool_main_downsample)
+        if pool_type not in {"avg", "max"}:
+            raise ValueError(f"Unknown downsampling pool: {pool_type}")
+        self.pool_type = pool_type
         self.out_dim = widths[3]
         self.in_planes = widths[0]
 
@@ -456,6 +465,7 @@ class WideResNetCIFAR(nn.Module):
                     maxpool_downsample_shortcut=self.maxpool_downsample_shortcut,
                     avgpool_downsample_shortcut=self.avgpool_downsample_shortcut,
                     avgpool_main_downsample=self.avgpool_main_downsample,
+                    pool_type=self.pool_type,
                 )
             )
             self.in_planes = planes
@@ -779,7 +789,11 @@ def _register_wrn_control(row, size):
             if key in kwargs and kwargs[key] != value:
                 raise ValueError(f'{factory.__name__} fixes {key}={value}')
         kwargs.update(options)
-        return WideResNetCIFAR(depth=depth, widen_factor=width, num_classes=num_classes,
+        implementation = WideResNetCIFAR
+        if kwargs.pop('pool_after_add', False):
+            from baseline.cifar_wrn_pool_after_add import WideResNetPoolAfterAddCIFAR
+            implementation = WideResNetPoolAfterAddCIFAR
+        return implementation(depth=depth, widen_factor=width, num_classes=num_classes,
                               in_chans=in_chans, **kwargs)
 
     factory.__name__ = model_name(row, size)
