@@ -23,6 +23,11 @@ else
   NUM_WORKERS="${NUM_WORKERS:-0}"
 fi
 case "${IMG_TYPE,,}" in
+  rgb)
+    IMG_TYPE=rgb
+    TEACHER_IMG_LABEL=rgb
+    SCANGEN_DATA_ROOT="${RGB_DATA_ROOT:-../data}"
+    ;;
   cifair)
     IMG_TYPE="CiFAIR"
     TEACHER_IMG_LABEL="CiFAIR"

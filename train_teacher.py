@@ -25,6 +25,7 @@ import torchvision.models as models
 
 from scangen.data import MyNoiseCIFARDataset
 from utils import progress_bar
+from rgb_teacher_preprocessing import rgb_teacher_metadata, rgb_teacher_transforms
 
 
 RAW_MEAN = (0.5, 0.5, 0.5, 0.5)
@@ -486,6 +487,10 @@ def load_noise_config(config_path_str: str, dataset_name: str) -> dict:
 
 
 def build_transforms(args: argparse.Namespace) -> tuple[transforms.Compose, transforms.Compose]:
+    if args.img_type.lower() == 'rgb':
+        if args.input_quant_bits is not None:
+            raise ValueError('RGB teacher training does not use sensor input quantization.')
+        return rgb_teacher_transforms(args.dataset, args.train_size, args.test_size)
     input_quant = []
     if args.input_quant_bits is not None:
         if args.input_quant_bits != 8:
@@ -541,6 +546,13 @@ def build_transforms(args: argparse.Namespace) -> tuple[transforms.Compose, tran
 
 
 def create_datasets(args: argparse.Namespace) -> tuple[MyNoiseCIFARDataset, MyNoiseCIFARDataset]:
+    if args.img_type.lower() == 'rgb':
+        from torchvision.datasets import CIFAR10, CIFAR100
+        dataset = CIFAR100 if args.dataset == 'cifar100' else CIFAR10
+        train_transform, test_transform = build_transforms(args)
+        root = args.root or os.environ.get('RGB_DATA_ROOT', '../data')
+        return (dataset(root=root, train=True, download=False, transform=train_transform),
+                dataset(root=root, train=False, download=False, transform=test_transform))
     dataset_name = _normalize_dataset_name(args.dataset)
     noise_config = load_noise_config(args.noise_config, dataset_name)
     data_input_name = _data_input_name(args.img_type, dataset_name)
@@ -882,11 +894,13 @@ def main() -> None:
         teacher_core = load_hankyul_efficientnet_v2_4ch(
             num_classes=num_classes,
             arch=args.arch,
+            in_channels=3 if args.img_type.lower() == 'rgb' else 4,
         )
     else:
         teacher_core = load_efficientnet_v2_4ch(
             num_classes=num_classes,
             arch=args.arch,
+            in_channels=3 if args.img_type.lower() == 'rgb' else 4,
             pretrained=not args.no_pretrained,
         )
     print(f'num parameters: {sum(p.numel() for p in teacher_core.parameters())}')
@@ -1004,6 +1018,9 @@ def main() -> None:
                     'net': teacher_core.state_dict(),
                     'acc': acc,
                     'epoch': epoch,
+                    **({'teacher_preprocessing': rgb_teacher_metadata(
+                        args.dataset, args.test_size), 'training_args': vars(args)}
+                       if args.img_type.lower() == 'rgb' else {}),
                     'mismatch_levels': mismatch_levels,
                     'mismatch_type': mismatch_type,
                     'mismatch_ramp_start': args.mismatch_ramp_start,

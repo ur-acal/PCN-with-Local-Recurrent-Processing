@@ -504,6 +504,7 @@ class TrainerCiFar(object):
         if self.teacher_model is None:
             return None, None
         inputs = self._quantize_inputs(inputs)
+        inputs = self._prepare_rgb_teacher_inputs(inputs)
         if self._teacher_feature_module is None:
             with torch.no_grad():
                 outputs = self.teacher_model(inputs)
@@ -573,6 +574,14 @@ class TrainerCiFar(object):
         mean = torch.full((1, channels, 1, 1), 0.5, device=inputs.device)
         std = torch.full((1, channels, 1, 1), 0.5, device=inputs.device)
         return (inputs - mean) / std
+
+    def _prepare_rgb_teacher_inputs(self, inputs):
+        # Only new RGB teacher checkpoints opt in; legacy teachers are unchanged.
+        size = getattr(self.teacher_model, 'rgb_teacher_input_size', None)
+        if self.img_type.lower() == 'rgb' and size is not None:
+            from rgb_teacher_preprocessing import resize_rgb_teacher_input
+            return resize_rgb_teacher_input(inputs, size)
+        return inputs
 
     def _ensure_crd_initialized(self, student_feat, teacher_feat):
         if not self._crd_enabled or self._crd_initialized:

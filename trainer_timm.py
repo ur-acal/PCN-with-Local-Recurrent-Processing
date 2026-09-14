@@ -1388,7 +1388,7 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
         inputs = self._quantize_inputs(inputs)
         if self.img_type.lower() in {"scangfi", "cifair"}:
             return self._prepare_teacher_inputs(inputs)
-        return inputs
+        return self._prepare_rgb_teacher_inputs(inputs)
 
     def _teacher_forward_feature_kd(self, inputs):
         """

@@ -18,6 +18,7 @@ from train_teacher import (
     load_hankyul_efficientnet_v2_4ch,
 )
 from trainer_timm import TrainerCiFarTimmStyle
+from rgb_teacher_preprocessing import rgb_teacher_metadata, rgb_teacher_transforms
 
 
 def str2bool(value: str | bool) -> bool:
@@ -33,11 +34,13 @@ def str2bool(value: str | bool) -> bool:
 
 def normalize_img_type(img_type: str) -> str:
     value = img_type.lower()
+    if value == 'rgb':
+        return 'rgb'
     if value == "cifair":
         return "CiFAIR"
     if value in {"scangfi", "raw", "_raw"}:
         return "scanGFI"
-    raise ValueError("img_type must be scanGFI/raw or CiFAIR")
+    raise ValueError("img_type must be rgb, scanGFI/raw or CiFAIR")
 
 
 class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
@@ -205,11 +208,14 @@ class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
                 "net_type": self.model.__class__.__name__,
                 "acc": acc,
                 "epoch": epoch,
+                **({'teacher_preprocessing': rgb_teacher_metadata(self.dataset_name, self.timm_input_size[-1])}
+                   if self.img_type == 'rgb' else {}),
                 "dataset_name": self.dataset_name,
                 "img_type": self.img_type,
                 "arch": "efficientnet_v2_l",
                 "arch_source": self.teacher_arch_source,
                 "training_recipe": (
+                    "rgb_native_old_augs" if self.img_type == 'rgb' else
                     "rggb_distillation_order_timm_augs"
                     if self.match_distill_aug_order
                     else (
@@ -228,6 +234,27 @@ class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
             save_path,
         )
         return str(save_path)
+
+
+class RGBResizeFineTuneTrainer(RGGBResizeFineTuneTrainer):
+    """Reuse the timm training loop with the RGB legacy augmentation recipe."""
+    def __init__(self, *args, rgb_data_root, **kwargs):
+        self.rgb_data_root = rgb_data_root
+        super().__init__(*args, **kwargs)
+
+    def _prepare_cifar(self, img_type, dataset_name):
+        from torchvision.datasets import CIFAR10, CIFAR100
+        from torch.utils.data import DataLoader
+        dataset = CIFAR100 if dataset_name == 'cifar100' else CIFAR10
+        train_transform, test_transform = rgb_teacher_transforms(
+            dataset_name, self.timm_input_size[-1], self.timm_input_size[-1])
+        self.train_set = dataset(self.rgb_data_root, train=True, download=False, transform=train_transform)
+        self.val_set = dataset(self.rgb_data_root, train=False, download=False, transform=test_transform)
+        self.train_dataloader = DataLoader(self.train_set, batch_size=self.batch_size,
+            shuffle=True, drop_last=True, num_workers=self.num_workers, pin_memory=self.pin_memory,
+            persistent_workers=self.persistent_workers and self.num_workers > 0)
+        self.val_dataloader = DataLoader(self.val_set, batch_size=self.test_batch_size,
+            shuffle=False, num_workers=self.num_workers, pin_memory=self.pin_memory)
 
 
 def parse_args() -> argparse.Namespace:
@@ -308,12 +335,21 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     args.img_type = normalize_img_type(args.img_type)
-    if args.data_root:
+    if args.img_type == 'rgb':
+        if not args.use_old_augs_for_timm or args.match_distill_aug_order:
+            raise ValueError('RGB currently supports the old-augmentation recipe only.')
+        import random
+        import numpy as np
+        torch.manual_seed(0)
+        np.random.seed(0)
+        random.seed(0)
+    elif args.data_root:
         os.environ["SCANGEN_DATA_ROOT"] = args.data_root
 
     cfg = deepcopy(CASE_DEFAULTS["resize_finetune"])
     cfg.update(RGGB_DEFAULTS)
-    cfg["timm_input_size"] = (4, 224, 224)
+    in_channels = 3 if args.img_type == 'rgb' else 4
+    cfg["timm_input_size"] = (in_channels, 224, 224)
     cfg["pretrained"] = args.pretrained
 
     if args.epochs is not None:
@@ -378,14 +414,14 @@ def main() -> None:
         model = load_hankyul_efficientnet_v2_4ch(
             num_classes=num_classes,
             arch="efficientnet_v2_l",
-            in_channels=4,
+            in_channels=in_channels,
             pretrained=cfg["pretrained"],
         )
     else:
         model = load_efficientnet_v2_4ch(
             num_classes=num_classes,
             arch="efficientnet_v2_l",
-            in_channels=4,
+            in_channels=in_channels,
             pretrained=cfg["pretrained"],
         )
     model_name = (
@@ -420,7 +456,11 @@ def main() -> None:
     )
     print(f"  checkpoint: {args.checkpoint}")
 
-    trainer = RGGBResizeFineTuneTrainer(
+    trainer_cls = RGBResizeFineTuneTrainer if args.img_type == 'rgb' else RGGBResizeFineTuneTrainer
+    rgb_kwargs = dict(rgb_data_root=args.data_root or os.environ.get('RGB_DATA_ROOT', '../data')) if args.img_type == 'rgb' else {}
+    normalization = rgb_teacher_metadata(args.dataset) if args.img_type == 'rgb' else dict(mean=(.5,)*4, std=(.5,)*4)
+    trainer = trainer_cls(
+        **rgb_kwargs,
         model=model,
         model_name=model_name,
         save_path=str(Path(args.checkpoint).expanduser().parent),
@@ -448,8 +488,8 @@ def main() -> None:
         lr_reduce_on=cfg.get("lr_reduce_on", "80,122,150,225,262"),
         timm_aug=True,
         timm_input_size=cfg["timm_input_size"],
-        timm_mean=(0.5, 0.5, 0.5, 0.5),
-        timm_std=(0.5, 0.5, 0.5, 0.5),
+        timm_mean=normalization['mean'],
+        timm_std=normalization['std'],
         interpolation="bilinear",
         timm_train_scale=cfg["timm_train_scale"],
         timm_train_ratio=cfg["timm_train_ratio"],
@@ -466,7 +506,7 @@ def main() -> None:
         non_rgb_affine_degrees=cfg["non_rgb_affine_degrees"],
         non_rgb_affine_translate=cfg["non_rgb_affine_translate"],
         non_rgb_affine_shear=cfg["non_rgb_affine_shear"],
-        source_input_size=16,
+        source_input_size=32 if args.img_type == 'rgb' else 16,
         teacher_checkpoint=args.checkpoint,
         teacher_arch_source=args.arch_source,
         use_old_augs_for_timm=args.use_old_augs_for_timm,

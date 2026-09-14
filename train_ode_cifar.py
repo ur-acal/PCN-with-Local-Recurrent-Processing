@@ -637,8 +637,9 @@ def _strip_state_dict_prefix(state_dict, prefix):
     return state_dict
 
 
-def _load_teacher_state_dict(ckpt_path, device):
+def _load_teacher_state_dict(ckpt_path, device, return_preprocessing=False):
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
+    preprocessing = checkpoint.get('teacher_preprocessing') if isinstance(checkpoint, dict) else None
     if isinstance(checkpoint, dict):
         for key in ("net", "model", "state_dict"):
             if key in checkpoint:
@@ -652,7 +653,7 @@ def _load_teacher_state_dict(ckpt_path, device):
     state_dict = OrderedDict(checkpoint)
     state_dict = _strip_state_dict_prefix(state_dict, "module.")
     state_dict = _strip_state_dict_prefix(state_dict, "model.")
-    return state_dict
+    return (state_dict, preprocessing) if return_preprocessing else state_dict
 
 
 def _infer_teacher_source(state_dict):
@@ -677,7 +678,7 @@ def build_teacher_model(args, student_in_channels=None, orig_t_inp=False):
     if args.teacher_arch is None:
         raise ValueError("teacher_arch must be specified when using a teacher checkpoint.")
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    state_dict = _load_teacher_state_dict(args.teacher_ckpt, device)
+    state_dict, preprocessing = _load_teacher_state_dict(args.teacher_ckpt, device, return_preprocessing=True)
     inferred_in_channels = None
     if not orig_t_inp:
         # Use the scanGFI version of teacher model.
@@ -742,6 +743,10 @@ def build_teacher_model(args, student_in_channels=None, orig_t_inp=False):
     missing, unexpected = teacher_model.load_state_dict(state_dict, strict=False)
     if missing or unexpected:
         logging.warning("Teacher state dict load: missing=%s unexpected=%s", missing, unexpected)
+    if preprocessing and preprocessing.get('kind') == 'rgb_cifar_normalize_then_resize':
+        if args.img_type.lower() != 'rgb' or preprocessing['dataset'] != args.dataset:
+            raise ValueError('RGB teacher preprocessing does not match the student dataset/input type.')
+        teacher_model.rgb_teacher_input_size = int(preprocessing['size'])
     teacher_model.to(device)
     teacher_model.eval()
     return teacher_model
