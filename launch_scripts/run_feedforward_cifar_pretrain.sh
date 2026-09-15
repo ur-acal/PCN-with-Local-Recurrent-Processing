@@ -6,10 +6,12 @@ set -e
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+source ./launch_scripts/tc_feedforward_args.sh pretrain
 
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
 TASK="${TASK:-cifar100}"
 IMG_TYPE="${IMG_TYPE:-CiFAIR}"
+source ./launch_scripts/rgb_teacher_defaults.sh
 OUTPUT_DIR="${OUTPUT_DIR:-./saved_ckpt_runs/feedforward_pretrain}"
 INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-none}"
 CENTER_STUDENT_INPUT="${CENTER_STUDENT_INPUT:-false}"
@@ -135,6 +137,7 @@ if [[ -n "${EXTRA_OVERRIDE}" ]]; then
   cmd+=(--override "${EXTRA_OVERRIDE}")
 fi
 
+cmd+=("${TC_FEEDFORWARD_ARGS[@]}")
 printf 'Running:'
 printf ' %q' "${cmd[@]}"
 printf '\n'

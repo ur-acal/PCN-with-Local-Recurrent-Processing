@@ -8,7 +8,8 @@
 #SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082
 #SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
-#set -euo pipefail
+# Preserve explicit wait/status handling; propagate Python failures through tee.
+set -o pipefail
 source ./launch_scripts/tc_nonideality_args.sh ft || exit 2
 
 # ---- Conda activation (non-interactive safe) ----
@@ -255,6 +256,7 @@ if [[ "${TIMM_RE_PROB}" != "none" && -n "${TIMM_RE_PROB}" ]]; then
   TIMM_RE_ARGS+=(--timm_re_prob "${TIMM_RE_PROB}")
 fi
 
+source ./launch_scripts/rgb_teacher_defaults.sh
 if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
   _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${TASK}_CiFAIR_timm.pth"
   _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
@@ -816,6 +818,10 @@ ok=0
 for p in "${pids[@]}"; do
   wait "$p" || ok=1
 done
+if (( ok )); then
+  echo 'ERROR: pretraining failed; refusing to launch fine-tuning/evaluation.' >&2
+  exit 1
+fi
 echo "Completed TRAIN phase for ${EXP} (job $SLURM_JOB_ID)."
 
 ###############################################################################
@@ -830,7 +836,8 @@ for comb in "${COMBS[@]}"; do
   train_log="${LOGDIR}/${comb_tag}/train_${EXP}_${comb_tag}_${TRAIN_ODE_BLOCK}.log"
   mn="$(extract_model_name "${train_log}")"
   if [[ -z "$mn" ]]; then
-    echo "[WARN] Could not extract model name from ${train_log}"
+    echo "ERROR: Could not extract model name from ${train_log}; refusing to skip fine-tuning." >&2
+    exit 1
   fi
   MODEL_NAMES_PRE+=( "${mn}" )
 done
@@ -857,6 +864,11 @@ for i in "${!COMB_TAGS[@]}"; do
 done
 for p in "${pids[@]}"; do wait "$p" || ok=1; done
 
+if (( ok )); then
+  echo 'ERROR: fine-tuning failed; refusing to launch evaluation.' >&2
+  exit 1
+fi
+
 ###############################################################################
 # Collect finetuned model names (one per combo)
 ###############################################################################
@@ -866,7 +878,8 @@ for i in "${!COMB_TAGS[@]}"; do
   ft_log="${LOGDIR}/${comb_tag}/finetune_${FT_ODE_BLOCK}.log"
   mn_ft="$(extract_model_name "${ft_log}")"
   if [[ -z "$mn_ft" ]]; then
-    echo "[WARN] Could not extract finetuned model name from ${ft_log} (comb=${comb_tag})"
+    echo "ERROR: Could not extract finetuned model name from ${ft_log} (comb=${comb_tag}); refusing to skip evaluation." >&2
+    exit 1
   fi
   MODEL_NAMES_FT+=( "${mn_ft}" )
 done

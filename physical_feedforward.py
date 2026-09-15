@@ -800,7 +800,13 @@ def convert_wide_resnet_to_physical(
     physical_level = int(physical_kwargs.pop("physical_level", 3))
     qat = bool(physical_kwargs.pop("qat", False))
     quantize_weights = bool(physical_kwargs.pop("quantize_weights", False))
-    if physical_level == 2:
+    tc_options = physical_kwargs.pop("tc_options", None)
+    if tc_options is not None:
+        from physical_feedforward_tc import TCPhysicalBasicBlock, TCFeedForwardPhysicalWrapper
+        block_cls = TCPhysicalBasicBlock
+        wrapper_cls = TCFeedForwardPhysicalWrapper
+        physical_kwargs.update(tc_options)
+    elif physical_level == 2:
         block_cls = AveragedPhysicalBasicBlock
         wrapper_cls = AveragedFeedForwardPhysicalWrapper
     elif physical_level == 3:

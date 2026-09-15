@@ -145,7 +145,9 @@ def parse_args():
     p.add_argument("--nonlinear_R_train_mode", default="none",
                    choices=("none", "exact_curve", "mean"))
     p.add_argument("--nonlinear_R_corner_range", default="all")
-    return p.parse_args()
+    from tc_feedforward_cli import add_arguments, initialize_args
+    add_arguments(p)
+    return initialize_args(p.parse_args())
 
 
 @torch.no_grad()
@@ -182,8 +184,10 @@ def evaluate_once(args):
     state_dict = checkpoint.get("net", checkpoint)
     checkpoint_is_full_param = any(
         ".parametrizations.weight.original" in key for key in state_dict)
+    from tc_feedforward_cli import conversion_options
     model = convert_wide_resnet_to_physical(
         model, activation_factory=None,
+        **conversion_options(args),
         physical_level=args.physical_level, physical=True,
         qat=checkpoint_is_full_param,
         R=args.R, C=args.C, v_dd=args.v_dd,
@@ -219,8 +223,14 @@ def evaluate_once(args):
         dtc_falling_edge_jitter_std=args.dtc_falling_edge_jitter_std,
         dtc_timing_seed=args.dtc_timing_seed)
     model.load_state_dict(state_dict, strict=True)
-    if not checkpoint_is_full_param:
+    if not checkpoint_is_full_param and not args.tc_feedforward:
         prepare_flattened_qat_for_pulse_inference(model)
+    elif not checkpoint_is_full_param and args.tc_feedforward:
+        for wrapper in iter_physical_wrappers(model):
+            wrapper.block._uses_quantized_weight_scale = True
+            for name, module in (("conv1", wrapper.block.conv1), ("conv2", wrapper.block.conv2)):
+                if module is not None:
+                    wrapper.block.clean_params[name].copy_(module.weight.detach())
     model.to(device).eval()
     if args.enable_measured_activation:
         activation_factory = feedforward_measured_activation_factory(
@@ -264,7 +274,10 @@ def evaluate_once(args):
         for wrapper in wrappers[1:]:
             wrapper.install_nonlinear_R_inference_package(
                 nonlinear_R_package)
-    if args.enable_measured_pooling:
+    if args.enable_measured_pooling and args.tc_feedforward:
+        from tc_feedforward_cli import configure_pooling
+        configure_pooling(model, args)
+    elif args.enable_measured_pooling:
         pooling_curve_path = args.nonlinear_R_table
         pooling_curve_gaussian = None
         if args.nonlinear_R_train_mode != "none":
@@ -326,7 +339,20 @@ def evaluate_once(args):
         torch.manual_seed(args.data_seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(args.data_seed)
-    return evaluate(model, loader, device)
+    accuracy = evaluate(model, loader, device)
+    if args.tc_feedforward:
+        import json
+        ref = next(model.parameters())
+        durations = [{stage: float(w.block._stage_duration(ref, stage))
+                      for stage in ('z', 'y') if stage == 'z' or w.block.conv2 is not None}
+                     for w in iter_physical_wrappers(model)]
+        metadata = dict(options=vars(args), accuracy_percent=accuracy,
+                        integration_seconds=durations,
+                        stage_labels={'z': 'conv1', 'y': 'conv2'},
+                        hardware_model='TC resistance-coded, constant-input capacitor integration')
+        (Path(args.result_path)/'tc_trial_metadata.json').write_text(
+            json.dumps(metadata, indent=2, default=str))
+    return accuracy
 
 
 def trial_args(args, trial_index):

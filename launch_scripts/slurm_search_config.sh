@@ -37,6 +37,7 @@ case "${IMG_TYPE,,}" in
   cifair) IMG_TYPE="CiFAIR" ;;
   scangfi|raw|_raw) IMG_TYPE="scanGFI" ;;
 esac
+source ./launch_scripts/rgb_teacher_defaults.sh
 if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
   _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${TASK}_CiFAIR_timm.pth"
   _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"

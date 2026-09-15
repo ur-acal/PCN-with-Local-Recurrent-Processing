@@ -1197,7 +1197,8 @@ class Validator(nn.Module):
                 _, inp_channels, inp_h, inp_w = inputs[0].shape
                 stride = mod.stride[0] if isinstance(mod.stride, tuple) else mod.stride
                 padding = mod.padding[0] if isinstance(mod.padding, tuple) else mod.padding
-                unrolled, _, _ = conv2d_to_matrix_fixed_padding(
+                unroll = getattr(layer, "unroll_convolution", conv2d_to_matrix_fixed_padding)
+                unrolled, _, _ = unroll(
                     (inp_channels, inp_h, inp_w), mod.weight.detach(), stride=stride, padding=padding)
                 k_h, k_w = mod.kernel_size if isinstance(mod.kernel_size, tuple) else (mod.kernel_size, mod.kernel_size)
                 stored[mod_name] = {

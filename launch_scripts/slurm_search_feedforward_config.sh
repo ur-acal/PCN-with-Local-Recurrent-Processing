@@ -1,12 +1,13 @@
 #!/bin/bash
 
-# Slurm entry point for the feedforward pretrain -> physical-FT pipeline.
+# Slurm entry for pretrain -> physical FT -> unrolled evaluation (TC only).
 # It mirrors the PCN search launcher's applicable configuration surface; the
 # recurrent/ODE-only controls intentionally do not exist on this path.
 set -e
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+source ./launch_scripts/tc_feedforward_args.sh ft
 mkdir -p logs/slurm_jobs
 
 export MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
@@ -20,6 +21,7 @@ export EXP_PREFIX="${EXP_PREFIX:-feedforward_physical}"
 export DATA_DIR="${DATA_DIR:-../data}"
 
 # Teacher and distillation.
+source ./launch_scripts/rgb_teacher_defaults.sh
 if [[ "${IMG_TYPE}" == "CiFAIR" ]]; then
   _DEFAULT_TEACHER_CKPT="checkpoint/efficientnet_v2_l_${TASK}_CiFAIR_timm.pth"
   _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
@@ -123,7 +125,9 @@ export PRETRAIN_EVAL_EVERY="${PRETRAIN_EVAL_EVERY:-5}"
 export FT_EVAL_EVERY="${FT_EVAL_EVERY:-2}"
 export TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
 
-sbatch -N "${N_NODES:-1}" \
+# Source this launcher from the configured login shell, as for
+# slurm_search_config.sh. Do not reinitialize modules or launch bash -lc here.
+sbatch --parsable -N "${N_NODES:-1}" \
   --time="${SBATCH_TIMELIMIT:-48:00:00}" \
   --export=ALL \
   ./launch_scripts/feedforward_pretrain_then_ft.sbatch

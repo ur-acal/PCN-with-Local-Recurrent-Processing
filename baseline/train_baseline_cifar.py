@@ -338,7 +338,9 @@ def parse_args():
     parser.add_argument("--ff_train_scale", type=float, default=1.0)
     parser.add_argument("--fb_train_scale", type=float, default=1.0)
 
-    return parser.parse_args()
+    from tc_feedforward_cli import add_arguments, initialize_args
+    add_arguments(parser)
+    return initialize_args(parser.parse_args())
 
 
 def infer_num_classes(dataset_name: str) -> int:
@@ -549,7 +551,12 @@ def main():
 
     distill_enabled = args.distill_method != "none"
     if distill_enabled and not args.teacher_ckpt:
-        if args.img_type == "CiFAIR":
+        if args.img_type == "rgb":
+            args.teacher_ckpt = (
+                f"checkpoint/efficientnet_v2_l_{args.dataset}_"
+                "rgb_OldNoTimm_MatchDistill.pth"
+            )
+        elif args.img_type == "CiFAIR":
             args.teacher_ckpt = (
                 f"checkpoint/efficientnet_v2_l_{args.dataset}_"
                 "CiFAIR_OldNoTimm_MatchDistill.pth"
@@ -561,7 +568,7 @@ def main():
     if distill_enabled and not args.teacher_arch:
         args.teacher_arch = (
             "efficientnet-b4"
-            if args.img_type != "CiFAIR" and args.dataset == "cifar10"
+            if args.img_type == "scanGFI" and args.dataset == "cifar10"
             else "efficientnet_v2_l"
         )
     if distill_enabled:
@@ -617,8 +624,10 @@ def main():
                 "flattened_quantized", "full_param"})
         if state_dict is not None and not checkpoint_is_physical:
             model.load_state_dict(state_dict, strict=True)
+        from tc_feedforward_cli import conversion_options
         model = convert_wide_resnet_to_physical(
             model,
+            **conversion_options(args),
             activation_factory=None,
             physical_level=args.physical_level,
             physical=not args.physical_pretraining,
@@ -737,7 +746,10 @@ def main():
                 curve_seed=args.nonlinear_R_curve_seed)
             for wrapper in wrappers[1:]:
                 wrapper.install_nonlinear_R_training_package(package)
-        if args.enable_measured_pooling and not args.physical_pretraining:
+        if args.enable_measured_pooling and not args.physical_pretraining and args.tc_feedforward:
+            from tc_feedforward_cli import configure_pooling
+            configure_pooling(model, args)
+        elif args.enable_measured_pooling and not args.physical_pretraining:
             configure_feedforward_measured_pooling(
                 model, enable_nonideality=True,
                 curve_path=args.nonlinear_R_table,

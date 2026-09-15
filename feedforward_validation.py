@@ -21,6 +21,8 @@ def feedforward_expanded_weight_cache_fingerprint(model, input_shape):
     """Fingerprint the exact effective convolutions expanded for this model."""
     digest = hashlib.sha256()
     digest.update(b"feedforward-validator-expanded-weights-v1\0")
+    if any(hasattr(b, 'unroll_convolution') for b in iter_physical_blocks(model)):
+        digest.update(b"tc-trimmed-csr-v1\0")
     digest.update(repr(tuple(int(v) for v in input_shape)).encode("utf-8"))
     digest.update(b"\0")
     num_convs = 0
@@ -79,6 +81,9 @@ class FeedForwardCNNValidator(Validator):
                 self.model, self._unroll_sample_inputs.shape[1:]))
         self.legacy_exp_w_path = os.path.join(
             expanded_weight_dir, "feedforward_expanded_weights_{}.pth")
+        if any(hasattr(b, 'unroll_convolution') for b in self._physical_blocks):
+            self.legacy_exp_w_path = os.path.join(
+                expanded_weight_dir, "tc_trimmed_no_legacy_{}.pth")
         expanded_weight_dir = os.path.join(
             expanded_weight_dir,
             "feedforward_cache_{}".format(

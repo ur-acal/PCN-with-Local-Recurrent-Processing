@@ -3,6 +3,7 @@
 set -e
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+source ./launch_scripts/tc_feedforward_args.sh eval
 
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
 MODEL_CKPT="${MODEL_CKPT:?MODEL_CKPT is required}"
@@ -93,6 +94,7 @@ for pair in \
   fi
 done
 
+cmd+=("${TC_FEEDFORWARD_ARGS[@]}")
 printf 'Running:'
 printf ' %q' "${cmd[@]}"
 printf '\n'

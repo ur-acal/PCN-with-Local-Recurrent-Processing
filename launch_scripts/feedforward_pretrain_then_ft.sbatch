@@ -6,14 +6,13 @@
 #SBATCH -t 48:00:00
 #SBATCH -o logs/slurm_jobs/feedforward_%j.out
 
-set -e
+# TC includes post-FT evaluation; stage/pipeline failures must fail this job.
+set -eo pipefail
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
 mkdir -p logs/slurm_jobs
 
-if [[ -n "${CONDA_ENV:-scanbase}" ]]; then
-  source "$(conda info --base)/etc/profile.d/conda.sh"
-  conda activate "${CONDA_ENV:-scanbase}"
-fi
+source activate base
+conda activate scanbase
 
-./launch_scripts/run_feedforward_pretrain_then_ft.sh
+source ./launch_scripts/run_feedforward_pretrain_then_ft.sh

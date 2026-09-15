@@ -7,11 +7,13 @@ set -e
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+source ./launch_scripts/tc_feedforward_args.sh ft
 
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
 MODEL_CKPT="${MODEL_CKPT:?MODEL_CKPT is required}"
 TASK="${TASK:-cifar100}"
 IMG_TYPE="${IMG_TYPE:-CiFAIR}"
+source ./launch_scripts/rgb_teacher_defaults.sh
 OUTPUT_DIR="${OUTPUT_DIR:-./saved_ckpt_runs/feedforward_physical_ft}"
 INPUT_PREPROCESS_ARGS=()
 if [[ -n "${INPUT_QUANT_BITS+x}" ]]; then
@@ -176,6 +178,7 @@ cmd+=(
   --orig_t_inp "${ORIG_T_INP:-false}"
 )
 
+cmd+=("${TC_FEEDFORWARD_ARGS[@]}")
 printf 'Running:'
 printf ' %q' "${cmd[@]}"
 printf '\n'

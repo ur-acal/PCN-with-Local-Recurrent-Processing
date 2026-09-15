@@ -1,6 +1,7 @@
 # Source with argument ft or eval. Empty arrays preserve non-TC callers.
 TC_ARGS=()
 if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/tc_hardware_defaults.sh" "$1"
   export MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-0906_RELU_Voltage}"
   # Fixed TT MC18 for FT; the full measured bank for per-spin evaluation.
   if [[ "$1" == ft ]]; then
@@ -10,14 +11,6 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
     tc_activation_path=./hardware_data/mc_45_corners/0906_RELU_Voltage
     tc_activation_corner=TT_25_1_MC18
   fi
-  export ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
-  export ENABLE_SUMMING_CURRENT_NOISE="${ENABLE_SUMMING_CURRENT_NOISE:-true}"
-  export ENABLE_COUPLER_NOISE="${ENABLE_COUPLER_NOISE:-true}"
-  export ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
-  export ENABLE_MEASURED_POOLING="${ENABLE_MEASURED_POOLING:-true}"
-  export ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
-  export SUMMING_CURRENT_P="${SUMMING_CURRENT_P:-0.6e-12}"
-  export COUPLER_NOISE_P="${COUPLER_NOISE_P:-0.6e-12}"
   if [[ "${TOGGLE_MODE:-none}" != none || "${SWITCH_INF:-false}" == true ]]; then
     echo 'TC_NONIDEALITIES cannot be combined with toggle or switched dynamics.' >&2
     return 2

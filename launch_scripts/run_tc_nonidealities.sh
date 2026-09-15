@@ -37,6 +37,7 @@ if [[ -z "${TC_STATE:-}" ]]; then
   if [[ "$MODEL_NAME" == *S2* || "$MODEL_NAME" == *State2* ]]; then TC_STATE=2; fi
 fi
 source ./launch_scripts/tc_nonideality_args.sh "$stage"
+source ./launch_scripts/rgb_teacher_defaults.sh
 if [[ "$stage" == ft ]]; then
   default_teacher_arch=efficientnet_v2_l
   if [[ "$IMG_TYPE" == CiFAIR ]]; then
@@ -47,8 +48,7 @@ if [[ "$stage" == ft ]]; then
     default_teacher=./checkpoint/b4.pth
     default_teacher_arch=efficientnet-b4
   else
-    # Do not silently use a four-channel sensor teacher for RGB input.
-    : "${TEACHER_CKPT:?Set a verified RGB TEACHER_CKPT (and TEACHER_ARCH if needed)}"
+    # RGB defaults were selected by rgb_teacher_defaults.sh above.
     default_teacher="$TEACHER_CKPT"
   fi
   TEACHER_CKPT="${TEACHER_CKPT:-${default_teacher}}"
@@ -63,7 +63,10 @@ if [[ "$stage" == ft ]]; then
     --t_end 1.75 --tol "${TOL:-1e-6}" --batch_size 128
     --distill_method "${DISTILL_METHOD:-srrl}" --teacher_ckpt "${TEACHER_CKPT:?Set TEACHER_CKPT}"
     --distill_alpha "${DISTILL_ALPHA:-0.3}" --distill_temperature "${DISTILL_TEMPERATURE:-2.0}"
-    --teacher_arch "${TEACHER_ARCH:-${default_teacher_arch}}" --adapt_PIL_teacher "${ADAPT_PIL_TEACHER:-false}")
+    --teacher_arch "${TEACHER_ARCH:-${default_teacher_arch}}"
+    --teacher_arch_source "${TEACHER_ARCH_SOURCE:-auto}"
+    --teacher_input_size "${TEACHER_INPUT_SIZE:-224}" --teacher_center_crop "${TEACHER_CENTER_CROP:-true}"
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER:-false}")
 else
   cmd=(python -u ode_inference.py --model_name "$MODEL_NAME" --model_dir "${MODEL_DIR:-./saved_ckpt_runs}"
     --task "${TASK:-cifar100}" --img_type "${IMG_TYPE:-CiFAIR}" --ckpt "${CKPT:-best}"
