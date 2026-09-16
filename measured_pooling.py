@@ -281,6 +281,14 @@ def configure_feedforward_measured_pooling(
         input_scale=final_scale, seed=seed, **common)
     pool_index = 1
     for block in iter_physical_blocks(model):
+        post_add_pool = getattr(block, "post_add_pool", None)
+        if isinstance(post_add_pool, nn.AvgPool2d):
+            block.post_add_pool = MeasuredAvgPool2d(
+                kernel_size=post_add_pool.kernel_size,
+                stride=post_add_pool.stride,
+                seed=None if seed is None else int(seed) + pool_index,
+                **common)
+            pool_index += 1
         if isinstance(block.main_downsample, nn.AvgPool2d):
             pool = block.main_downsample
             block.main_downsample = MeasuredAvgPool2d(

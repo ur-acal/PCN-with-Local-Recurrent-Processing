@@ -35,12 +35,30 @@ CUSTOM_CIFAR_MODELS = {
     "resnet32_cifar",
     "resnet44_cifar",
     "resnet56_cifar",
+    "resnet44_cifar_avgpool",
+    "resnet44_cifar_nobn",
+    "resnet44_cifar_nobn_avgpool",
+    "resnet44_cifar_nobn_no_bias",
+    "resnet44_cifar_nobn_no_bias_avgpool",
+    "resnet56_cifar_avgpool",
+    "resnet56_cifar_nobn",
+    "resnet56_cifar_nobn_avgpool",
+    "resnet56_cifar_nobn_no_bias",
+    "resnet56_cifar_nobn_no_bias_avgpool",
     "resnet110_cifar",
     "preact_resnet164_cifar",
     "wrn_28_10_cifar",
+    "wrn_16_2_cifar",
+    "wrn_16_2_cifar_avgpool",
+    "wrn_16_2_cifar_nobn",
+    "wrn_16_2_cifar_nobn_avgpool",
+    "wrn_16_2_cifar_nobn_no_bias",
+    "wrn_16_2_cifar_nobn_no_bias_avgpool",
+    "wrn_28_2_cifar",
     "wrn_28_2_cifar_avgpool",
     "wrn_28_2_cifar_avgpool_shortcut",
     "wrn_28_2_cifar_nobn_avgpool",
+    "wrn_28_2_cifar_nobn",
     "wrn_28_2_cifar_nobn_avgpool_shortcut",
     "wrn_28_2_cifar_nobn_no_bias",
     "wrn_28_2_cifar_nobn_no_bias_avgpool",
@@ -347,6 +365,12 @@ MODEL_OVERRIDES = {
     "wrn_28_2_cifar_nobn_no_bias_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_16_2_cifar_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_16_2_cifar_nobn_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_16_2_cifar_nobn_no_bias_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "pcn_16l96c_cnn_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},

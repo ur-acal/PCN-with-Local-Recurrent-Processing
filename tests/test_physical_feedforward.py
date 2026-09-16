@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from baseline.cifar_resnet import (
     AvgPoolChannelPad,
+    ChannelZeroPad,
     WideBasicBlock,
     WideResNetCIFAR,
     wrn_28_2_cifar_avgpool,
@@ -485,15 +486,17 @@ def test_hardware_wrn_variants_preserve_activation_bn_and_downsampling():
         (wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut,
          False, False, False),
     )
-    for factory, uses_bn, pools_main, uses_conv_bias in variants:
+    for factory, uses_bn, pools_after_add, uses_conv_bias in variants:
         model = factory(num_classes=100, in_chans=4)
         transition = model.layer2[0]
         assert isinstance(transition.relu1, torch.nn.ReLU6)
         assert isinstance(transition.relu2, torch.nn.ReLU6)
         assert type(model.relu) is torch.nn.ReLU
-        assert isinstance(transition.shortcut, AvgPoolChannelPad)
-        assert isinstance(transition.main_downsample, (
-            torch.nn.AvgPool2d if pools_main else torch.nn.Identity))
+        assert isinstance(transition.shortcut, (
+            ChannelZeroPad if pools_after_add else AvgPoolChannelPad))
+        assert isinstance(transition.main_downsample, torch.nn.Identity)
+        assert isinstance(transition.post_add_pool, (
+            torch.nn.AvgPool2d if pools_after_add else torch.nn.Identity))
         assert isinstance(transition.bn1, (
             torch.nn.BatchNorm2d if uses_bn else torch.nn.Identity))
         convs = [module for module in model.modules()
@@ -501,7 +504,7 @@ def test_hardware_wrn_variants_preserve_activation_bn_and_downsampling():
         assert all((conv.bias is not None) is uses_conv_bias for conv in convs)
 
 
-def test_avgpool_main_path_survives_physical_conversion_and_is_measured():
+def test_post_add_avgpool_survives_physical_conversion_and_is_measured():
     torch.manual_seed(29)
     model = WideResNetCIFAR(
         depth=16, widen_factor=1, num_classes=3, in_chans=4,
@@ -527,8 +530,9 @@ def test_avgpool_main_path_survives_physical_conversion_and_is_measured():
         model, enable_nonideality=True, curve_gaussian=gaussian,
         nominal_R=0.5, seed=1)
     transition = model.layer2[0].ode_block
-    assert isinstance(transition.main_downsample, MeasuredAvgPool2d)
-    assert isinstance(transition.shortcut.pool, MeasuredAvgPool2d)
+    assert isinstance(transition.post_add_pool, MeasuredAvgPool2d)
+    assert isinstance(transition.main_downsample, torch.nn.Identity)
+    assert isinstance(transition.shortcut, ChannelZeroPad)
 
 
 def test_wrn_feature_forward_supports_shared_feature_kd_contract():

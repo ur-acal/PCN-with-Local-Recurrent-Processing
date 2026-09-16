@@ -108,6 +108,7 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
             act2: Optional[nn.Module] = None,
             between: Optional[nn.Module] = None,
             main_downsample: Optional[nn.Module] = None,
+            post_add_pool: Optional[nn.Module] = None,
             shortcut: Optional[nn.Module] = None,
             *, layer_idx: int = 0,
             R: float = 50e3, C: float = 500e-15, v_dd: float = 0.5,
@@ -154,6 +155,8 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         self.between = nn.Identity() if between is None else between
         self.main_downsample = (
             nn.Identity() if main_downsample is None else main_downsample)
+        self.post_add_pool = (
+            nn.Identity() if post_add_pool is None else post_add_pool)
         self.shortcut = shortcut
 
         self.layer_idx = int(layer_idx)
@@ -406,7 +409,7 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         duration = self._stage_duration(source, stage)
         return self._run_averaged_stage(module, source, stage, duration)
 
-    def forward(self, x, layer_idx=None):
+    def _prepare_block_input(self, x):
         self.reset_slow_current_noise()
         if self.training and self.enable_spin_variation:
             self.reset_spin_variation()
@@ -415,17 +418,9 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         x = x * self.input_scale
         if self.physical and not self._capture_dense_modules:
             x = self.project_state(x)
-        residual = x
-        out = self._run_stage(
-            self.conv1, self.act1(self.norm1(x)), "z")
-        if self.conv2 is not None:
-            out = self.between(self.act2(self.norm2(out)))
-            out = self._run_stage(self.conv2, out, "y")
-            out = self.main_downsample(out)
-            if self.shortcut is not None:
-                out = out + self.shortcut(residual)
-                if self.physical and not self._capture_dense_modules:
-                    out = self.project_state(out)
+        return x
+
+    def _finalize_block_output(self, out):
         if self.physical and not self._capture_dense_modules and self.enob is not None:
             if self.training:
                 out = OutputQuantImpl.apply(out, self.v_dd, int(self.enob))
@@ -437,6 +432,22 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
                             step).round() * step - self.v_dd)
                     out = out.clamp(-self.v_dd, self.v_dd)
         return out / self.output_scale
+
+    def forward(self, x, layer_idx=None):
+        x = self._prepare_block_input(x)
+        residual = x
+        out = self._run_stage(
+            self.conv1, self.act1(self.norm1(x)), "z")
+        if self.conv2 is not None:
+            out = self.between(self.act2(self.norm2(out)))
+            out = self._run_stage(self.conv2, out, "y")
+            out = self.main_downsample(out)
+            if self.shortcut is not None:
+                out = out + self.shortcut(residual)
+                if self.physical and not self._capture_dense_modules:
+                    out = self.project_state(out)
+            out = self.post_add_pool(out)
+        return self._finalize_block_output(out)
 
 
 class PulsePhysicalBasicBlock(AveragedPhysicalBasicBlock, TogglePulseBlk):
@@ -832,7 +843,12 @@ def convert_wide_resnet_to_physical(
         if group is None:
             continue
         for block_idx, block in enumerate(group):
-            required = ("conv1", "conv2", "bn1", "bn2", "relu1", "relu2")
+            post_activation = (
+                getattr(block, "physical_block_style", None) ==
+                "post_activation")
+            required = (("conv1", "conv2", "bn1", "bn2", "relu")
+                        if post_activation else
+                        ("conv1", "conv2", "bn1", "bn2", "relu1", "relu2"))
             if not all(hasattr(block, name) for name in required):
                 raise TypeError(
                     "Only pre-activation two-convolution basic blocks are "
@@ -841,19 +857,31 @@ def convert_wide_resnet_to_physical(
             dropout_rate = float(getattr(block, "dropout_rate", 0.0))
             between = (
                 nn.Dropout(p=dropout_rate) if dropout_rate > 0 else nn.Identity())
-            act1 = (
-                block.relu1 if activation_factory is None else
-                activation_factory(layer_idx, "conv1"))
-            act2 = (
-                block.relu2 if activation_factory is None else
-                activation_factory(layer_idx, "conv2"))
-            replacement = block_cls(
+            if post_activation:
+                if tc_options is None:
+                    raise TypeError(
+                        "Post-activation CIFAR ResNet blocks are supported only "
+                        "by the TC feedforward implementation.")
+                from physical_feedforward_tc import TCPhysicalCIFARBasicBlock
+                selected_block_cls = TCPhysicalCIFARBasicBlock
+                act1 = block.relu
+                act2 = block.relu
+            else:
+                selected_block_cls = block_cls
+                act1 = block.relu1
+                act2 = block.relu2
+            if activation_factory is not None:
+                act1 = activation_factory(layer_idx, "conv1")
+                act2 = activation_factory(layer_idx, "conv2")
+            replacement = selected_block_cls(
                 block.conv1, block.conv2,
                 norm1=block.bn1, act1=act1,
                 norm2=block.bn2, act2=act2,
                 between=between,
                 main_downsample=getattr(
                     block, "main_downsample", nn.Identity()),
+                post_add_pool=getattr(
+                    block, "post_add_pool", nn.Identity()),
                 shortcut=_converted_shortcut(block),
                 layer_idx=layer_idx, **physical_kwargs)
             group[block_idx] = wrap(replacement)
@@ -866,5 +894,8 @@ def convert_wide_resnet_to_physical(
         scale_batchnorm_to_physical_domain(model, q)
         blocks[0].input_scale = q
         model._physical_state_scale = q
-        model.relu = nn.Sequential(model.relu, StateScale(1.0 / q))
+        if getattr(model, "physical_model_style", None) == "post_activation":
+            blocks[-1].output_scale = q
+        else:
+            model.relu = nn.Sequential(model.relu, StateScale(1.0 / q))
     return model

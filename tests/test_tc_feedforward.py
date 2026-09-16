@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from physical_feedforward_tc import TCPhysicalBasicBlock, TCFeedForwardPhysicalWrapper
 from physical_feedforward import convert_wide_resnet_to_physical
@@ -57,6 +58,170 @@ class TCFeedForwardTests(unittest.TestCase):
         actual=w(x)
         expected=torch.nn.functional.conv2d(x,a.conv1.weight)/a.scale1
         torch.testing.assert_close(actual,expected)
+
+    def test_derived_bias_matches_unitless_convolution(self):
+        """TC bias is an ideal fixed current inside the spin loop."""
+        torch.manual_seed(91)
+        conv = nn.Conv2d(2, 3, 1, bias=True).double()
+        conv.weight.data.mul_(0.1)
+        conv.bias.data.uniform_(-0.01, 0.01)
+        physical = TCPhysicalBasicBlock(
+            conv, R=1e4, C=49e-15, v_dd=100.0,
+            one_over_q=10.0, one_shot_conv=True).double().eval()
+        wrapper = TCFeedForwardPhysicalWrapper(physical, qat=True).eval()
+        x = torch.randn(2, 2, 4, 4, dtype=torch.float64) * 0.01
+        q = physical.q
+        expected = F.conv2d(
+            x, physical.conv1.weight / physical.scale1,
+            physical.conv1.bias)
+        actual = wrapper(q * x) / q
+        torch.testing.assert_close(actual, expected, rtol=2e-6, atol=2e-9)
+
+        # The same q*b convention must also match after physical rail
+        # projection, for both the one-shot and solver execution paths.
+        saturated = nn.Conv2d(1, 1, 1, bias=True).double()
+        saturated.weight.data.fill_(1.0)
+        saturated.bias.data.fill_(2.0)
+        source = torch.full((1, 1, 1, 1), 0.5, dtype=torch.float64)
+        expected_rail = torch.clamp(
+            saturated(source) * 0.1, -0.1, 0.1) / 0.1
+        for one_shot in (True, False):
+            physical = TCPhysicalBasicBlock(
+                copy.deepcopy(saturated), R=1e4, C=49e-15,
+                v_dd=0.1, one_over_q=1.0,
+                one_shot_conv=one_shot).double().eval()
+            actual_rail = TCFeedForwardPhysicalWrapper(physical)(0.1 * source) / 0.1
+            torch.testing.assert_close(
+                actual_rail, expected_rail, rtol=2e-6, atol=2e-9)
+
+        # Bias current and MVM current receive the same destination-spin gain.
+        biased = nn.Conv2d(1, 1, 1, bias=True).double()
+        biased.weight.data.zero_()
+        biased.bias.data.fill_(0.02)
+        physical = TCPhysicalBasicBlock(
+            biased, R=1e4, C=49e-15, v_dd=1.0, one_over_q=10.0,
+            one_shot_conv=True, enable_spin_variation=True,
+            sigma_spin=0.0, spin_variation_mean=1.5).double().eval()
+        actual_spin = TCFeedForwardPhysicalWrapper(physical)(
+            torch.zeros(1, 1, 1, 1, dtype=torch.float64)) / physical.q
+        torch.testing.assert_close(actual_spin, torch.full_like(actual_spin, 0.03))
+
+    def test_resnet_variant_registration_and_tc_conversion(self):
+        import timm
+        from baseline.cifar_resnet import (
+            CIFARResNet, ChannelZeroPad, CIFARBasicBlock)
+
+        for depth in (44, 56):
+            prefix = f"resnet{depth}_cifar"
+            names = (
+                prefix, prefix + "_avgpool", prefix + "_nobn",
+                prefix + "_nobn_avgpool", prefix + "_nobn_no_bias",
+                prefix + "_nobn_no_bias_avgpool")
+            for name in names:
+                model = timm.create_model(name, num_classes=100)
+                has_bn = any(isinstance(m, nn.BatchNorm2d)
+                             for m in model.modules())
+                conv_biases = [m.bias is not None for m in model.modules()
+                               if isinstance(m, nn.Conv2d)]
+                self.assertEqual(has_bn, "_nobn" not in name)
+                self.assertEqual(any(conv_biases),
+                                 "_nobn" in name and "_no_bias" not in name)
+                transitions = [m for m in model.modules()
+                               if isinstance(m, CIFARBasicBlock) and
+                               not isinstance(m.post_add_pool, nn.Identity)]
+                self.assertEqual(len(transitions), 2 if name.endswith("avgpool") else 0)
+                if transitions:
+                    self.assertTrue(all(isinstance(m.shortcut, ChannelZeroPad)
+                                        for m in transitions))
+                    self.assertTrue(all(m.conv1.stride == (1, 1)
+                                        for m in transitions))
+
+        # A small model verifies that conversion preserves ResNet-v1 ordering,
+        # including convolution biases and post-add pooling.
+        base = CIFARResNet(
+            depth=8, base_width=2, num_classes=3, in_chans=3,
+            use_batchnorm=False, conv_bias=True,
+            avgpool_after_add=True, intermediate_activation="relu6").eval()
+        converted = convert_wide_resnet_to_physical(
+            copy.deepcopy(base), physical=False, physical_level=2,
+            R=1e4, C=49e-15, v_dd=.1,
+            weight_quant_factor_bits=None,
+            tc_options=dict(one_shot_conv=True)).eval()
+        x = torch.randn(2, 3, 8, 8) * 0.01
+        torch.testing.assert_close(converted(x), base(x))
+
+        from physical_feedforward import iter_physical_blocks
+        from measured_activation import configure_feedforward_measured_activation
+        from measured_pooling import (
+            MeasuredAvgPool2d, configure_feedforward_measured_pooling)
+        configure_feedforward_measured_activation(
+            converted, lambda layer_idx, stage: nn.Sigmoid())
+        residual_blocks = [b for b in iter_physical_blocks(converted)
+                           if b.conv2 is not None]
+        self.assertIsInstance(converted.relu, nn.Sigmoid)
+        self.assertTrue(all(isinstance(b.act1, nn.Sigmoid)
+                            for b in residual_blocks))
+        self.assertTrue(all(isinstance(b.act2, nn.Sigmoid)
+                            for b in residual_blocks[:-1]))
+        self.assertIsInstance(residual_blocks[-1].act2, nn.ReLU6)
+        gaussian = {
+            "v_grid": torch.tensor([-0.1, 0.1]),
+            "mean": torch.tensor([2.0, 2.0]),
+            "factor": torch.zeros(2, 2),
+            "value_scale": 1.0,
+            "quantity": "conductance",
+        }
+        configure_feedforward_measured_pooling(
+            converted, enable_nonideality=True, curve_gaussian=gaussian,
+            nominal_R=0.5, seed=1)
+        self.assertEqual(sum(isinstance(b.post_add_pool, MeasuredAvgPool2d)
+                             for b in residual_blocks), 2)
+
+    def test_resnet_six_variants_preserve_unitless_function_physically(self):
+        from baseline.cifar_resnet import CIFARResNet
+
+        for use_bn, bias, pool in (
+                (True, False, False), (True, False, True),
+                (False, True, False), (False, True, True),
+                (False, False, False), (False, False, True)):
+            torch.manual_seed(5)
+            base = CIFARResNet(
+                depth=8, base_width=2, num_classes=3, in_chans=3,
+                use_batchnorm=use_bn, conv_bias=bias,
+                avgpool_after_add=pool,
+                intermediate_activation="relu6").eval().double()
+            x = torch.randn(2, 3, 8, 8, dtype=torch.float64) * 0.01
+            expected = base(x)
+            physical = convert_wide_resnet_to_physical(
+                copy.deepcopy(base), physical=True, physical_level=2,
+                R=1e4, C=49e-15, v_dd=100.0, one_over_q=10.0,
+                weight_quant_factor_bits=None,
+                tc_options=dict(one_shot_conv=True)).eval()
+            torch.testing.assert_close(physical(x), expected)
+
+    def test_wrn_16_and_28_six_variant_registration(self):
+        import timm
+
+        for depth in (16, 28):
+            prefix = f"wrn_{depth}_2_cifar"
+            names = (
+                prefix, prefix + "_avgpool", prefix + "_nobn",
+                prefix + "_nobn_avgpool", prefix + "_nobn_no_bias",
+                prefix + "_nobn_no_bias_avgpool")
+            for name in names:
+                model = timm.create_model(name, num_classes=100)
+                has_bn = any(isinstance(m, nn.BatchNorm2d)
+                             for m in model.modules())
+                conv_biases = [m.bias is not None for m in model.modules()
+                               if isinstance(m, nn.Conv2d)]
+                self.assertEqual(has_bn, "_nobn" not in name)
+                self.assertEqual(any(conv_biases),
+                                 "_nobn" in name and "_no_bias" not in name)
+                post_add_pools = sum(
+                    isinstance(getattr(m, "post_add_pool", None), nn.AvgPool2d)
+                    for m in model.modules())
+                self.assertEqual(
+                    post_add_pools, 2 if name.endswith("avgpool") else 0)
 
     def test_pcn_ff_noise_coefficients_match(self):
         pcn=make_block();pw=wrap(pcn,enable_summing_current_noise=True,

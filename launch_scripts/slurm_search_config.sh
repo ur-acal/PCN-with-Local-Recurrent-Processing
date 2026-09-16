@@ -156,6 +156,16 @@ NONLINEAR_R_MC_QUANTITY="${NONLINEAR_R_MC_QUANTITY:-conductance}"
 NONLINEAR_R_CURVE_SHARING="${NONLINEAR_R_CURVE_SHARING:-shared}"
 NONLINEAR_R_CURVE_SEED="${NONLINEAR_R_CURVE_SEED:-none}"
 NUM_COMB_PER_NUM_LAYER="${NUM_COMB_PER_NUM_LAYER:-3}"
+COMB_SEL_SET="${COMB_SEL_SET:-}"
+if [[ -n "${COMB_SEL_SET}" ]]; then
+  for _comb_sel in ${COMB_SEL_SET}; do
+    if [[ ! "${_comb_sel}" =~ ^[1-9][0-9]*$ ]] ||
+       (( _comb_sel > NUM_COMB_PER_NUM_LAYER )); then
+      echo "ERROR: COMB_SEL_SET entries must be between 1 and NUM_COMB_PER_NUM_LAYER=${NUM_COMB_PER_NUM_LAYER}; got '${_comb_sel}'." >&2
+      return 2 2>/dev/null || exit 2
+    fi
+  done
+fi
 WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
 WARMUP_FT="${WARMUP_FT:-0}"
 FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
@@ -190,18 +200,22 @@ PCNS=( "PCNetNoBatchNorm" )
 IMG_TYPES=( "${IMG_TYPE}" )
 CIRC_CONFS=( "" )
 
-# CHAN_0 options (order matters)
-CHAN_0_LIST=( 24 ) # For the default three pattern
+# CHAN_0 options (order matters). Override with a space-separated list, e.g.
+# PCN_CHAN_0_LIST="16".
+read -r -a CHAN_0_LIST <<< "${PCN_CHAN_0_LIST:-24}"
 #CHAN_0_LIST=( 40 42 44 46 48 ) # For the time-interleaving, two_stage_fixed
 #CHAN_0_LIST=( 72 74 76 78 80 ) # For the time-interleaving, one_stage_fixed
 
-# NUM_LAYERS dict: key=CHAN_0, value="layers..."
+# NUM_LAYERS dict: key=CHAN_0, value="layers...". The optional override is
+# applied unchanged to every selected CHAN_0, e.g. PCN_NUM_LAYERS_LIST="22 28".
 declare -A NUM_LAYERS_BY_CHAN0
 # For the default three pattern
 #NUM_LAYERS_BY_CHAN0[18]="20 22"
 #NUM_LAYERS_BY_CHAN0[20]="18 20"
 #NUM_LAYERS_BY_CHAN0[22]="22 24"
-NUM_LAYERS_BY_CHAN0[24]="16"
+for _pcn_chan_0 in "${CHAN_0_LIST[@]}"; do
+  NUM_LAYERS_BY_CHAN0[${_pcn_chan_0}]="${PCN_NUM_LAYERS_LIST:-16}"
+done
 #NUM_LAYERS_BY_CHAN0[26]="16 18"
 #NUM_LAYERS_BY_CHAN0[28]="14 16"
 #NUM_LAYERS_BY_CHAN0[30]="12 14"
@@ -298,6 +312,15 @@ generate_combs() {
       return 2
       ;;
   esac
+}
+
+select_generated_combs() {
+  if [[ -z "${COMB_SEL_SET}" ]]; then
+    cat
+  else
+    awk -v selected=" ${COMB_SEL_SET} " \
+      'index(selected, " " NR " ") != 0'
+  fi
 }
 
 generate_top_combs() {
@@ -817,7 +840,11 @@ for IMG_TYPE in "${IMG_TYPES[@]}"; do
               last_tag=""
               comb_list=""
             fi
-          done < <(generate_combs "${CHAN_0}" "${NUM_LAYERS}" "${NUM_COMB_PER_NUM_LAYER}")
+          done < <(
+            generate_combs \
+              "${CHAN_0}" "${NUM_LAYERS}" "${NUM_COMB_PER_NUM_LAYER}" |
+              select_generated_combs
+          )
 
           # flush remainder
           if (( chunk_count > 0 )); then

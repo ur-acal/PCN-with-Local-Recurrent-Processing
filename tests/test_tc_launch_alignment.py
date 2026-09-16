@@ -62,6 +62,34 @@ def pcn_stage(stage, state='1', **overrides):
 
 
 class TCLaunchAlignmentTests(unittest.TestCase):
+    def test_pcn_architecture_list_overrides_preserve_defaults_and_schedules(self):
+        base = environment(SHOW_COMB_ONLY='1', NUM_COMB_PER_NUM_LAYER='20')
+        default = subprocess.check_output(
+            ['bash', 'launch_scripts/slurm_search_config.sh'],
+            cwd=ROOT, text=True, env=base)
+        self.assertIn('CHAN_0=24 NUM_LAYERS=16', default)
+        self.assertNotIn('NUM_LAYERS=22', default)
+
+        configured = dict(base, PCN_CHAN_0_LIST='16',
+                          PCN_NUM_LAYERS_LIST='22 28')
+        output = subprocess.check_output(
+            ['bash', 'launch_scripts/slurm_search_config.sh'],
+            cwd=ROOT, text=True, env=configured)
+        self.assertIn('CHAN_0=16 NUM_LAYERS=22', output)
+        self.assertIn('N22_C16_n07_n16_n26', output)
+        self.assertIn('CHAN_0=16 NUM_LAYERS=28', output)
+        self.assertIn('N28_C16_n09_n18_n28', output)
+
+        selected = dict(base, PCN_CHAN_0_LIST='16',
+                        PCN_NUM_LAYERS_LIST='22',
+                        NUM_COMB_PER_NUM_LAYER='3', COMB_SEL_SET='1 3')
+        output = subprocess.check_output(
+            ['bash', 'launch_scripts/slurm_search_config.sh'],
+            cwd=ROOT, text=True, env=selected)
+        self.assertIn('N22_C16_n06_n16_n27', output)
+        self.assertNotIn('N22_C16_n06_n17_n26', output)
+        self.assertIn('N22_C16_n07_n16_n26', output)
+
     def test_pcn_slurm_defaults_select_rgb_teacher(self):
         out = subprocess.check_output(['bash', 'launch_scripts/slurm_search_config.sh'],
             cwd=ROOT, text=True, env=environment(TC_NONIDEALITIES='true', TC_DRY_RUN='true'))

@@ -23,8 +23,6 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         super().__init__(*args, **kwargs)
         if any(not math.isfinite(v) or v <= 0 for v in (self.R, self.C, self.v_dd)):
             raise ValueError('R, C and v_dd must be finite and positive.')
-        if any(m.bias is not None for m in self.active_convolutions()):
-            raise ValueError('TC CNN currently requires bias-free convolutions; no bias circuit is assumed.')
         for m in self.active_convolutions():
             if (m.groups != 1 or m.dilation != (1, 1) or m.padding_mode != 'zeros'
                     or m.stride[0] != m.stride[1] or m.padding[0] != m.padding[1]):
@@ -75,27 +73,36 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
 
     def _current(self, module, source):
         if hasattr(module, 'mat'):
-            return module(source)
-        package = getattr(self, '_tc_resistance_package', None)
-        if package is not None:
-            if package.means.device != source.device or package.means.dtype != source.dtype:
-                package = replace(package, **{f.name: getattr(package, f.name).to(source)
-                    for f in fields(package) if torch.is_tensor(getattr(package, f.name))})
-                self._tc_resistance_package = package
-                self._tc_samples.clear()
-            key = self._module_key(module)
-            if self.training or key not in self._tc_samples:
-                seed = getattr(self, '_tc_curve_seed', 4096)
-                self._tc_samples[key] = package.sample_shared(
-                    self._values_to_level_idx(module.weight.detach()),
-                    sampling=self.tc_curve_sampling,
-                    generator=self._tc_generator(source, 'curve:'+key, seed))
-            curve = self._tc_samples[key]
-            if curve is not None:
-                source = shared_correction(source, curve, package.v_grid,
-                                           self.v_dd, package.floor_ohms)
-        return F.conv2d(source, module.weight, None, module.stride,
-                        module.padding, module.dilation, module.groups)
+            current = module(source)
+        else:
+            package = getattr(self, '_tc_resistance_package', None)
+            if package is not None:
+                if package.means.device != source.device or package.means.dtype != source.dtype:
+                    package = replace(package, **{f.name: getattr(package, f.name).to(source)
+                        for f in fields(package) if torch.is_tensor(getattr(package, f.name))})
+                    self._tc_resistance_package = package
+                    self._tc_samples.clear()
+                key = self._module_key(module)
+                if self.training or key not in self._tc_samples:
+                    seed = getattr(self, '_tc_curve_seed', 4096)
+                    self._tc_samples[key] = package.sample_shared(
+                        self._values_to_level_idx(module.weight.detach()),
+                        sampling=self.tc_curve_sampling,
+                        generator=self._tc_generator(source, 'curve:'+key, seed))
+                curve = self._tc_samples[key]
+                if curve is not None:
+                    source = shared_correction(source, curve, package.v_grid,
+                                               self.v_dd, package.floor_ohms)
+            current = F.conv2d(source, module.weight, None, module.stride,
+                               module.padding, module.dilation, module.groups)
+        # The bias circuit is ideal, but its fixed current enters the same spin
+        # loop.  Its integrated physical-domain contribution is q*b.
+        bias = self._module_bias(module)
+        if bias is not None:
+            stage = 'z' if module is self.conv1 else 'y'
+            scale = self._effective_stage_scale(current, stage)
+            current = current + (scale * self.q * bias).view(1, -1, 1, 1)
+        return current
 
     def _noise_context(self, module, source, state, stage):
         cap = self._stage_capacitance(stage)
@@ -131,6 +138,25 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                        h=self.tc_step_size, eps=eps, noise_type='addi',
                        proj_fn=self.project_state)
         return odesolve(rhs, state, options)
+
+
+class TCPhysicalCIFARBasicBlock(TCPhysicalBasicBlock):
+    """TC convolution stages with CIFAR ResNet-v1 post-activation ordering."""
+
+    def forward(self, x, layer_idx=None):
+        x = self._prepare_block_input(x)
+        residual = x
+        out = self._run_stage(self.conv1, x, 'z')
+        out = self.act1(self.norm1(out))
+        out = self._run_stage(self.conv2, out, 'y')
+        out = self.norm2(out)
+        if self.shortcut is not None:
+            out = out + self.shortcut(residual)
+            if self.physical and not self._capture_dense_modules:
+                out = self.project_state(out)
+        out = self.post_add_pool(out)
+        out = self.act2(out)
+        return self._finalize_block_output(out)
 
 
 class TCFeedForwardPhysicalWrapper(AveragedFeedForwardPhysicalWrapper):

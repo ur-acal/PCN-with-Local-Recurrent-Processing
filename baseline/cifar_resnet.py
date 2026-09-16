@@ -47,18 +47,40 @@ class LambdaLayer(nn.Module):
 # -----------------------------------------------------------------------------
 class CIFARBasicBlock(nn.Module):
     expansion = 1
+    physical_block_style = "post_activation"
 
-    def __init__(self, in_planes: int, planes: int, stride: int = 1, option: str = "A"):
+    def __init__(self, in_planes: int, planes: int, stride: int = 1,
+                 option: str = "A", use_batchnorm: bool = True,
+                 conv_bias: bool | None = None,
+                 avgpool_after_add: bool = False,
+                 intermediate_activation: str = "relu"):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
+        if conv_bias is None:
+            conv_bias = not use_batchnorm
+        transition = stride != 1 or in_planes != planes
+        conv_stride = 1 if avgpool_after_add and transition else stride
+        self.conv1 = nn.Conv2d(
+            in_planes, planes, kernel_size=3, stride=conv_stride,
+            padding=1, bias=conv_bias)
+        self.bn1 = nn.BatchNorm2d(planes) if use_batchnorm else nn.Identity()
+        self.relu = _intermediate_activation(intermediate_activation)
+        self.conv2 = nn.Conv2d(
+            planes, planes, kernel_size=3, stride=1, padding=1,
+            bias=conv_bias)
+        self.bn2 = nn.BatchNorm2d(planes) if use_batchnorm else nn.Identity()
+        self.post_add_pool = (
+            nn.AvgPool2d(kernel_size=stride, stride=stride)
+            if avgpool_after_add and transition and stride != 1
+            else nn.Identity())
 
         self.shortcut = nn.Identity()
-        if stride != 1 or in_planes != planes:
-            if option == "A":
+        if transition:
+            if avgpool_after_add:
+                if option != "A":
+                    raise ValueError(
+                        "Post-add AvgPool supports only parameter-free option-A shortcuts.")
+                self.shortcut = ChannelZeroPad(in_planes, planes)
+            elif option == "A":
                 # Original CIFAR ResNet shortcut: spatial downsample + zero-pad channels.
                 pad_ch = planes - in_planes
                 self.shortcut = LambdaLayer(
@@ -81,11 +103,14 @@ class CIFARBasicBlock(nn.Module):
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         out = out + self.shortcut(x)
+        out = self.post_add_pool(out)
         out = self.relu(out)
         return out
 
 
 class CIFARResNet(nn.Module):
+    physical_model_style = "post_activation"
+
     def __init__(
         self,
         depth: int = 20,
@@ -94,6 +119,10 @@ class CIFARResNet(nn.Module):
         base_width: int = 16,
         shortcut_option: str = "A",
         zero_init_last_bn: bool = False,
+        use_batchnorm: bool = True,
+        conv_bias: bool | None = None,
+        avgpool_after_add: bool = False,
+        intermediate_activation: str = "relu",
         **kwargs,
     ):
         super().__init__()
@@ -105,11 +134,19 @@ class CIFARResNet(nn.Module):
         self.depth = depth
         self.base_width = base_width
         self.shortcut_option = shortcut_option
+        self.use_batchnorm = bool(use_batchnorm)
+        self.conv_bias = (
+            not self.use_batchnorm if conv_bias is None else bool(conv_bias))
+        self.avgpool_after_add = bool(avgpool_after_add)
+        self.intermediate_activation = str(intermediate_activation)
         self.in_planes = base_width
 
-        self.conv1 = nn.Conv2d(in_chans, base_width, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(base_width)
-        self.relu = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(
+            in_chans, base_width, kernel_size=3, stride=1, padding=1,
+            bias=self.conv_bias)
+        self.bn1 = (
+            nn.BatchNorm2d(base_width) if self.use_batchnorm else nn.Identity())
+        self.relu = _intermediate_activation(self.intermediate_activation)
 
         self.layer1 = self._make_layer(base_width, n, stride=1)
         self.layer2 = self._make_layer(base_width * 2, n, stride=2)
@@ -119,7 +156,7 @@ class CIFARResNet(nn.Module):
         self.fc = nn.Linear(base_width * 4, num_classes)
 
         _init_cifar_model(self)
-        if zero_init_last_bn:
+        if zero_init_last_bn and self.use_batchnorm:
             for m in self.modules():
                 if isinstance(m, CIFARBasicBlock):
                     nn.init.zeros_(m.bn2.weight)
@@ -128,7 +165,13 @@ class CIFARResNet(nn.Module):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for s in strides:
-            layers.append(CIFARBasicBlock(self.in_planes, planes, stride=s, option=self.shortcut_option))
+            layers.append(CIFARBasicBlock(
+                self.in_planes, planes, stride=s,
+                option=self.shortcut_option,
+                use_batchnorm=self.use_batchnorm,
+                conv_bias=self.conv_bias,
+                avgpool_after_add=self.avgpool_after_add,
+                intermediate_activation=self.intermediate_activation))
             self.in_planes = planes * CIFARBasicBlock.expansion
         return nn.Sequential(*layers)
 
@@ -340,15 +383,23 @@ class WideBasicBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(planes) if use_batchnorm else nn.Identity()
         self.relu2 = _intermediate_activation(intermediate_activation)
         self.dropout_rate = float(dropout_rate)
+        post_add_downsample = avgpool_main_downsample and stride != 1
         self.conv2 = nn.Conv2d(
             planes, planes, kernel_size=3,
-            stride=1 if avgpool_main_downsample and stride != 1 else stride,
+            stride=1 if post_add_downsample else stride,
             padding=1, bias=conv_bias)
-        self.main_downsample = (
+        self.main_downsample = nn.Identity()
+        self.post_add_pool = (
             nn.AvgPool2d(kernel_size=stride, stride=stride)
-            if avgpool_main_downsample and stride != 1 else nn.Identity())
+            if post_add_downsample else nn.Identity())
 
-        if avgpool_downsample_shortcut and (stride != 1 or in_planes != planes):
+        if post_add_downsample and (stride != 1 or in_planes != planes):
+            self.shortcut = (
+                ChannelZeroPad(in_planes, planes)
+                if avgpool_downsample_shortcut else
+                nn.Conv2d(in_planes, planes, kernel_size=1, stride=1,
+                          bias=conv_bias))
+        elif avgpool_downsample_shortcut and (stride != 1 or in_planes != planes):
             self.shortcut = (
                 AvgPoolChannelPad(in_planes, planes, stride=stride)
                 if stride != 1 else ChannelZeroPad(in_planes, planes))
@@ -367,6 +418,7 @@ class WideBasicBlock(nn.Module):
         out = self.conv2(out)
         out = self.main_downsample(out)
         out = out + self.shortcut(x)
+        out = self.post_add_pool(out)
         return out
 
 
@@ -572,6 +624,94 @@ def resnet56_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: in
     return CIFARResNet(depth=56, num_classes=num_classes, in_chans=in_chans, **kwargs)
 
 
+def _build_hardware_cifar_resnet(
+        depth: int, pretrained: bool, num_classes: int, in_chans: int,
+        *, use_batchnorm: bool, conv_bias: bool,
+        avgpool_after_add: bool, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for hardware CIFAR ResNets.")
+    return CIFARResNet(
+        depth=depth, num_classes=num_classes, in_chans=in_chans,
+        use_batchnorm=use_batchnorm, conv_bias=conv_bias,
+        avgpool_after_add=avgpool_after_add,
+        intermediate_activation="relu6", **kwargs)
+
+
+def _register_resnet_variant(depth, use_batchnorm, conv_bias, avgpool):
+    return dict(depth=depth, use_batchnorm=use_batchnorm,
+                conv_bias=conv_bias, avgpool_after_add=avgpool)
+
+
+@register_model
+def resnet44_cifar_avgpool(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(44, True, False, True), **kwargs)
+
+
+@register_model
+def resnet44_cifar_nobn(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(44, False, True, False), **kwargs)
+
+
+@register_model
+def resnet44_cifar_nobn_avgpool(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(44, False, True, True), **kwargs)
+
+
+@register_model
+def resnet44_cifar_nobn_no_bias(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(44, False, False, False), **kwargs)
+
+
+@register_model
+def resnet44_cifar_nobn_no_bias_avgpool(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(44, False, False, True), **kwargs)
+
+
+@register_model
+def resnet56_cifar_avgpool(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(56, True, False, True), **kwargs)
+
+
+@register_model
+def resnet56_cifar_nobn(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(56, False, True, False), **kwargs)
+
+
+@register_model
+def resnet56_cifar_nobn_avgpool(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(56, False, True, True), **kwargs)
+
+
+@register_model
+def resnet56_cifar_nobn_no_bias(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(56, False, False, False), **kwargs)
+
+
+@register_model
+def resnet56_cifar_nobn_no_bias_avgpool(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+    return _build_hardware_cifar_resnet(
+        pretrained=pretrained, num_classes=num_classes, in_chans=in_chans,
+        **_register_resnet_variant(56, False, False, True), **kwargs)
+
+
 @register_model
 def resnet110_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: int = 3, **kwargs):
     if pretrained:
@@ -655,7 +795,7 @@ def wrn_flexible_cifar_avgpool(
         pretrained: bool = False, num_classes: int = 10,
         in_chans: int = 3, depth: int = 28,
         first_stage_channels: int = 32, **kwargs):
-    """Flexible-depth WRN with stride-1 transition convs plus AvgPool."""
+    """Flexible-depth WRN with one shared post-add transition AvgPool."""
     if pretrained:
         raise ValueError(
             "No registered pretrained weights for wrn_flexible_cifar_avgpool.")
@@ -729,6 +869,68 @@ def _build_wrn_nobn_no_bias(
     kwargs["conv_bias"] = False
     return _build_wrn_nobn(
         depth, widen_factor, pretrained, num_classes, in_chans, **kwargs)
+
+
+@register_model
+def wrn_16_2_cifar_avgpool(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    if pretrained:
+        raise ValueError("No registered pretrained weights for wrn_16_2_cifar_avgpool.")
+    return WideResNetCIFAR(
+        depth=16, widen_factor=2, num_classes=num_classes,
+        in_chans=in_chans, avgpool_downsample_shortcut=True,
+        avgpool_main_downsample=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_16_2_cifar_nobn(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(
+        16, 2, pretrained, num_classes, in_chans,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_16_2_cifar_nobn_avgpool(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(
+        16, 2, pretrained, num_classes, in_chans,
+        avgpool_downsample_shortcut=True,
+        avgpool_main_downsample=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_16_2_cifar_nobn_no_bias(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn_no_bias(
+        16, 2, pretrained, num_classes, in_chans,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_16_2_cifar_nobn_no_bias_avgpool(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn_no_bias(
+        16, 2, pretrained, num_classes, in_chans,
+        avgpool_downsample_shortcut=True,
+        avgpool_main_downsample=True,
+        **_new_hardware_wrn_kwargs(kwargs))
+
+
+@register_model
+def wrn_28_2_cifar_nobn(
+        pretrained: bool = False, num_classes: int = 10,
+        in_chans: int = 3, **kwargs):
+    return _build_wrn_nobn(
+        28, 2, pretrained, num_classes, in_chans,
+        **_new_hardware_wrn_kwargs(kwargs))
 
 
 @register_model

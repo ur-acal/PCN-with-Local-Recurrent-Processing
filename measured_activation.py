@@ -899,11 +899,20 @@ def configure_feedforward_measured_activation(model, factory):
     from physical_feedforward import iter_physical_blocks
 
     blocks = list(iter_physical_blocks(model))
+    post_activation = (
+        getattr(model, "physical_model_style", None) == "post_activation")
+    if post_activation:
+        # CIFAR ResNet has an explicit activation after its stem convolution.
+        model.relu = factory(blocks[0].layer_idx, "conv1")
+    residual_blocks = [block for block in blocks if block.conv2 is not None]
     for block in blocks:
         if block.conv2 is None:
             continue
         block.act1 = factory(block.layer_idx, "conv1")
-        block.act2 = factory(block.layer_idx, "conv2")
+        # In post-activation ResNet, act2 follows the residual addition. Keep
+        # only the last such activation ideal, matching the pre-GAP PCN rule.
+        if not post_activation or block is not residual_blocks[-1]:
+            block.act2 = factory(block.layer_idx, "conv2")
     return model
 
 
