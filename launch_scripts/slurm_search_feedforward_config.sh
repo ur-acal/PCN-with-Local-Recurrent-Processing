@@ -5,7 +5,8 @@
 # recurrent/ODE-only controls intentionally do not exist on this path.
 set -e
 
-REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
+SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/feedforward_pretrain_then_ft.sbatch"
 cd "${REPO_ROOT}"
 source ./launch_scripts/tc_feedforward_args.sh ft
 mkdir -p logs/slurm_jobs
@@ -127,7 +128,7 @@ export TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
 
 # Source this launcher from the configured login shell, as for
 # slurm_search_config.sh. Do not reinitialize modules or launch bash -lc here.
-sbatch --parsable -N "${N_NODES:-1}" \
-  --time="${SBATCH_TIMELIMIT:-48:00:00}" \
+sbatch --parsable \
+  --gres=gpu:${GPUS_PER_JOB:-1} \
   --export=ALL \
-  ./launch_scripts/feedforward_pretrain_then_ft.sbatch
+  "${SBATCH_SCRIPT}"
