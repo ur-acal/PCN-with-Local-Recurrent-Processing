@@ -1,11 +1,15 @@
 """Execute real Slurm/combined/stage shells with fake training, never submit."""
 import json
 import os
+import random
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+
+import numpy as np
+import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,7 +43,9 @@ def fake_python(argv):
     path = Path(append_preprocessing_suffix(path, bits, center))
     model, task = options['--model_name'], options['--dataset']
     name = f'custom_noresize_{task}_{model}'
-    suffix = 'full_param_best' if stage == 'ft' else 'best'
+    final_only = options.get('--final_eval_only') == 'true'
+    selection = 'last' if final_only else 'best'
+    suffix = f'full_param_{selection}' if stage == 'ft' else selection
     checkpoint = path/task/'custom_noresize'/model/name/f'{name}_{suffix}_ckpt.pth'
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
     checkpoint.touch()  # Fixture, deliberately not a real model checkpoint.
@@ -86,12 +92,18 @@ source launch_scripts/slurm_search_feedforward_config.sh
                 ft = dict(zip(rows[1]['argv'][1::2], rows[1]['argv'][2::2]))
                 self.assertEqual(pre['--timm_aug_level'], 'none')
                 self.assertEqual(ft['--timm_aug_level'], 'no_aug')
+                self.assertEqual(pre['--tc_intermediate_activation'], 'relu6')
+                self.assertEqual(ft['--tc_intermediate_activation'], 'relu6')
+                eval_args = dict(zip(
+                    rows[-1]['argv'][1::2], rows[-1]['argv'][2::2]))
+                self.assertEqual(
+                    eval_args['--tc_intermediate_activation'], 'relu6')
                 self.assertIn('lr=0.1,num_epochs=300,', pre['--override'])
                 self.assertIn('lr=0.005,num_epochs=140,', ft['--override'])
                 cnn = parsed(cnn_eval, rows[-1]['argv'])
                 pcn = pcn_stage('eval', N_TRIALS=preprocessing.get('N_TRIALS', '10'))
                 self.assertIn('/ft'+('_iq12_ctr' if preprocessing else '')+'/', cnn.checkpoint)
-                self.assertTrue(cnn.checkpoint.endswith('_full_param_best_ckpt.pth'))
+                self.assertTrue(cnn.checkpoint.endswith('_full_param_last_ckpt.pth'))
                 self.assertEqual(cnn.n_trials, pcn.noisy_trials)
                 self.assertTrue(cnn.use_expanded_weights)
                 self.assertTrue(cnn.enable_nonlinear_R)
@@ -108,6 +120,17 @@ source launch_scripts/slurm_search_feedforward_config.sh
                 self.assertEqual(cnn.tc_method, pcn.method)
                 self.assertEqual(cnn.tc_tol, pcn.tol)
                 self.assertIn('FAKE EVALUATION', (Path(directory)/'results/evaluation.log').read_text())
+
+    def test_pcn_training_seed_resets_python_numpy_and_torch(self):
+        from train_ode_cifar import seed_training
+
+        seed_training(4096)
+        first = (random.random(), np.random.rand(), torch.rand(3))
+        seed_training(4096)
+        second = (random.random(), np.random.rand(), torch.rand(3))
+        self.assertEqual(first[0], second[0])
+        self.assertEqual(first[1], second[1])
+        torch.testing.assert_close(first[2], second[2])
 
     def test_failure_never_runs_dependent_stage(self):
         for failure, expected in (

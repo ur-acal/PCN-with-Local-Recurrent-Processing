@@ -27,9 +27,9 @@ case "${IMG_TYPE,,}" in
   *) echo 'TC launcher expects IMG_TYPE=rgb, CiFAIR or scanGFI.' >&2; exit 2 ;;
 esac
 if [[ -z "${CKPT:-}" ]]; then
-  CKPT=best
+  CKPT=last
   if [[ "$stage" == ft && "$model_lower" == *qat* ]]; then
-    CKPT=full_param_best
+    CKPT=full_param_last
   fi
 fi
 if [[ -z "${TC_STATE:-}" ]]; then
@@ -58,6 +58,10 @@ if [[ "$stage" == ft ]]; then
     --input_quant_bits "${INPUT_QUANT_BITS:-none}" --center_student_input "${CENTER_STUDENT_INPUT:-false}"
     --timm_trainer true --optim SGD --learning_rate "${FT_LEARNING_RATE:-0.005}"
     --num_epochs "${FT_NUM_EPOCHS:-140}" --eval_every 2 --warmup_epoch 0
+    --final_eval_only "${FINAL_EVAL_ONLY:-true}"
+    --health_check_epochs "${FT_HEALTH_CHECK_EPOCHS:-20,50}"
+    --health_check_batches "${HEALTH_CHECK_BATCHES:-4}"
+    --health_check_seed "${HEALTH_CHECK_SEED:-4096}"
     --timm_sched cosine --timm_aug_level no_aug --timm_re_prob "${TIMM_RE_PROB:-0}"
     --pcn PCNetNoBatchNorm --pc_conv PCConvReLU6 --avg_pooling true --dropout .25
     --t_end 1.75 --tol "${TOL:-1e-6}" --batch_size 128

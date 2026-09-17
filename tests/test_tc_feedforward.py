@@ -107,9 +107,10 @@ class TCFeedForwardTests(unittest.TestCase):
         torch.testing.assert_close(actual_spin, torch.full_like(actual_spin, 0.03))
 
     def test_resnet_variant_registration_and_tc_conversion(self):
-        import timm
         from baseline.cifar_resnet import (
             CIFARResNet, ChannelZeroPad, CIFARBasicBlock)
+        from baseline.baseline_cifar_configs import (
+            build_model, get_baseline_config)
 
         for depth in (44, 56):
             prefix = f"resnet{depth}_cifar"
@@ -118,7 +119,12 @@ class TCFeedForwardTests(unittest.TestCase):
                 prefix + "_nobn_avgpool", prefix + "_nobn_no_bias",
                 prefix + "_nobn_no_bias_avgpool")
             for name in names:
-                model = timm.create_model(name, num_classes=100)
+                cfg = get_baseline_config(
+                    name, pretrained=False, case="custom_noresize")
+                model = build_model(name, cfg, num_classes=100)
+                self.assertEqual(
+                    model.final_dropout_rate,
+                    0.0 if name == prefix else 0.25)
                 has_bn = any(isinstance(m, nn.BatchNorm2d)
                              for m in model.modules())
                 conv_biases = [m.bias is not None for m in model.modules()
@@ -135,6 +141,13 @@ class TCFeedForwardTests(unittest.TestCase):
                                         for m in transitions))
                     self.assertTrue(all(m.conv1.stride == (1, 1)
                                         for m in transitions))
+
+        # ResNet applies the final dropout before its ideal pre-GAP ReLU.
+        dropped = CIFARResNet(
+            depth=8, base_width=2, num_classes=3,
+            final_dropout_rate=1.0).train()
+        features = dropped.forward_features(torch.randn(2, 3, 8, 8))
+        self.assertEqual(torch.count_nonzero(features).item(), 0)
 
         # A small model verifies that conversion preserves ResNet-v1 ordering,
         # including convolution biases and post-add pooling.
@@ -200,7 +213,8 @@ class TCFeedForwardTests(unittest.TestCase):
             torch.testing.assert_close(physical(x), expected)
 
     def test_wrn_16_and_28_six_variant_registration(self):
-        import timm
+        from baseline.baseline_cifar_configs import (
+            build_model, get_baseline_config)
 
         for depth in (16, 28):
             prefix = f"wrn_{depth}_2_cifar"
@@ -209,7 +223,12 @@ class TCFeedForwardTests(unittest.TestCase):
                 prefix + "_nobn_avgpool", prefix + "_nobn_no_bias",
                 prefix + "_nobn_no_bias_avgpool")
             for name in names:
-                model = timm.create_model(name, num_classes=100)
+                cfg = get_baseline_config(
+                    name, pretrained=False, case="custom_noresize")
+                model = build_model(name, cfg, num_classes=100)
+                self.assertEqual(
+                    model.final_dropout_rate,
+                    0.0 if name == prefix else 0.25)
                 has_bn = any(isinstance(m, nn.BatchNorm2d)
                              for m in model.modules())
                 conv_biases = [m.bias is not None for m in model.modules()

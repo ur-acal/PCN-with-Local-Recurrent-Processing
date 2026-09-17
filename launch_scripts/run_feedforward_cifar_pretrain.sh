@@ -31,7 +31,13 @@ fi
 TIMM_AUG_LEVEL="${TIMM_AUG_LEVEL:-none}"
 TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
 DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
-_DEFAULT_OVERRIDE="lr=${PRETRAIN_LEARNING_RATE:-0.1},num_epochs=${PRETRAIN_NUM_EPOCHS:-300},warmup_epoch=${WARMUP_PRETRAIN:-0},weight_decay=${WEIGHT_DECAY:-0.001},batch_size=${BATCH_SIZE:-128}"
+_PRETRAIN_WEIGHT_DECAY="${WEIGHT_DECAY:-0.001}"
+case "${MODEL_NAME}" in
+  wrn_16_2_cifar|resnet44_cifar|resnet56_cifar)
+    _PRETRAIN_WEIGHT_DECAY="${WEIGHT_DECAY:-0.0005}"
+    ;;
+esac
+_DEFAULT_OVERRIDE="lr=${PRETRAIN_LEARNING_RATE:-0.1},num_epochs=${PRETRAIN_NUM_EPOCHS:-300},warmup_epoch=${WARMUP_PRETRAIN:-0},weight_decay=${_PRETRAIN_WEIGHT_DECAY},batch_size=${BATCH_SIZE:-128}"
 case "${MODEL_NAME}" in
   wrn_28_2_cifar_nobn_avgpool|wrn_28_2_cifar_nobn_avgpool_shortcut)
     if [[ "${TASK}" == "cifar10" ]]; then
@@ -63,6 +69,10 @@ cmd=(
   --case custom_noresize
   --seed "${TRAINING_SEED:-4096}"
   --eval_every "${PRETRAIN_EVAL_EVERY:-5}"
+  --final_eval_only "${FINAL_EVAL_ONLY:-false}"
+  --health_check_epochs "${PRETRAIN_HEALTH_CHECK_EPOCHS:-30,75}"
+  --health_check_batches "${HEALTH_CHECK_BATCHES:-4}"
+  --health_check_seed "${HEALTH_CHECK_SEED:-4096}"
   --num_workers "${NUM_WORKERS}"
   --img_type "${IMG_TYPE}"
   --timm_aug_level "${TIMM_AUG_LEVEL}"

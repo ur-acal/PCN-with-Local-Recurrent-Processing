@@ -354,9 +354,31 @@ MODEL_OVERRIDES = {
     "preact_resnet164_cifar": {},
     "vgg19": {},
     "mobilenetv2_100": {},
+    "resnet44_cifar_avgpool": {
+        "final_dropout_rate": 0.25},
+    "resnet44_cifar_nobn": {
+        "final_dropout_rate": 0.25},
+    "resnet44_cifar_nobn_avgpool": {
+        "final_dropout_rate": 0.25},
+    "resnet44_cifar_nobn_no_bias": {
+        "final_dropout_rate": 0.25},
+    "resnet44_cifar_nobn_no_bias_avgpool": {
+        "final_dropout_rate": 0.25},
+    "resnet56_cifar_avgpool": {
+        "final_dropout_rate": 0.25},
+    "resnet56_cifar_nobn": {
+        "final_dropout_rate": 0.25},
+    "resnet56_cifar_nobn_avgpool": {
+        "final_dropout_rate": 0.25},
+    "resnet56_cifar_nobn_no_bias": {
+        "final_dropout_rate": 0.25},
+    "resnet56_cifar_nobn_no_bias_avgpool": {
+        "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_avgpool_shortcut": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_28_2_cifar_nobn": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_nobn_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
@@ -364,11 +386,17 @@ MODEL_OVERRIDES = {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_nobn_no_bias_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_28_2_cifar_nobn_no_bias": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_16_2_cifar_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_16_2_cifar_nobn": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_16_2_cifar_nobn_avgpool": {
+        "dropout_rate": 0.0, "final_dropout_rate": 0.25},
+    "wrn_16_2_cifar_nobn_no_bias": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},
     "wrn_16_2_cifar_nobn_no_bias_avgpool": {
         "dropout_rate": 0.0, "final_dropout_rate": 0.25},

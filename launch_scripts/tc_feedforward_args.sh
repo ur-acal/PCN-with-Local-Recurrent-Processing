@@ -2,6 +2,10 @@
 TC_FEEDFORWARD_ARGS=()
 if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
   source "$(dirname "${BASH_SOURCE[0]}")/tc_hardware_defaults.sh" "$1"
+  if [[ "$1" == pretrain ]]; then
+    export WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-5}"
+  fi
+  export FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-true}"
   export PHYSICAL_LEVEL=2
   export WEIGHT_QUANT_FACTOR_BITS=-1 ENOB=none
   export NONLINEAR_R_TABLE="$TC_MEAN_TABLE"
@@ -20,7 +24,9 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     export ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
     export ACTIVATION_CURVE_SHARING=per_model
   fi
-  TC_FEEDFORWARD_ARGS=(--tc_feedforward true --one_shot_conv "${ONE_SHOT_CONV:-false}"
+  TC_FEEDFORWARD_ARGS=(--tc_feedforward true
+    --tc_intermediate_activation "${TC_INTERMEDIATE_ACTIVATION:-relu6}"
+    --one_shot_conv "${ONE_SHOT_CONV:-false}"
     --w_bits 5 --enob none --weight_quant_factor_bits -1
     --tc_method "${TC_METHOD:-dopri5}" --tc_tol "${TC_TOL:-1e-6}"
     --tc_curve_sampling "${TC_CURVE_SAMPLING:-histogram}"

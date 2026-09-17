@@ -846,8 +846,27 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
 
             train_loss = self.train_one_epoch(epoch)
+            if self.final_eval_only:
+                train_loss_list.append(train_loss)
 
-            if (epoch + 1) % self.eval_every == 0 and epoch >= self.skip_eval_epochs:
+            if self.final_eval_only and epoch + 1 in self.health_check_epochs:
+                health_acc, health_top5 = self._evaluate_training_health()
+                if self.dataset_name == "cifar100":
+                    print(
+                        "Training health check epoch {}: top1={}, top5={} "
+                        "(fixed {}-batch training subset)".format(
+                            epoch + 1, health_acc, health_top5,
+                            self.health_check_batches))
+                else:
+                    print(
+                        "Training health check epoch {}: acc={} "
+                        "(fixed {}-batch training subset)".format(
+                            epoch + 1, health_acc,
+                            self.health_check_batches))
+
+            if (not self.final_eval_only and
+                    (epoch + 1) % self.eval_every == 0 and
+                    epoch >= self.skip_eval_epochs):
                 train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
 
@@ -879,7 +898,16 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             self.scheduler.step(epoch + 1)
 
             save_latest(self, epoch + 1, locals())
-        _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
+        if self.final_eval_only:
+            val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
+            val_acc_list.append(val_acc)
+            if self.dataset_name == "cifar100":
+                print("Final validation top1: {}, top5: {}".format(
+                    val_acc, val_top5))
+            else:
+                print("Final validation acc: {}".format(val_acc))
+        last_model_path = self._save_model_ckpt(
+            val_acc, self.num_epochs, "_last_ckpt.pth")
         remove_latest(self)
 
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
@@ -889,7 +917,14 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             )
         )
 
-        if self.dataset_name == "cifar100":
+        if self.final_eval_only and self.dataset_name == "cifar100":
+            print(
+                "----- Final top1: {}, Final top5: {}, Final epoch: {} -----".format(
+                    val_acc, val_top5, self.num_epochs))
+        elif self.final_eval_only:
+            print("----- Final acc: {}, Final epoch: {} -----".format(
+                val_acc, self.num_epochs))
+        elif self.dataset_name == "cifar100":
             print(
                 "----- Best top1: {}, Best top5: {}, Best epoch: {} -----".format(
                     best_acc,
@@ -900,7 +935,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         else:
             print("----- Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
 
-        print("----- Model path: {} -----".format(best_model_path))
+        print("----- Model path: {} -----".format(
+            last_model_path if self.final_eval_only else best_model_path))
         print("--------------------------------------------------------------------------")
 
         return train_loss_list, val_acc_list

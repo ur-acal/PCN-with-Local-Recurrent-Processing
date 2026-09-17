@@ -36,7 +36,11 @@ feedforward_run_stage() {
 feedforward_run_stage ./launch_scripts/run_feedforward_cifar_pretrain.sh "${PRETRAIN_OUTPUT_DIR}"
 
 checkpoint_name="custom_noresize_${TASK}_${MODEL_NAME}"
-MODEL_CKPT="${PRETRAIN_OUTPUT_DIR}/${TASK}/custom_noresize/${MODEL_NAME}/${checkpoint_name}/${checkpoint_name}_best_ckpt.pth"
+checkpoint_selection=best
+if [[ "${FINAL_EVAL_ONLY:-false}" == true ]]; then
+  checkpoint_selection=last
+fi
+MODEL_CKPT="${PRETRAIN_OUTPUT_DIR}/${TASK}/custom_noresize/${MODEL_NAME}/${checkpoint_name}/${checkpoint_name}_${checkpoint_selection}_ckpt.pth"
 if [[ ! -f "${MODEL_CKPT}" ]]; then
   echo "Pretraining checkpoint not found: ${MODEL_CKPT}" >&2
   exit 1
@@ -59,7 +63,7 @@ bits, center = resolve_preprocessing(sys.argv[2], bits, center)
 print(append_preprocessing_suffix(sys.argv[1], bits, center))
 PY
 )"
-  MODEL_CKPT="${FT_RUN_DIR}/${TASK}/custom_noresize/${MODEL_NAME}/${checkpoint_name}/${checkpoint_name}_full_param_best_ckpt.pth"
+  MODEL_CKPT="${FT_RUN_DIR}/${TASK}/custom_noresize/${MODEL_NAME}/${checkpoint_name}/${checkpoint_name}_full_param_${checkpoint_selection}_ckpt.pth"
   if [[ ! -f "${MODEL_CKPT}" ]]; then
     echo "Fine-tuning checkpoint not found; refusing evaluation: ${MODEL_CKPT}" >&2
     exit 1

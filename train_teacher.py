@@ -816,6 +816,38 @@ def evaluate(
     return acc, top5_acc
 
 
+def save_teacher_checkpoint(
+    checkpoint_path: Path,
+    teacher_core: nn.Module,
+    args: argparse.Namespace,
+    epoch: int,
+    mismatch_levels: Sequence[float],
+    *,
+    acc: float | None = None,
+    top5: float | None = None,
+    training_complete: bool = False,
+) -> None:
+    """Atomically replace the teacher checkpoint with the latest epoch state."""
+    payload = {
+        'net': teacher_core.state_dict(),
+        'acc': acc,
+        'epoch': epoch,
+        'checkpoint_kind': 'last',
+        'training_complete': training_complete,
+        **({'top5': top5} if top5 is not None else {}),
+        **({'teacher_preprocessing': rgb_teacher_metadata(
+            args.dataset, args.test_size), 'training_args': vars(args)}
+           if args.img_type.lower() == 'rgb' else {}),
+        'mismatch_levels': list(mismatch_levels),
+        'mismatch_type': args.mismatch_type,
+        'mismatch_ramp_start': args.mismatch_ramp_start,
+        'mismatch_ramp_epochs': args.mismatch_ramp_epochs,
+    }
+    temporary_path = checkpoint_path.with_suffix(checkpoint_path.suffix + '.tmp')
+    torch.save(payload, temporary_path)
+    os.replace(temporary_path, checkpoint_path)
+
+
 def main() -> None:
     args = parse_args()
     args.dataset = _normalize_dataset_name(args.dataset)
@@ -994,9 +1026,6 @@ def main() -> None:
             start_level,
         )
 
-    best_acc = 0.0
-    best_top5 = None
-    best_epoch = -1
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(args.ne):
@@ -1006,37 +1035,35 @@ def main() -> None:
             logging.info("Epoch %d mismatch std=%.4f", epoch, scheduled_level)
         train_one_epoch(net, trainloader, optimizer, criterion, device, epoch, args)
         scheduler.step()
+        save_teacher_checkpoint(
+            checkpoint_path,
+            teacher_core,
+            args,
+            epoch,
+            mismatch_levels,
+        )
+        print(f'Last checkpoint updated after epoch {epoch + 1}/{args.ne}')
 
-        print('==> Evaluating..')
-        acc, top5 = evaluate(net, testloader, criterion, device, dataset_name=args.dataset)
-        if acc > best_acc:
-            best_acc = acc
-            best_top5 = top5
-            best_epoch = epoch
-            torch.save(
-                {
-                    'net': teacher_core.state_dict(),
-                    'acc': acc,
-                    'epoch': epoch,
-                    **({'teacher_preprocessing': rgb_teacher_metadata(
-                        args.dataset, args.test_size), 'training_args': vars(args)}
-                       if args.img_type.lower() == 'rgb' else {}),
-                    'mismatch_levels': mismatch_levels,
-                    'mismatch_type': mismatch_type,
-                    'mismatch_ramp_start': args.mismatch_ramp_start,
-                    'mismatch_ramp_epochs': args.mismatch_ramp_epochs,
-                },
-                checkpoint_path,
-            )
-            if top5 is not None:
-                print(f'Best checkpoint updated at epoch {epoch} with top1={acc:.2f}%, top5={top5:.2f}%')
-            else:
-                print(f'Best checkpoint updated at epoch {epoch} with acc={acc:.2f}%')
-
-    if best_top5 is not None:
-        print(f'Training finished. Best top1={best_acc:.2f}% top5={best_top5:.2f}% at epoch {best_epoch}')
+    final_epoch = args.ne - 1
+    print('==> Final test evaluation..')
+    final_acc, final_top5 = evaluate(
+        net, testloader, criterion, device, dataset_name=args.dataset)
+    save_teacher_checkpoint(
+        checkpoint_path,
+        teacher_core,
+        args,
+        final_epoch,
+        mismatch_levels,
+        acc=final_acc,
+        top5=final_top5,
+        training_complete=True,
+    )
+    if final_top5 is not None:
+        print(
+            f'Training finished. Final top1={final_acc:.2f}% '
+            f'top5={final_top5:.2f}% at epoch {args.ne}')
     else:
-        print(f'Training finished. Best acc={best_acc:.2f}% at epoch {best_epoch}')
+        print(f'Training finished. Final acc={final_acc:.2f}% at epoch {args.ne}')
 
 
 if __name__ == "__main__":

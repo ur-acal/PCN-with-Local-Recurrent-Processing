@@ -4,6 +4,7 @@ import torch
 import os
 import argparse
 import logging
+import random
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
@@ -128,6 +129,9 @@ def get_args():
     p.add_argument("--skip_eval_epochs", type=int, default=0)
     p.add_argument("--img_type", type=str, default="rgb")
     p.add_argument(
+        "--seed", type=int, default=4096,
+        help="Training RNG seed shared by RGB, scanGFI, and CiFAIR runs.")
+    p.add_argument(
         "--input_quant_bits",
         type=lambda s: None if s.lower() in {"none", ""} else int(s),
         default=None,
@@ -160,6 +164,12 @@ def get_args():
                    help="T0 of cosine annealing schedule; if None, using default reduce on epoch scheduler")
     p.add_argument("--aug", type=str2bool, default=False)
     p.add_argument("--eval_every", type=int, default=1)
+    p.add_argument("--final_eval_only", type=str2bool, default=False,
+                   help="Skip test-set model selection and evaluate once after the final epoch.")
+    p.add_argument("--health_check_epochs", default="",
+                   help="Comma-separated epochs for deterministic training-subset checks.")
+    p.add_argument("--health_check_batches", type=int, default=4)
+    p.add_argument("--health_check_seed", type=int, default=4096)
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch")
     p.add_argument("--ckpt", type=str, default="best")
@@ -438,6 +448,15 @@ def get_args():
     args = p.parse_args()
     validate_tc(args)
     return args
+
+
+def seed_training(seed):
+    """Reset every training RNG before data/model construction."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def evaluate_teacher(model: torch.nn.Module, trainer: TrainerCiFar) -> float:
@@ -769,6 +788,7 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
+    seed_training(args.seed)
     inference_path = args.save_path if args.model_name is not None else ""
     args.input_quant_bits, args.center_student_input = resolve_preprocessing(
         inference_path, args.input_quant_bits, args.center_student_input)
@@ -1156,6 +1176,10 @@ def main():
             max_norm=cfg.get("max_norm", None),
             aug=False,  # transforms are handled by TrainerCiFarTimmStyle
             eval_every=args.eval_every if not args.test_only else 2,
+            final_eval_only=args.final_eval_only and not args.test_only,
+            health_check_epochs=args.health_check_epochs,
+            health_check_batches=args.health_check_batches,
+            health_check_seed=args.health_check_seed,
             img_type=args.img_type,
             dataset_name=args.dataset,
 
@@ -1243,6 +1267,10 @@ def main():
             aug           = args.aug,
             T0            = args.cosine_t0,
             eval_every    = args.eval_every if not args.test_only else 2,
+            final_eval_only = args.final_eval_only and not args.test_only,
+            health_check_epochs = args.health_check_epochs,
+            health_check_batches = args.health_check_batches,
+            health_check_seed = args.health_check_seed,
             img_type      = args.img_type,
             dataset_name  = args.dataset,
             noise_level   = args.noise_level,

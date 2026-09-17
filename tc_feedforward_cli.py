@@ -8,6 +8,8 @@ def add_arguments(parser):
             raise ValueError('Expected true or false')
         return value.lower() == 'true'
     parser.add_argument('--tc_feedforward', type=boolean, default=False)
+    parser.add_argument('--tc_intermediate_activation',
+                        choices=('relu', 'relu6'), default='relu6')
     parser.add_argument('--one_shot_conv', type=boolean, default=False)
     parser.add_argument('--tc_method', choices=('dopri5', 'euler'), default='dopri5')
     parser.add_argument('--tc_tol', type=float, default=1e-6)

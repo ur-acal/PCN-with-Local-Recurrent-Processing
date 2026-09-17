@@ -238,8 +238,14 @@ TRAIN_BATCH_SIZE="${patch_bs:-128}"
 ##########################################################################
 DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
 IS_TIMM="${IS_TIMM:-true}"
-WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
 WARMUP_FT="${WARMUP_FT:-0}"
+if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
+  WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-5}"
+  FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-true}"
+else
+  WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
+  FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-false}"
+fi
 FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
 FT_NUM_EPOCHS="${FT_NUM_EPOCHS:-140}"
 TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
@@ -441,6 +447,10 @@ run_one_combo () {
     --num_classes   "${N_CLASSES}" \
     --num_epochs    300 \
     --eval_every    5 \
+    --final_eval_only "${FINAL_EVAL_ONLY}" \
+    --health_check_epochs "${PRETRAIN_HEALTH_CHECK_EPOCHS:-30,75}" \
+    --health_check_batches "${HEALTH_CHECK_BATCHES:-4}" \
+    --health_check_seed "${HEALTH_CHECK_SEED:-4096}" \
     --warmup_epoch  "${WARMUP_PRETRAIN}" \
     --learning_rate 0.01 \
     --offset_eps    0.0 \
@@ -541,6 +551,9 @@ eval_one_combo_model() {
   mkdir -p "$dir"
 
   local ckpt="best"
+  if [[ "${FINAL_EVAL_ONLY}" == true ]]; then
+    ckpt="last"
+  fi
 
   local test_bs=128
 
@@ -707,6 +720,9 @@ finetune_one_combo_model() {
   echo "[FINETUNE] comb=${comb_tag} ${name} (block=${train_block}) → $logfile"
 
   local ckpt="best"
+  if [[ "${FINAL_EVAL_ONLY}" == true ]]; then
+    ckpt="last"
+  fi
   local t_end="1.75"
   local qat_wrapper="QATWrapper1State"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
@@ -740,6 +756,10 @@ finetune_one_combo_model() {
     --optim         "SGD" \
     --learning_rate "${FT_LEARNING_RATE}" \
     --eval_every    2 \
+    --final_eval_only "${FINAL_EVAL_ONLY}" \
+    --health_check_epochs "${FT_HEALTH_CHECK_EPOCHS:-20,50}" \
+    --health_check_batches "${HEALTH_CHECK_BATCHES:-4}" \
+    --health_check_seed "${HEALTH_CHECK_SEED:-4096}" \
     --num_epochs    "${FT_NUM_EPOCHS}" \
     --warmup_epoch  "${WARMUP_FT}" \
     --img_type      "${IMG_TYPE}" \

@@ -190,6 +190,12 @@ def parse_args():
     parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument("--eval_every", type=int, default=None)
+    parser.add_argument("--final_eval_only", type=str2bool, default=False,
+                        help="Skip test-set model selection and evaluate once after the final epoch.")
+    parser.add_argument("--health_check_epochs", default="",
+                        help="Comma-separated epochs for deterministic training-subset checks.")
+    parser.add_argument("--health_check_batches", type=int, default=4)
+    parser.add_argument("--health_check_seed", type=int, default=4096)
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=4096)
     parser.add_argument('--noise_level', default=None, type=float,
@@ -422,6 +428,10 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
             args.eval_every if args.eval_every is not None else
             (2 if args.physical_feedforward and
              not args.physical_pretraining else cfg.get("eval_every", 5))),
+        final_eval_only=args.final_eval_only,
+        health_check_epochs=args.health_check_epochs,
+        health_check_batches=args.health_check_batches,
+        health_check_seed=args.health_check_seed,
         img_type=args.img_type,
         dataset_name=args.dataset,
 
@@ -520,20 +530,25 @@ def main():
     )
     cfg["wrn_depth"] = args.wrn_depth
     cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
+    if args.tc_feedforward:
+        cfg["intermediate_activation"] = args.tc_intermediate_activation
 
     if args.img_type != "rgb" and args.rggb_to_rgb:
         cfg.update(RGGB_TO_RGB_EXTRAS)
     elif args.img_type != "rgb":
         cfg.update(RGGB_DEFAULTS)
 
-    if args.img_type != "rgb":
-        if args.timm_aug_level == "no_aug":
-            cfg.update(RGGB_NO_AUG)
-        elif args.timm_aug_level == "mild":
-            cfg.update(RGGB_MILD_AUG)
-        elif args.timm_aug_level == "mid":
-            cfg.update(RGGB_MID_AUG)
+    # The augmentation-level selector describes the training recipe, not the
+    # input channel layout.  In particular, TC RGB fine-tuning must honor
+    # ``no_aug`` in the same way as the PCN entry point.
+    if args.timm_aug_level == "no_aug":
+        cfg.update(RGGB_NO_AUG)
+    elif args.timm_aug_level == "mild":
+        cfg.update(RGGB_MILD_AUG)
+    elif args.timm_aug_level == "mid":
+        cfg.update(RGGB_MID_AUG)
 
+    if args.img_type != "rgb":
         # Match the current PCN pretraining default.
         if args.timm_re_prob is None:
             cfg["re_prob"] = 0.0

@@ -108,7 +108,7 @@ else
     --lr 0.002 \
     --gamma 0.1 \
     --wd 1e-6 \
-    --ne 100 \
+    --ne "${TEACHER_EPOCHS:-100}" \
     --nsc 10 \
     --batch_split 1 \
     --batch 32 \

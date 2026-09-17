@@ -90,6 +90,7 @@ def test_real_train_loop_resume_and_final_cleanup(tmp_path, filename, classname)
     trainer.num_epochs = 3
     trainer.eval_every = 2
     trainer.skip_eval_epochs = 0
+    trainer.final_eval_only = False
     trainer.dataset_name = 'cifar100'
     trainer.train_dataloader = trainer.val_dataloader = None
     trainer.evaluate = lambda _: (.5, .8, None, None)
@@ -114,4 +115,45 @@ def test_real_train_loop_resume_and_final_cleanup(tmp_path, filename, classname)
     namespace['train'](trainer)
     assert seen == [0, 1, 1, 2]
     assert saved == ['_best_ckpt.pth', '_last_ckpt.pth']
+    assert not Path(latest_path(trainer)).exists()
+
+
+@pytest.mark.parametrize('filename,classname', [('trainer.py', 'TrainerCiFar'),
+                                               ('trainer_timm.py', 'TrainerCiFarTimmStyle')])
+def test_final_only_policy_uses_health_checks_then_one_final_eval(
+        tmp_path, filename, classname):
+    tree = ast.parse((Path(__file__).resolve().parents[1] / filename).read_text())
+    cls = next(node for node in tree.body
+               if isinstance(node, ast.ClassDef) and node.name == classname)
+    method = next(node for node in cls.body
+                  if isinstance(node, ast.FunctionDef) and node.name == 'train')
+    namespace = dict(restore_latest=restore_latest, save_latest=save_latest,
+                     remove_latest=remove_latest)
+    exec(compile(ast.Module(body=[method], type_ignores=[]), filename, 'exec'),
+         namespace)
+    trainer = make_trainer(tmp_path)
+    trainer.num_epochs = 3
+    trainer.eval_every = 1
+    trainer.skip_eval_epochs = 0
+    trainer.final_eval_only = True
+    trainer.health_check_epochs = {2}
+    trainer.health_check_batches = 4
+    trainer.dataset_name = 'cifar100'
+    trainer.train_dataloader = trainer.val_dataloader = SimpleNamespace(
+        generator=None)
+    trainer.train_one_epoch = lambda epoch: float(epoch)
+    health = []
+    trainer._evaluate_training_health = lambda: health.append(2) or (.2, .5)
+    final_evaluations = []
+    trainer.evaluate = lambda loader: final_evaluations.append(loader) or (
+        .6, .9, None, None)
+    saved = []
+    trainer._save_model_ckpt = lambda acc, epoch, suffix: (
+        saved.append((suffix, acc, epoch)) or 'last-path')
+
+    namespace['train'](trainer)
+
+    assert health == [2]
+    assert final_evaluations == [trainer.val_dataloader]
+    assert saved == [('_last_ckpt.pth', .6, 3)]
     assert not Path(latest_path(trainer)).exists()

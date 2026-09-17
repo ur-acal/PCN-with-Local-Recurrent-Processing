@@ -119,6 +119,7 @@ class CIFARResNet(nn.Module):
         base_width: int = 16,
         shortcut_option: str = "A",
         zero_init_last_bn: bool = False,
+        final_dropout_rate: float = 0.0,
         use_batchnorm: bool = True,
         conv_bias: bool | None = None,
         avgpool_after_add: bool = False,
@@ -134,6 +135,7 @@ class CIFARResNet(nn.Module):
         self.depth = depth
         self.base_width = base_width
         self.shortcut_option = shortcut_option
+        self.final_dropout_rate = float(final_dropout_rate)
         self.use_batchnorm = bool(use_batchnorm)
         self.conv_bias = (
             not self.use_batchnorm if conv_bias is None else bool(conv_bias))
@@ -180,6 +182,12 @@ class CIFARResNet(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
+        if self.final_dropout_rate > 0:
+            x = F.dropout(
+                x, p=self.final_dropout_rate, training=self.training)
+        # Keep the classifier tail aligned with PCN/WRN: final dropout,
+        # ideal ReLU, then global average pooling.
+        x = F.relu(x)
         return x
 
     def forward_head(self, x, pre_logits: bool = False):

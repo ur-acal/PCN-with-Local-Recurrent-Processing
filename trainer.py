@@ -333,7 +333,9 @@ class TrainerCiFar(object):
                  input_quant_bits=None, center_student_input=False,
                  scale_train_recipe=False, ff_train_scale=1.0,
                  fb_train_scale=1.0,
-                 pulse_mismatch_training_mode="post_quant_amplitude"):
+                 pulse_mismatch_training_mode="post_quant_amplitude",
+                 final_eval_only=False, health_check_epochs=None,
+                 health_check_batches=4, health_check_seed=4096):
         self.skip_eval_epochs = skip_eval_epochs
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
@@ -366,6 +368,17 @@ class TrainerCiFar(object):
         self.max_norm = max_norm
         self.aug = aug # use the augmentation in convMixer or not
         self.eval_every = eval_every
+        self.final_eval_only = bool(final_eval_only)
+        if isinstance(health_check_epochs, str):
+            health_check_epochs = [
+                int(value) for value in health_check_epochs.split(",")
+                if value.strip()
+            ]
+        self.health_check_epochs = set(health_check_epochs or ())
+        self.health_check_batches = int(health_check_batches)
+        self.health_check_seed = int(health_check_seed)
+        if self.health_check_batches < 1:
+            raise ValueError("health_check_batches must be positive")
         self.img_type = img_type
         self.dataset_name = _normalize_dataset_name(dataset_name)
         self.distill_alpha = distill_alpha
@@ -633,7 +646,25 @@ class TrainerCiFar(object):
         for epoch in range(start_epoch, self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch(epoch)
-            if (epoch + 1) % self.eval_every == 0 and epoch >= self.skip_eval_epochs:
+            if self.final_eval_only:
+                train_loss_list.append(train_loss)
+            if self.final_eval_only and epoch + 1 in self.health_check_epochs:
+                health_acc, health_top5 = self._evaluate_training_health()
+                if self.dataset_name == "cifar100":
+                    print(
+                        "Training health check epoch {}: top1={}, top5={} "
+                        "(fixed {}-batch training subset)".format(
+                            epoch + 1, health_acc, health_top5,
+                            self.health_check_batches))
+                else:
+                    print(
+                        "Training health check epoch {}: acc={} "
+                        "(fixed {}-batch training subset)".format(
+                            epoch + 1, health_acc,
+                            self.health_check_batches))
+            if (not self.final_eval_only and
+                    (epoch + 1) % self.eval_every == 0 and
+                    epoch >= self.skip_eval_epochs):
                 train_acc, train_top5, _, _ = self.evaluate(self.train_dataloader)
                 val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
                 train_loss_list.append(train_loss)
@@ -653,15 +684,31 @@ class TrainerCiFar(object):
                     best_model_path = self._save_model_ckpt(val_acc, epoch + 1, "_best_ckpt.pth")
             self.scheduler.step()
             save_latest(self, epoch + 1, locals())
-        _ = self._save_model_ckpt(val_acc, self.num_epochs, "_last_ckpt.pth")
+        if self.final_eval_only:
+            val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
+            val_acc_list.append(val_acc)
+            if self.dataset_name == "cifar100":
+                print("Final validation top1: {}, top5: {}".format(
+                    val_acc, val_top5))
+            else:
+                print("Final validation acc: {}".format(val_acc))
+        last_model_path = self._save_model_ckpt(
+            val_acc, self.num_epochs, "_last_ckpt.pth")
         remove_latest(self)
         print("----- Train finished, Model Name: {} -----".format(self.model_name))
         print("----- Total number of parameters: {} M -----".format(sum(p.numel() for p in self.model.parameters()) / 1e6))
-        if self.dataset_name == "cifar100":
+        if self.final_eval_only and self.dataset_name == "cifar100":
+            print("----- Final top1: {}, Final top5: {}, Final epoch: {} -----".format(
+                val_acc, val_top5, self.num_epochs))
+        elif self.final_eval_only:
+            print("----- Final acc: {}, Final epoch: {} -----".format(
+                val_acc, self.num_epochs))
+        elif self.dataset_name == "cifar100":
             print("----- Best top1: {}, Best top5: {}, Best epoch: {} -----".format(best_acc, best_top5, best_epoch))
         else:
             print("----- Best acc: {}, Best epoch: {} -----".format(best_acc, best_epoch))
-        print("----- Model path: {} -----".format(best_model_path))
+        print("----- Model path: {} -----".format(
+            last_model_path if self.final_eval_only else best_model_path))
         print("--------------------------------------------------------------------------")
         return train_loss_list, val_acc_list
 
@@ -798,7 +845,55 @@ class TrainerCiFar(object):
             if callable(reset):
                 reset()
 
-    def evaluate(self, dataloader):
+    def _evaluate_training_health(self):
+        """Evaluate a reproducible augmented training subset without moving RNG."""
+        python_state = random.getstate()
+        numpy_state = np.random.get_state()
+        torch_state = torch.get_rng_state()
+        cuda_state = (
+            torch.cuda.get_rng_state_all()
+            if torch.cuda.is_initialized() else None)
+        generator = getattr(self.train_dataloader, "generator", None)
+        generator_state = generator.get_state() if generator is not None else None
+        hardware_generator_states = []
+        for module in self.model.modules():
+            for name, value in vars(module).items():
+                if isinstance(value, torch.Generator):
+                    hardware_generator_states.append(
+                        (module, name, None, value.get_state()))
+                elif isinstance(value, dict):
+                    for key, item in value.items():
+                        if isinstance(item, torch.Generator):
+                            hardware_generator_states.append(
+                                (module, name, key, item.get_state()))
+        try:
+            random.seed(self.health_check_seed)
+            np.random.seed(self.health_check_seed)
+            torch.manual_seed(self.health_check_seed)
+            if torch.cuda.is_initialized():
+                torch.cuda.manual_seed_all(self.health_check_seed)
+            if generator is not None:
+                generator.manual_seed(self.health_check_seed)
+            acc, top5, _, _ = self.evaluate(
+                self.train_dataloader,
+                max_batches=self.health_check_batches)
+            return acc, top5
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
+            torch.set_rng_state(torch_state)
+            if cuda_state is not None:
+                torch.cuda.set_rng_state_all(cuda_state)
+            if generator is not None:
+                generator.set_state(generator_state)
+            for module, name, key, state in hardware_generator_states:
+                value = getattr(module, name)
+                if key is None:
+                    value.set_state(state)
+                else:
+                    value[key].set_state(state)
+
+    def evaluate(self, dataloader, max_batches=None):
         correct = 0
         correct_top5 = 0
         total = 0
@@ -808,7 +903,9 @@ class TrainerCiFar(object):
         with torch.no_grad():
             self.model.eval()
             self.reset_spin_variation_for_inference()
-            for data in dataloader:
+            for batch_index, data in enumerate(dataloader):
+                if max_batches is not None and batch_index >= max_batches:
+                    break
                 if isinstance(data, (list, tuple)):
                     if self.orig_t_inp:
                         if len(data) == 5:

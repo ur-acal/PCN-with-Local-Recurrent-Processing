@@ -8,7 +8,8 @@ submit_rgb_teacher() {
   local data="${RGB_DATA_ROOT:-${root}/../data}"
   local checkpoints="${TEACHER_OUTPUT_DIR:-${root}/checkpoint}"
   local logs="${TEACHER_LOG_DIR:-${root}/logs/teacher_rgb}"
-  local exports="ALL,IS_SLURM=1,REPO_ROOT=${root},RGB_TEACHER_RECIPE=${recipe},RGB_DATA_ROOT=${data},TEACHER_OUTPUT_DIR=${checkpoints},TEACHER_LOG_DIR=${logs}"
+  local torch_home="${TORCH_HOME:-${root}/.cache/torch}"
+  local exports="ALL,IS_SLURM=1,REPO_ROOT=${root},RGB_TEACHER_RECIPE=${recipe},RGB_DATA_ROOT=${data},TEACHER_OUTPUT_DIR=${checkpoints},TEACHER_LOG_DIR=${logs},TORCH_HOME=${torch_home}"
   local -a command=(sbatch --parsable --chdir="$root" --gres=gpu:1
     --time="${SBATCH_TIMELIMIT:-90:10:00}" --export="$exports"
     --output="${logs}/slurm_%j.out" "${root}/launch_scripts/run_rgb_teacher.sbatch")

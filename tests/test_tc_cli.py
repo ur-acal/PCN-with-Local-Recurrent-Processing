@@ -64,7 +64,7 @@ class TCCommandTests(unittest.TestCase):
         ft = command('ft', 'TIMMQAT5b_C100_16Layers_CiFAIR_1REP')
         self.assertEqual(ft['--dataset'], 'cifar100')
         self.assertEqual(ft['--img_type'], 'CiFAIR')
-        self.assertEqual(ft['--ckpt'], 'full_param_best')
+        self.assertEqual(ft['--ckpt'], 'full_param_last')
         self.assertEqual(ft['--tc_conv_method'], 'shared')
         self.assertTrue(ft['--teacher_ckpt'].endswith(
             'efficientnet_v2_l_cifar100_CiFAIR_OldNoTimm_MatchDistill.pth'))
@@ -75,7 +75,7 @@ class TCCommandTests(unittest.TestCase):
             self.assertEqual(args['--dataset'], task)
             self.assertEqual(args['--img_type'], 'scanGFI')
             self.assertTrue(args['--teacher_ckpt'].endswith(teacher))
-            self.assertEqual(args['--ckpt'], 'best')
+            self.assertEqual(args['--ckpt'], 'last')
         rgb = command('eval', 'TIMMQAT5b_C100_16Layers_1REP')
         self.assertEqual(rgb['--img_type'], 'rgb')
         self.assertEqual(rgb['--ode_wrapper'], 'QATTester1State')

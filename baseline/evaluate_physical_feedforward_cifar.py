@@ -175,6 +175,8 @@ def evaluate_once(args):
         args.model_name, case="custom_noresize")
     cfg["wrn_depth"] = args.wrn_depth
     cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
+    if args.tc_feedforward:
+        cfg["intermediate_activation"] = args.tc_intermediate_activation
     if args.img_type.lower() != "rgb":
         cfg.update(RGGB_DEFAULTS)
     model = build_model(

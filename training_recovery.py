@@ -93,7 +93,9 @@ def restore_latest(trainer):
                 'toggle_timing_mode', 'toggle_y_time', 'z_over_y_time',
                 'scale_train_recipe', 'one_over_q', 'v_dd', 'num_epochs',
                 'override', 'distill_method', 'input_quant_bits',
-                'center_student_input', 'timm_aug_level'):
+                'center_student_input', 'timm_aug_level', 'final_eval_only',
+                'health_check_epochs', 'health_check_batches',
+                'health_check_seed'):
         if key in current and key in recovery['config'] and current[key] != recovery['config'][key]:
             raise ValueError(f'Full recovery requires unchanged {key}; use an ordinary checkpoint for a new stage')
     for name in ('train_dataloader', 'val_dataloader'):

@@ -13,6 +13,7 @@ if [[ "${TEACHER_DRY_RUN:-false}" != true ]]; then
   conda activate scanbase
 fi
 cd "${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
+export TORCH_HOME="${TORCH_HOME:-${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}/.cache/torch}"
 export IMG_TYPE=rgb
 export RGB_DATA_ROOT="${RGB_DATA_ROOT:-../data}"
 export NUM_WORKERS="${NUM_WORKERS:-4}"
@@ -37,7 +38,9 @@ export TEACHER_LOG_DIR="${TEACHER_LOG_DIR:-./logs/teacher_rgb}"
 output="${TEACHER_OUTPUT_DIR:-./checkpoint}"
 if [[ "${TEACHER_DRY_RUN:-false}" != true ]]; then
   mkdir -p "$TEACHER_LOG_DIR" "$output"
-  # No downloads/dependency installation on compute nodes. Fail visibly first.
+  # Validate local inputs before the long run.  Torchvision retains its normal
+  # cache-then-download behavior for ImageNet initialization; TORCH_HOME points
+  # at shared scratch storage so later jobs reuse the same download.
   python -u - <<'PY'
 import os, sys
 from pathlib import Path
@@ -52,9 +55,9 @@ for dataset in (CIFAR10, CIFAR100):
     for train in (True, False):
         dataset(os.environ['RGB_DATA_ROOT'], train=train, download=False)
 cached = Path(torch.hub.get_dir())/'checkpoints'/Path(urlparse(_get_efficientnet_v2_weights('efficientnet_v2_l').url).path).name
-if not cached.is_file():
-    raise FileNotFoundError(f'Cache ImageNet weights on the login node first: {cached}')
-print('Validated both RGB datasets and ImageNet weight cache:', cached, flush=True)
+print('Validated both RGB datasets. ImageNet initialization cache:', cached,
+      'present' if cached.is_file() else 'absent; torchvision will download it',
+      flush=True)
 PY
 fi
 for dataset in cifar10 cifar100; do

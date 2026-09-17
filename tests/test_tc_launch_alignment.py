@@ -62,6 +62,36 @@ def pcn_stage(stage, state='1', **overrides):
 
 
 class TCLaunchAlignmentTests(unittest.TestCase):
+    def test_feedforward_slurm_envelope_uses_proven_cluster_pattern(self):
+        submitter = (ROOT/'launch_scripts/slurm_search_feedforward_config.sh').read_text()
+        worker = (ROOT/'launch_scripts/feedforward_pretrain_then_ft.sbatch').read_text()
+        required = (
+            '#!/bin/bash -l', '#SBATCH -p ising', '#SBATCH -N 1',
+            '#SBATCH --ntasks=1', '#SBATCH --cpus-per-task=16',
+            '#SBATCH --gres=gpu:1', '#SBATCH -t 90:10:00',
+            '#SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out',
+            'source activate base', 'conda activate scanbase')
+        for line in required:
+            self.assertIn(line, worker)
+        self.assertIn(
+            'REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"',
+            submitter)
+        self.assertIn('SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/feedforward_pretrain_then_ft.sbatch"',
+                      submitter)
+        executable = '\n'.join(
+            line for text in (submitter, worker) for line in text.splitlines()
+            if not line.lstrip().startswith('#'))
+        for forbidden in ('bash -lc', 'conda shell.', 'module load', 'module swap'):
+            self.assertNotIn(forbidden, executable)
+
+    def test_rgb_teacher_uses_shared_cache_without_requiring_a_preload(self):
+        submitter = (ROOT/'launch_scripts/slurm_run_rgb_teacher.sh').read_text()
+        worker = (ROOT/'launch_scripts/run_rgb_teacher.sbatch').read_text()
+        self.assertIn('TORCH_HOME=${torch_home}', submitter)
+        self.assertIn('export TORCH_HOME=', worker)
+        self.assertNotIn("if not cached.is_file():", worker)
+        self.assertIn('torchvision will download it', worker)
+
     def test_pcn_architecture_list_overrides_preserve_defaults_and_schedules(self):
         base = environment(SHOW_COMB_ONLY='1', NUM_COMB_PER_NUM_LAYER='20')
         default = subprocess.check_output(
