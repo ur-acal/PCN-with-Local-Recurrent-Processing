@@ -236,6 +236,10 @@ def parse_args():
         "--activation_curve_path",
         default=str(Path(__file__).resolve().parents[1] / "hardware_data"
                     / "relu_current_0p2uA_finer.csv"))
+    parser.add_argument(
+        "--activation_curve_override", default=None,
+        help="Use this activation curve for every corner instead of the "
+             "corner-specific ReLU Monte-Carlo file.")
     parser.add_argument("--activation_corner", default="TT")
     parser.add_argument(
         "--activation_curve_sharing",
@@ -481,13 +485,17 @@ def build_corner_command(args, corner, corner_index):
             "--nonlinear_R_curve_bank_indices",
             ",".join(str(index) for index in curve_bank_indices),
         ])
-    if trial_config["relu_indices"] is not None:
+    if trial_config["relu_indices"] is not None and args.activation_curve_override is None:
         command.extend([
             "--activation_mc_curve_indices",
             ",".join(str(index) for index in trial_config["relu_indices"]),
         ])
-    _set_command_arg(command, "--activation_curve_path", corner["relu"]["path"])
-    _set_command_arg(command, "--activation_corner", "MC1")
+    _set_command_arg(
+        command, "--activation_curve_path",
+        args.activation_curve_override or corner["relu"]["path"])
+    _set_command_arg(
+        command, "--activation_corner",
+        "TT" if args.activation_curve_override is not None else "MC1")
     _set_command_arg(
         command, "--enable_spin_variation",
         bool_arg(args.full_45_corner_enable_spin_variation))

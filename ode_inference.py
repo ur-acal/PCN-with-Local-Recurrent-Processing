@@ -479,7 +479,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
                       "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
                       "nonlinear_R_curve_bank_indices": (
-                          nonlinear_R_curve_bank_indices),
+                          _parse_index_list(args.nonlinear_R_curve_bank_indices)),
                       "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
                       "nonlinear_R_curve_edge_chunk_size": (
                           args.nonlinear_R_curve_edge_chunk_size),
@@ -615,7 +615,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
                       "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
                       "nonlinear_R_curve_bank_indices": (
-                          nonlinear_R_curve_bank_indices),
+                          _parse_index_list(args.nonlinear_R_curve_bank_indices)),
                       "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
                       "nonlinear_R_curve_edge_chunk_size": (
                           args.nonlinear_R_curve_edge_chunk_size),
