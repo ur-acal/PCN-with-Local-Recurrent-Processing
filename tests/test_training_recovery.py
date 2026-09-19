@@ -1,6 +1,7 @@
 import random
 import ast
 from pathlib import Path
+import types
 from types import SimpleNamespace
 
 import numpy as np
@@ -8,6 +9,7 @@ import pytest
 import torch
 from torch import nn
 from torch.nn.utils import parametrize
+from torch.utils.data import DataLoader, TensorDataset
 
 from training_recovery import HISTORY, latest_path, save_latest, restore_latest, remove_latest
 
@@ -75,6 +77,16 @@ def test_no_automatic_discovery_and_atomic_failure(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         save_latest(trainer, 2, history)
     assert torch.load(latest_path(trainer), weights_only=False)['epoch'] == 1
+
+
+def test_save_latest_accepts_loader_without_generator_attribute(tmp_path):
+    trainer = make_trainer(tmp_path)
+    trainer.train_dataloader = object()
+    trainer.val_dataloader = object()
+    history = dict.fromkeys(HISTORY, None)
+    save_latest(trainer, 1, history)
+    checkpoint = torch.load(latest_path(trainer), weights_only=False)
+    assert checkpoint['training_recovery']['loader_generators'] == {}
 
 
 @pytest.mark.parametrize('filename,classname', [('trainer.py', 'TrainerCiFar'),
@@ -157,3 +169,39 @@ def test_final_only_policy_uses_health_checks_then_one_final_eval(
     assert final_evaluations == [trainer.val_dataloader]
     assert saved == [('_last_ckpt.pth', .6, 3)]
     assert not Path(latest_path(trainer)).exists()
+
+
+def test_real_training_health_check_executes_and_restores_rng():
+    """Exercise the actual method in trainer.py, including its module globals."""
+    import trainer as trainer_module
+
+    data_generator = torch.Generator().manual_seed(73)
+    loader = DataLoader(
+        TensorDataset(torch.randn(12, 4), torch.arange(12) % 3),
+        batch_size=2, shuffle=True, generator=data_generator, num_workers=0)
+    dummy = SimpleNamespace(
+        model=nn.Linear(4, 3), train_dataloader=loader,
+        health_check_seed=4096,
+        health_check_batches=2,
+        device=torch.device('cpu'), dataset_name='cifar10', orig_t_inp=False,
+        loss_fn=nn.CrossEntropyLoss(),
+        _prepare_student_inputs=lambda inputs: inputs,
+        reset_spin_variation_for_inference=lambda: None,
+    )
+    dummy.evaluate = types.MethodType(trainer_module.TrainerCiFar.evaluate, dummy)
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    torch_state = torch.get_rng_state().clone()
+    generator_state = data_generator.get_state().clone()
+
+    health_acc, health_top5 = (
+        trainer_module.TrainerCiFar._evaluate_training_health(dummy))
+    assert 0 <= health_acc <= 1
+    assert health_top5 is None
+    assert random.getstate() == python_state
+    restored_numpy = np.random.get_state()
+    assert restored_numpy[0] == numpy_state[0]
+    assert np.array_equal(restored_numpy[1], numpy_state[1])
+    assert restored_numpy[2:] == numpy_state[2:]
+    assert torch.equal(torch.get_rng_state(), torch_state)
+    assert torch.equal(data_generator.get_state(), generator_state)

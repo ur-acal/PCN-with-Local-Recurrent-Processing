@@ -153,8 +153,18 @@ class ODEBlockPC(nn.Module):
         if self.return_init:
             return y0
         self.integration_time = self.integration_time.type_as(x)
-
-        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
+        energy_meter = getattr(self, "_tc_energy_meter", None)
+        if energy_meter is not None:
+            energy_meter.start_solve(
+                y0.shape[0], self.integration_time[-1] - self.integration_time[0])
+        try:
+            out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
+        except Exception:
+            if energy_meter is not None:
+                energy_meter.abort_solve()
+            raise
+        if energy_meter is not None:
+            energy_meter.finish_solve()
         # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         out = out[-1]
 
@@ -787,11 +797,18 @@ class ODEXInitFFFB(ODEBlockXInit):
             curves = self._tc_curves_for_solve()
             context, sy, sz = self._tc_prepare_noise(x)
             def tc_func(t, y):
+                meter = getattr(self, "_tc_energy_meter", None)
                 z = self._tc_dense_conv(self.FBconv, y, None if curves is None else curves["FBconv"])
+                if meter is not None:
+                    meter.observe("FB", self.FBconv)
                 noise = 0. if context is None else context.fb_current()
                 h = self.act_fn(sz * (z * self._tc_fb_gain + noise * self._tc_fb_gain * self.R))
-                return sy * self._tc_dense_conv(self.FFconv, h, None if curves is None else curves["FFconv"])
+                out = self._tc_dense_conv(self.FFconv, h, None if curves is None else curves["FFconv"])
+                if meter is not None:
+                    meter.observe("FF", self.FFconv)
+                return sy * out
             tc_func.tc_context = context
+            tc_func.energy_meter = getattr(self, "_tc_energy_meter", None)
             return tc_func
         def ode_func(t, y):
             return self.FFconv(self.act_fn(self.FBconv(y)))

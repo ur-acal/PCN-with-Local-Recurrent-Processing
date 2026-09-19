@@ -1034,6 +1034,11 @@ def run_ode_inference():
                     max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"
                     real_t_end = avg_real_t
                     net_.eval()
+                    energy_study = None
+                    if args.measure_coupler_energy:
+                        from tc_energy import enable_tc_coupler_energy
+                        energy_study = enable_tc_coupler_energy(
+                            net_, supply_voltage=args.coupler_supply_voltage)
                     total = 0
                     correct = 0
 
@@ -1070,6 +1075,13 @@ def run_ode_inference():
 
                     # Calculate the accuracy
                     accuracy = 100 * correct / total
+                    if energy_study is not None:
+                        from tc_energy import (append_tc_coupler_energy,
+                                               print_tc_coupler_energy)
+                        energy_summary = energy_study.summary()
+                        print_tc_coupler_energy(energy_summary)
+                        append_tc_coupler_energy(
+                            args.tc_coupler_energy_path, energy_summary, t)
                     if args.tc_nonidealities:
                         from tc_cli import record_trial
                         record_trial(args,net_,t,accuracy,ckpt_path)

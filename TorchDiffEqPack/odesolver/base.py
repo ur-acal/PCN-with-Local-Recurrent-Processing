@@ -435,8 +435,19 @@ class ODESolver(nn.Module):
             # print(y_current.shape)
 
             # time passed into step function must be of type Tensor with shape None
-            y_current, error, variables = self.step(self.func, t_current, (point - t_current), y_current,
-                                                    return_variables=True)
+            energy_meter = getattr(self, "energy_meter", None)
+            if energy_meter is not None:
+                energy_meter.begin_step(point - t_current, self.__class__.__name__)
+            try:
+                y_current, error, variables = self.step(
+                    self.func, t_current, (point - t_current), y_current,
+                    return_variables=True)
+            except Exception:
+                if energy_meter is not None:
+                    energy_meter.cancel_step()
+                raise
+            if energy_meter is not None:
+                energy_meter.accept_step()
             if self.noise_type == "mul":
                 y_current = self.mult_noisy_update_and_proj(h=point-t_current, y_current=y_current)
             else:

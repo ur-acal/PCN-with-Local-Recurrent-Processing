@@ -964,6 +964,10 @@ class MVMConv(nn.Module):
         active_edges = torch.nonzero(
             pulse_values != 0, as_tuple=False).reshape(-1)
         out = x_flat.new_zeros((self.mat.shape[0], x_flat.shape[1]))
+        measure_current = getattr(self, "_tc_measure_coupler_energy", False)
+        total_current = x_flat.new_zeros(x_flat.shape[1]) if measure_current else None
+        if measure_current:
+            self._tc_last_coupler_current = None
         chunk_size = self.nonlinear_R_curve_edge_chunk_size
         for start in range(0, active_edges.numel(), chunk_size):
             edge = active_edges[start:start + chunk_size]
@@ -983,6 +987,10 @@ class MVMConv(nn.Module):
             contribution = (
                 pulse_values[edge, None] * source * nominal_R / R_eff)
             out.index_add_(0, rows, contribution)
+            if measure_current:
+                total_current.add_((source.abs() / R_eff).sum(dim=0))
+        if measure_current:
+            self._tc_last_coupler_current = total_current
         return out
 
     def forward_pulse(self, x, pulse_weight, nominal_R=None):

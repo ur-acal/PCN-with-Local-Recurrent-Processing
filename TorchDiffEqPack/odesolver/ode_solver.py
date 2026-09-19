@@ -72,6 +72,7 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, full_traj=Fal
         print('Name of solver not found.')
 
     solver.tc_context = getattr(func, "tc_context", None)
+    solver.energy_meter = getattr(func, "energy_meter", None)
     if solver.tc_context is not None:
         solver.noise_type = "addi"
         solver.end_point_mode = options.get("end_point_mode", solver.end_point_mode)

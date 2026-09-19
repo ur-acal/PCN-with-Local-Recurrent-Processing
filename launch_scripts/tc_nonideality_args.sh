@@ -58,6 +58,11 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
       --nonlinear_R_train_mode none --nonlinear_R_curve_sharing shared)
   elif [[ "$1" == eval ]]; then
     TC_ARGS+=(--tc_max_eval_batches "${TC_MAX_EVAL_BATCHES:-0}")
+    TC_ARGS+=(--measure_coupler_energy "${MEASURE_COUPLER_ENERGY:-false}"
+      --coupler_supply_voltage "${COUPLER_SUPPLY_VOLTAGE:-1.3}")
+    if [[ -n "${TC_COUPLER_ENERGY_PATH:-}" ]]; then
+      TC_ARGS+=(--tc_coupler_energy_path "$TC_COUPLER_ENERGY_PATH")
+    fi
     TC_ARGS+=(--ode_wrapper "$tc_tester" --method "${TC_EVAL_METHOD:-dopri5}"
       --d_start 0 --d_end 1 --n_sweep_left 0 --n_sweep_right 1 --sweep_eps false
       --thermal_noise false --sde_noise_type add --diff_mismatch false --noise_level_list 0

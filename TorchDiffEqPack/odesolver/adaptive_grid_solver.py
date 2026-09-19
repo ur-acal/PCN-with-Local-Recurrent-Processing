@@ -346,8 +346,20 @@ class AdaptiveGridSolver(ODESolver):
                 all_t_steps.append(t_current)
                 all_traj.append(y_current)
             y_old = y_current
-            y_current, error, variables = self.step(self.func, t_current, h_current * self.time_direction,
-                                                    y_current, return_variables=True)
+            energy_meter = getattr(self, "energy_meter", None)
+            if energy_meter is not None:
+                energy_meter.begin_step(
+                    h_current * self.time_direction, self.__class__.__name__)
+            try:
+                y_current, error, variables = self.step(
+                    self.func, t_current, h_current * self.time_direction,
+                    y_current, return_variables=True)
+            except Exception:
+                if energy_meter is not None:
+                    energy_meter.cancel_step()
+                raise
+            if energy_meter is not None:
+                energy_meter.accept_step()
             if self.noise_type == "mul":
                 y_current = self.mult_noisy_update_and_proj(h=h_current, y_current=y_current)
             else:
@@ -389,8 +401,19 @@ class AdaptiveGridSolver(ODESolver):
             # if t_current < self.t1, make the last move
             if abs(t_current - self.t0) < abs(self.t1 - self.t0):
                 step_current = self.t1 - t_current
-                y_current, error, variables = self.step(self.func, t_current, step_current,
-                                                        y_current, return_variables=True)
+                energy_meter = getattr(self, "energy_meter", None)
+                if energy_meter is not None:
+                    energy_meter.begin_step(step_current, self.__class__.__name__)
+                try:
+                    y_current, error, variables = self.step(
+                        self.func, t_current, step_current,
+                        y_current, return_variables=True)
+                except Exception:
+                    if energy_meter is not None:
+                        energy_meter.cancel_step()
+                    raise
+                if energy_meter is not None:
+                    energy_meter.accept_step()
                 if getattr(self, "tc_context", None) is not None:
                     y_current = self.addi_noisy_update_and_proj(h=abs(step_current), y_current=y_current)
                     self.tc_context.accepted()

@@ -58,10 +58,10 @@ def save_latest(trainer, epoch, history):
         rng=dict(python=random.getstate(), numpy=np.random.get_state(),
                  torch=torch.get_rng_state(),
                  cuda=torch.cuda.get_rng_state_all() if torch.cuda.is_initialized() else None),
-        loader_generators={name: loader.generator.get_state()
+        loader_generators={name: generator.get_state()
                            for name in ('train_dataloader', 'val_dataloader')
                            if (loader := getattr(trainer, name, None)) is not None
-                           and loader.generator is not None})
+                           and (generator := getattr(loader, 'generator', None)) is not None})
     path = latest_path(trainer)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix='.latest-', dir=os.path.dirname(path))

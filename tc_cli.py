@@ -18,6 +18,8 @@ def add_tc_arguments(parser):
     options=dict(tc_nonidealities=(boolean,False),tc_covariance_table=(str,None),tc_conv_method=(str,'loop'),
         tc_curve_sampling=(str,'histogram'),
         measured_pooling_curve_path=(str,None),measured_pooling_nominal_R=(float,None),
+        measure_coupler_energy=(boolean,False),coupler_supply_voltage=(float,1.3),
+        tc_coupler_energy_path=(str,None),
         spin_variation_mean=(float,1.0),
         tc_noise_reference_R=(float,50e3),tc_asd_reference_p=(float,.6e-12),
         tc_fb_asd_path=(str,str(Path(__file__).parent/'hardware_data/coupler_asd_vs_freq.csv')),
@@ -46,6 +48,12 @@ def validate_tc(args, inference=False):
         raise ValueError('tc_conv_method must be loop, grouped or shared.')
     if args.tc_curve_sampling not in ('histogram','uniform'):
         raise ValueError('tc_curve_sampling must be histogram or uniform.')
+    if args.measure_coupler_energy and not inference:
+        raise ValueError('Coupler-energy measurement is inference-only.')
+    if args.measure_coupler_energy and args.ode_block != 'ODEXInitFFFB':
+        raise ValueError('Coupler-energy measurement currently supports one-state ODEXInitFFFB.')
+    if args.measure_coupler_energy and args.coupler_supply_voltage <= 0:
+        raise ValueError('coupler_supply_voltage must be positive.')
     if args.ode_block not in ('ODEXInitFFFB','S2NoisyIYAsXZAs0'):
         raise ValueError('TC requires the ordinary one-/two-state block, not toggle/switched.')
     if args.weight_quant_factor_bits is not None or args.enob is not None:
