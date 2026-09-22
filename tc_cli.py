@@ -52,8 +52,6 @@ def validate_tc(args, inference=False):
         raise ValueError('Coupler-energy measurement is inference-only.')
     if args.measure_coupler_energy and args.ode_block != 'ODEXInitFFFB':
         raise ValueError('Coupler-energy measurement currently supports one-state ODEXInitFFFB.')
-    if args.measure_coupler_energy and args.coupler_supply_voltage <= 0:
-        raise ValueError('coupler_supply_voltage must be positive.')
     if args.ode_block not in ('ODEXInitFFFB','S2NoisyIYAsXZAs0'):
         raise ValueError('TC requires the ordinary one-/two-state block, not toggle/switched.')
     if args.weight_quant_factor_bits is not None or args.enob is not None:

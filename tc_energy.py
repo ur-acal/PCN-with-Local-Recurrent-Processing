@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import math
 from pathlib import Path
 
 import torch
@@ -81,9 +80,8 @@ class _LayerTotals:
 class TCCouplerEnergyMeter:
     """One-layer accepted-step RK quadrature; never part of solver state."""
 
-    def __init__(self, layer, supply_voltage, totals):
+    def __init__(self, layer, totals):
         self.layer = int(layer)
-        self.supply_voltage = float(supply_voltage)
         self.totals = totals
         self._solving = False
         self._step_active = False
@@ -135,17 +133,16 @@ class TCCouplerEnergyMeter:
         elif previous != sites:
             raise RuntimeError("Physical coupler-site count changed between batches.")
 
-        current = getattr(module, "_tc_last_coupler_current", None)
-        module._tc_last_coupler_current = None
-        if current is None:
+        power = getattr(module, "_tc_last_coupler_power", None)
+        module._tc_last_coupler_power = None
+        if power is None:
             raise RuntimeError(
-                "Coupler current was not recorded by the preceding expanded MVM.")
+                "Coupler power was not recorded by the preceding expanded MVM.")
         with torch.no_grad():
             if stage == "FB":
-                self._stage_power.append(self.supply_voltage * current)
+                self._stage_power.append(power)
             else:
-                self._stage_power[-1] = (
-                    self._stage_power[-1] + self.supply_voltage * current)
+                self._stage_power[-1] = self._stage_power[-1] + power
 
     def accept_step(self):
         if not self._step_active:
@@ -194,16 +191,14 @@ class TCCouplerEnergyMeter:
 
 class TCCouplerEnergyStudy:
     def __init__(self, supply_voltage=1.3):
-        supply_voltage = float(supply_voltage)
-        if not math.isfinite(supply_voltage) or supply_voltage <= 0:
-            raise ValueError("Coupler supply voltage must be positive and finite.")
-        self.supply_voltage = supply_voltage
+        # Legacy argument accepted for unchanged launch commands; power now
+        # uses the individual spin voltage: P = |V_spin|^2 / R_eff(V_spin).
         self.layers = {}
 
     def meter(self, layer):
         layer = int(layer)
         totals = self.layers.setdefault(layer, _LayerTotals())
-        return TCCouplerEnergyMeter(layer, self.supply_voltage, totals)
+        return TCCouplerEnergyMeter(layer, totals)
 
     def summary(self):
         if not self.layers or any(v.samples == 0 for v in self.layers.values()):
@@ -231,7 +226,7 @@ class TCCouplerEnergyStudy:
                 fb_physical_coupler_sites=int(totals.fb_sites or 0)))
         average_time = coupler_site_time_s / total_sites
         return dict(
-            supply_voltage_V=self.supply_voltage,
+            power_model="spin_voltage_squared_over_resistance",
             samples=samples,
             average_energy_per_sample_J=average_energy_J,
             average_coupler_power_W=average_energy_J / coupler_site_time_s,
@@ -260,7 +255,7 @@ def enable_tc_coupler_energy(model, supply_voltage=1.3):
                 raise TypeError(
                     "Coupler-energy measurement requires TC per-coupler R(V) curves.")
             module._tc_measure_coupler_energy = True
-            module._tc_last_coupler_current = None
+            module._tc_last_coupler_power = None
         block._tc_energy_meter = study.meter(getattr(block, "layer_idx", index))
     return study
 

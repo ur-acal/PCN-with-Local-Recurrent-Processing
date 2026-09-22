@@ -245,12 +245,12 @@ class ODEBlockPC(nn.Module):
                 meta = module.meta
                 h = (source.shape[-2]+2*meta['padding']-meta['ker_h'])//meta['stride']+1
                 w = (source.shape[-1]+2*meta['padding']-meta['ker_w'])//meta['stride']+1
-                return torch.sparse.mm(clean, ones.flatten().view(-1,1)).view(1,meta['out_chan'],h,w)
+                return torch.sparse.mm(clean, ones.flatten().view(-1,1)).view(1,meta['out_chan'],h,w).clamp_min(0.0)
             weight = module.weight.detach().abs()
             if isinstance(module, nn.ConvTranspose2d):
                 return F.conv_transpose2d(ones, weight, None, module.stride, module.padding,
-                                         module.output_padding, module.groups, module.dilation)
-            return F.conv2d(ones, weight, None, module.stride, module.padding, module.dilation, module.groups)
+                                         module.output_padding, module.groups, module.dilation).clamp_min(0.0)
+            return F.conv2d(ones, weight, None, module.stride, module.padding, module.dilation, module.groups).clamp_min(0.0)
 
     def _tc_spin_generator(self, ref, stage):
         return self._tc_generator(ref, 'spin:'+stage, self._tc_noise_cfg['spin_variation_seed'])
@@ -1283,7 +1283,7 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
             state.shape, device=state.device, dtype=state.dtype,
             generator=self._coupler_noise_generator(state))
         duration = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
-        level_sum = coupler_level_sum.to(device=state.device, dtype=state.dtype)
+        level_sum = coupler_level_sum.to(device=state.device, dtype=state.dtype).clamp_min(0.0)
         scale = self.coupler_noise_p / self._stage_capacitance(stage)
         return scale * (duration * level_sum / float(self.q_hi)).sqrt() * normal
 

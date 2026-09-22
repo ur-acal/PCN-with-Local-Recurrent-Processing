@@ -20,18 +20,20 @@ class TCEnergyTests(unittest.TestCase):
         return package.__class__(
             **{**package.__dict__, "factor": torch.zeros_like(package.factor)})
 
-    def test_expanded_current_and_programmed_zero_site_count(self):
+    def test_expanded_power_and_programmed_zero_site_count(self):
         module = expanded(self.package())
         source = torch.linspace(-.08, .08, 18, dtype=torch.float64).reshape(2, 1, 3, 3)
+        reference = module(source)
         module._tc_measure_coupler_energy = True
-        module(source)
-        actual = module._tc_last_coupler_current
+        measured = module(source)
+        torch.testing.assert_close(measured, reference, rtol=0, atol=0)
+        actual = module._tc_last_coupler_power
         flat = source.reshape(2, -1).t()
         expected = torch.zeros(2, dtype=source.dtype)
         for edge, value in enumerate(module.mat.values()):
             if value != 0:
                 resistance = module.R / value.abs()
-                expected += flat[module.mat.col_indices()[edge]].abs() / resistance
+                expected += flat[module.mat.col_indices()[edge]].square() / resistance
         torch.testing.assert_close(actual, expected)
         self.assertEqual(physical_coupler_sites(module), module.mat.values().numel())
         self.assertGreater((module.mat.values() == 0).sum().item(), 0)
@@ -99,8 +101,8 @@ class TCEnergyTests(unittest.TestCase):
         source = torch.full((2, 1, 3, 3), .05, dtype=torch.float64)
         module._tc_measure_coupler_energy = True
         module(source)
-        one_stage_current = module._tc_last_coupler_current.clone()
-        module._tc_last_coupler_current = None
+        one_stage_power = module._tc_last_coupler_power.clone()
+        module._tc_last_coupler_power = None
         physical_duration = 1e-9
         overshooting_step = 1.075e-9
         with torch.no_grad():
@@ -114,7 +116,7 @@ class TCEnergyTests(unittest.TestCase):
             meter.accept_step()
             meter.finish_solve()
         summary = study.summary()
-        expected = float((2 * 1.3 * one_stage_current.mean() *
+        expected = float((2 * one_stage_power.mean() *
                           physical_duration).item())
         self.assertAlmostEqual(summary["average_energy_per_sample_J"],
                                expected, places=24)
@@ -125,6 +127,26 @@ class TCEnergyTests(unittest.TestCase):
         study = TCCouplerEnergyStudy()
         with torch.enable_grad(), self.assertRaisesRegex(RuntimeError, "inference-only"):
             study.meter(0).start_solve(1, 1e-9)
+
+    def test_legacy_supply_voltage_does_not_affect_energy(self):
+        summaries = []
+        for voltage in (1.3, 0., 5.):
+            study = TCCouplerEnergyStudy(supply_voltage=voltage)
+            meter = study.meter(0)
+            module = expanded(self.package())
+            with torch.no_grad():
+                meter.start_solve(1, 2e-9)
+                meter.begin_step(2e-9, "Euler")
+                for stage in ("FB", "FF"):
+                    module._tc_last_coupler_power = torch.tensor([3e-6], dtype=torch.float64)
+                    meter.observe(stage, module)
+                meter.accept_step()
+                meter.finish_solve()
+            summaries.append(study.summary())
+        self.assertEqual(summaries[0], summaries[1])
+        self.assertEqual(summaries[0], summaries[2])
+        self.assertAlmostEqual(summaries[0]["average_energy_per_sample_J"],
+                               2 * 3e-6 * 2e-9, places=24)
 
     def test_solver_observer_is_passive_and_counts_only_accepted_duration(self):
         class Observer:
