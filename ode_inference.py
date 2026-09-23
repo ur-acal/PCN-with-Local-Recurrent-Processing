@@ -686,7 +686,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
             ))
 
 
-def run_ode_inference():
+def run_ode_inference(linear_study=None):
     args = parse_args()
     args.input_quant_bits, args.center_student_input = resolve_preprocessing(
         args.model_dir, args.input_quant_bits, args.center_student_input)
@@ -1054,6 +1054,8 @@ def run_ode_inference():
                         torch.manual_seed(trial_data_seed)
                         if torch.cuda.is_available():
                             torch.cuda.manual_seed_all(trial_data_seed)
+                    if linear_study is not None:
+                        linear_study.start(net_, args, t)
                     pbar = tqdm(enumerate(test_dataloader), total=len(test_dataloader), disable=False)
                     for batch_idx, (inputs, targets) in pbar:
                         inputs, targets = inputs.to(device), targets.to(device)
@@ -1062,6 +1064,8 @@ def run_ode_inference():
                             if torch.isnan(output_tensor).any():
                                 logging.warning("=====> Output tensor contains nan values. <=====")
 
+                        if linear_study is not None:
+                            linear_study.record(batch_idx, targets, output_tensor)
                         # Get the predicted class
                         _, predicted = torch.max(output_tensor, 1)
                         total += targets.size(0)
@@ -1075,6 +1079,8 @@ def run_ode_inference():
 
                     # Calculate the accuracy
                     accuracy = 100 * correct / total
+                    if linear_study is not None:
+                        linear_study.finish(accuracy)
                     if energy_study is not None:
                         from tc_energy import (append_tc_coupler_energy,
                                                print_tc_coupler_energy)

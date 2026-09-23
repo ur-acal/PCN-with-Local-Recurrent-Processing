@@ -156,6 +156,9 @@ mkdir -p logs/scheduler_slurm
 echo Scheduler PID: $!
 ```
 
+Sample 2-trial "FS_V2_T1" corner run -> 58.73%
+results/coupler_full_range_CiFAIR100_qf1_noENOB_zOvery1_relu0906_fixed_FS_V2_T1_2trials/FS_V2_T1.log
+
 ReLU and coupler assignments are sampled from the selected corner and held
 fixed for each dataset trial, then resampled for the next trial. Pooling uses
 the same selected coupler source. The checkpoint loaded is `_best_ckpt.pth`
@@ -187,6 +190,87 @@ the explicit fixed override. It runs pretraining then FT, without automatic
 post-FT ablation. Checkpoints use a timestamped run root printed in the log.
 For 4/5/4 depths, change only STAGE_DEPTHS. The old compatibility script
 `local_cifar100_c7_14_28_relu0906.sh` calls this same pipeline.
+
+## Final linear layer study
+
+The persistent diagnostic runs one full Level-3 test trial using the actual
+inference command saved by the MC45 launcher. Its default reference is the
+main model's FS_V2_T1 per-spin run (0906 adaptive offset enabled). It changes
+only the trial count to one and adds passive recording. It calls the normal
+`ode_inference.run_ode_inference` implementation, including its data loader,
+hardware sampling, pooling, and accuracy loop.
+
+```bash
+conda activate scanbase
+bash diagnostic_scripts/run_study_final_linear.sh
+```
+
+Optional shell overrides: `REFERENCE_LOG` selects another MC45 corner log,
+`OUTPUT_DIR` selects the output directory, and `BATCH_INDEX` selects the one
+saved batch (zero-based, default 0). The log must contain its `COMMAND:` line.
+Only use trusted run logs: their arguments are passed to inference.
+
+After a completed run, regenerate both PDFs without inference:
+
+```bash
+PLOT_ONLY=true DROP_PP=1 bash diagnostic_scripts/run_study_final_linear.sh
+```
+
+`DROP_PP` is the requested potential accuracy loss in percentage points
+(default 1). It also works during a full inference run. Plot-only mode reads
+`margin_data.npz`: one signed `margin` and Boolean `correct` flag per test
+sample, plus the scalar `mean_absolute_logit`. Full-test logits are not saved.
+
+Pinned artifacts under `results/final_linear_study/pinned_FS_V2_T1/`:
+
+Completed on 2026-09-22: 10,000 samples, 58.76% accuracy. Every logged batch
+accuracy matches the original uninstrumented trial. The saved batch's NumPy
+linear reconstruction has maximum absolute error 3.8146973e-6.
+The margin-saving rerun reproduced 58.76%. With `DROP_PP=1`, the marked
+threshold is 0.1350955963134766 raw logit units: 100 correct samples are
+vulnerable, giving potential remaining accuracy 57.76% (1.701838% of correct
+predictions vulnerable).
+
+- [One-batch NumPy archive](../results/final_linear_study/pinned_FS_V2_T1/linear_batch.npz).
+- [Five-statistic summary table](../results/final_linear_study/pinned_FS_V2_T1/summary.md).
+- [Signed-margin histogram](../results/final_linear_study/pinned_FS_V2_T1/signed_margin_histogram.pdf).
+- [Two-curve threshold sweep with accuracy and drop markers](../results/final_linear_study/pinned_FS_V2_T1/threshold_sweep.pdf).
+- [1 pp marker version](../results/final_linear_study/pinned_FS_V2_T1/threshold_sweep_drop1pp.pdf), threshold 0.1350955963134766.
+- [5 pp marker version](../results/final_linear_study/pinned_FS_V2_T1/threshold_sweep_drop5pp.pdf), threshold 0.684863567352295.
+- [Saved full-test margins](../results/final_linear_study/pinned_FS_V2_T1/margin_data.npz).
+
+The archive contains `linear_input` [batch, features], `linear_output`
+[batch, classes], `weight` [classes, features], `bias` [classes], `labels`
+[batch], and `sample_indices` [batch] (positions in test-loader order).
+These are the actual linear-layer input, raw output, and parameters during
+the selected batch. No softmax or centering is applied.
+
+```python
+import numpy as np
+with np.load("results/final_linear_study/pinned_FS_V2_T1/linear_batch.npz") as data:
+    logits = data["linear_input"] @ data["weight"].T + data["bias"]
+    np.testing.assert_allclose(logits, data["linear_output"], rtol=1e-4, atol=1e-5)
+    predictions = data["linear_output"].argmax(axis=1)
+    labels = data["labels"]
+```
+
+Full-test logits are kept only in memory. The summary reports accuracy, mean
+absolute raw logit, and mean signed margins for all/correct/incorrect samples.
+Margin is true-class logit minus maximum incorrect-class logit. The sweep retains
+two curves, both as percentages of the entire test set: correct predictions
+with margin < threshold, and all predictions with absolute margin < threshold.
+The first curve measures potential accuracy loss if all vulnerable correct
+predictions flip, not expected loss under a specified noise distribution.
+The current accuracy is a horizontal reference line. A dot and dashed guides
+mark the configurable drop on the first curve, with threshold and drop percentage labeled
+at the axes. `threshold_marker.json` records the exact threshold and drop.
+Each plot-only call also preserves a `threshold_sweep_drop{DROP_PP}pp.pdf`
+and corresponding marker JSON, so different markers can coexist. Numeric
+markers appear only at the axes; the legend says "Current accuracy".
+The threshold is just above the selected margin (strict inequality); tied
+margins can make the attainable drop exceed the request, which is reported.
+Exact ties in classification follow the actual argmax prediction.
+`run_config.json` and `reference_command.txt` preserve provenance.
 
 ## Operational notes
 

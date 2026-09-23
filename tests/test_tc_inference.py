@@ -77,6 +77,23 @@ class TCInferenceTests(unittest.TestCase):
         zeros=codes==0
         self.assertTrue(torch.isinf(expected[zeros]).all())
 
+    def test_curve_normalization_reuses_sample_storage(self):
+        p = self.package()
+        original_sample = type(p).sample
+        captured = {}
+
+        def sample(package, *args, **kwargs):
+            result = original_sample(package, *args, **kwargs)
+            captured['tensor'] = result
+            captured['expected'] = result.clone() / 1e4
+            return result
+
+        with patch.object(type(p), 'sample', new=sample):
+            m = expanded(p)
+        actual = m.nonlinear_R_curve_gaussian_R_normalized
+        self.assertEqual(actual.data_ptr(), captured['tensor'].data_ptr())
+        torch.testing.assert_close(actual, captured['expected'], rtol=0, atol=0)
+
     def test_validator_wires_both_convolutions_and_cache_has_no_realization(self):
         with tempfile.TemporaryDirectory() as directory:
             samples=[]

@@ -552,7 +552,10 @@ class MVMConv(nn.Module):
                                     chunk_size=self.nonlinear_R_curve_edge_chunk_size)
             # Existing interpolation multiplies by nominal_R. Normalize only
             # for that interface, not by each code's mean or nominal value.
-            self.nonlinear_R_curve_gaussian_R_normalized = curves.to(self.mat) / self.R
+            # sample() returns an owned tensor; reuse its storage rather than
+            # retaining a second full per-edge curve array during normalization.
+            curves = curves.to(self.mat)
+            self.nonlinear_R_curve_gaussian_R_normalized = curves.div_(self.R)
             return self.nonlinear_R_curve_gaussian_R_normalized
         n_groups = self.nonlinear_R_curve_group_count
         n_points = self.nonlinear_R_curve_gaussian_v_grid.numel()

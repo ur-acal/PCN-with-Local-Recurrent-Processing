@@ -1017,3 +1017,42 @@ def wrn_40_4_cifar(pretrained: bool = False, num_classes: int = 10, in_chans: in
     if pretrained:
         raise ValueError("No registered pretrained weights for wrn_40_4_cifar.")
     return WideResNetCIFAR(depth=40, widen_factor=4, num_classes=num_classes, in_chans=in_chans, **kwargs)
+
+
+class MNISTResidualCNN(CIFARResNet):
+    """Small MNIST assemblies; block/head computation is inherited unchanged."""
+
+    def __init__(self, extra_block=False, num_classes=10, in_chans=1,
+                 final_dropout_rate=0.25, **kwargs):
+        nn.Module.__init__(self)
+        if in_chans != 1 or num_classes != 10:
+            raise ValueError("The MNIST models require one input channel and ten classes.")
+        self.num_classes, self.in_chans = num_classes, in_chans
+        self.final_dropout_rate = float(final_dropout_rate)
+        self.use_batchnorm, self.conv_bias = False, False
+        self.shortcut_option, self.avgpool_after_add = "A", True
+        self.intermediate_activation = "relu6"
+        self.in_planes = 32
+        self.conv1 = nn.Conv2d(1, 32, 3, padding=1, bias=False)
+        self.bn1 = nn.Identity()
+        self.relu = nn.ReLU6()
+        self.layer1 = self._make_layer(32, 1, 1) if extra_block else nn.Sequential()
+        self.layer2 = self._make_layer(64, 1, 2)
+        self.layer3 = nn.Sequential()
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(64, 10)
+        _init_cifar_model(self)
+
+
+@register_model
+def mnist_cnn3_avgpool(pretrained=False, **kwargs):
+    if pretrained:
+        raise ValueError("MNIST models have no registered pretrained checkpoint.")
+    return MNISTResidualCNN(extra_block=False, **kwargs)
+
+
+@register_model
+def mnist_cnn5_avgpool(pretrained=False, **kwargs):
+    if pretrained:
+        raise ValueError("MNIST models have no registered pretrained checkpoint.")
+    return MNISTResidualCNN(extra_block=True, **kwargs)

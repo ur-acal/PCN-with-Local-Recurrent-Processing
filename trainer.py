@@ -318,6 +318,9 @@ def _resolve_cifar_data_root(img_type: str, input_name: str) -> Path:
 
 
 class TrainerCiFar(object):
+    # Dataset-only extension point; subclasses may supply a non-CIFAR loader.
+    normalize_dataset_name = staticmethod(_normalize_dataset_name)
+
     def __init__(self, model, model_name, save_path,
                  batch_size=512, optim_type="Adam", weight_decay=1e-3,
                  loss_fn=nn.CrossEntropyLoss(), skip_eval_epochs=0,
@@ -381,7 +384,7 @@ class TrainerCiFar(object):
         if self.health_check_batches < 1:
             raise ValueError("health_check_batches must be positive")
         self.img_type = img_type
-        self.dataset_name = _normalize_dataset_name(dataset_name)
+        self.dataset_name = self.normalize_dataset_name(dataset_name)
         self.distill_alpha = distill_alpha
         self.distill_temperature = distill_temperature
         self.distill_method = (distill_method or "none").lower()

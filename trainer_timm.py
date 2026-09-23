@@ -172,7 +172,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         # Optional timm model construction.
         # If caller already passes model=..., this is not needed.
         # ------------------------------------------------------------
-        dataset_name = _normalize_dataset_name(kwargs.get("dataset_name", "cifar10"))
+        dataset_name = self.normalize_dataset_name(kwargs.get("dataset_name", "cifar10"))
         num_classes = 100 if dataset_name == "cifar100" else 10
 
         if timm_model_name is not None:
