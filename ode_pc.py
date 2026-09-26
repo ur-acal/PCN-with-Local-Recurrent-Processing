@@ -71,7 +71,7 @@ class ODEBlockPC(nn.Module):
 
     def __init__(self, pc_conv: Union[PCConvNoisy, PCConv], noise_level=0.0, method="dopri5", t_end=None, t_step=None,
                  tol=1e-3, return_mid=False, init_b=False, sde_noise_type="mul", mismatch_type="mul",
-                 return_init=False, **kwargs):
+                 return_init=False, reuse_accepted_step_training=False, **kwargs):
         super(ODEBlockPC, self).__init__()
         self.noise_level = noise_level
         self.tie_weights = pc_conv.tie_weights
@@ -134,7 +134,10 @@ class ODEBlockPC(nn.Module):
 
         self.option_aca = {"t0": self.integration_time[0], "t1": self.integration_time[-1],
                            "t_eval": self.integration_time.tolist(), "rtol": self.tol, "atol": self.tol,
-                           "h": t_step, "method": self.method, "noise_type": self.sde_noise_type}
+                           "h": t_step, "method": self.method, "noise_type": self.sde_noise_type,
+                           "reuse_accepted_step_training": reuse_accepted_step_training,
+                           "accepted_step_reuse_safe": getattr(
+                               self, "accepted_step_reuse_safe", True)}
 
     def _transfer_reg_buff(self, pc_conv):
         for _name, _val in pc_conv.named_buffers():

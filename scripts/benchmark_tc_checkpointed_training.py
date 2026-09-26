@@ -1,15 +1,24 @@
-"""Dense TC grouped-convolution activation-checkpointing timing, no diagnostic hooks.
-All-on defaults reproduce the TC training nonideality recipe. No optimizer updates.
+"""Dense TC training benchmark for checkpointing and accepted-step reuse.
+
+All-on defaults reproduce the TC training nonideality recipe. No optimizer
+updates are performed.
 """
-import argparse, collections, functools, json, logging, sys, time, types
+import argparse, collections, json, logging, pickle, sys, time, types
 from pathlib import Path
-sys.path.insert(0, '/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 import torch, h5py, numpy as np
 from inference_utils import load_and_prepare_model
-from ode_pc import ODEXInitFFFB, QATWrapper1State
+from ode_pc import (ODEXInitFFFB, QATWrapper1State, QATWrapper2State,
+                    S2NoisyIYAsXZAs0)
 from pc_conv import PCConvReLU6Noisy, PCConvReLU6
 p=argparse.ArgumentParser()
 p.add_argument('--batch',type=int,default=128)
+p.add_argument('--memory-fraction',type=float,default=.75)
+p.add_argument('--checkpoint',type=Path,help='Override the pinned legacy checkpoint.')
+p.add_argument('--state',type=int,choices=(1,2),default=1)
+p.add_argument('--input-kind',choices=('scangfi','rgb'),default='scangfi')
+p.add_argument('--method',choices=('rk12','rk23','dopri5'),default='dopri5')
 p.add_argument('--mode',choices=['clean','loop','grouped','all','legacy'],default='all')
 p.add_argument('--output',required=True)
 p.add_argument('--repeats',type=int,default=5)
@@ -27,9 +36,16 @@ p.add_argument('--effects', help='Explicit comma-separated TC effects: nonlinear
 p.add_argument('--legacy-mismatch',type=float,default=.25)
 p.add_argument('--reference-correction',action='store_true',help='Diagnostic prior shared correction, for matched optimization benchmarks.')
 p.add_argument('--compare-correction',action='store_true',help='Alternate optimized/prior correction in one process.')
+p.add_argument('--training-step-reuse',action='store_true',help='Retain the accepted adaptive-training candidate instead of replaying it.')
+p.add_argument('--compare-training-step-reuse',action='store_true',help='Alternate baseline/reuse adaptive training in one process.')
 p.add_argument('--save-final-tensors',action='store_true',help='Diagnostic final logits and parameter gradients.')
 
 a=p.parse_args()
+if sum((a.compare_sampling, a.compare_correction,
+        a.compare_training_step_reuse)) > 1:
+ p.error('Choose only one --compare-* option per benchmark.')
+effective_conv_method=(a.conv_method or
+ ('grouped' if a.mode=='grouped' else 'shared' if a.mode=='all' else 'loop'))
 if a.reference_correction or a.compare_correction:
  import tc_shared_correction
  optimized_correction=tc_shared_correction.shared_correction
@@ -50,19 +66,26 @@ if effects-set(('nonlinear','spin','summing','coupler','relu','pooling')):
 if a.mode=='legacy' and effects:p.error('Legacy mode cannot enable TC effects')
 logging.disable(logging.CRITICAL)
 torch.manual_seed(107);torch.cuda.manual_seed_all(107)
-torch.cuda.set_per_process_memory_fraction(.75)
+torch.cuda.set_per_process_memory_fraction(a.memory_fraction)
 torch.backends.cudnn.benchmark=False
 torch.backends.cudnn.deterministic=True
 torch.backends.cuda.matmul.allow_tf32=False
 torch.backends.cudnn.allow_tf32=False
 name='TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP'
+checkpoint_root=REPO_ROOT/'saved_ckpt'
+if not checkpoint_root.exists():checkpoint_root=REPO_ROOT.parent/'ScAN-PCN'/'saved_ckpt'
+checkpoint_path=(a.checkpoint.resolve() if a.checkpoint else
+                 checkpoint_root/name/f'{name}_full_param_best_ckpt.pth')
+block_cls=ODEXInitFFFB if a.state==1 else S2NoisyIYAsXZAs0
+wrapper_cls=QATWrapper1State if a.state==1 else QATWrapper2State
 wrappers={}
-model=load_and_prepare_model(f'saved_ckpt/{name}/{name}_full_param_best_ckpt.pth','cuda',
+model=load_and_prepare_model(str(checkpoint_path),'cuda',
  pc_conv_layer=PCConvReLU6 if a.mode=='legacy' else PCConvReLU6Noisy,wrappers=wrappers,
  conv_only=True,fuse_bn=False,noise_level=0.,
- ode_params=dict(ode_block=ODEXInitFFFB,method='dopri5',t_end=1.75,tol=a.tol,n_steps=5),
- ode_wrapper_params=dict(ode_wrapper=QATWrapper1State,tc_nonidealities=a.mode!='legacy',
- tc_conv_method=a.conv_method or ('grouped' if a.mode in ('grouped','all') else 'loop'),tc_curve_sampling=a.curve_sampling,
+ ode_params=dict(ode_block=block_cls,method=a.method,t_end=1.75,tol=a.tol,n_steps=5,
+                 reuse_accepted_step_training=a.training_step_reuse),
+ ode_wrapper_params=dict(ode_wrapper=wrapper_cls,tc_nonidealities=a.mode!='legacy',
+ tc_conv_method=effective_conv_method,tc_curve_sampling=a.curve_sampling,
  R=10e3,R_max=150e3,C=49e-15,v_dd=.1,one_over_q=1,w_bits=5,enob=a.enob,weight_quant_factor_bits=None,thermal_noise=False,
  nonlinear_R='nonlinear' in effects,nonlinear_R_train_mode='none',nonlinear_R_curve_sharing='shared',
  nonlinear_R_table='hardware_data/res_vs_vin_10k_150k.csv',tc_covariance_table='hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv',nonlinear_R_curve_seed=19,
@@ -74,11 +97,22 @@ if 'pooling' in effects:
  from tc_cli import pooling_options
  from measured_pooling import configure_measured_pooling
  pool_args=types.SimpleNamespace(nonlinear_R_table='hardware_data/res_vs_vin_10k_150k.csv',
+     measured_pooling_curve_path='hardware_data/res_vs_vin_10k_150k.csv',
+     measured_pooling_nominal_R=10e3,
      tc_covariance_table='hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv',R=10e3,R_max=150e3)
  configure_measured_pooling(model,wrappers['wrappers'],enable_nonideality=True,seed=4096,**pooling_options(pool_args,wrappers['wrappers']))
-with h5py.File('../cifar-10-data/scanGFI/cifar100_raw.h5') as f:
- idx=np.flatnonzero(~f['train'][:])[a.input_offset:a.input_offset+a.batch]
- x=torch.from_numpy(f['images'][idx]).cuda().clamp(0,1)
+if a.input_kind=='scangfi':
+ with h5py.File(REPO_ROOT.parent/'cifar-10-data/scanGFI/cifar100_raw.h5') as f:
+  idx=np.flatnonzero(~f['train'][:])[a.input_offset:a.input_offset+a.batch]
+  x=torch.from_numpy(f['images'][idx]).cuda().clamp(0,1)
+else:
+ with open(REPO_ROOT.parent/'data/cifar-100-python/train','rb') as f:
+  rgb=pickle.load(f,encoding='bytes')[b'data']
+ idx=np.arange(a.input_offset,a.input_offset+a.batch)
+ x=torch.from_numpy(rgb[idx]).reshape(-1,3,32,32).cuda().float().div_(255)
+ mean=x.new_tensor((0.5071,0.4867,0.4408)).view(1,3,1,1)
+ std=x.new_tensor((0.2675,0.2565,0.2761)).view(1,3,1,1)
+ x=(x-mean)/std
 
 if a.sensitivity_projections:
  from tc_shared_sensitivity import run_sensitivity
@@ -105,16 +139,32 @@ for block in model.PcConvs:
 
 stage_counts=collections.Counter()
 rhs_counts=collections.Counter()
+
+def set_training_step_reuse(enabled):
+ for block in model.PcConvs:
+  for name in ('option_aca','option_init','option_patch'):
+   option=getattr(block,name,None)
+   if option is not None:option['reuse_accepted_step_training']=enabled
+ for wrapper in wrappers.get('wrappers',[]):
+  for name in ('orig_option_aca','orig_option_init','orig_option_patch'):
+   option=getattr(wrapper,name,None)
+   if option is not None:option['reuse_accepted_step_training']=enabled
+
 if a.count_stages:
+ class CountedRHS(torch.nn.Module):
+  def __init__(self,fn):
+   super().__init__()
+   if isinstance(fn,torch.nn.Module):self.fn=fn
+   else:self.__dict__['fn']=fn
+   for name in ('tc_context','energy_meter'):
+    if hasattr(fn,name):setattr(self,name,getattr(fn,name))
+  def forward(self,*args,**kwargs):
+   rhs_counts['grad_enabled' if torch.is_grad_enabled() else 'no_grad']+=1
+   return self.fn(*args,**kwargs)
  for block in model.PcConvs:
   make_original=block._make_ode_fn
   def make_counted(self,*args,_make_original=make_original,**kwargs):
-   fn=_make_original(*args,**kwargs)
-   @functools.wraps(fn)
-   def rhs(*args,**kwargs):
-    rhs_counts['grad_enabled' if torch.is_grad_enabled() else 'no_grad']+=1
-    return fn(*args,**kwargs)
-   return rhs
+   return CountedRHS(_make_original(*args,**kwargs))
   block._make_ode_fn=types.MethodType(make_counted,block)
   original=block._tc_dense_conv
   def counted(self,module,source,curves,_original=original):
@@ -124,17 +174,20 @@ if a.count_stages:
 
 result=dict(batch=a.batch,mode=a.mode,checkpoint_conv=not a.no_checkpoint,
  reference_correction=a.reference_correction,
- conv_method=a.conv_method,curve_sampling=a.curve_sampling,device=torch.cuda.get_device_name(),
- checkpoint_path=f'saved_ckpt/{name}/{name}_full_param_best_ckpt.pth',
- enob=a.enob,tol=a.tol,effects=sorted(effects),legacy_mismatch_std=a.legacy_mismatch if a.mode=='legacy' else None,
+ training_step_reuse=a.training_step_reuse,
+ conv_method=effective_conv_method,curve_sampling=a.curve_sampling,device=torch.cuda.get_device_name(),
+ checkpoint_path=str(checkpoint_path),
+ enob=a.enob,tol=a.tol,method=a.method,state=a.state,input_kind=a.input_kind,
+ effects=sorted(effects),legacy_mismatch_std=a.legacy_mismatch if a.mode=='legacy' else None,
  unrolled=False,teacher=False,optimizer=False,loss='mean squared logits',
- memory_fraction=.75,seed=107,curve_seed=19,hardware_seeds=4096,
+ memory_fraction=a.memory_fraction,seed=107,curve_seed=19,hardware_seeds=4096,
  input_indices=idx.tolist(),input_shape=list(x.shape),rows=[])
 path=Path(a.output);path.parent.mkdir(parents=True,exist_ok=True)
 def save():path.write_text(json.dumps(result,indent=2))
 save()
-for iteration in range((a.repeats+1)*(2 if a.compare_sampling or a.compare_correction else 1)):
- repeat=iteration//2 if a.compare_sampling or a.compare_correction else iteration
+paired=a.compare_sampling or a.compare_correction or a.compare_training_step_reuse
+for iteration in range((a.repeats+1)*(2 if paired else 1)):
+ repeat=iteration//2 if paired else iteration
  correction_mode='reference' if a.reference_correction else 'optimized'
  if a.compare_correction:
   correction_mode=('reference','optimized')[(iteration%2)^(repeat%2)]
@@ -143,11 +196,16 @@ for iteration in range((a.repeats+1)*(2 if a.compare_sampling or a.compare_corre
   sampling=('uniform','histogram')[(iteration%2)^(repeat%2)]
   for block in model.PcConvs:block._tc_curve_sampling=sampling
  else:sampling=a.curve_sampling
+ if a.compare_training_step_reuse:
+  training_step_reuse=bool((iteration%2)^(repeat%2))
+  set_training_step_reuse(training_step_reuse)
+ else:training_step_reuse=a.training_step_reuse
  model.zero_grad(set_to_none=True)
  stage_counts.clear()
  rhs_counts.clear()
  torch.cuda.synchronize();torch.cuda.reset_peak_memory_stats()
- row=dict(repeat=repeat,warmup=repeat==0,phase='forward',sampling=sampling,correction=correction_mode)
+ row=dict(repeat=repeat,warmup=repeat==0,phase='forward',sampling=sampling,
+          correction=correction_mode,training_step_reuse=training_step_reuse)
  try:
   start=time.perf_counter()
   y=runtime_model(x)
@@ -164,7 +222,13 @@ for iteration in range((a.repeats+1)*(2 if a.compare_sampling or a.compare_corre
    row['dense_stage_calls']=dict(stage_counts)
    row['rhs_calls']=dict(rhs_counts)
   if a.save_final_tensors:
-   torch.save(dict(logits=y.detach().cpu(),gradients={n:p.grad.detach().cpu() for n,p in model.named_parameters() if p.grad is not None}),path.with_suffix('.pt'))
+   label=(f'sampling-{sampling}' if a.compare_sampling else
+          f'correction-{correction_mode}' if a.compare_correction else
+          f'reuse-{str(training_step_reuse).lower()}' if a.compare_training_step_reuse
+          else 'result')
+   tensor_path=path.with_name(f'{path.stem}_{label}_repeat-{repeat}.pt')
+   torch.save(dict(logits=y.detach().cpu(),gradients={n:p.grad.detach().cpu() for n,p in model.named_parameters() if p.grad is not None}),tensor_path)
+   row['tensor_path']=str(tensor_path)
   del y
  except torch.OutOfMemoryError as exc:
   row.update(status='OOM',error=str(exc),peak_allocated=torch.cuda.max_memory_allocated(),
@@ -186,6 +250,12 @@ if rows:
       for k in ('forward_seconds','backward_seconds','total_seconds','peak_allocated','peak_reserved')}
       for mode in ('histogram','uniform')}
   save();print(json.dumps(result['by_sampling']),flush=True)
+ if a.compare_training_step_reuse:
+  result['by_training_step_reuse']={str(mode).lower():{k:float(np.median(
+      [r[k] for r in rows if r['training_step_reuse']==mode]))
+      for k in ('forward_seconds','backward_seconds','total_seconds','peak_allocated','peak_reserved')}
+      for mode in (False,True)}
+  save();print(json.dumps(result['by_training_step_reuse']),flush=True)
 
 if a.sampling_repeats:
  # Includes detached code mapping, histogram (where selected), categorical

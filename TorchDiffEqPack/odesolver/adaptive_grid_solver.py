@@ -241,16 +241,22 @@ class AdaptiveGridSolver(ODESolver):
 
         self.before_integrate(y0, t_eval)
 
-        # TC inference has no graph to rebuild. Reuse only the final accepted
-        # trial; keep replay for training, stateful reloads and energy metering
-        # (whose observer is deliberately inactive during step-size search).
-        reuse_accepted = (
-            not torch.is_grad_enabled() and not reload_state
-            and getattr(self, 'tc_context', None) is not None
-            and getattr(self, 'energy_meter', None) is None
-            and isinstance(self, Dopri5)
+        # Inference can reuse the final accepted TC trial directly. Training
+        # may opt in for any solver whose candidate is also a valid state
+        # advancement. Rejected candidate graphs are released before retrying.
+        can_reuse_accepted = (
+            not reload_state
+            and getattr(self, 'energy_meter', None) is None)
+        reuse_accepted_inference = (
+            can_reuse_accepted and getattr(self, 'tc_context', None) is not None
+            and isinstance(self, Dopri5) and not torch.is_grad_enabled()
             and getattr(self, 'tc_reuse_accepted_step', True))
-
+        reuse_accepted_training = (
+            can_reuse_accepted and torch.is_grad_enabled()
+            and not self.regenerate_graph
+            and getattr(self, 'supports_accepted_step_reuse', False)
+            and getattr(self, 'accepted_step_reuse_safe', True)
+            and getattr(self, 'reuse_accepted_step_training', False))
         is_stiff = False
 
         state0 = self.func.state_dict()
@@ -317,30 +323,60 @@ class AdaptiveGridSolver(ODESolver):
                 #                   Delete redundant computation graph              #
                 #####################################################################
 
-                # detach y in order to avoid extra unused computation graphs
-                with torch.no_grad():
+                if getattr(self, "tc_context", None) is not None:
+                    # TC solves must not let an adaptive trial overshoot the
+                    # physical interval represented by this solve.
+                    h_new = min(float(h_new), float(abs(self.t1-t_current)))
+                # The legacy controller mutates a tensor-valued automatically
+                # selected first step before replaying it. Preserve that
+                # behavior when it occurs; subsequent proposals are scalars
+                # and can use accepted-candidate reuse normally.
+                reuse_training_candidate = (
+                    reuse_accepted_training and not torch.is_tensor(h_new))
+                h_current = h_new  # .clone().detach()
 
-                    y_detach = tuple( Variable(_y_current.clone().detach(), requires_grad = False) for _y_current in y_current)
-
-                    if getattr(self, "tc_context", None) is not None:
-                        # adapt_stepsize mutates tensor h_abs in place; a Python
-                        # scalar keeps that proposal separate from accepted h.
-                        h_new = min(float(h_new), float(abs(self.t1-t_current)))
-                    h_current = h_new  # .clone().detach()
-
-                    _y_new, _error, _variables = self.step(self.func, t_current, h_current * self.time_direction,
-                                                           y_detach, return_variables=True)
-
-                    h_new, step_accepted, step_rejected = self.adapt_stepsize(y_detach, _y_new, _error, h_current,
-                                                               step_accepted=step_accepted, step_rejected=step_rejected)
-
-                    if not step_accepted:
-                        if abs(h_new - h_current) / (h_current) < self.step_dif_ratio:
+                if reuse_training_candidate:
+                    # Build a graph for the candidate so an accepted trial can
+                    # become the training step without replay. Error control is
+                    # deliberately detached from that graph.
+                    _y_new, _error, _variables = self.step(
+                        self.func, t_current, h_current * self.time_direction,
+                        y_current, return_variables=True)
+                    with torch.no_grad():
+                        h_new, step_accepted, step_rejected = self.adapt_stepsize(
+                            tuple(value.detach() for value in y_current),
+                            tuple(value.detach() for value in _y_new),
+                            tuple(value.detach() for value in _error), h_current,
+                            step_accepted=step_accepted, step_rejected=step_rejected)
+                        if (not step_accepted
+                                and abs(h_new-h_current)/h_current < self.step_dif_ratio):
                             step_accepted = True
+                    if not step_accepted:
+                        # Assignment to the next candidate happens only after
+                        # its RHS is evaluated, so release these references now
+                        # rather than briefly holding two candidate graphs.
+                        del _y_new, _error, _variables
+                else:
+                    # detach y in order to avoid extra unused computation graphs
+                    with torch.no_grad():
+                        y_detach = tuple(Variable(_y_current.clone().detach(), requires_grad=False)
+                                         for _y_current in y_current)
+                        _y_new, _error, _variables = self.step(
+                            self.func, t_current, h_current * self.time_direction,
+                            y_detach, return_variables=True)
 
-                    # print(h_new)
+                        h_new, step_accepted, step_rejected = self.adapt_stepsize(
+                            y_detach, _y_new, _error, h_current,
+                            step_accepted=step_accepted, step_rejected=step_rejected)
 
-                    delete_local_computation_graph(flatten([y_detach, _y_new, _error] + list(_variables)))
+                        if not step_accepted:
+                            if abs(h_new-h_current)/h_current < self.step_dif_ratio:
+                                step_accepted = True
+
+                        # print(h_new)
+
+                        delete_local_computation_graph(
+                            flatten([y_detach, _y_new, _error] + list(_variables)))
 
                 # restore state dict to before integrate
                 if reload_state:
@@ -361,7 +397,7 @@ class AdaptiveGridSolver(ODESolver):
                 energy_meter.begin_step(
                     h_current * self.time_direction, self.__class__.__name__)
             try:
-                if reuse_accepted:
+                if reuse_accepted_inference or reuse_training_candidate:
                     y_current, error, variables = _y_new, _error, _variables
                 else:
                     y_current, error, variables = self.step(
@@ -465,6 +501,7 @@ class RK12(AdaptiveGridSolver):
     Constants follow wikipedia
     """
     order = 1
+    supports_accepted_step_reuse = True
 
     def step(self, func, t, dt, y, return_variables=False):
         k1 = func(t, y)
@@ -482,6 +519,7 @@ class RK23(AdaptiveGridSolver):
     Constants follow scipy implementation, https://en.wikipedia.org/wiki/List_of_Runge%E2%80%93Kutta_methods#Kutta's_third-order_method
     """
     order = 2
+    supports_accepted_step_reuse = True
 
     P = np.array([[1, -4 / 3, 5 / 9],
                   [0, 1, -2 / 3],
@@ -512,6 +550,7 @@ class Dopri5(AdaptiveGridSolver):
     Dormand-Prince's method
     """
     order = 4
+    supports_accepted_step_reuse = True
     n_stages = 6
     P = np.array([
         [1, -8048581381 / 2820520608, 8663915743 / 2820520608,

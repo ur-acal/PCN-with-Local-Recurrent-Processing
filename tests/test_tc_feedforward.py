@@ -51,6 +51,28 @@ class TCFeedForwardTests(unittest.TestCase):
             torch.testing.assert_close(xa.grad,xb.grad)
             torch.testing.assert_close(a.conv1.weight.grad,b.conv1.weight.grad)
 
+    def test_training_step_reuse_reaches_direct_cnn_solver(self):
+        model = block(reuse_accepted_step_training=True)
+        x = torch.rand(2, 2, 3, 3, dtype=torch.float64) * .01
+        with patch('physical_feedforward_tc.odesolve',
+                   side_effect=lambda _rhs, state, _options: state) as solve:
+            model(x)
+        self.assertTrue(solve.call_args.args[2]['reuse_accepted_step_training'])
+
+    def test_training_step_reuse_matches_direct_cnn_gradients(self):
+        baseline = block(reuse_accepted_step_training=False)
+        reused = copy.deepcopy(baseline)
+        reused.reuse_accepted_step_training = True
+        x0 = (torch.rand(2, 2, 3, 3, dtype=torch.float64) * .01).requires_grad_()
+        x1 = x0.detach().clone().requires_grad_()
+        y0, y1 = baseline(x0), reused(x1)
+        y0.sum().backward()
+        y1.sum().backward()
+        torch.testing.assert_close(y0, y1, rtol=0, atol=0)
+        torch.testing.assert_close(x0.grad, x1.grad, rtol=0, atol=0)
+        torch.testing.assert_close(
+            baseline.conv1.weight.grad, reused.conv1.weight.grad, rtol=0, atol=0)
+
     def test_qat_compensation(self):
         a=block(one_shot_conv=True)
         w=TCFeedForwardPhysicalWrapper(a,qat=True).double()
@@ -334,7 +356,8 @@ class TCFeedForwardTests(unittest.TestCase):
             ('pretrain','run_feedforward_cifar_pretrain.sh',train_parser),
             ('ft','run_feedforward_physical_ft.sh',train_parser),
             ('eval','run_feedforward_physical_eval.sh',eval_parser)):
-            env=dict(os.environ, TC_FEEDFORWARD='true', MODEL_NAME='wrn_28_2_cifar_nobn_no_bias_avgpool',
+            env=dict(os.environ, TC_FEEDFORWARD='true', REUSE_ACCEPTED_STEP_TRAINING='true',
+                     MODEL_NAME='wrn_28_2_cifar_nobn_no_bias_avgpool',
                      MODEL_CKPT='/tmp/checkpoint-not-read.pth',IMG_TYPE='rgb',TASK='cifar100')
             result=subprocess.run(['bash','-c',
                 'python() { :; }; export -f python; bash launch_scripts/'+script],
@@ -345,6 +368,7 @@ class TCFeedForwardTests(unittest.TestCase):
                 args=parser()
             self.assertTrue(args.tc_feedforward)
             self.assertFalse(args.one_shot_conv)
+            self.assertTrue(args.reuse_accepted_step_training)
             self.assertEqual(args.R,1e4)
             self.assertEqual(args.C,49e-15)
             self.assertEqual(args.physical_level,2)

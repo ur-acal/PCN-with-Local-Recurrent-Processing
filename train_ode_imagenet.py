@@ -71,6 +71,7 @@ def get_args():
     p.add_argument("--model_name", type=str, default=None,
                    help="Resume from a checkpoint. None means training from scratch.")
     p.add_argument("--ckpt", type=str, default="best")
+    p.add_argument("--output_save_path", type=str, default=None)
 
     p.add_argument("--mem_frac", type=float, default=1.0)
     p.add_argument("--test_only", type=str2bool, default=False)
@@ -104,6 +105,10 @@ def get_args():
     # ------------------------------------------------------------------
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()), default="ODEBlockPC")
     p.add_argument("--method", type=str, default="dopri5")
+    p.add_argument(
+        "--reuse_accepted_step_training", type=str2bool,
+        default=str2bool(os.environ.get("REUSE_ACCEPTED_STEP_TRAINING", "false")),
+        help="Retain accepted adaptive-step candidates and their autograd graph instead of replaying them.")
     p.add_argument("--tol", type=float, default=1e-3)
     p.add_argument("--n_steps", type=float, default=10)
     p.add_argument("--t_end", type=float, default=1.0)
@@ -323,6 +328,7 @@ def main():
     ode_kw = [
         "offset_eps",
         "sde_noise_type",
+        "reuse_accepted_step_training",
         "patch_node",
         "patch_stride",
         "patch_cycle",

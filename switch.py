@@ -904,6 +904,9 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
         self.scale_RHS = True
 
         self.use_cached_patches = use_cached_patches
+        # A cached tensor is created from the first RHS call and then mutated
+        # by later stages. It must not retain a rejected candidate's graph.
+        self.option_aca["accepted_step_reuse_safe"] = not self.use_cached_patches
         if max_pixels is not None:
             assert int(max_pixels) >= 1, "max_pixels must be >= 1."
             self.max_pixels = int(max_pixels)
@@ -1198,6 +1201,12 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
 
 
 class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # This implementation always caches graph-connected reference tensors
+        # inside each RHS closure, independently of use_cached_patches.
+        self.option_aca["accepted_step_reuse_safe"] = False
+
     def _make_ode_fn(self, x, noisy_cu=None, y_ref=None, active_h=None, active_w=None, read_decay=None):
         """
         Build an RHS that updates a chunk of active pixels in parallel, but
@@ -1476,6 +1485,9 @@ class PerturbODEXInitFFFB(ODEXInitFFFBPixelSwitchEfficient):
         **kwargs
     ):
         super().__init__(**kwargs)
+        # This subclass replaces the cached pixel-switch RHS with a stateless
+        # perturbation RHS, so accepted training candidates are reusable.
+        self.option_aca["accepted_step_reuse_safe"] = True
         self.detach_tangent = bool(detach_tangent)
 
     def _compute_correction_efficient(self, y):

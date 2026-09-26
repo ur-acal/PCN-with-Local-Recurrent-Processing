@@ -73,6 +73,10 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, full_traj=Fal
 
     solver.tc_context = getattr(func, "tc_context", None)
     solver.energy_meter = getattr(func, "energy_meter", None)
+    solver.reuse_accepted_step_training = options.get(
+        "reuse_accepted_step_training", False)
+    solver.accepted_step_reuse_safe = options.get(
+        "accepted_step_reuse_safe", True)
     if solver.tc_context is not None:
         solver.noise_type = "addi"
         solver.end_point_mode = options.get("end_point_mode", solver.end_point_mode)

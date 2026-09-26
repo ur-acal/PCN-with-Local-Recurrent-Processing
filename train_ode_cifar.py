@@ -195,6 +195,10 @@ def get_args():
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()),
                         default="ODEBlockPC")
     p.add_argument("--method", type=str, default="dopri5")
+    p.add_argument(
+        "--reuse_accepted_step_training", type=str2bool,
+        default=str2bool(os.environ.get("REUSE_ACCEPTED_STEP_TRAINING", "false")),
+        help="Retain accepted adaptive-step candidates and their autograd graph instead of replaying them.")
     p.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     p.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
@@ -924,7 +928,8 @@ def main():
 
     # convert block to Neural ode
     # Todo: The offset eps in ode_block is currently useless. Need to pass that to the wrapper.
-    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "patch_node", "patch_stride",
+    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "reuse_accepted_step_training",
+                          "patch_node", "patch_stride",
                           "patch_cycle", "patch_pad", "fold_scalar", "n_iters",
                           "toggle_n_cycles", "toggle_time_split", "toggle_fast_path",
                           "toggle_timing_mode", "toggle_y_time", "z_over_y_time",

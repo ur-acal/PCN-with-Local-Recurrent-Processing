@@ -16,7 +16,8 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
 
     def __init__(self, *args, one_shot_conv=False, tc_method='dopri5',
                  tc_tol=1e-6, tc_step_size=None, tc_noise_reference_R=50e3,
-                 tc_covariance_table=None, tc_curve_sampling='histogram', **kwargs):
+                 tc_covariance_table=None, tc_curve_sampling='histogram',
+                 reuse_accepted_step_training=False, **kwargs):
         for key, value in dict(R=1e4, C=49e-15, v_dd=.1,
                                summing_current_p=.6e-12, coupler_noise_p=.6e-12).items():
             kwargs.setdefault(key, value)
@@ -48,6 +49,7 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         self.tc_noise_reference_R = tc_noise_reference_R
         self.tc_covariance_table = tc_covariance_table
         self.tc_curve_sampling = tc_curve_sampling
+        self.reuse_accepted_step_training = reuse_accepted_step_training
         self._tc_generators = {}
         self._tc_samples = {}
 
@@ -132,10 +134,11 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         def rhs(t, v):
             return drift
         rhs.tc_context = context
-        # Same entry point, additive update, projection and accepted-step replay as TC PCN.
+        # Same entry point, additive update, projection and accepted-step handling as TC PCN.
         options = dict(t0=0., t1=float(duration), t_eval=[float(duration)],
                        method=self.tc_method, rtol=self.tc_tol, atol=self.tc_tol,
                        h=self.tc_step_size, eps=eps, noise_type='addi',
+                       reuse_accepted_step_training=self.reuse_accepted_step_training,
                        proj_fn=self.project_state)
         return odesolve(rhs, state, options)
 

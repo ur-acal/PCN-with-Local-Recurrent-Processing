@@ -39,6 +39,17 @@ def odesolve_endtime(func, z0, options, return_solver=False, **kwargs):
     else:
         print('Name of solver not found.')
 
+    solver.tc_context = getattr(func, "tc_context", None)
+    solver.energy_meter = getattr(func, "energy_meter", None)
+    solver.reuse_accepted_step_training = options.get(
+        "reuse_accepted_step_training", False)
+    solver.accepted_step_reuse_safe = options.get(
+        "accepted_step_reuse_safe", True)
+    if solver.tc_context is not None:
+        solver.noise_type = "addi"
+        solver.end_point_mode = options.get(
+            "end_point_mode", solver.end_point_mode)
+
     if return_solver: # return solver
         return solver
     else: # return integrated value
