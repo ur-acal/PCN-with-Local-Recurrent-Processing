@@ -64,7 +64,8 @@ finetune_one_combo_model() { echo "CALL:ft:$2"; [[ "${FAIL_FT:-false}" != true ]
 eval_one_combo_model() { echo "CALL:eval:$2"; }
 '''
         env=dict(os.environ, PATH=str(Path(sys.executable).parent)+':'+os.environ['PATH'],
-            OUTPUT_SAVE_PATH=str(self.root), LOGDIR=str(self.root/'logs'), FIXTURE=self.name,
+            OUTPUT_SAVE_PATH=str(self.root), PRETRAIN_SAVE_PATH=str(self.root),
+            FT_OUTPUT_SAVE_PATH=str(self.root), LOGDIR=str(self.root/'logs'), FIXTURE=self.name,
             EXP='test',SLURM_JOB_ID='fixture',TRAIN_ODE_BLOCK='ODEXInitFFFB',FT_ODE_BLOCK='ODEXInitFFFB',
             INF_ODE_BLOCK='ODEXInitFFFB',FINAL_EVAL_ONLY='true',TASK='cifar10',IMG_TYPE='rgb',
             PCN='PCNetNoBatchNorm',INPUT_QUANT_BITS='none',CENTER_STUDENT_INPUT='false')

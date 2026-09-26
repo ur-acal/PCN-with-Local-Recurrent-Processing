@@ -47,6 +47,9 @@ SAN_BLOCKS="${SAN_BLOCKS//,/+}"
 EXP="${EXP:-no_bn_${PCN}_NODE_search_${TASK}_${IMG_TYPE}_${CIRC_CONF:-NoCirc}_job${SLURM_JOB_ID}_Exp}"
 RUN_TAG="${RUN_TAG:-${EXP_PREFIX:-kdcrd_then_ft}}"
 OUTPUT_SAVE_PATH="${OUTPUT_SAVE_PATH:-./saved_ckpt_runs/${RUN_TAG}}"
+PRETRAIN_SAVE_PATH="${PRETRAIN_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
+FT_OUTPUT_SAVE_PATH="${FT_OUTPUT_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
+FT_TIMM_AUG_LEVEL="${FT_TIMM_AUG_LEVEL:-no_aug}"
 
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"
 
@@ -346,7 +349,7 @@ fi
 echo "Toggle mode=${TOGGLE_MODE}: train=${TRAIN_ODE_BLOCK}, ft=${FT_ODE_BLOCK}, inference=${INF_ODE_BLOCK}"
 echo "Toggle timing=${TOGGLE_TIMING_MODE}: T_y=${TOGGLE_Y_TIME}s, T_z/T_y=${Z_OVER_Y_TIME}, scale_train_recipe=${SCALE_TRAIN_RECIPE}"
 echo "Weight quant factor bits=${WEIGHT_QUANT_FACTOR_BITS}"
-echo "Checkpoint output: run_tag=${RUN_TAG}, path=${OUTPUT_SAVE_PATH}"
+echo "Checkpoint paths: pretrain=${PRETRAIN_SAVE_PATH}, ft=${FT_OUTPUT_SAVE_PATH}"
 echo "FT physical config: R=${R_VAL}, R_max=${R_MAX}, C=${C_VAL}, mismatch=${MISMATCH_LEVEL}"
 echo "FT spin variation=${ENABLE_SPIN_VARIATION} (sigma=${SIGMA_SPIN}); summing-current noise=${ENABLE_SUMMING_CURRENT_NOISE} (p=${SUMMING_CURRENT_P}); coupler noise=${ENABLE_COUPLER_NOISE} (p=${COUPLER_NOISE_P})"
 echo "FT nonlinear-R: enabled=${ENABLE_NONLINEAR_R}, mode=${NONLINEAR_R_TRAIN_MODE}, corners=${NONLINEAR_R_CORNER_RANGE}, table=${NONLINEAR_R_TABLE}, quantity=${NONLINEAR_R_MC_QUANTITY}, sharing=${NONLINEAR_R_CURVE_SHARING}, expanded=${TRAIN_CONV_EXPANDED}"
@@ -440,8 +443,8 @@ run_one_combo () {
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
-    --save_path     "${OUTPUT_SAVE_PATH}" \
-    --output_save_path "${OUTPUT_SAVE_PATH}" \
+    --save_path     "${PRETRAIN_SAVE_PATH}" \
+    --output_save_path "${PRETRAIN_SAVE_PATH}" \
     --optim         "SGD" \
     --timm_trainer  "${IS_TIMM}" \
     --timm_sched    "cosine" \
@@ -509,7 +512,7 @@ run_one_combo () {
 }
 
 # ------------------------ EVAL ONE MODEL ------------------------
-MODEL_DIR="${OUTPUT_SAVE_PATH}"
+MODEL_DIR="${FT_OUTPUT_SAVE_PATH}"
 METHOD="dopri5"
 TOL="1e-6"
 n_bits=5
@@ -750,12 +753,12 @@ finetune_one_combo_model() {
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
-    --save_path     "${MODEL_DIR}" \
-    --output_save_path "${OUTPUT_SAVE_PATH}" \
+    --save_path     "${PRETRAIN_SAVE_PATH}" \
+    --output_save_path "${FT_OUTPUT_SAVE_PATH}" \
     --dataset       "${TASK}" \
     --timm_trainer  "${IS_TIMM}" \
     --timm_sched    "cosine" \
-    --timm_aug_level "no_aug" \
+    --timm_aug_level "${FT_TIMM_AUG_LEVEL}" \
     "${TIMM_RE_ARGS[@]}" \
     --num_classes   "${N_CLASSES}" \
     --ckpt          "${ckpt}" \
@@ -867,7 +870,7 @@ for comb in "${COMBS[@]}"; do
   if [[ "$mode" == ft_only || "$mode" == ft_and_eval ]]; then
     selection=best
     [[ "${FINAL_EVAL_ONLY}" != true ]] || selection=last
-    mn="$(python launch_scripts/find_tc_pretrain.py --root "${OUTPUT_SAVE_PATH}" \
+    mn="$(python launch_scripts/find_tc_pretrain.py --root "${PRETRAIN_SAVE_PATH}" \
       --inp "$inp_str" --out "$out_str" --pool "$pool_str" \
       --stride "${STRIDE[*]}" --kernel "${KERNEL[*]}" \
       --task "$TASK" --img_type "$IMG_TYPE" --block "$TRAIN_ODE_BLOCK" --pcn "$PCN" \

@@ -176,6 +176,7 @@ fi
 WARMUP_FT="${WARMUP_FT:-0}"
 FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
 FT_NUM_EPOCHS="${FT_NUM_EPOCHS:-140}"
+FT_TIMM_AUG_LEVEL="${FT_TIMM_AUG_LEVEL:-no_aug}"
 TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
 DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
 REVIEWKD_WEIGHT="${REVIEWKD_WEIGHT:-1.0}"
@@ -281,6 +282,8 @@ elif [[ "${SWITCH_INF}" == "true" ]]; then
   RUN_TAG+="_switch_inf"
 fi
 OUTPUT_SAVE_PATH="${OUTPUT_SAVE_PATH:-saved_ckpt_runs/${RUN_TAG}}"
+PRETRAIN_SAVE_PATH="${PRETRAIN_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
+FT_OUTPUT_SAVE_PATH="${FT_OUTPUT_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
 SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_${EXP_PREFIX}_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
@@ -647,12 +650,14 @@ submit_chunk() {
   # remains available to explicit non-search launches only.
   sbatch_exports+=",ADAPT_PIL_TEACHER=false"
   sbatch_exports+=",RUN_TAG=${RUN_TAG},OUTPUT_SAVE_PATH=${OUTPUT_SAVE_PATH}"
+  sbatch_exports+=",PRETRAIN_SAVE_PATH=${PRETRAIN_SAVE_PATH},FT_OUTPUT_SAVE_PATH=${FT_OUTPUT_SAVE_PATH}"
   sbatch_exports+=",ODE_BLOCK=${ODE_BLOCK},TOGGLE_MODE=${TOGGLE_MODE}"
   sbatch_exports+=",WARMUP_PRETRAIN=${WARMUP_PRETRAIN},WARMUP_FT=${WARMUP_FT}"
   sbatch_exports+=",FINAL_EVAL_ONLY=${FINAL_EVAL_ONLY}"
   sbatch_exports+=",INPUT_QUANT_BITS=${INPUT_QUANT_BITS},CENTER_STUDENT_INPUT=${CENTER_STUDENT_INPUT}"
   sbatch_exports+=",FT_LEARNING_RATE=${FT_LEARNING_RATE}"
   sbatch_exports+=",FT_NUM_EPOCHS=${FT_NUM_EPOCHS}"
+  sbatch_exports+=",FT_TIMM_AUG_LEVEL=${FT_TIMM_AUG_LEVEL}"
   sbatch_exports+=",TIMM_RE_PROB=${TIMM_RE_PROB}"
   sbatch_exports+=",DISTILL_METHOD=${DISTILL_METHOD},REVIEWKD_WEIGHT=${REVIEWKD_WEIGHT}"
   sbatch_exports+=",REVIEWKD_WARMUP_EPOCHS=${REVIEWKD_WARMUP_EPOCHS},REVIEWKD_NUM_STAGES=${REVIEWKD_NUM_STAGES}"
