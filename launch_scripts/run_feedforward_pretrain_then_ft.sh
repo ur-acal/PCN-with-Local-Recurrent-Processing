@@ -5,6 +5,12 @@ set -eo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+mode="${mode:-default}"
+case "$mode" in default|pretrain_only|ft_only|ft_and_eval) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
+if [[ "$mode" != default && "${TC_FEEDFORWARD:-false}" != true ]]; then
+  echo 'Pipeline modes are supported only for TC feedforward.' >&2
+  exit 2
+fi
 
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
 TASK="${TASK:-cifar100}"
@@ -33,7 +39,13 @@ feedforward_run_stage() {
   source "$1"
 }
 
-feedforward_run_stage ./launch_scripts/run_feedforward_cifar_pretrain.sh "${PRETRAIN_OUTPUT_DIR}"
+if [[ "$mode" == default || "$mode" == pretrain_only ]]; then
+  feedforward_run_stage ./launch_scripts/run_feedforward_cifar_pretrain.sh "${PRETRAIN_OUTPUT_DIR}"
+else
+  # Same stage-default initialization as pretraining, without launching Python.
+  source ./launch_scripts/tc_feedforward_args.sh pretrain
+fi
+if [[ "$mode" == pretrain_only ]]; then exit 0; fi
 
 checkpoint_name="custom_noresize_${TASK}_${MODEL_NAME}"
 checkpoint_selection=best
@@ -48,6 +60,7 @@ fi
 
 export MODEL_CKPT
 feedforward_run_stage ./launch_scripts/run_feedforward_physical_ft.sh "${FT_OUTPUT_DIR}"
+if [[ "$mode" == ft_only ]]; then exit 0; fi
 
 if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
   # Use the same preprocessing inference/suffix logic as training. FT can infer

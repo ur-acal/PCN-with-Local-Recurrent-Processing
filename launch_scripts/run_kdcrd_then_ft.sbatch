@@ -11,6 +11,12 @@
 # Preserve explicit wait/status handling; propagate Python failures through tee.
 set -o pipefail
 source ./launch_scripts/tc_nonideality_args.sh ft || exit 2
+mode="${mode:-default}"
+case "$mode" in default|pretrain_only|ft_only|ft_and_eval) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
+if [[ "$mode" != default && ( "${TC_NONIDEALITIES:-false}" != true || "${TOGGLE_MODE:-none}" != none || "${SWITCH_INF:-false}" != false ) ]]; then
+  echo 'Pipeline modes are supported only for TC nonidealities, not toggle/switch/legacy.' >&2
+  exit 2
+fi
 
 # ---- Conda activation (non-interactive safe) ----
 source activate base
@@ -830,6 +836,8 @@ finetune_one_combo_model() {
 ###############################################################################
 echo "==== PHASE 1: TRAIN (parallel over combos) ===="
 pids=()
+ok=0
+if [[ "$mode" == default || "$mode" == pretrain_only ]]; then
 for comb in "${COMBS[@]}"; do
   run_one_combo "${comb}" "${TRAIN_ODE_BLOCK}" & pids+=($!)
 done
@@ -843,6 +851,8 @@ if (( ok )); then
   exit 1
 fi
 echo "Completed TRAIN phase for ${EXP} (job $SLURM_JOB_ID)."
+fi
+if [[ "$mode" == pretrain_only ]]; then exit 0; fi
 
 ###############################################################################
 # Collect model names from train logs (one per combo)
@@ -854,7 +864,17 @@ for comb in "${COMBS[@]}"; do
   IFS=$'\t' read -r comb_tag params inp_str out_str pool_str <<< "${comb}"
   COMB_TAGS+=( "${comb_tag}" )
   train_log="${LOGDIR}/${comb_tag}/train_${EXP}_${comb_tag}_${TRAIN_ODE_BLOCK}.log"
-  mn="$(extract_model_name "${train_log}")"
+  if [[ "$mode" == ft_only || "$mode" == ft_and_eval ]]; then
+    selection=best
+    [[ "${FINAL_EVAL_ONLY}" != true ]] || selection=last
+    mn="$(python launch_scripts/find_tc_pretrain.py --root "${OUTPUT_SAVE_PATH}" \
+      --inp "$inp_str" --out "$out_str" --pool "$pool_str" \
+      --stride "${STRIDE[*]}" --kernel "${KERNEL[*]}" \
+      --task "$TASK" --img_type "$IMG_TYPE" --block "$TRAIN_ODE_BLOCK" --pcn "$PCN" \
+      --bits "$INPUT_QUANT_BITS" --center "$CENTER_STUDENT_INPUT" --selection "$selection")" || exit 2
+  else
+    mn="$(extract_model_name "${train_log}")"
+  fi
   if [[ -z "$mn" ]]; then
     echo "ERROR: Could not extract model name from ${train_log}; refusing to skip fine-tuning." >&2
     exit 1
@@ -888,6 +908,7 @@ if (( ok )); then
   echo 'ERROR: fine-tuning failed; refusing to launch evaluation.' >&2
   exit 1
 fi
+if [[ "$mode" == ft_only ]]; then exit 0; fi
 
 ###############################################################################
 # Collect finetuned model names (one per combo)

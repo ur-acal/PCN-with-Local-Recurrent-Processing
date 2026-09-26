@@ -88,6 +88,7 @@ source ./launch_scripts/run_mnist_pipeline.sh
 
         class TinyModel(nn.Module):
             def forward(self, x):
+                assert not self.validator_installed.training
                 return x.new_zeros((x.shape[0], 10))
 
         references = []
@@ -100,6 +101,12 @@ source ./launch_scripts/run_mnist_pipeline.sh
 
         loader = DataLoader(TensorDataset(torch.zeros(2, 1, 28, 28),
                                          torch.zeros(2, dtype=torch.long)), batch_size=2)
+        def validator(model, *args, **kwargs):
+            # Reproduce Validator replacing children after the caller's first
+            # model.eval(); newly attached modules begin in training mode.
+            model.validator_installed = nn.Identity()
+            self.assertTrue(model.validator_installed.training)
+            return SimpleNamespace(model=model)
         with tempfile.TemporaryDirectory() as directory:
             checkpoint = Path(directory) / 'model.pth'
             torch.save({'mnist_config': dict(family='cnn', variant='small', tc_state=1,
@@ -107,8 +114,7 @@ source ./launch_scripts/run_mnist_pipeline.sh
             with patch('mnist_train_eval.mnist_evaluate.device_for', return_value=torch.device('cpu')), \
                  patch('mnist_train_eval.mnist_evaluate.mnist_loader', return_value=loader), \
                  patch('mnist_train_eval.mnist_evaluate.build_cnn', new=build), \
-                 patch('feedforward_validation.FeedForwardCNNValidator',
-                       new=lambda model, *a, **k: SimpleNamespace(model=model)):
+                 patch('feedforward_validation.FeedForwardCNNValidator', new=validator):
                 records = main(['--checkpoint', str(checkpoint), '--output_dir', directory,
                                 '--n_trials', '2', '--num_workers', '0'])
             self.assertEqual(len(records), 2)

@@ -241,6 +241,16 @@ class AdaptiveGridSolver(ODESolver):
 
         self.before_integrate(y0, t_eval)
 
+        # TC inference has no graph to rebuild. Reuse only the final accepted
+        # trial; keep replay for training, stateful reloads and energy metering
+        # (whose observer is deliberately inactive during step-size search).
+        reuse_accepted = (
+            not torch.is_grad_enabled() and not reload_state
+            and getattr(self, 'tc_context', None) is not None
+            and getattr(self, 'energy_meter', None) is None
+            and isinstance(self, Dopri5)
+            and getattr(self, 'tc_reuse_accepted_step', True))
+
         is_stiff = False
 
         state0 = self.func.state_dict()
@@ -351,9 +361,12 @@ class AdaptiveGridSolver(ODESolver):
                 energy_meter.begin_step(
                     h_current * self.time_direction, self.__class__.__name__)
             try:
-                y_current, error, variables = self.step(
-                    self.func, t_current, h_current * self.time_direction,
-                    y_current, return_variables=True)
+                if reuse_accepted:
+                    y_current, error, variables = _y_new, _error, _variables
+                else:
+                    y_current, error, variables = self.step(
+                        self.func, t_current, h_current * self.time_direction,
+                        y_current, return_variables=True)
             except Exception:
                 if energy_meter is not None:
                     energy_meter.cancel_step()

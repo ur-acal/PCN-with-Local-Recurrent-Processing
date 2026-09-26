@@ -41,6 +41,12 @@ class FixedGridSolver(ODESolver):
                 steps = self.t1.reshape(1)
             else:
                 steps = torch.stack(steps).view(-1).float()
+                if (getattr(self, "tc_context", None) is not None
+                        and torch.isclose(steps[-1], self.t1, atol=0.,
+                                          rtol=4 * torch.finfo(steps.dtype).eps)):
+                    # Physical-time scaling may round N*h just below t1.
+                    # Snap that endpoint rather than adding a spurious noise step.
+                    steps[-1] = self.t1
         else:
             steps = predefine_steps
 

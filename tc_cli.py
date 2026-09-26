@@ -6,7 +6,7 @@ from pathlib import Path
 NOISE_KEYS = ('enable_spin_variation','sigma_spin','spin_variation_mean','spin_variation_seed',
     'enable_summing_current_noise','summing_current_p','summing_noise_seed',
     'enable_coupler_noise','coupler_noise_p','coupler_noise_seed',
-    'tc_noise_reference_R','tc_asd_reference_p','tc_fb_asd_path')
+    'tc_noise_stages','tc_noise_reference_R','tc_asd_reference_p','tc_fb_asd_path')
 
 def add_tc_arguments(parser):
     def boolean(value):
@@ -16,11 +16,12 @@ def add_tc_arguments(parser):
             return False
         raise ArgumentTypeError('Expected true or false.')
     options=dict(tc_nonidealities=(boolean,False),tc_covariance_table=(str,None),tc_conv_method=(str,'loop'),
-        tc_curve_sampling=(str,'histogram'),
+        tc_curve_sampling=(str,'histogram'),tc_empirical_curve_bank=(str,None),
         measured_pooling_curve_path=(str,None),measured_pooling_nominal_R=(float,None),
         measure_coupler_energy=(boolean,False),coupler_supply_voltage=(float,1.3),
         tc_coupler_energy_path=(str,None),
         spin_variation_mean=(float,1.0),
+        tc_noise_stages=(str,'both'),
         tc_noise_reference_R=(float,50e3),tc_asd_reference_p=(float,.6e-12),
         tc_fb_asd_path=(str,str(Path(__file__).parent/'hardware_data/coupler_asd_vs_freq.csv')),
         tc_metadata_path=(str,None),tc_max_eval_batches=(int,0))
@@ -32,6 +33,7 @@ def wrapper_options(args, trial=None):
     result={key:getattr(args,key) for key in NOISE_KEYS}
     result.update(tc_nonidealities=True,tc_covariance_table=args.tc_covariance_table,
                   tc_conv_method=args.tc_conv_method,tc_curve_sampling=args.tc_curve_sampling)
+    result['tc_empirical_curve_bank'] = getattr(args, 'tc_empirical_curve_bank', None)
     if trial is not None:
         base=args.hardware_seed if args.hardware_seed is not None else args.data_seed
         for key in ('spin_variation_seed','summing_noise_seed','coupler_noise_seed',
@@ -42,12 +44,16 @@ def wrapper_options(args, trial=None):
 
 def validate_tc(args, inference=False):
     if not args.tc_nonidealities:return
+    if getattr(args, 'tc_empirical_curve_bank', None) and (not inference or not args.nonlinear_R):
+        raise ValueError('TC empirical banks require nonlinear-R unrolled inference, not dense FT.')
     if args.tc_max_eval_batches < 0:
         raise ValueError('tc_max_eval_batches must be nonnegative (0 means full dataset).')
     if args.tc_conv_method not in ('loop','grouped','shared'):
         raise ValueError('tc_conv_method must be loop, grouped or shared.')
     if args.tc_curve_sampling not in ('histogram','uniform'):
         raise ValueError('tc_curve_sampling must be histogram or uniform.')
+    if args.tc_noise_stages not in ('both','ff','fb'):
+        raise ValueError('tc_noise_stages must be both, ff or fb.')
     if args.measure_coupler_energy and not inference:
         raise ValueError('Coupler-energy measurement is inference-only.')
     if args.measure_coupler_energy and args.ode_block != 'ODEXInitFFFB':

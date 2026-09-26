@@ -1567,11 +1567,11 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
             self.optimizer.zero_grad()
 
-            outputs, student_features = self._student_forward_feature_kd(inputs)
-
             teacher_logits, teacher_features = self.teacher_forward_for_distillation(
                 teacher_inputs if teacher_inputs is not None else inputs
             )
+
+            outputs, student_features = self._student_forward_feature_kd(inputs)
 
             ce_loss = self.train_loss_fn(outputs, labels_for_ce)
 
@@ -1665,7 +1665,9 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
         if self._feature_kd_loss is None:
             raise RuntimeError("Feature-KD module has not been initialized.")
 
-        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        # Recovery files also contain Generator states; deserialize those on CPU.
+        # load_state_dict copies auxiliary weights onto the module's device.
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
         if "feature_kd" not in ckpt:
             logging.warning("No feature_kd state found. Training with newly initialized aux module.")

@@ -121,7 +121,13 @@ class TCFeedForwardTests(unittest.TestCase):
             for name in names:
                 cfg = get_baseline_config(
                     name, pretrained=False, case="custom_noresize")
+                # Reproduce the TC launcher path: train_baseline_cifar.py adds
+                # this override before calling build_model().  Hardware model
+                # registrations must accept it without supplying the keyword a
+                # second time themselves.
+                cfg["intermediate_activation"] = "relu6"
                 model = build_model(name, cfg, num_classes=100)
+                self.assertEqual(model.intermediate_activation, "relu6")
                 self.assertEqual(
                     model.final_dropout_rate,
                     0.0 if name == prefix else 0.25)
@@ -225,7 +231,9 @@ class TCFeedForwardTests(unittest.TestCase):
             for name in names:
                 cfg = get_baseline_config(
                     name, pretrained=False, case="custom_noresize")
+                cfg["intermediate_activation"] = "relu6"
                 model = build_model(name, cfg, num_classes=100)
+                self.assertEqual(model.intermediate_activation, "relu6")
                 self.assertEqual(
                     model.final_dropout_rate,
                     0.0 if name == prefix else 0.25)

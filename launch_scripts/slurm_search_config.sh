@@ -637,6 +637,7 @@ submit_chunk() {
   # one fixed block; keep passing BLOCKS_LIST for sbatch compatibility
   local BLOCKS_LIST="${ODE_BLOCK}"
   local sbatch_exports="ALL"
+  sbatch_exports+=",mode=${mode:-default}"
   sbatch_exports+=",PCN=${pcn},IMG_TYPE=${img_type},SWITCH_INF=${SWITCH_INF}"
   sbatch_exports+=",EXP=${EXP},CIRC_CONF=${circ_conf},TASK=${TASK}"
   sbatch_exports+=",TEACHER_CKPT=${TEACHER_CKPT},TEACHER_ARCH=${TEACHER_ARCH}"

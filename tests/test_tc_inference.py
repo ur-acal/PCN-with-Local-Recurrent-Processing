@@ -43,7 +43,8 @@ class TCInferenceTests(unittest.TestCase):
                     continue
                 q=flat[cols[edge]].clamp(-.1,.1)
                 interval=(q>=0).long()
-                r=curves[edge,interval]+(curves[edge,interval+1]-curves[edge,interval])*(q-p.v_grid[interval])/.1
+                row=m._tc_curve_row_index[edge]
+                r=curves[row,interval]+(curves[row,interval+1]-curves[row,interval])*(q-p.v_grid[interval])/.1
                 expected[rows[edge]] += w.sign()*flat[cols[edge]]/r
             with patch.object(m,'_forward_pulse_per_edge',wraps=m._forward_pulse_per_edge) as helper:
                 actual=m(x)
@@ -54,7 +55,7 @@ class TCInferenceTests(unittest.TestCase):
             torch.testing.assert_close(expanded(p,stride=stride).nonlinear_R_curve_gaussian_R_normalized,curves)
             self.assertFalse(torch.equal(expanded(p,seed=13,stride=stride).nonlinear_R_curve_gaussian_R_normalized,curves))
             same=torch.nonzero(m.mat.values()==1).flatten()
-            self.assertFalse(torch.equal(curves[same[0]],curves[same[1]]))
+            self.assertFalse(torch.equal(curves[m._tc_curve_row_index[same[0]]],curves[m._tc_curve_row_index[same[1]]]))
             # 3x3 on a 3x3 image has 49 genuine locations at stride1,
             # rather than 81 including virtual padding couplers.
             if stride==1:
@@ -73,7 +74,9 @@ class TCInferenceTests(unittest.TestCase):
         p=self.package(); m=expanded(p)
         codes=m._values_to_code_idx(m.mat.values())+1
         expected=p.sample(codes,generator=torch.Generator().manual_seed(12),chunk_size=3)/1e4
-        torch.testing.assert_close(m.nonlinear_R_curve_gaussian_R_normalized,expected)
+        torch.testing.assert_close(m.nonlinear_R_curve_gaussian_R_normalized,expected[codes!=0],rtol=0,atol=0)
+        self.assertTrue((m._tc_curve_row_index[codes==0] == -1).all())
+        self.assertEqual(m.nonlinear_R_curve_gaussian_R_normalized.shape[0], int((codes!=0).sum()))
         zeros=codes==0
         self.assertTrue(torch.isinf(expected[zeros]).all())
 

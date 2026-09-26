@@ -638,11 +638,12 @@ def _build_hardware_cifar_resnet(
         avgpool_after_add: bool, **kwargs):
     if pretrained:
         raise ValueError("No registered pretrained weights for hardware CIFAR ResNets.")
+    kwargs.setdefault("intermediate_activation", "relu6")
     return CIFARResNet(
         depth=depth, num_classes=num_classes, in_chans=in_chans,
         use_batchnorm=use_batchnorm, conv_bias=conv_bias,
         avgpool_after_add=avgpool_after_add,
-        intermediate_activation="relu6", **kwargs)
+        **kwargs)
 
 
 def _register_resnet_variant(depth, use_batchnorm, conv_bias, avgpool):

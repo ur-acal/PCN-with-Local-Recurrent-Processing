@@ -156,8 +156,53 @@ mkdir -p logs/scheduler_slurm
 echo Scheduler PID: $!
 ```
 
-Sample 2-trial "FS_V2_T1" corner run -> 58.73%
+Historical, **before the FF expansion fix**: 2-trial "FS_V2_T1" run -> 58.73%
 results/coupler_full_range_CiFAIR100_qf1_noENOB_zOvery1_relu0906_fixed_FS_V2_T1_2trials/FS_V2_T1.log
+
+### Level-3 FF expansion correction (2026-09-24)
+
+The historical trials were 58.76% and 58.70%. They did not exercise the
+intended per-physical-coupler FF curve sampling: FF's functional convolution
+bypassed Validator's module-forward expansion hook. FB was expanded correctly.
+The dense FF path used its fallback nonlinear curve instead.
+
+The shape-initialization pass now explicitly triggers both pulse modules'
+expansion hooks before constructing pulse matrices, and rejects incomplete
+FF/FB expansion. Normal training does not enable this initialization flag.
+Regression tests cover ideal-output equivalence, old incomplete-cache repair,
+complete-cache reuse, and per-coupler curves on both sides.
+
+The matched two-trial replay is recorded in
+`results/ff_unroll_fix_FS_V2_T1_2trials/` (`FS_V2_T1.log`, `command.json`,
+`results.json`, and `summary.md`). Numerical CLI arguments are preserved from
+the historical log; artifact locations are separate. Both trials completed:
+
+| Trial | Before FF fix (%) | After FF fix (%) | Change (percentage points) |
+|---|---:|---:|---:|
+| 0 | 58.76 | 57.24 | -1.52 |
+| 1 | 58.70 | 56.84 | -1.86 |
+| Mean | 58.73 | 57.04 | -1.69 |
+
+This is a measurable reduction, not an accuracy collapse. Two trials in one
+corner do not establish the effect across all 45 corners.
+Earlier accuracy and final-linear-layer study artifacts remain historical
+pre-fix measurements, not validation of the corrected level-3 implementation.
+
+Empirical lookup, signed current calculation and accumulation now use an
+inference-only Triton fast path on supported CUDA float32 toggle modules;
+no launch changes are needed. A sequential five-batch/128-sample comparison
+against the FF-fixed **unoptimized** reference measured 4.46x faster forwards,
+640/640 matching predictions, and maximum logit difference 5.9605e-6.
+This is accepted numerical roundoff, not bitwise equality: atomic accumulation
+order differs. All nonideality sampling and pulse/state-update logic remain
+unchanged. Results: `results/toggle_full_fusion/summary.md`.
+Details, fallbacks and reproduction commands:
+[Toggle optimization audit](toggle_inference_optimization_audit.md).
+
+The two subsequent optional stage-reuse experiments were removed. The retained
+fusion was reverified against the original unoptimized FF-fixed path on 1,280
+inputs: all predictions matched, maximum logit difference 1.0014e-5, and 4.49x
+forward speedup. Details: `results/toggle_reuse_removal/summary.md`.
 
 ReLU and coupler assignments are sampled from the selected corner and held
 fixed for each dataset trial, then resampled for the next trial. Pooling uses

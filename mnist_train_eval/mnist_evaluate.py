@@ -5,6 +5,7 @@ import logging
 import statistics
 
 import torch
+from tqdm import tqdm
 
 from mnist_train_eval.mnist_config import parse_args, seed_all, device_for, model_name
 from mnist_train_eval.mnist_data import mnist_loader
@@ -79,6 +80,10 @@ def main(argv=None):
             validator = Validator(model, str(args.expanded_weight_dir / model_name(args)),
                 device, loader, str(args.output_dir), wrapper=wrappers)
             reset_after_probe(model)
+        # Validators install new physical modules after the initial eval() call.
+        # Put those replacements in evaluation mode as well; the fused TC
+        # per-edge inference path deliberately rejects training-mode modules.
+        model.eval()
         # Coupler assignments survive the dry run. Reset transient sampled
         # spin/pooling/activation values without replacing physical couplers.
         if args.family == 'cnn':
@@ -90,12 +95,14 @@ def main(argv=None):
             del module, reset
         print(f'Trial {trial + 1}/{args.n_trials}: evaluating {len(loader.dataset)} samples', flush=True)
         correct, total = 0, 0
-        for inputs, labels in loader:
+        pbar = tqdm(enumerate(loader), total=len(loader), disable=False)
+        for _, (inputs, labels) in pbar:
             outputs = model(inputs.to(device))
             if not torch.isfinite(outputs).all():
                 raise RuntimeError(f'Nonfinite logits in trial {trial + 1}')
             correct += (outputs.argmax(1).cpu() == labels).sum().item()
             total += labels.numel()
+            pbar.set_postfix(acc=f'{100.0 * correct / total:.2f}%')
         record = dict(trial=trial + 1, hardware_seed=seed, samples=total, accuracy=correct / total)
         records.append(record)
         path.write_text(json.dumps(dict(config=vars(args), trials=records,

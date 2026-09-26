@@ -35,6 +35,10 @@ def resolved(stage, state='1', **extra):
 
 
 class TCCommandTests(unittest.TestCase):
+    def test_empirical_bank_forwarding(self):
+        args = resolved('eval', TC_EMPIRICAL_CURVE_BANK='/tmp/tc_bank.npz')
+        self.assertEqual(wrapper_options(args)['tc_empirical_curve_bank'], '/tmp/tc_bank.npz')
+
     def test_local_distillation_forwarding(self):
         for method in ('srrl', 'kd'):
             defaults = resolved('ft', DISTILL_METHOD=method,
@@ -170,6 +174,7 @@ class TCCommandTests(unittest.TestCase):
                 opts = wrapper_options(args)
                 self.assertTrue(opts['enable_summing_current_noise'])
                 self.assertTrue(opts['enable_coupler_noise'])
+                self.assertEqual(opts['tc_noise_stages'], 'both')
                 self.assertEqual(opts['summing_current_p'], .6e-12)
                 self.assertEqual(opts['coupler_noise_p'], .6e-12)
                 if stage == 'eval':

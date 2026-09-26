@@ -648,7 +648,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
 
     if return_net:
         return net_
-    print_quantization_level_ratios(net_, 2 ** (args.w_bits - 1) - 1)
+    if args.ode_wrapper not in (None, "ODEWrapperRC"):
+        print_quantization_level_ratios(net_, 2 ** (args.w_bits - 1) - 1)
     # logging.warning("Model info: {}".format(torchinfo.summary(net_, input_size=(16,4,16,16))))
     # test_batch = next(iter(test_dataloader))[0].to(device)[:512]
     # _ = net_(test_batch)
@@ -672,7 +673,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
     input_ranges = calibrate_input(model=net_, device=device, model_name=args.model_name,
                                    calib_bs=256,
                                    calib_samples=256, percentile=0.995,
-                                   symmetric=False, save_to=None, img_type=args.img_type)
+                                   symmetric=False, save_to=None, img_type=args.img_type,
+                                   dataset_name=args.task)
     for _t, _range in input_ranges.items():
         print("Type: {}".format(_t))
         print(_range)

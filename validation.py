@@ -432,6 +432,7 @@ class MVMConv(nn.Module):
         self.R_slope = R_slope
         self.proj_fn = proj_fn
         self.R = R
+        self._tc_curve_row_index = None
 
         if tc_curve_package is not None:
             if nonlinear_R_curve_edge_chunk_size <= 0:
@@ -449,7 +450,13 @@ class MVMConv(nn.Module):
                 self.mat.crow_indices(), self.mat.col_indices(),
                 self.mat.values().sign(), size=self.mat.shape,
                 device=self.mat.device, dtype=self.mat.dtype)
-            self.sample_nonlinear_R_gaussian_curves()
+            bank = getattr(tc_curve_package, 'empirical_bank', None)
+            if bank is None:
+                self.sample_nonlinear_R_gaussian_curves()
+            else:
+                self.nonlinear_R_curve_sampling = 'empirical_with_replacement'
+                self.set_nonlinear_R_curve_bank(bank)
+                self.sample_nonlinear_R_curve_assignment()
             return
 
         self.mul_mismatch_mode = mul_mismatch_mode
@@ -548,7 +555,12 @@ class MVMConv(nn.Module):
             if self.nonlinear_R_curve_seed is not None:
                 generator = torch.Generator(device=package.means.device).manual_seed(
                     int(self.nonlinear_R_curve_seed))
-            curves = package.sample(codes.to(package.means.device), generator=generator,
+            active = codes != 0
+            # Preserve physical CSR slots, but give open circuits no curve row.
+            # Sampling retains the original active-edge order and RNG chunks.
+            self._tc_curve_row_index = active.long().cumsum(0).sub_(1)
+            self._tc_curve_row_index.masked_fill_(~active, -1)
+            curves = package.sample(codes[active].to(package.means.device), generator=generator,
                                     chunk_size=self.nonlinear_R_curve_edge_chunk_size)
             # Existing interpolation multiplies by nominal_R. Normalize only
             # for that interface, not by each code's mean or nominal value.
@@ -675,9 +687,17 @@ class MVMConv(nn.Module):
             generator = torch.Generator(device=self.mat.device)
             generator.manual_seed(int(self.nonlinear_R_curve_seed))
         if sampler is None:
-            indices = torch.randint(
-                n_curves, (n_groups,), device=self.mat.device,
-                generator=generator)
+            bank = getattr(getattr(self, '_tc_curve_package', None), 'empirical_bank', None)
+            if bank is None:
+                indices = torch.randint(
+                    n_curves, (n_groups,), device=self.mat.device, generator=generator)
+            else:
+                codes = self._values_to_code_idx(self.mat.values())
+                active = self.mat.values() != 0
+                count = bank['draws_per_code']
+                indices = torch.zeros(n_groups, dtype=torch.long, device=self.mat.device)
+                indices[active] = codes[active] * count + torch.randint(
+                    count, (int(active.sum()),), device=self.mat.device, generator=generator)
         else:
             indices = sampler(
                 n_groups=n_groups, n_curves=n_curves,
@@ -908,6 +928,9 @@ class MVMConv(nn.Module):
         interval = torch.searchsorted(
             grid.contiguous(), query.contiguous(), right=False) - 1
         interval.clamp_(min=0, max=grid.numel() - 2)
+        row_index = getattr(self, '_tc_curve_row_index', None)
+        if row_index is not None:
+            group_index = row_index[group_index]
         curves = self.nonlinear_R_curve_gaussian_R_normalized[group_index]
         left = curves.gather(1, interval)
         right = curves.gather(1, interval + 1)
@@ -919,6 +942,12 @@ class MVMConv(nn.Module):
 
     def _get_curve_bank_R_eff(self, v, curve_index):
         """Evaluate one selected piecewise-linear R(V) curve per source row."""
+        if (getattr(self, '_toggle_pulse_edges', False)
+                and getattr(self, '_toggle_fused_lookup', True)):
+            from toggle_edge_inference import empirical_resistance
+            fused = empirical_resistance(self, v, curve_index)
+            if fused is not None:
+                return fused
         if self.proj_fn is not None:
             v = self.proj_fn(v)
         curve_index = torch.as_tensor(
@@ -956,6 +985,16 @@ class MVMConv(nn.Module):
             pulse_weight, x_flat * nominal_R / R_eff)
 
     def _forward_pulse_per_edge(self, x_flat, pulse_weight, nominal_R):
+        if getattr(self, '_toggle_pulse_edges', False):
+            from toggle_edge_inference import empirical_edge_forward
+            fused = empirical_edge_forward(self, x_flat, pulse_weight, nominal_R)
+            if fused is not None:
+                return fused
+        if self.nonlinear_R_curve_sampling == 'multivariate_gaussian':
+            from tc_edge_inference import gaussian_edge_forward
+            fused = gaussian_edge_forward(self, x_flat, pulse_weight, nominal_R)
+            if fused is not None:
+                return fused
         if pulse_weight.layout != torch.sparse_csr:
             raise TypeError(
                 "Per-edge nonlinear-R pulse evaluation requires a CSR matrix.")
@@ -1270,21 +1309,35 @@ class Validator(nn.Module):
 
     @torch.no_grad()
     def unroll_or_load(self):
+        from ode_pc import TogglePulseFFFB
         for _idx, _layer in enumerate(self.model.PcConvs):
             self._register_hook_for_unroll(_idx, _layer)
 
         # One forward pass to trigger the hooks and unroll the weights
         tc_layers = [layer for layer in self.model.PcConvs
                      if getattr(layer, "_tc_current_mode", False)]
+        pulse_layers = [layer for layer in self.model.PcConvs
+                        if isinstance(layer, TogglePulseFFFB)]
         # The dense masked-convolution path uses F.conv2d, which intentionally
         # bypasses module hooks. This shape-only pass must trigger those hooks.
         for layer in tc_layers:
             layer._tc_unrolling = True
+        for layer in pulse_layers:
+            layer._pulse_unrolling = True
         try:
             _ = self.model(self._unroll_sample_inputs)
         finally:
             for layer in tc_layers:
                 layer._tc_unrolling = False
+            for layer in pulse_layers:
+                del layer._pulse_unrolling
+        for idx, layer in enumerate(self.model.PcConvs):
+            if isinstance(layer, TogglePulseFFFB) and not layer.return_init:
+                for name in ("FFconv", "FBconv"):
+                    if not isinstance(getattr(layer, name), MVMConv):
+                        raise RuntimeError(
+                            f"Level-3 pulse expansion incomplete: layer {idx} {name}")
+                    getattr(layer, name)._toggle_pulse_edges = True
         self._unroll_sample_inputs = None
 
         # If record full trajectory, use forward_full_steps of odeblocks.

@@ -68,7 +68,13 @@ def _resolve_scan_noise_root(img_type: str, input_name: str) -> Path:
         for candidate in candidates:
             if (candidate / hdf5_name).exists():
                 return candidate.resolve()
-    return (Path(__file__).resolve().parents[1] / _default_cifar_dir(dataset_name) / img_type).resolve()
+    root = Path(__file__).resolve().parents[1]
+    default = root / _default_cifar_dir(dataset_name) / img_type
+    # Legacy scanGFI stores both CIFAR datasets under cifar-10-data.
+    shared = root / "cifar-10-data" / img_type
+    if not (default / hdf5_name).exists() and (shared / hdf5_name).exists():
+        return shared.resolve()
+    return default.resolve()
 
 
 def _load_scangen_config():

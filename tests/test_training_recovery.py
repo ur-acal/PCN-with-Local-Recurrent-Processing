@@ -19,6 +19,45 @@ class IdentityQuantizer(nn.Module):
         return weight
 
 
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_model_and_feature_loaders_keep_pickled_rng_on_cpu(tmp_path, monkeypatch, device):
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
+    import inference_utils
+    from trainer_timm import TrainerCiFarTimmStyleFeatureKD
+
+    class Tiny(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.tensor([2.0]))
+
+    path = str(tmp_path / 'latest_ckpt.pth')
+    aux = nn.Linear(2, 2).to(device)
+    torch.save(dict(
+        init_args={'model_args': {}, 'kwargs': {}}, net=Tiny().state_dict(),
+        training_recovery={'generator': torch.Generator().manual_seed(123)},
+        feature_kd={'name': 'srrl', 'state_dict': aux.state_dict()},
+    ), path)
+    original_load = torch.load
+    locations = []
+
+    def checked_load(*args, **kwargs):
+        locations.append(kwargs.get('map_location'))
+        assert kwargs.get('map_location') == 'cpu'
+        return original_load(*args, **kwargs)
+
+    monkeypatch.setattr(torch, 'load', checked_load)
+    model = inference_utils.load_and_prepare_model(
+        path, device, model_struct=Tiny, pc_conv_layer=None, fuse_bn=False)
+    assert model.weight.device.type == device
+    assert model.weight.item() == 2.0
+    target = nn.Linear(2, 2).to(device)
+    trainer = SimpleNamespace(_feature_kd_loss=target, feature_kd_name='srrl', device=device)
+    TrainerCiFarTimmStyleFeatureKD.load_feature_kd_from_ckpt(trainer, path)
+    assert torch.equal(target.weight, aux.weight)
+    assert locations == ['cpu', 'cpu']
+
+
 def make_trainer(tmp_path):
     model = nn.Sequential(nn.Linear(3, 4), nn.BatchNorm1d(4), nn.Dropout(.2), nn.Linear(4, 2))
     parametrize.register_parametrization(model[0], 'weight', IdentityQuantizer())

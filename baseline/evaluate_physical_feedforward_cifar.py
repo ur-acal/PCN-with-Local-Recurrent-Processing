@@ -322,6 +322,9 @@ def evaluate_once(args):
         FeedForwardCNNValidator(
             model, args.expanded_weight_dir, device, loader,
             args.result_path)
+        if args.tc_feedforward:
+            # Expansion installs new modules; eval mode enables fused TC inference.
+            model.eval()
     if args.bn_recalibrate:
         calibration_loader = get_bn_calibration_data(
             bs=args.bn_calibration_batch_size,

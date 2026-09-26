@@ -277,16 +277,22 @@ class ODEBlockPC(nn.Module):
         ratio = cfg['tc_noise_reference_R'] / self.R
         a = cfg['summing_current_p'] if cfg['enable_summing_current_noise'] else 0.
         b = cfg['coupler_noise_p'] if cfg['enable_coupler_noise'] else 0.
-        coefficients = [(torch.full_like(ff, a*math.sqrt(ratio)/cap_ff), ff.sqrt()*b*math.sqrt(ratio)/cap_ff)]
+        ff_enabled = cfg['tc_noise_stages'] in ('both', 'ff')
+        fb_enabled = cfg['tc_noise_stages'] in ('both', 'fb')
+        ff_a, ff_b = (a, b) if ff_enabled else (0., 0.)
+        coefficients = [(torch.full_like(ff, ff_a*math.sqrt(ratio)/cap_ff),
+                         ff.sqrt()*ff_b*math.sqrt(ratio)/cap_ff)]
         if two:
-            coefficients.append((torch.full_like(fb, a*math.sqrt(ratio)/cap_fb), fb.sqrt()*b*math.sqrt(ratio)/cap_fb))
+            fb_a, fb_b = (a, b) if fb_enabled else (0., 0.)
+            coefficients.append((torch.full_like(fb, fb_a*math.sqrt(ratio)/cap_fb),
+                                 fb.sqrt()*fb_b*math.sqrt(ratio)/cap_fb))
         generators = {}
         for branch in list(range(len(coefficients))) + ['fb']:
             for source in ('sum','coupler'):
                 seed = cfg['summing_noise_seed' if source=='sum' else 'coupler_noise_seed']
                 generators[(branch,source)] = self._tc_generator(x, f'{branch}:{source}', seed)
         fb_coeff = None
-        if not two and (a or b):
+        if not two and fb_enabled and (a or b):
             scale = self._tc_fb_integral.std_A / cfg['tc_asd_reference_p'] * math.sqrt(ratio)
             fb_coeff = (torch.full_like(fb, a*scale), fb.sqrt()*b*scale)
         context = TCNoiseLifecycle(coefficients, generators, fb_coeff,
@@ -1922,6 +1928,8 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         return self.project_state(updated)
 
     def run_z_stage(self, y_hold, z, T_z):
+        if getattr(self, "_pulse_unrolling", False) and isinstance(self.FBconv, nn.Conv2d):
+            self.FBconv(y_hold)  # Trigger Validator before constructing pulse matrices.
         # get the number of quantization levels
         # split the full pulse width into number of quant levels
         num_slices = self._num_slices("z")
@@ -1958,6 +1966,8 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
         return z
 
     def run_y_stage(self, y, h_hold, T_y):
+        if getattr(self, "_pulse_unrolling", False) and isinstance(self.FFconv, nn.Conv2d):
+            self.FFconv(h_hold)  # Functional pulse convolution otherwise bypasses hooks.
         num_slices = self._num_slices("y")
         dt = T_y / float(num_slices)
         dtc_window = self._sample_dtc_window(self.FFconv, "y")
@@ -3361,6 +3371,7 @@ class WrapQuantizeW(ODEWrapperRC):
 
         self.tc_nonidealities = kwargs.pop("tc_nonidealities", False)
         self.tc_covariance_table = kwargs.pop("tc_covariance_table", None)
+        self.tc_empirical_curve_bank = kwargs.pop('tc_empirical_curve_bank', None)
         self.tc_conv_method = kwargs.pop('tc_conv_method', 'loop')
         self.tc_curve_sampling = kwargs.pop('tc_curve_sampling', 'histogram')
         if self.tc_nonidealities and self.tc_conv_method not in ('loop','grouped','shared'):
@@ -3372,7 +3383,8 @@ class WrapQuantizeW(ODEWrapperRC):
             defaults = dict(enable_spin_variation=False, sigma_spin=.1, spin_variation_mean=1.,
                 spin_variation_seed=None, enable_summing_current_noise=False,
                 summing_current_p=.6e-12, summing_noise_seed=None, enable_coupler_noise=False,
-                coupler_noise_p=.6e-12, coupler_noise_seed=None, tc_noise_reference_R=50e3,
+                coupler_noise_p=.6e-12, coupler_noise_seed=None, tc_noise_stages='both',
+                tc_noise_reference_R=50e3,
                 tc_asd_reference_p=.6e-12, tc_fb_asd_path=os.path.join(
                     os.path.dirname(__file__), 'hardware_data', 'coupler_asd_vs_freq.csv'))
             self._tc_noise_options = {key:kwargs.pop(key, value) for key,value in defaults.items()}
@@ -3654,7 +3666,7 @@ class WrapQuantizeW(ODEWrapperRC):
             enable_spin_variation=cfg['enable_spin_variation'], sigma_spin=cfg['sigma_spin'],
             spin_variation_mean=cfg['spin_variation_mean'], _spin_factor_y=None, _spin_factor_z=None,
             _spin_variation_generator=block._tc_spin_generator)
-        if (type(block) is ODEXInitFFFB and
+        if (type(block) is ODEXInitFFFB and cfg['tc_noise_stages'] in ('both', 'fb') and
                 (cfg['enable_coupler_noise'] or cfg['enable_summing_current_noise'])):
             block._tc_fb_integral = integrate_current_asd(cfg['tc_fb_asd_path'],
                                                          reference_R=cfg['tc_noise_reference_R'])
@@ -3690,6 +3702,12 @@ class WrapQuantizeW(ODEWrapperRC):
                 self.nonlinear_R_table, self.tc_covariance_table,
                 levels=block._get_quant_magnitude_levels(ref), R=self.R,
                 R_max=self.R_max, dtype=ref.dtype, device=ref.device)
+            if self.tc_empirical_curve_bank:
+                if self.nonlinear_R_curve_sharing != 'per_coupler':
+                    raise ValueError('TC empirical banks require unrolled per-coupler evaluation.')
+                from tc_nonidealities import load_tc_empirical_bank
+                block._tc_curve_package = load_tc_empirical_bank(
+                    block._tc_curve_package, self.tc_empirical_curve_bank)
             block._tc_curve_generator = None
             if self.nonlinear_R_curve_seed is not None:
                 block._tc_curve_generator = torch.Generator(device=ref.device).manual_seed(

@@ -4,6 +4,7 @@
 # It mirrors the PCN search launcher's applicable configuration surface; the
 # recurrent/ODE-only controls intentionally do not exist on this path.
 set -e
+export mode="${mode:-default}"
 
 REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
 SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/feedforward_pretrain_then_ft.sbatch"

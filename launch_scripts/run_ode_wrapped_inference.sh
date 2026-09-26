@@ -6,7 +6,7 @@ set -eu
 trap '' HUP   # ignore hangup so the children survive
 
 # ─────────────── fixed params ───────────────
-export MODEL_DIR="./saved_ckpt"
+export MODEL_DIR="${MODEL_DIR:-./saved_ckpt}"
 export tol="1e-6"
 export R_VAL="10e3"
 export R_MAX="150e3"
@@ -23,7 +23,7 @@ CAP_VALS=("49e-15")
 #METHOD_VALS=("euler")
 #METHOD_VALS=("rk4")
 
-export BASE_LOGDIR="./logs/test_ode_noisy"
+export BASE_LOGDIR="${BASE_LOGDIR:-./logs/test_ode_noisy}"
 # MASTER_LOG and JOB_LOG will be set per noise combination
 
 # ─────────────── model list ───────────────
@@ -182,16 +182,17 @@ MODEL_NAMES=(
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_10REP" # one_over_q = 1, qat with output quantization 8 enob, clamp 0-0.2, 160 epochs (effectively 140 epochs)
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_14REP" # one_over_q = 1, qat + kd_crd with output quantization 8 enob, clamp 0-0.2, 140 epochs
 #  "QAT5bNT0p25mulPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_1REP"
+#  "TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
 
 #  "TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP"
   # The same 16L baseline; trained with srrl + timm augs; ft with srrl + QAT + MT.
 #  "TIMMQAT5bNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_11REP" # srrl + timm trained model, then QAT + MT
-  "TIMMQAT5b2aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP" # same, but 10e3 - 150e3 Ohm
-  "TIMMQAT5b3aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b4aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b5aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b6aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
-  "TIMMQAT5b7aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+  # "TIMMQAT5b2aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP" # same, but 10e3 - 150e3 Ohm
+  # "TIMMQAT5b3aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+  # "TIMMQAT5b4aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+  # "TIMMQAT5b5aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+  # "TIMMQAT5b6aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
+  # "TIMMQAT5b7aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
   "TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP"
 
 #  "PCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEBlockXInit_dopri5Solver_1.5TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_kd_crdDistill_a0p3_t2p0_scanGFI_3REP"
@@ -202,6 +203,14 @@ MODEL_NAMES=(
 )
 
 # ─────────────── prepare logs ───────────────
+if [[ -n "${MODEL_NAMES_STR:-}" ]]; then
+  readarray -t MODEL_NAMES <<< "$MODEL_NAMES_STR"
+fi
+export EVAL_MODE="${EVAL_MODE:-auto}"
+case "$EVAL_MODE" in
+  auto|fp|scaled_fp) ;;
+  *) echo 'EVAL_MODE must be auto, fp, or scaled_fp' >&2; exit 2 ;;
+esac
 mkdir -p "$BASE_LOGDIR"
 for n_bits in "${N_BITS_VALS[@]}"; do
   for cap_val in "${CAP_VALS[@]}"; do
@@ -261,11 +270,31 @@ run_model(){
   if [[ "$name" != *QAT* ]]; then
     _ode_wrapper="ODEWrapperRC"
   fi
+  local _diff_mismatch="${DIFF_MISMATCH:-true}"
+  local _thermal_noise="${THERMAL_NOISE:-true}"
+  if [[ "$name" != *QAT* ]]; then
+    # Unquantized weights have no resistance-code metadata for this mismatch.
+    _diff_mismatch="${DIFF_MISMATCH:-false}"
+    _thermal_noise="${THERMAL_NOISE:-false}"
+  fi
+  if [[ "$EVAL_MODE" != auto ]]; then
+    if [[ "$name" == *QAT* ]]; then
+      echo 'fp/scaled_fp modes require an unquantized pretrained checkpoint.' >&2
+      return 2
+    fi
+    _diff_mismatch=false
+    _thermal_noise=false
+    if [[ "$EVAL_MODE" == fp ]]; then _ode_wrapper=none; fi
+  fi
+  if [[ "$name" != *QAT* && "$_diff_mismatch" == true ]]; then
+    echo 'Resistance-code mismatch requires quantized weights; use DIFF_MISMATCH=false for FP.' >&2
+    return 2
+  fi
 #  _ode_wrapper="ODEWrapper1StateWithX"
 #  _ode_wrapper="WrapQuantizeWXInit"
 #  _ode_wrapper="QATTester1StateWithX"
 
-  local enob=8
+  local enob=none
   if [[ "$name" =~ TIMMQAT[0-9]+b([0-9]+)a ]]; then
     enob="${BASH_REMATCH[1]}"
   fi
@@ -291,8 +320,8 @@ run_model(){
     --d_end           1 \
     --n_sweep_left    0 \
     --n_sweep_right   1 \
-    --thermal_noise   "true" \
-    --sde_noise_type  "mul" \
+    --thermal_noise   "${_thermal_noise}" \
+    --sde_noise_type  "add" \
     --mismatch_type   "mul" \
     --sweep_eps       "false" \
     --R               "$R_VAL" \
@@ -315,7 +344,7 @@ run_model(){
     --noisy_trials    "10" \
     --conv_only       "true" \
     --test_expanded   "true" \
-    --diff_mismatch   "true" \
+    --diff_mismatch   "${_diff_mismatch}" \
     --nonlinear_R     "true" \
     --nonlinear_R_table "${NONLINEAR_R_TABLE:-none}" \
     --mul_mismatch_mode "static_mismatch" \

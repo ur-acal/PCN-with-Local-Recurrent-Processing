@@ -49,6 +49,20 @@ class TCNoiseTests(unittest.TestCase):
                 expected=b._tc_fb_integral.variance_A2*5*((.7/.6)**2+(.4/.6)**2*fb)
                 torch.testing.assert_close(s.square()+c.square(),expected,atol=0,rtol=1e-5)
 
+    def test_stage_selector_separates_ff_and_fb_and_defaults_to_both(self):
+        x=torch.ones(2,2,2,2)*.02
+        for stages, expect_ff, expect_fb in (
+                ('ff', True, False), ('fb', False, True), (None, True, True)):
+            b=make_block()
+            options={'enable_coupler_noise':True}
+            if stages is not None:
+                options['tc_noise_stages']=stages
+            wrap(b,**options)
+            context,_,_=b._tc_prepare_noise(x)
+            ff_nonzero=any(torch.count_nonzero(value).item() for value in context.coefficients[0])
+            self.assertEqual(ff_nonzero,expect_ff)
+            self.assertEqual(context.fb_coefficients is not None,expect_fb)
+
     def test_spin_training_eval_lifetime_and_independence(self):
         b=make_block();w=wrap(b,enable_spin_variation=True,spin_variation_seed=5)
         x=torch.ones(3,2,2,2)*.02

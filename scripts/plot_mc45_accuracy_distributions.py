@@ -27,6 +27,13 @@ NONIDEAL_POOLING_LABEL = "Gaussian-based non-ideal pooling"
 OUTPUT_FORMAT = "pdf"
 ACCURACY_MIN = None
 ACCURACY_MAX = None
+VIOLIN_DOT_BINS = 6
+SUMMARY_COLOR = "#4A4A4A"
+MIN_DOTS_PER_BIN = 2
+BIN_WIDTH_REGULARIZATION = 0.02
+BIN_SEPARATION_REGULARIZATION = 0.05
+ADJACENT_BIN_EDGE_DOTS = 3
+MIN_CROSS_BIN_DISTANCE = 0.025
 
 
 def load_corner_results(root):
@@ -87,20 +94,174 @@ def normal_pdf(x, mean, std):
 def draw_mean_std(ax, position, values):
     mean = values.mean()
     std = values.std()
-    line_length = 2.0 * std
-    data_min = values.min()
-    data_max = values.max()
-    if line_length > data_max - data_min:
-        raise ValueError("The 2-sigma marker cannot fit inside the violin range.")
-    line_lower = min(max(mean - std, data_min), data_max - line_length)
-    line_upper = line_lower + line_length
-    ax.vlines(position, line_lower, line_upper, color="#222222",
-              linewidth=3.0, alpha=0.85)
-    ax.hlines(mean, position - 0.15, position + 0.15, color="#222222",
-              linewidth=1.7)
+    line_lower = mean - std
+    line_upper = mean + std
+    cap_half_width = 0.035
+    ax.axhline(mean, color=SUMMARY_COLOR, linestyle=(0, (5, 3)),
+               linewidth=1.0, zorder=3.5)
+    ax.annotate("mean", xy=(0.98, mean), xycoords=("axes fraction", "data"),
+                xytext=(0, 3), textcoords="offset points", ha="right",
+                va="bottom", color="black", fontsize=plt.rcParams["font.size"],
+                zorder=5)
+    ax.vlines(position, line_lower, line_upper, color=SUMMARY_COLOR,
+              linewidth=1.0, zorder=4)
+    ax.hlines((line_lower, line_upper),
+              position - cap_half_width, position + cap_half_width,
+              color=SUMMARY_COLOR, linewidth=1.0, zorder=4)
 
 
-def violin_jitter(body, position, values, rng):
+def mark_mean_tick(ax, mean):
+    lower, upper = ax.get_ylim()
+    minimum_separation = 0.035 * (upper - lower)
+    ticks = [tick for tick in ax.get_yticks()
+             if lower <= tick <= upper and
+             abs(tick - mean) >= minimum_separation]
+    ticks.append(mean)
+    ticks.sort()
+    labels = ["{:.2f}".format(tick) if np.isclose(tick, mean)
+              else "{:g}".format(tick) for tick in ticks]
+    ax.set_yticks(ticks, labels)
+    for tick, label in zip(ticks, ax.get_yticklabels()):
+        if np.isclose(tick, mean):
+            label.set_color(SUMMARY_COLOR)
+            label.set_fontweight("semibold")
+
+
+def _cumulative_violin_area(y_coordinates, half_widths):
+    segment_areas = (np.diff(y_coordinates) *
+                     (half_widths[:-1] + half_widths[1:]) * 0.5)
+    return np.concatenate(([0.0], np.cumsum(segment_areas)))
+
+
+def optimize_violin_bins(values, y_coordinates, half_widths, num_bins,
+                         y_axis_span):
+    """Partition sorted values so dot counts match integrated violin area.
+
+    For fixed K, candidate boundaries are the midpoints between adjacent
+    accuracies. Dynamic programming minimizes
+
+        sum_j (observed_fraction_j - violin_mass_j)^2 / violin_mass_j
+
+    plus a small bin-width regularizer and a cross-bin separation penalty.
+    Every bin contains at least MIN_DOTS_PER_BIN points.
+    """
+    num_values = len(values)
+    if num_bins < 1:
+        raise ValueError("The number of violin dot bins must be positive.")
+    if num_values < num_bins * MIN_DOTS_PER_BIN:
+        raise ValueError(
+            "{} values cannot fill {} bins with at least {} dots each."
+            .format(num_values, num_bins, MIN_DOTS_PER_BIN))
+
+    sorted_values = np.sort(values)
+    sorted_indices = np.argsort(values, kind="stable")
+    widths_at_values = np.interp(values, y_coordinates, half_widths)
+    edges = np.empty(num_values + 1, dtype=float)
+    edges[0] = y_coordinates[0]
+    edges[-1] = y_coordinates[-1]
+    edges[1:-1] = 0.5 * (sorted_values[:-1] + sorted_values[1:])
+
+    cumulative_area = _cumulative_violin_area(y_coordinates, half_widths)
+    total_area = cumulative_area[-1]
+    total_range = edges[-1] - edges[0]
+
+    def area_at(value):
+        return np.interp(value, y_coordinates, cumulative_area)
+
+    def segment_cost(left, right):
+        observed_fraction = (right - left) / num_values
+        violin_mass = ((area_at(edges[right]) - area_at(edges[left])) /
+                       total_area)
+        mass_cost = ((observed_fraction - violin_mass) ** 2 /
+                     max(violin_mass, np.finfo(float).eps))
+        width_fraction = (edges[right] - edges[left]) / total_range
+        width_cost = BIN_WIDTH_REGULARIZATION * (
+            width_fraction - 1.0 / num_bins) ** 2
+        return mass_cost + width_cost
+
+    layouts = {}
+
+    def segment_layout(left, right):
+        key = (left, right)
+        if key not in layouts:
+            members = sorted_indices[left:right]
+            usable_half_width = 0.8 * widths_at_values[members].min()
+            slots = np.linspace(-usable_half_width, usable_half_width,
+                                len(members))
+            layouts[key] = dict(zip(members, slots))
+        return layouts[key]
+
+    def separation_cost(previous_left, boundary, right):
+        lower_layout = segment_layout(previous_left, boundary)
+        upper_layout = segment_layout(boundary, right)
+        lower_edge = sorted_indices[
+            max(previous_left, boundary - ADJACENT_BIN_EDGE_DOTS):boundary]
+        upper_edge = sorted_indices[
+            boundary:min(right, boundary + ADJACENT_BIN_EDGE_DOTS)]
+        penalty = 0.0
+        for lower_index in lower_edge:
+            for upper_index in upper_edge:
+                dx = upper_layout[upper_index] - lower_layout[lower_index]
+                dy = ((values[upper_index] - values[lower_index]) /
+                      y_axis_span)
+                distance = np.hypot(dx, dy)
+                shortfall = max(
+                    0.0, 1.0 - distance / MIN_CROSS_BIN_DISTANCE)
+                penalty += shortfall ** 2
+        return BIN_SEPARATION_REGULARIZATION * penalty
+
+    costs = np.full(
+        (num_bins + 1, num_values + 1, num_values + 1), np.inf)
+    parents = np.full(
+        (num_bins + 1, num_values + 1, num_values + 1), -1, dtype=int)
+
+    last_first_bin = num_values - (num_bins - 1) * MIN_DOTS_PER_BIN
+    for right in range(MIN_DOTS_PER_BIN, last_first_bin + 1):
+        costs[1, 0, right] = segment_cost(0, right)
+
+    for bins_used in range(2, num_bins + 1):
+        first_left = (bins_used - 1) * MIN_DOTS_PER_BIN
+        last_left = num_values - (
+            num_bins - bins_used + 1) * MIN_DOTS_PER_BIN
+        for left in range(first_left, last_left + 1):
+            if np.isclose(sorted_values[left - 1], sorted_values[left]):
+                continue
+            first_right = left + MIN_DOTS_PER_BIN
+            last_right = num_values - (
+                num_bins - bins_used) * MIN_DOTS_PER_BIN
+            for right in range(first_right, last_right + 1):
+                for previous_left in range(0, left):
+                    previous_cost = costs[
+                        bins_used - 1, previous_left, left]
+                    if not np.isfinite(previous_cost):
+                        continue
+                    candidate = (previous_cost + segment_cost(left, right) +
+                                 separation_cost(
+                                     previous_left, left, right))
+                    if candidate < costs[bins_used, left, right]:
+                        costs[bins_used, left, right] = candidate
+                        parents[bins_used, left, right] = previous_left
+
+    final_left = int(np.argmin(costs[num_bins, :, num_values]))
+    objective = costs[num_bins, final_left, num_values]
+    if not np.isfinite(objective):
+        raise RuntimeError("Could not construct optimized violin bins.")
+
+    cuts = [num_values]
+    right = num_values
+    left = final_left
+    for bins_used in range(num_bins, 0, -1):
+        cuts.append(left)
+        if bins_used > 1:
+            previous_left = parents[bins_used, left, right]
+            right, left = left, previous_left
+    cuts.reverse()
+    boundaries = edges[np.asarray(cuts)]
+    return boundaries, float(objective)
+
+
+def deterministic_violin_offsets(body, position, values, num_bins,
+                                 y_axis_span):
     vertices = body.get_paths()[0].vertices
     y_coordinates = np.unique(vertices[:, 1])
     half_widths = np.array([
@@ -108,7 +269,20 @@ def violin_jitter(body, position, values, rng):
         for y in y_coordinates
     ])
     widths_at_values = np.interp(values, y_coordinates, half_widths)
-    return rng.uniform(-1.0, 1.0, size=len(values)) * widths_at_values * 0.8
+    bin_edges, objective = optimize_violin_bins(
+        values, y_coordinates, half_widths, num_bins, y_axis_span)
+    bin_indices = np.digitize(values, bin_edges[1:-1])
+    offsets = np.zeros(len(values), dtype=float)
+
+    for bin_index in range(num_bins):
+        members = np.flatnonzero(bin_indices == bin_index)
+        if len(members) <= 1:
+            continue
+        members = members[np.argsort(values[members], kind="stable")]
+        usable_half_width = 0.8 * widths_at_values[members].min()
+        offsets[members] = np.linspace(
+            -usable_half_width, usable_half_width, len(members))
+    return offsets, bin_edges, objective
 
 
 def plot_histogram(base, patch, output_dir):
@@ -185,14 +359,12 @@ def plot_ecdf(base, patch, output_dir):
     save_figure(fig, output_dir, "corner_mean_ecdf.pdf")
 
 
-def plot_violin(base, patch, output_dir):
+def plot_violin(base, patch, output_dir, num_dot_bins):
     base_values = np.array([entry["mean"] for entry in base.values()])
     patch_values = np.array([entry["mean"] for entry in patch.values()])
     lower = min(base_values.min(), patch_values.min()) - 1.0
     upper = max(base_values.max(), patch_values.max()) + 1.0
     view_lower, view_upper = accuracy_limits(lower, upper)
-    rng = np.random.default_rng(20260806)
-
     configurations = (
         (base_values, BASE_COLOR, BASE_LABEL,
          "corner_mean_violin_strip_no_measured_pooling.pdf"),
@@ -209,7 +381,13 @@ def plot_violin(base, patch, output_dir):
         body.set_edgecolor(color)
         body.set_alpha(0.25)
 
-        jitter = violin_jitter(body, 1, values, rng)
+        jitter, bin_edges, objective = deterministic_violin_offsets(
+            body, 1, values, num_dot_bins, view_upper - view_lower)
+        print("Optimized {}-bin violin layout: boundaries={}, objective={:.8g}"
+              .format(num_dot_bins,
+                      ",".join("{:.6g}".format(value)
+                               for value in bin_edges),
+                      objective))
         ax.scatter(1 + jitter, values, s=25, color=color, alpha=0.72,
                    edgecolors="white", linewidths=0.35)
         draw_mean_std(ax, 1, values)
@@ -220,6 +398,7 @@ def plot_violin(base, patch, output_dir):
         ax.set_ylabel("Corner mean accuracy (%)")
         ax.set_title("Corner Accuracy Distribution")
         ax.grid(axis="y", alpha=0.22)
+        mark_mean_tick(ax, values.mean())
         save_figure(fig, output_dir, filename)
 
     fig, ax = plt.subplots(figsize=(7.1, 5.0))
@@ -231,7 +410,9 @@ def plot_violin(base, patch, output_dir):
         body.set_facecolor(color)
         body.set_edgecolor(color)
         body.set_alpha(0.25)
-        jitter = violin_jitter(body, position, values, rng)
+        jitter, _, _ = deterministic_violin_offsets(
+            body, position, values, num_dot_bins,
+            view_upper - view_lower)
         ax.scatter(position + jitter, values, s=25, color=color, alpha=0.72,
                    edgecolors="white", linewidths=0.35)
         draw_mean_std(ax, position, values)
@@ -322,6 +503,8 @@ def main():
                         default="all")
     parser.add_argument("--accuracy_min", type=float)
     parser.add_argument("--accuracy_max", type=float)
+    parser.add_argument("--violin_dot_bins", type=int,
+                        default=VIOLIN_DOT_BINS)
     args = parser.parse_args()
 
     if (args.accuracy_min is not None and
@@ -347,7 +530,8 @@ def main():
     if args.plot_kind in ("all", "histogram"):
         plot_histogram(baseline, patched, args.output_dir)
     if args.plot_kind in ("all", "violin"):
-        plot_violin(baseline, patched, args.output_dir)
+        plot_violin(baseline, patched, args.output_dir,
+                    args.violin_dot_bins)
 
 
 if __name__ == "__main__":

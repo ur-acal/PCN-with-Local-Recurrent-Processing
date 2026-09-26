@@ -33,6 +33,7 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
     --w_bits 5 --weight_quant_factor_bits none --enob none
     --R "${R_VAL:-10e3}" --R_max "${R_MAX:-150e3}" --C "${C_VAL:-49e-15}" --v_dd "${V_DD:-0.1}"
     --one_over_q "${TOGGLE_ONE_OVER_Q:-1}" --sde_noise_type add
+    --tc_noise_stages "${TC_NOISE_STAGES:-both}"
     --enable_spin_variation "${ENABLE_SPIN_VARIATION}" --sigma_spin "${SIGMA_SPIN:-0.1}"
     --spin_variation_mean "${SPIN_VARIATION_MEAN:-1.0}"
     --spin_variation_seed "${SPIN_VARIATION_SEED:-4096}"
@@ -44,6 +45,7 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
     --nonlinear_R "${ENABLE_NONLINEAR_R}"
     --nonlinear_R_table "${TC_MEAN_TABLE:-./hardware_data/res_vs_vin_10k_150k.csv}"
     --tc_covariance_table "${TC_COVARIANCE_TABLE:-./hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv}"
+    --tc_empirical_curve_bank "${TC_EMPIRICAL_CURVE_BANK:-}"
     --nonlinear_R_curve_seed "${NONLINEAR_R_CURVE_SEED:-4096}"
     --tc_fb_asd_path "${TC_FB_ASD_PATH:-./hardware_data/coupler_asd_vs_freq.csv}"
     --tc_noise_reference_R "${TC_NOISE_REFERENCE_R:-50e3}" --tc_asd_reference_p "${TC_ASD_REFERENCE_P:-0.6e-12}"

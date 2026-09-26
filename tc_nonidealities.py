@@ -14,6 +14,38 @@ import torch
 from utils import load_mc_res_curve_gaussian, load_res_vs_vin
 
 
+def load_tc_empirical_bank(package, path):
+    """Attach NPZ curves [resistance code, draw, voltage], in absolute ohms.
+
+    Required arrays: v_grid, programmed_resistances, curves. Code order must
+    match the package; no mixing of programmed resistance levels is allowed.
+    """
+    from dataclasses import replace
+    with np.load(path, allow_pickle=False) as data:
+        grid = torch.as_tensor(data['v_grid'], device=package.means.device,
+                               dtype=package.means.dtype)
+        resistances = torch.as_tensor(data['programmed_resistances']).double()
+        curves = torch.as_tensor(data['curves'], device=package.means.device,
+                                 dtype=package.means.dtype)
+    expected = package.programmed_resistances.detach().cpu().double()
+    if resistances.shape != expected.shape or not torch.allclose(resistances, expected):
+        raise ValueError('TC empirical bank programmed resistance codes do not match.')
+    if (grid.ndim != 1 or grid.numel() < 2 or not torch.isfinite(grid).all()
+            or not torch.all(grid[1:] > grid[:-1])):
+        raise ValueError('TC empirical voltage grid must be finite and increasing.')
+    if (curves.ndim != 3 or curves.shape[0] != expected.numel()
+            or curves.shape[1] < 1 or curves.shape[2] != grid.numel()
+            or not torch.isfinite(curves).all() or not torch.all(curves > 0)):
+        raise ValueError('TC empirical curves must be positive finite [codes, draws, voltage].')
+    n_draws = curves.shape[1]
+    flat = curves.flatten(0, 1)
+    bank = dict(v_grid=grid.expand(flat.shape[0], -1), R_left=flat[:, :-1],
+                R_slope=(flat[:, 1:] - flat[:, :-1]) / (grid[1:] - grid[:-1]),
+                lengths=torch.full((flat.shape[0],), grid.numel(), device=grid.device,
+                                   dtype=torch.long), draws_per_code=n_draws)
+    return replace(package, empirical_bank=bank)
+
+
 class TCNoiseLifecycle:
     """Solve-local noise tape; accepted intervals, not RHS calls, advance it.
 
@@ -113,6 +145,7 @@ class TCResistanceCurves:
     mean_path: str
     covariance_path: str
     floor_ohms: float = 1e-6
+    empirical_bank: object = None
 
     @property
     def covariance(self):
