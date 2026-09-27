@@ -446,7 +446,7 @@ def main():
         # Trainer base args.
         model=model,
         model_name=model_name,
-        save_path=args.save_path,
+        save_path=args.output_save_path or args.save_path,
         batch_size=cfg["batch_size"],
         optim_type="sgd",  # ignored by TrainerImageNetTimmStyle._get_optimizer
         weight_decay=cfg["weight_decay"],

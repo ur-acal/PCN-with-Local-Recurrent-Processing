@@ -261,6 +261,7 @@ for iteration in range((a.repeats+1)*width):
  row=dict(repeat=repeat,warmup=repeat==0,phase='forward',sampling=sampling,
           correction=correction_mode,training_step_reuse=training_step_reuse,
           checkpoint_ode_rhs_training=rhs_checkpoint)
+ y=None
  try:
   start=time.perf_counter()
   y=runtime_model(x)
@@ -287,10 +288,11 @@ for iteration in range((a.repeats+1)*width):
    tensor_path=path.with_name(f'{path.stem}_{label}_repeat-{repeat}.pt')
    torch.save(dict(logits=y.detach().cpu(),gradients={n:p.grad.detach().cpu() for n,p in model.named_parameters() if p.grad is not None}),tensor_path)
    row['tensor_path']=str(tensor_path)
-  del y
  except torch.OutOfMemoryError as exc:
   row.update(status='OOM',error=str(exc),peak_allocated=torch.cuda.max_memory_allocated(),
              peak_reserved=torch.cuda.max_memory_reserved())
+ finally:
+  del y
  result['rows'].append(row);save();print(json.dumps(row),flush=True)
  if row['status']!='ok':
   if a.compare_training_optimizations or a.compare_rhs_checkpoint:
