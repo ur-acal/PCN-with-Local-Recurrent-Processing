@@ -109,6 +109,10 @@ def get_args():
         "--reuse_accepted_step_training", type=str2bool,
         default=str2bool(os.environ.get("REUSE_ACCEPTED_STEP_TRAINING", "false")),
         help="Retain accepted adaptive-step candidates and their autograd graph instead of replaying them.")
+    p.add_argument(
+        "--checkpoint_ode_rhs_training", type=str2bool,
+        default=str2bool(os.environ.get("CHECKPOINT_ODE_RHS_TRAINING", "false")),
+        help="Checkpoint ODE RHS evaluations during gradient-enabled training.")
     p.add_argument("--tol", type=float, default=1e-3)
     p.add_argument("--n_steps", type=float, default=10)
     p.add_argument("--t_end", type=float, default=1.0)
@@ -329,6 +333,7 @@ def main():
         "offset_eps",
         "sde_noise_type",
         "reuse_accepted_step_training",
+        "checkpoint_ode_rhs_training",
         "patch_node",
         "patch_stride",
         "patch_cycle",

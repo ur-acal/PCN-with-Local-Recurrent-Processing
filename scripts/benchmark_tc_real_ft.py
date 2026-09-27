@@ -25,10 +25,25 @@ p.add_argument('--batches',type=int,default=13)
 p.add_argument('--warmup',type=int,default=3)
 p.add_argument('--distill-alpha',type=float,default=None)
 p.add_argument('--distill-temperature',type=float,default=None)
+p.add_argument('--model-name',default=None)
+p.add_argument('--model-dir',default=None)
+p.add_argument('--task',choices=('cifar10','cifar100'),default=None)
+p.add_argument('--img-type',choices=('rgb','CiFAIR','scanGFI'),default=None)
+p.add_argument('--checkpoint-name',default=None)
+p.add_argument('--tc-state',type=int,choices=(1,2),default=None)
+p.add_argument('--teacher-checkpoint',default=None)
+p.add_argument('--training-step-reuse',action='store_true')
+p.add_argument('--rhs-checkpoint',action='store_true')
 a=p.parse_args()
 assert a.batches>a.warmup>=0
 out=Path(a.output).resolve();out.mkdir(parents=True,exist_ok=True)
 env=dict(os.environ,TC_DRY_RUN='true',OUTPUT_DIR=str(out/'scratch_output'))
+for key,value in (
+        ('MODEL_NAME',a.model_name),('MODEL_DIR',a.model_dir),
+        ('TASK',a.task),('IMG_TYPE',a.img_type),('CKPT',a.checkpoint_name),
+        ('TC_STATE',a.tc_state),('TEACHER_CKPT',a.teacher_checkpoint)):
+    if value is not None:
+        env[key]=str(value)
 command=shlex.split(subprocess.check_output(['bash','launch_scripts/run_tc_nonidealities.sh','ft'],
                                            cwd=ROOT,env=env,text=True))
 argv=command[command.index('train_ode_cifar.py')+1:]
@@ -36,6 +51,12 @@ for flag,value in (('--distill_alpha',a.distill_alpha),('--distill_temperature',
     if value is not None:
         argv += [flag,str(value)]
         command += [flag,str(value)]
+for flag,enabled in (
+        ('--reuse_accepted_step_training',a.training_step_reuse),
+        ('--checkpoint_ode_rhs_training',a.rhs_checkpoint)):
+    value=str(enabled).lower()
+    argv += [flag,value]
+    command += [flag,value]
 (out/'resolved_command.txt').write_text(shlex.join(command)+'\n')
 report=dict(command=command,rows=[],warmup_batches=a.warmup,
             scope='Actual train_one_epoch: data/H2D, student, teacher, CE/KD/SRRL, backward, SGD. No checkpoint saves.',

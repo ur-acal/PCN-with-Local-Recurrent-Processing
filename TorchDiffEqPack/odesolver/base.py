@@ -1,8 +1,10 @@
 import abc
+from contextlib import contextmanager, nullcontext
 import torch
 import copy
 import numpy as np
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 from ..misc import interp_cubic_hermite_spline, flatten, delete_local_computation_graph
 from ..utils import monotonic
 
@@ -15,6 +17,41 @@ class FuncWrapper(nn.Module):
         self.func_tensor = func_tensor
     def forward(self, t, y):
         return ( self.func_tensor(t,y[0]), )
+
+
+@contextmanager
+def _tc_noise_recompute_context(context, index):
+    """Replay one RHS with its original accepted-interval noise index."""
+    live_index = context.index
+    context.index = index
+    try:
+        yield
+    finally:
+        context.index = live_index
+
+
+class RHSCheckpointWrapper(nn.Module):
+    """Apply non-reentrant activation checkpointing to one normalized RHS."""
+    def __init__(self, func, tc_context=None):
+        super().__init__()
+        self.func = func
+        # TCNoiseLifecycle is solve-local state, not a child module.
+        self.__dict__['tc_context'] = tc_context
+
+    def forward(self, t, y):
+        if not torch.is_grad_enabled():
+            return self.func(t, y)
+
+        context = self.tc_context
+        if context is None:
+            context_fn = lambda: (nullcontext(), nullcontext())
+        else:
+            noise_index = context.index
+            context_fn = lambda: (
+                nullcontext(),
+                _tc_noise_recompute_context(context, noise_index))
+        return checkpoint(
+            self.func, t, y, use_reentrant=False, context_fn=context_fn)
 
 def check_arguments(func, y0, t):
     tensor_input = False

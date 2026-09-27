@@ -52,12 +52,14 @@ class TCFeedForwardTests(unittest.TestCase):
             torch.testing.assert_close(a.conv1.weight.grad,b.conv1.weight.grad)
 
     def test_training_step_reuse_reaches_direct_cnn_solver(self):
-        model = block(reuse_accepted_step_training=True)
+        model = block(reuse_accepted_step_training=True,
+                      checkpoint_ode_rhs_training=True)
         x = torch.rand(2, 2, 3, 3, dtype=torch.float64) * .01
         with patch('physical_feedforward_tc.odesolve',
                    side_effect=lambda _rhs, state, _options: state) as solve:
             model(x)
         self.assertTrue(solve.call_args.args[2]['reuse_accepted_step_training'])
+        self.assertTrue(solve.call_args.args[2]['checkpoint_ode_rhs_training'])
 
     def test_training_step_reuse_matches_direct_cnn_gradients(self):
         baseline = block(reuse_accepted_step_training=False)

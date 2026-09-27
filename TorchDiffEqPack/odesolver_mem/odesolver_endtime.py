@@ -8,6 +8,10 @@ import torch
 __all__ = ['odesolve_endtime']
 
 def odesolve_endtime(func, z0, options, return_solver=False, **kwargs):
+    if options.get("checkpoint_ode_rhs_training", False):
+        raise ValueError(
+            "checkpoint_ode_rhs_training cannot be combined with the adjoint "
+            "solver, which already recomputes the RHS.")
     hyperparams = extract_keys(options)
     if 'end_point_mode' not in hyperparams.keys():
         hyperparams['end_point_mode'] = True

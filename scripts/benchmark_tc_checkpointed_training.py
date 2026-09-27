@@ -17,14 +17,15 @@ p.add_argument('--batch',type=int,default=128)
 p.add_argument('--memory-fraction',type=float,default=.75)
 p.add_argument('--checkpoint',type=Path,help='Override the pinned legacy checkpoint.')
 p.add_argument('--state',type=int,choices=(1,2),default=1)
+p.add_argument('--dataset',choices=('cifar10','cifar100'),default='cifar100')
 p.add_argument('--input-kind',choices=('scangfi','rgb'),default='scangfi')
-p.add_argument('--method',choices=('rk12','rk23','dopri5'),default='dopri5')
+p.add_argument('--method',choices=('euler','rk2','rk4','rk12','rk23','dopri5'),default='dopri5')
 p.add_argument('--mode',choices=['clean','loop','grouped','all','legacy'],default='all')
 p.add_argument('--output',required=True)
 p.add_argument('--repeats',type=int,default=5)
 p.add_argument('--conv-method',choices=['loop','grouped','shared'],default=None)
 p.add_argument('--curve-sampling',choices=['histogram','uniform'],default='histogram')
-p.add_argument('--no-checkpoint',action='store_true')
+p.add_argument('--rhs-checkpoint',action='store_true',help='Enable production ODE-RHS activation checkpointing.')
 p.add_argument('--sampling-repeats',type=int,default=0)
 p.add_argument('--sensitivity-projections',type=int,default=0)
 p.add_argument('--input-offset',type=int,default=0)
@@ -38,12 +39,19 @@ p.add_argument('--reference-correction',action='store_true',help='Diagnostic pri
 p.add_argument('--compare-correction',action='store_true',help='Alternate optimized/prior correction in one process.')
 p.add_argument('--training-step-reuse',action='store_true',help='Retain the accepted adaptive-training candidate instead of replaying it.')
 p.add_argument('--compare-training-step-reuse',action='store_true',help='Alternate baseline/reuse adaptive training in one process.')
+p.add_argument('--compare-rhs-checkpoint',action='store_true',help='Alternate ODE-RHS checkpointing off/on in one process.')
+p.add_argument('--compare-training-optimizations',action='store_true',help='Benchmark baseline, step reuse only, RHS checkpointing only, and both.')
 p.add_argument('--save-final-tensors',action='store_true',help='Diagnostic final logits and parameter gradients.')
+p.add_argument('--optimizer-step',action='store_true',help='Apply an SGD update after each measured backward pass.')
 
 a=p.parse_args()
-if sum((a.compare_sampling, a.compare_correction,
-        a.compare_training_step_reuse)) > 1:
+comparison_count=sum((a.compare_sampling, a.compare_correction,
+                      a.compare_training_step_reuse, a.compare_rhs_checkpoint,
+                      a.compare_training_optimizations))
+if comparison_count > 1:
  p.error('Choose only one --compare-* option per benchmark.')
+if a.optimizer_step and comparison_count:
+ p.error('--optimizer-step cannot be combined with a comparison benchmark.')
 effective_conv_method=(a.conv_method or
  ('grouped' if a.mode=='grouped' else 'shared' if a.mode=='all' else 'loop'))
 if a.reference_correction or a.compare_correction:
@@ -71,11 +79,20 @@ torch.backends.cudnn.benchmark=False
 torch.backends.cudnn.deterministic=True
 torch.backends.cuda.matmul.allow_tf32=False
 torch.backends.cudnn.allow_tf32=False
-name='TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP'
-checkpoint_root=REPO_ROOT/'saved_ckpt'
-if not checkpoint_root.exists():checkpoint_root=REPO_ROOT.parent/'ScAN-PCN'/'saved_ckpt'
-checkpoint_path=(a.checkpoint.resolve() if a.checkpoint else
-                 checkpoint_root/name/f'{name}_full_param_best_ckpt.pth')
+legacy_name='TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP'
+block_name='ODEXInitFFFB' if a.state==1 else 'S2NoisyIYAsXZAs0'
+cifar10_name=f'TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_{block_name}_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_22Layers6l7l6_2Pool_srrlDistill_a0p3_t2p0_2REP'
+name=legacy_name if a.dataset=='cifar100' else cifar10_name
+if a.checkpoint:
+ checkpoint_path=a.checkpoint.resolve()
+else:
+ candidates=[]
+ for source_root in (REPO_ROOT,REPO_ROOT.parent/'ScAN-PCN'):
+  if a.dataset=='cifar100':
+   candidates.append(source_root/'saved_ckpt'/name/f'{name}_full_param_best_ckpt.pth')
+  else:
+   candidates.append(source_root/'saved_ckpt_runs'/f'tc_rgb_cifar10_state{a.state}_pcn_resnet_depth_study'/name/f'{name}_last_ckpt.pth')
+ checkpoint_path=next((path for path in candidates if path.exists()),candidates[0])
 block_cls=ODEXInitFFFB if a.state==1 else S2NoisyIYAsXZAs0
 wrapper_cls=QATWrapper1State if a.state==1 else QATWrapper2State
 wrappers={}
@@ -83,7 +100,8 @@ model=load_and_prepare_model(str(checkpoint_path),'cuda',
  pc_conv_layer=PCConvReLU6 if a.mode=='legacy' else PCConvReLU6Noisy,wrappers=wrappers,
  conv_only=True,fuse_bn=False,noise_level=0.,
  ode_params=dict(ode_block=block_cls,method=a.method,t_end=1.75,tol=a.tol,n_steps=5,
-                 reuse_accepted_step_training=a.training_step_reuse),
+                 reuse_accepted_step_training=a.training_step_reuse,
+                 checkpoint_ode_rhs_training=a.rhs_checkpoint),
  ode_wrapper_params=dict(ode_wrapper=wrapper_cls,tc_nonidealities=a.mode!='legacy',
  tc_conv_method=effective_conv_method,tc_curve_sampling=a.curve_sampling,
  R=10e3,R_max=150e3,C=49e-15,v_dd=.1,one_over_q=1,w_bits=5,enob=a.enob,weight_quant_factor_bits=None,thermal_noise=False,
@@ -102,16 +120,20 @@ if 'pooling' in effects:
      tc_covariance_table='hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv',R=10e3,R_max=150e3)
  configure_measured_pooling(model,wrappers['wrappers'],enable_nonideality=True,seed=4096,**pooling_options(pool_args,wrappers['wrappers']))
 if a.input_kind=='scangfi':
- with h5py.File(REPO_ROOT.parent/'cifar-10-data/scanGFI/cifar100_raw.h5') as f:
+ scan_file='cifar100_raw.h5' if a.dataset=='cifar100' else 'cifar10_raw.h5'
+ with h5py.File(REPO_ROOT.parent/'cifar-10-data/scanGFI'/scan_file) as f:
   idx=np.flatnonzero(~f['train'][:])[a.input_offset:a.input_offset+a.batch]
   x=torch.from_numpy(f['images'][idx]).cuda().clamp(0,1)
 else:
- with open(REPO_ROOT.parent/'data/cifar-100-python/train','rb') as f:
+ rgb_file=(REPO_ROOT.parent/'data/cifar-100-python/train' if a.dataset=='cifar100'
+           else REPO_ROOT.parent/'data/cifar-10-batches-py/data_batch_1')
+ with open(rgb_file,'rb') as f:
   rgb=pickle.load(f,encoding='bytes')[b'data']
  idx=np.arange(a.input_offset,a.input_offset+a.batch)
  x=torch.from_numpy(rgb[idx]).reshape(-1,3,32,32).cuda().float().div_(255)
- mean=x.new_tensor((0.5071,0.4867,0.4408)).view(1,3,1,1)
- std=x.new_tensor((0.2675,0.2565,0.2761)).view(1,3,1,1)
+ stats=((0.5071,0.4867,0.4408),(0.2675,0.2565,0.2761)) if a.dataset=='cifar100' else ((0.4914,0.4822,0.4465),(0.2470,0.2435,0.2616))
+ mean=x.new_tensor(stats[0]).view(1,3,1,1)
+ std=x.new_tensor(stats[1]).view(1,3,1,1)
  x=(x-mean)/std
 
 if a.sensitivity_projections:
@@ -121,24 +143,32 @@ if a.sensitivity_projections:
           input_indices=idx.tolist(),mode=a.mode,batch=a.batch,seed=107))
  sys.exit(0)
 
-from torch.utils.checkpoint import checkpoint
 model.train()
 runtime_model=model
 if a.mode=='legacy':
  from trainer import WrappedNoisyModel
  # Same pre-quantization functional parameter-mismatch wrapper as legacy FT.
  runtime_model=WrappedNoisyModel(model,noise_levels=a.legacy_mismatch,noise_type='mul')
-for block in model.PcConvs:
- if a.no_checkpoint:continue
- original=block._tc_dense_conv
- def checkpointed(self,module,source,curves,_original=original):
-  if torch.is_grad_enabled():
-   return checkpoint(lambda src:_original(module,src,curves),source,use_reentrant=False)
-  return _original(module,source,curves)
- block._tc_dense_conv=types.MethodType(checkpointed,block)
-
+optimizer=torch.optim.SGD(model.parameters(),lr=.005) if a.optimizer_step else None
 stage_counts=collections.Counter()
 rhs_counts=collections.Counter()
+
+def reset_benchmark_rng():
+ # Every configuration sees the same dropout and sampled hardware realization.
+ torch.manual_seed(107);torch.cuda.manual_seed_all(107);np.random.seed(107)
+ seen=set()
+ def reset(value):
+  if id(value) in seen:return
+  seen.add(id(value))
+  if isinstance(value,torch.Generator):value.manual_seed(value.initial_seed())
+  elif isinstance(value,dict):
+   for item in value.values():reset(item)
+  elif isinstance(value,(list,tuple)):
+   for item in value:reset(item)
+  elif isinstance(value,types.SimpleNamespace):
+   for item in vars(value).values():reset(item)
+ for module in model.modules():
+  for value in vars(module).values():reset(value)
 
 def set_training_step_reuse(enabled):
  for block in model.PcConvs:
@@ -149,6 +179,16 @@ def set_training_step_reuse(enabled):
   for name in ('orig_option_aca','orig_option_init','orig_option_patch'):
    option=getattr(wrapper,name,None)
    if option is not None:option['reuse_accepted_step_training']=enabled
+
+def set_rhs_checkpoint(enabled):
+ for block in model.PcConvs:
+  for name in ('option_aca','option_init','option_patch'):
+   option=getattr(block,name,None)
+   if option is not None:option['checkpoint_ode_rhs_training']=enabled
+ for wrapper in wrappers.get('wrappers',[]):
+  for name in ('orig_option_aca','orig_option_init','orig_option_patch'):
+   option=getattr(wrapper,name,None)
+   if option is not None:option['checkpoint_ode_rhs_training']=enabled
 
 if a.count_stages:
  class CountedRHS(torch.nn.Module):
@@ -172,22 +212,26 @@ if a.count_stages:
    return _original(module,source,curves)
   block._tc_dense_conv=types.MethodType(counted,block)
 
-result=dict(batch=a.batch,mode=a.mode,checkpoint_conv=not a.no_checkpoint,
+result=dict(batch=a.batch,dataset=a.dataset,mode=a.mode,
+ checkpoint_ode_rhs_training=a.rhs_checkpoint,
+ compare_training_optimizations=a.compare_training_optimizations,
+ matched_rng_reset=True,
  reference_correction=a.reference_correction,
  training_step_reuse=a.training_step_reuse,
  conv_method=effective_conv_method,curve_sampling=a.curve_sampling,device=torch.cuda.get_device_name(),
  checkpoint_path=str(checkpoint_path),
  enob=a.enob,tol=a.tol,method=a.method,state=a.state,input_kind=a.input_kind,
  effects=sorted(effects),legacy_mismatch_std=a.legacy_mismatch if a.mode=='legacy' else None,
- unrolled=False,teacher=False,optimizer=False,loss='mean squared logits',
+ unrolled=False,teacher=False,optimizer=a.optimizer_step,loss='mean squared logits',
  memory_fraction=a.memory_fraction,seed=107,curve_seed=19,hardware_seeds=4096,
  input_indices=idx.tolist(),input_shape=list(x.shape),rows=[])
 path=Path(a.output);path.parent.mkdir(parents=True,exist_ok=True)
 def save():path.write_text(json.dumps(result,indent=2))
 save()
-paired=a.compare_sampling or a.compare_correction or a.compare_training_step_reuse
-for iteration in range((a.repeats+1)*(2 if paired else 1)):
- repeat=iteration//2 if paired else iteration
+paired=a.compare_sampling or a.compare_correction or a.compare_training_step_reuse or a.compare_rhs_checkpoint
+width=4 if a.compare_training_optimizations else 2 if paired else 1
+for iteration in range((a.repeats+1)*width):
+ repeat=iteration//width
  correction_mode='reference' if a.reference_correction else 'optimized'
  if a.compare_correction:
   correction_mode=('reference','optimized')[(iteration%2)^(repeat%2)]
@@ -200,18 +244,30 @@ for iteration in range((a.repeats+1)*(2 if paired else 1)):
   training_step_reuse=bool((iteration%2)^(repeat%2))
   set_training_step_reuse(training_step_reuse)
  else:training_step_reuse=a.training_step_reuse
+ if a.compare_training_optimizations:
+  configurations=((False,False),(True,False),(False,True),(True,True))
+  training_step_reuse,rhs_checkpoint=configurations[(iteration+repeat)%4]
+  set_training_step_reuse(training_step_reuse)
+  set_rhs_checkpoint(rhs_checkpoint)
+ elif a.compare_rhs_checkpoint:
+  rhs_checkpoint=bool((iteration%2)^(repeat%2))
+  set_rhs_checkpoint(rhs_checkpoint)
+ else:rhs_checkpoint=a.rhs_checkpoint
+ reset_benchmark_rng()
  model.zero_grad(set_to_none=True)
  stage_counts.clear()
  rhs_counts.clear()
  torch.cuda.synchronize();torch.cuda.reset_peak_memory_stats()
  row=dict(repeat=repeat,warmup=repeat==0,phase='forward',sampling=sampling,
-          correction=correction_mode,training_step_reuse=training_step_reuse)
+          correction=correction_mode,training_step_reuse=training_step_reuse,
+          checkpoint_ode_rhs_training=rhs_checkpoint)
  try:
   start=time.perf_counter()
   y=runtime_model(x)
   torch.cuda.synchronize();forward_end=time.perf_counter()
   row['phase']='backward'
   y.square().mean().backward()
+  if optimizer is not None:optimizer.step()
   torch.cuda.synchronize();backward_end=time.perf_counter()
   row.update(status='ok',forward_seconds=forward_end-start,backward_seconds=backward_end-forward_end,
              total_seconds=backward_end-start,peak_allocated=torch.cuda.max_memory_allocated(),
@@ -225,6 +281,8 @@ for iteration in range((a.repeats+1)*(2 if paired else 1)):
    label=(f'sampling-{sampling}' if a.compare_sampling else
           f'correction-{correction_mode}' if a.compare_correction else
           f'reuse-{str(training_step_reuse).lower()}' if a.compare_training_step_reuse
+          else f'rhs-checkpoint-{str(rhs_checkpoint).lower()}' if a.compare_rhs_checkpoint
+          else f'reuse-{str(training_step_reuse).lower()}_rhs-checkpoint-{str(rhs_checkpoint).lower()}' if a.compare_training_optimizations
           else 'result')
    tensor_path=path.with_name(f'{path.stem}_{label}_repeat-{repeat}.pt')
    torch.save(dict(logits=y.detach().cpu(),gradients={n:p.grad.detach().cpu() for n,p in model.named_parameters() if p.grad is not None}),tensor_path)
@@ -234,11 +292,17 @@ for iteration in range((a.repeats+1)*(2 if paired else 1)):
   row.update(status='OOM',error=str(exc),peak_allocated=torch.cuda.max_memory_allocated(),
              peak_reserved=torch.cuda.max_memory_reserved())
  result['rows'].append(row);save();print(json.dumps(row),flush=True)
- if row['status']!='ok':break
+ if row['status']!='ok':
+  if a.compare_training_optimizations or a.compare_rhs_checkpoint:
+   model.zero_grad(set_to_none=True);torch.cuda.empty_cache();continue
+  break
 rows=[r for r in result['rows'] if not r['warmup'] and r['status']=='ok']
+metrics=('forward_seconds','backward_seconds','total_seconds','peak_allocated','peak_reserved')
+def summarize(selected):
+ if not selected:return dict(status='no successful run')
+ return dict(status='ok',**{key:float(np.median([row[key] for row in selected])) for key in metrics})
 if rows:
- result['median']={k:float(np.median([r[k] for r in rows])) for k in
-                   ('forward_seconds','backward_seconds','total_seconds','peak_allocated','peak_reserved')}
+ result['median']=summarize(rows)
  save();print(json.dumps(result['median']),flush=True)
  if a.compare_correction:
   result['by_correction']={mode:{k:float(np.median([r[k] for r in rows if r['correction']==mode]))
@@ -256,6 +320,19 @@ if rows:
       for k in ('forward_seconds','backward_seconds','total_seconds','peak_allocated','peak_reserved')}
       for mode in (False,True)}
   save();print(json.dumps(result['by_training_step_reuse']),flush=True)
+ if a.compare_rhs_checkpoint:
+  result['by_rhs_checkpoint']={str(mode).lower():{k:float(np.median(
+      [r[k] for r in rows if r['checkpoint_ode_rhs_training']==mode]))
+      for k in ('forward_seconds','backward_seconds','total_seconds','peak_allocated','peak_reserved')}
+      for mode in (False,True)}
+  save();print(json.dumps(result['by_rhs_checkpoint']),flush=True)
+ if a.compare_training_optimizations:
+  result['by_training_optimizations']={
+   f'reuse-{str(reuse).lower()}_rhs-checkpoint-{str(rhs).lower()}':
+    summarize([r for r in rows
+        if r['training_step_reuse']==reuse and r['checkpoint_ode_rhs_training']==rhs])
+   for reuse,rhs in ((False,False),(True,False),(False,True),(True,True))}
+  save();print(json.dumps(result['by_training_optimizations']),flush=True)
 
 if a.sampling_repeats:
  # Includes detached code mapping, histogram (where selected), categorical

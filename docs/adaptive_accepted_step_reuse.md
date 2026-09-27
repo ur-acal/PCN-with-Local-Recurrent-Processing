@@ -166,13 +166,116 @@ candidates for the remaining scalar-valued step proposals. TC solves already
 normalize their bounded step to a scalar, so this exception does not apply to
 the TC training benchmarks above.
 
-## Current benchmark scope
+## ODE RHS activation checkpointing
 
-The available production-path TC training checks show that accepted-step reuse
-is faster with effectively unchanged peak allocated memory. It does not make
-the RK12 batch-64 case fit. Activation checkpointing is not integrated into
-the production training path by this branch. The known CIFAR-10 fine-tuning OOM
-configuration has not yet been benchmarked here.
+The second training optimization is enabled with:
+
+```bash
+CHECKPOINT_ODE_RHS_TRAINING=true ...
+```
+
+The Python option is `checkpoint_ode_rhs_training=True`. It is installed in
+`ODEBlockPC.option_aca` when the block is constructed, inherited by
+`option_init`, `option_patch`, interval copies, and wrapper snapshots, and
+consumed at the common solver RHS boundary. It is not a TC wrapper option and
+is not shipped through the nonlinear-resistance package.
+
+Gradient-enabled RHS calls use non-reentrant PyTorch activation checkpointing.
+No-gradient evaluation calls the original RHS directly. Tensor and tuple
+states, fixed and predefined grids, Euler, RK2, RK4, RK12, RK23, Dopri5, and
+ProjDopri5 use the same implementation. ODE23s and Sym12Async are deferred by
+scope rather than claimed incompatible.
+
+Ordinary CPU/CUDA RNG state is preserved by checkpointing. For
+`TCNoiseLifecycle`, each checkpoint captures its accepted-interval tape index;
+backward recomputation temporarily restores that index and then restores the
+live index. Thus one-state FB noise and the other interval-cached TC noise use
+the identical stored sample during recomputation. Two-state solver-update
+noise remains outside the checkpointed RHS.
+
+The option fails explicitly rather than silently falling back for:
+
+- adjoint solvers, which already implement their own recomputation;
+- energy-metered RHS execution, whose observations would otherwise be counted
+  again during backward;
+- the cached parallel/efficient pixel-switch RHS variants marked unsafe for
+  graph reuse;
+- training-mode BatchNorm inside an RHS, whose running statistics would
+  otherwise be updated again during recomputation;
+- ODE23s and Sym12Async while their support remains deferred.
+
+The direct feedforward TC solver receives the same option. Its expensive
+convolution/current construction currently occurs before its constant-drift
+RHS, so generic RHS checkpointing is correct there but is not expected to save
+meaningful memory.
+
+Known minor limitation: checkpoint activation is decided when `odesolve`
+constructs a solver. Do not construct a solver under `torch.no_grad()` with
+`return_solver=True` and later reuse that solver for gradient-enabled training;
+that unusual sequence retains the no-gradient decision. Ordinary training and
+evaluation construct and execute the solver in the same gradient context and
+are unaffected.
+
+### CIFAR-10 batch-128 OOM result
+
+RTX 4090; production shared/histogram training path; RGB CIFAR-10; pinned
+22-layer, 64-channel 2REP checkpoints; all TC nonidealities; Dopri5,
+`tol=1e-6`; batch 128. Times and peak allocated memory are medians of three
+post-warm-up successful runs. OOM rows failed during forward on every attempt.
+The benchmark resets the global and per-module TC random generators before
+each configuration, so all four configurations use the same stochastic draws.
+
+| Model | Accepted-step reuse | RHS checkpoint | Result | Total time | Peak allocated |
+|---|---:|---:|---|---:|---:|
+| One-state | off | off | OOM | n/a | >22.37 GiB before failure |
+| One-state | on | off | OOM | n/a | >22.37 GiB before failure |
+| One-state | off | on | pass | 2.289 s | 5.79 GiB |
+| One-state | on | on | pass | 1.932 s | 5.78 GiB |
+| Two-state | off | off | OOM | n/a | >19.54 GiB before failure |
+| Two-state | on | off | OOM | n/a | >19.50 GiB before failure |
+| Two-state | off | on | pass | 2.723 s | 10.90 GiB |
+| Two-state | on | on | pass | 2.242 s | 10.83 GiB |
+
+Separate identical-seed batch-1 processes compared the unoptimized and
+combined configurations. Both one-state and two-state runs produced
+bitwise-identical logits and all 46 parameter gradients. Both combined
+batch-128 configurations also completed two consecutive batches through the
+production `train_one_epoch` path: real data loading, EfficientNet teacher,
+CE/SRRL losses, backward, and SGD. Parameters changed and remained finite.
+The two-batch medians were 2.126 s and 6.52 GiB allocated for one-state and
+2.378 s and 11.67 GiB for two-state. Standalone teacher validation and
+checkpoint serialization were intentionally outside this bounded check.
+
+### Batch-64 comparison with gradient accumulation
+
+The matched batch-64 benchmark gives the following post-warm-up medians:
+
+| Model | Configuration | Total time | Peak allocated |
+|---|---|---:|---:|
+| One-state | neither | 1.353 s | 14.06 GiB |
+| One-state | accepted-step reuse only | 1.002 s | 14.05 GiB |
+| One-state | RHS checkpoint only | 1.972 s | 2.89 GiB |
+| One-state | both | 1.730 s | 2.88 GiB |
+| Two-state | neither | 1.634 s | 16.07 GiB |
+| Two-state | accepted-step reuse only | 1.288 s | 16.05 GiB |
+| Two-state | RHS checkpoint only | 2.233 s | 5.45 GiB |
+| Two-state | both | 1.861 s | 5.43 GiB |
+
+At equal effective batch size, the batch-128 combined run is approximately 4%
+faster than two batch-64 accepted-step-reuse steps for one-state and 13% faster
+for two-state. This comparison excludes optimizer, teacher, data-loading, and
+SRRL overhead equally from both sides.
+
+### Legacy model cross-solver result
+
+The supplied 16-layer CIFAR-100 scanGFI checkpoint was run at batch 64 with
+all TC nonidealities through the production shared path. RHS checkpointing
+completed forward and backward for Euler, RK2, RK4, RK12, RK23, and Dopri5.
+The QAT wrapper's projection made the Dopri5 run an actual projected solve.
+RK12 changed from an uncheckpointed forward OOM at 22.41 GiB allocated to a
+successful checkpointed backward at 10.33 GiB. Separate solver tests cover
+forced rejection, full trajectories, predefined grids, tuple states, and
+projection output/gradient equivalence.
 
 ## Verification coverage
 
@@ -189,3 +292,14 @@ The automated and end-to-end checks cover:
   MNIST, feedforward launchers, and local recovery;
 - wrapper snapshot restoration and the internal cached-RHS safety guard;
 - peak training memory and elapsed time on the production configuration.
+- parser/environment-to-block RHS-checkpoint wiring for CIFAR, ImageNet,
+  MNIST, feedforward CNN, local recovery, derived options, and wrapper
+  snapshots;
+- RHS-checkpoint output and gradient equivalence for every enabled solver,
+  tensor and tuple states, projection, full trajectories, and no-gradient
+  evaluation;
+- exact TC noise-tape replay during backward recomputation;
+- explicit failures for adjoint, energy-metered, cached-RHS, and deferred
+  solver combinations;
+- batch-128 one-state and two-state OOM recovery with optimization 2 alone and
+  combined with accepted-step reuse.

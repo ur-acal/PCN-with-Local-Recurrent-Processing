@@ -17,7 +17,8 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
     def __init__(self, *args, one_shot_conv=False, tc_method='dopri5',
                  tc_tol=1e-6, tc_step_size=None, tc_noise_reference_R=50e3,
                  tc_covariance_table=None, tc_curve_sampling='histogram',
-                 reuse_accepted_step_training=False, **kwargs):
+                 reuse_accepted_step_training=False,
+                 checkpoint_ode_rhs_training=False, **kwargs):
         for key, value in dict(R=1e4, C=49e-15, v_dd=.1,
                                summing_current_p=.6e-12, coupler_noise_p=.6e-12).items():
             kwargs.setdefault(key, value)
@@ -50,6 +51,7 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         self.tc_covariance_table = tc_covariance_table
         self.tc_curve_sampling = tc_curve_sampling
         self.reuse_accepted_step_training = reuse_accepted_step_training
+        self.checkpoint_ode_rhs_training = checkpoint_ode_rhs_training
         self._tc_generators = {}
         self._tc_samples = {}
 
@@ -139,6 +141,7 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                        method=self.tc_method, rtol=self.tc_tol, atol=self.tc_tol,
                        h=self.tc_step_size, eps=eps, noise_type='addi',
                        reuse_accepted_step_training=self.reuse_accepted_step_training,
+                       checkpoint_ode_rhs_training=self.checkpoint_ode_rhs_training,
                        proj_fn=self.project_state)
         return odesolve(rhs, state, options)
 

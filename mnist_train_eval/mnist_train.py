@@ -79,7 +79,8 @@ def build_cnn(args, device, *, inference=False, checkpoint=None, seed=None):
         tc_options=dict(one_shot_conv=args.one_shot_conv, tc_method='dopri5',
             tc_tol=args.tol, tc_noise_reference_R=args.tc_noise_reference_R,
             tc_covariance_table=args.tc_covariance_table, tc_curve_sampling=args.tc_curve_sampling,
-            reuse_accepted_step_training=args.reuse_accepted_step_training),
+            reuse_accepted_step_training=args.reuse_accepted_step_training,
+            checkpoint_ode_rhs_training=args.checkpoint_ode_rhs_training),
         **(noise_options(args, seed) if physical else {}))
     wrappers = list(iter_physical_wrappers(model))
     if inference:
@@ -135,7 +136,8 @@ def build_pcn(args, device, checkpoint=None):
     block_cls = ODEXInitFFFB if args.tc_state == 1 else S2NoisyIYAsXZAs0
     model = make_ode_block(model, ode_block=block_cls, noise_level=0., method='dopri5',
         t_end=args.t_end, tol=args.tol, n_steps=5, offset_eps=0., sde_noise_type='add',
-        reuse_accepted_step_training=args.reuse_accepted_step_training)
+        reuse_accepted_step_training=args.reuse_accepted_step_training,
+        checkpoint_ode_rhs_training=args.checkpoint_ode_rhs_training)
     if checkpoint is not None:
         model.load_state_dict(checkpoint['net'], strict=True)
     wrappers = []
