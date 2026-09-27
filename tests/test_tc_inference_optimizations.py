@@ -7,7 +7,8 @@ from test_tc_inference import expanded, TCInferenceTests
 
 
 class AcceptedReuseTests(unittest.TestCase):
-    def solve(self, reuse, grad=False, two=False, endpoint=False, project=False, meter=None):
+    def solve(self, reuse, grad=False, two=False, endpoint=False, project=False,
+              meter=None, training_reuse=False, safe=True):
         ref = torch.full((2,), .08, requires_grad=grad)
         ctx = tape(ref, fb=not two)
         if two:
@@ -27,6 +28,8 @@ class AcceptedReuseTests(unittest.TestCase):
         state = (ref, ref*.5) if two else ref
         options = dict(method='dopri5',t0=0.,t1=1.,h=.4,
             t_eval=[1.],eps=.036,noise_type='addi',end_point_mode=endpoint)
+        options['reuse_accepted_step_training'] = training_reuse
+        options['accepted_step_reuse_safe'] = safe
         if project: options['proj_fn'] = torch.nn.Hardtanh(-.03,.03)
         solver = odesolve(rhs, state, options,return_solver=True)
         solver.tc_reuse_accepted_step = reuse
@@ -43,7 +46,8 @@ class AcceptedReuseTests(unittest.TestCase):
         with torch.set_grad_enabled(grad), patch.object(solver,'adapt_stepsize',side_effect=reject_once), \
                 patch.object(solver,'step',wraps=solver.step) as step:
             result, times = solver.integrate(state,0.,t_eval=[1.],return_steps=True)
-        return result, times, step.call_count, ctx.tape
+        gradient = torch.autograd.grad(result.sum(), ref)[0] if grad else None
+        return result, times, step.call_count, ctx.tape, gradient
 
     def test_same_states_steps_noise_with_rejection_and_endpoint(self):
         for two in (False,True):
@@ -60,6 +64,23 @@ class AcceptedReuseTests(unittest.TestCase):
         a,b = self.solve(False,grad=True),self.solve(True,grad=True)
         self.assertEqual(a[2],b[2])
         torch.testing.assert_close(a[0],b[0],rtol=0,atol=0)
+
+    def test_training_reuses_accepted_graph_after_rejection(self):
+        baseline = self.solve(False,grad=True)
+        reused = self.solve(False,grad=True,training_reuse=True)
+        torch.testing.assert_close(baseline[0],reused[0],rtol=0,atol=0)
+        torch.testing.assert_close(baseline[1],reused[1],rtol=0,atol=0)
+        torch.testing.assert_close(baseline[4],reused[4],rtol=0,atol=0)
+        self.assertLess(reused[2],baseline[2])
+        self.assertEqual(baseline[3].keys(),reused[3].keys())
+        for key in baseline[3]:
+            torch.testing.assert_close(baseline[3][key],reused[3][key],rtol=0,atol=0)
+
+    def test_training_safety_gate_does_not_disable_existing_inference_reuse(self):
+        baseline = self.solve(False, safe=False)
+        reused = self.solve(True, safe=False)
+        torch.testing.assert_close(baseline[0], reused[0], rtol=0, atol=0)
+        self.assertLess(reused[2], baseline[2])
 
     def test_clamped_states_match(self):
         for two in (False,True):

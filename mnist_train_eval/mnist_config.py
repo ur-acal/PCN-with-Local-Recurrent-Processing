@@ -52,6 +52,10 @@ def parse_args(argv=None, *, evaluation=False):
     p.add_argument('--n_trials', type=int, default=10)
     p.add_argument('--t_end', type=float, default=1.75)
     p.add_argument('--tol', type=float, default=None)
+    p.add_argument('--reuse_accepted_step_training', type=boolean,
+                   default=boolean(os.environ.get('REUSE_ACCEPTED_STEP_TRAINING', 'false')))
+    p.add_argument('--checkpoint_ode_rhs_training', type=boolean,
+                   default=boolean(os.environ.get('CHECKPOINT_ODE_RHS_TRAINING', 'false')))
     p.add_argument('--one_shot_conv', type=boolean, default=False)
     p.add_argument('--download', type=boolean, default=False)
     p.add_argument('--dry_run', type=boolean, default=False)

@@ -30,7 +30,8 @@ def resolved(stage, state='1', **extra):
     output = subprocess.check_output(['bash', str(ROOT/'launch_scripts'/script)],
                                      env=env, text=True, cwd=ROOT)
     argv = shlex.split(output)[2:]
-    with patch.object(sys, 'argv', argv), contextlib.redirect_stderr(io.StringIO()):
+    with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', argv), \
+            contextlib.redirect_stderr(io.StringIO()):
         return (get_args if stage == 'ft' else parse_args)()
 
 
@@ -107,6 +108,32 @@ class TCCommandTests(unittest.TestCase):
                 if stage=='eval':
                     self.assertTrue(args.test_expanded)
                     self.assertEqual(args.nonlinear_R_curve_sharing,'per_coupler')
+
+    def test_training_accepted_step_reuse_forwarding(self):
+        disabled = resolved('ft')
+        enabled = resolved('ft', REUSE_ACCEPTED_STEP_TRAINING='true')
+        self.assertFalse(disabled.reuse_accepted_step_training)
+        self.assertTrue(enabled.reuse_accepted_step_training)
+        self.assertNotIn('reuse_accepted_step_training', wrapper_options(enabled))
+        block = make_block()
+        block.option_aca['reuse_accepted_step_training'] = True
+        wrapper = wrap(block)
+        self.assertTrue(wrapper.orig_option_aca['reuse_accepted_step_training'])
+        block(torch.full((1, 2, 2, 2), .02))
+        self.assertTrue(block.option_aca['reuse_accepted_step_training'])
+
+    def test_rhs_checkpointing_is_block_option_not_wrapper_option(self):
+        disabled = resolved('ft')
+        enabled = resolved('ft', CHECKPOINT_ODE_RHS_TRAINING='true')
+        self.assertFalse(disabled.checkpoint_ode_rhs_training)
+        self.assertTrue(enabled.checkpoint_ode_rhs_training)
+        self.assertNotIn('checkpoint_ode_rhs_training', wrapper_options(enabled))
+        block = make_block()
+        block.option_aca['checkpoint_ode_rhs_training'] = True
+        wrapper = wrap(block)
+        self.assertTrue(wrapper.orig_option_aca['checkpoint_ode_rhs_training'])
+        block(torch.full((1, 2, 2, 2), .02))
+        self.assertTrue(block.option_aca['checkpoint_ode_rhs_training'])
 
     def test_pooling_uses_selected_distribution(self):
         from types import SimpleNamespace

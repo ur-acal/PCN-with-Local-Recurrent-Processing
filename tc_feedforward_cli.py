@@ -1,4 +1,5 @@
 """Opt-in wiring for resistance-coded feedforward CNNs."""
+import os
 import torch
 
 
@@ -12,6 +13,12 @@ def add_arguments(parser):
                         choices=('relu', 'relu6'), default='relu6')
     parser.add_argument('--one_shot_conv', type=boolean, default=False)
     parser.add_argument('--tc_method', choices=('dopri5', 'euler'), default='dopri5')
+    parser.add_argument('--reuse_accepted_step_training', type=boolean,
+                        default=boolean(os.environ.get(
+                            'REUSE_ACCEPTED_STEP_TRAINING', 'false')))
+    parser.add_argument('--checkpoint_ode_rhs_training', type=boolean,
+                        default=boolean(os.environ.get(
+                            'CHECKPOINT_ODE_RHS_TRAINING', 'false')))
     parser.add_argument('--tc_tol', type=float, default=1e-6)
     parser.add_argument('--tc_step_size', type=float, default=None)
     parser.add_argument('--tc_noise_reference_R', type=float, default=50e3)
@@ -28,7 +35,8 @@ def conversion_options(args):
         raise ValueError('TC uses normalized conductances (physical_level=2), never pulse-level weights.')
     return dict(tc_options={key: getattr(args, key) for key in (
         'one_shot_conv', 'tc_method', 'tc_tol', 'tc_step_size',
-        'tc_noise_reference_R', 'tc_covariance_table', 'tc_curve_sampling')})
+        'tc_noise_reference_R', 'tc_covariance_table', 'tc_curve_sampling',
+        'reuse_accepted_step_training', 'checkpoint_ode_rhs_training')})
 
 
 def initialize_args(args):

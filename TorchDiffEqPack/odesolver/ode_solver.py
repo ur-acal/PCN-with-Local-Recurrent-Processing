@@ -5,9 +5,46 @@ from ..utils import extract_keys
 from .stiff_ode_solver import *
 from .symplectic import *
 import torch
-from .base import check_arguments
+from functools import partial
+from types import FunctionType, MethodType
+from .base import check_arguments, RHSCheckpointWrapper
 
 __all__ = ['odesolve']
+
+
+def _rhs_modules(func):
+    """Find modules registered on, or captured by, an RHS callable."""
+    pending, seen = [func], set()
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, torch.nn.Module):
+            modules = list(value.modules())
+            yield from modules
+            for module in modules:
+                pending.extend(item for item in vars(module).values()
+                               if isinstance(item, (torch.nn.Module, FunctionType,
+                                                    MethodType, partial, dict,
+                                                    list, tuple, set)))
+        elif isinstance(value, MethodType):
+            pending.extend((value.__self__, value.__func__))
+        elif isinstance(value, FunctionType):
+            pending.extend(value.__defaults__ or ())
+            pending.extend((value.__kwdefaults__ or {}).values())
+            for cell in value.__closure__ or ():
+                try:
+                    pending.append(cell.cell_contents)
+                except ValueError:
+                    pass
+        elif isinstance(value, partial):
+            pending.extend((value.func, *value.args,
+                            *(value.keywords or {}).values()))
+        elif isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set)):
+            pending.extend(value)
 
 def odesolve(func, y0, options, return_solver=False, proj_fn=None, full_traj=False, **kwargs):
     r"""
@@ -30,8 +67,15 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, full_traj=Fal
     * out = odesolve(func, y0, options = options) : func is the ODE; y0 is the initial condition, could be either a tensor or a tuple of tensors
     """
     hyperparams = extract_keys(options)
+    checkpoint_rhs = options.get("checkpoint_ode_rhs_training", False)
+    checkpoint_rhs_active = checkpoint_rhs and torch.is_grad_enabled()
+    method = options['method'].lower()
+    if checkpoint_rhs_active and method in (
+            'ode23s', 'sym12async', 'fixedstep_sym12async'):
+        raise ValueError(
+            f"checkpoint_ode_rhs_training is not implemented for {method}.")
 
-    if options['method'].lower() == 'euler':
+    if method == 'euler':
         if proj_fn is None and 'proj_fn' not in options:
             solver = Euler(func=func, y0=y0,  **hyperparams, **kwargs)
         elif proj_fn is not None:
@@ -73,6 +117,28 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, full_traj=Fal
 
     solver.tc_context = getattr(func, "tc_context", None)
     solver.energy_meter = getattr(func, "energy_meter", None)
+    solver.reuse_accepted_step_training = options.get(
+        "reuse_accepted_step_training", False)
+    solver.accepted_step_reuse_safe = options.get(
+        "accepted_step_reuse_safe", True)
+    if checkpoint_rhs_active:
+        if solver.energy_meter is not None:
+            raise ValueError(
+                "checkpoint_ode_rhs_training is incompatible with RHS energy "
+                "metering because backward recomputation would repeat observations.")
+        if not options.get("accepted_step_reuse_safe", True):
+            raise ValueError(
+                "checkpoint_ode_rhs_training is incompatible with this cached "
+                "RHS implementation.")
+        if any(isinstance(module, torch.nn.modules.batchnorm._BatchNorm)
+               and module.training for module in _rhs_modules(solver.func)):
+            raise ValueError(
+                "checkpoint_ode_rhs_training is incompatible with training-mode "
+                "BatchNorm inside the RHS because recomputation would update "
+                "running statistics twice.")
+        solver.func = RHSCheckpointWrapper(solver.func, solver.tc_context)
+    solver.checkpoint_ode_rhs_training = checkpoint_rhs
+    solver.checkpoint_ode_rhs_active = checkpoint_rhs_active
     if solver.tc_context is not None:
         solver.noise_type = "addi"
         solver.end_point_mode = options.get("end_point_mode", solver.end_point_mode)

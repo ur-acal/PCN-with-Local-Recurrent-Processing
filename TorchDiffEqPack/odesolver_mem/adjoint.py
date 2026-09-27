@@ -177,6 +177,10 @@ def odesolve_adjoint(func, y0, options = None):
     out = odesolve_adjoint(func, y0, options = options) # func is the ODE; y0 is the initial condition, could be either a tensor or a tuple of tensors
     """
 
+    if options.get("checkpoint_ode_rhs_training", False):
+        raise ValueError(
+            "checkpoint_ode_rhs_training cannot be combined with the adjoint "
+            "solver, which already recomputes the RHS.")
     assert options['method'].lower() not in ['sym12async','fixedstep_sym12async'], 'odesolve_adjoint cannot be used with sym12async method, ' \
                                                             'please use odesolve_adjoint_sym12'
     flat_params = flatten_params(func.parameters())
