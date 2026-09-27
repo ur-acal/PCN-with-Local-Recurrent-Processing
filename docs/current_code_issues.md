@@ -19,12 +19,16 @@ do not duplicate it across experiment documents.
    correct but does not use the fused Gaussian TC kernel. This is a performance
    limitation only; the default Gaussian per-coupler evaluation remains fused.
 
-3. **CNN stage-only checkpoint verification is path-based.**
-   `ft_only` and `ft_and_eval` require the exact expected checkpoint path and
-   reject a missing file, but do not validate saved run metadata or completion
-   as thoroughly as `find_tc_pretrain.py` does for PCN. The complete default
-   pipeline is unaffected. Do not move an unrelated checkpoint into the
-   expected CNN path.
+3. **Standalone downstream launches do not always prove upstream completion.**
+   A separately launched student can accept a validation teacher's best
+   checkpoint even if teacher training stopped before its planned final epoch;
+   the validation-split metadata proves which split was used, not that the run
+   completed. Likewise, CNN `ft_only` and `ft_and_eval` require the exact
+   expected pretraining checkpoint path, but do not prove that the originating
+   pretraining run completed. These checkpoints are not inherently invalid,
+   but they may represent fewer epochs than the intended recipe. Normal
+   pipelined pretrain-to-FT execution is unaffected: a failed pretraining
+   process prevents FT from starting. This completion guard is deferred.
 
 ## Audited and not open
 

@@ -13,6 +13,7 @@ if [[ "${TEACHER_DRY_RUN:-false}" != true ]]; then
   conda activate scanbase
 fi
 cd "${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
+source ./launch_scripts/normalize_validation_mode.sh || exit 2
 export TORCH_HOME="${TORCH_HOME:-${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}/.cache/torch}"
 export IMG_TYPE=rgb
 export RGB_DATA_ROOT="${RGB_DATA_ROOT:-../data}"
@@ -22,6 +23,7 @@ export MATCH_DISTILL_AUG_ORDER=false USE_DIRECT_RESIZE_FOR_TIMM_AUGS=false
 case "${RGB_TEACHER_RECIPE:-legacy}" in
   legacy)
     export USE_TIMM=false MATCH_DISTILL_PREPROCESS=true ARCH_SOURCE=torchvision
+    export TEACHER_EPOCHS="${TEACHER_EPOCHS:-15}"
     recipe_label=OldNoTimm_MatchDistill
     ;;
   timm_oldaugs)
@@ -36,6 +38,10 @@ case "${RGB_TEACHER_RECIPE:-legacy}" in
 esac
 export TEACHER_LOG_DIR="${TEACHER_LOG_DIR:-./logs/teacher_rgb}"
 output="${TEACHER_OUTPUT_DIR:-./checkpoint}"
+validation_suffix=""
+if [[ "${VALIDATION_MODE}" == "true" ]]; then
+  validation_suffix="_val5k"
+fi
 if [[ "${TEACHER_DRY_RUN:-false}" != true ]]; then
   mkdir -p "$TEACHER_LOG_DIR" "$output"
   # Validate local inputs before the long run.  Torchvision retains its normal
@@ -62,9 +68,9 @@ PY
 fi
 for dataset in cifar10 cifar100; do
   export DATASET_NAME="$dataset"
-  export TEACHER_CHECKPOINT="${output}/efficientnet_v2_l_${dataset}_rgb_${recipe_label}.pth"
-  export TEACHER_LOG="${TEACHER_LOG_DIR}/${dataset}_rgb_${recipe_label}.log"
-  echo "Teacher recipe=${RGB_TEACHER_RECIPE:-legacy} dataset=$dataset checkpoint=$TEACHER_CHECKPOINT"
+  export TEACHER_CHECKPOINT="${output}/efficientnet_v2_l_${dataset}_rgb_${recipe_label}${validation_suffix}.pth"
+  export TEACHER_LOG="${TEACHER_LOG_DIR}/${dataset}_rgb_${recipe_label}${validation_suffix}.log"
+  echo "Teacher recipe=${RGB_TEACHER_RECIPE:-legacy} dataset=$dataset checkpoint=$TEACHER_CHECKPOINT log=$TEACHER_LOG"
   if [[ "${TEACHER_DRY_RUN:-false}" == true ]]; then
     # Print the actual entry-point argv; do not load data/models or run training.
     ( python() { printf '%q ' python "$@"; printf '\n'; }

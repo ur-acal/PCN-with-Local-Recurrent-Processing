@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Hardware-aware feedforward fine-tuning.  Level 2 uses averaged physical
 # convolutions for training.  Level 3 is available for pulse-level diagnostic
 # training, but is much slower.
@@ -7,6 +6,7 @@ set -e
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+source ./launch_scripts/normalize_validation_mode.sh || exit 2
 source ./launch_scripts/tc_feedforward_args.sh ft
 
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
@@ -15,6 +15,7 @@ TASK="${TASK:-cifar100}"
 IMG_TYPE="${IMG_TYPE:-CiFAIR}"
 source ./launch_scripts/rgb_teacher_defaults.sh
 OUTPUT_DIR="${OUTPUT_DIR:-./saved_ckpt_runs/feedforward_physical_ft}"
+OUTPUT_DIR="$(validation_output_path "${OUTPUT_DIR}")"
 INPUT_PREPROCESS_ARGS=()
 if [[ -n "${INPUT_QUANT_BITS+x}" ]]; then
   INPUT_PREPROCESS_ARGS+=(--input_quant_bits "${INPUT_QUANT_BITS}")
@@ -23,6 +24,13 @@ if [[ -n "${CENTER_STUDENT_INPUT+x}" ]]; then
   INPUT_PREPROCESS_ARGS+=(--center_student_input "${CENTER_STUDENT_INPUT}")
 fi
 DATA_DIR="${DATA_DIR:-../data}"
+VALIDATION_ARGS=(
+  --validation_mode "${VALIDATION_MODE}"
+  --validation_split_seed "${VALIDATION_SPLIT_SEED:-4096}"
+)
+if [[ -n "${VALIDATION_MANIFEST:-}" ]]; then
+  VALIDATION_ARGS+=(--validation_manifest "${VALIDATION_MANIFEST}")
+fi
 if [[ -n "${SLURM_JOB_ID:-}" ]]; then
   NUM_WORKERS="${NUM_WORKERS:-2}"
 else
@@ -65,6 +73,7 @@ cmd=(
   --model_name "${MODEL_NAME}"
   --dataset "${TASK}"
   --data_dir "${DATA_DIR}"
+  "${VALIDATION_ARGS[@]}"
   --output_dir "${OUTPUT_DIR}"
   --case custom_noresize
   --seed "${TRAINING_SEED:-4096}"

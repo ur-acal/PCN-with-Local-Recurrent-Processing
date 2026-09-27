@@ -11,6 +11,7 @@
 # Preserve explicit wait/status handling; propagate Python failures through tee.
 set -o pipefail
 source ./launch_scripts/tc_nonideality_args.sh ft || exit 2
+source ./launch_scripts/normalize_validation_mode.sh || exit 2
 mode="${mode:-default}"
 case "$mode" in default|pretrain_only|ft_only|ft_and_eval) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
 if [[ "$mode" != default && ( "${TC_NONIDEALITIES:-false}" != true || "${TOGGLE_MODE:-none}" != none || "${SWITCH_INF:-false}" != false ) ]]; then
@@ -46,10 +47,24 @@ SAN_BLOCKS="${SAN_BLOCKS//,/+}"
 
 EXP="${EXP:-no_bn_${PCN}_NODE_search_${TASK}_${IMG_TYPE}_${CIRC_CONF:-NoCirc}_job${SLURM_JOB_ID}_Exp}"
 RUN_TAG="${RUN_TAG:-${EXP_PREFIX:-kdcrd_then_ft}}"
+if [[ "${VALIDATION_MODE}" == true ]]; then
+  [[ "${EXP}" == *"_val5k"* ]] || EXP+="_val5k"
+  [[ "${RUN_TAG}" == *"_val5k"* ]] || RUN_TAG+="_val5k"
+fi
 OUTPUT_SAVE_PATH="${OUTPUT_SAVE_PATH:-./saved_ckpt_runs/${RUN_TAG}}"
+OUTPUT_SAVE_PATH="$(validation_output_path "${OUTPUT_SAVE_PATH}")"
 PRETRAIN_SAVE_PATH="${PRETRAIN_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
 FT_OUTPUT_SAVE_PATH="${FT_OUTPUT_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
+PRETRAIN_SAVE_PATH="$(validation_output_path "${PRETRAIN_SAVE_PATH}")"
+FT_OUTPUT_SAVE_PATH="$(validation_output_path "${FT_OUTPUT_SAVE_PATH}")"
 FT_TIMM_AUG_LEVEL="${FT_TIMM_AUG_LEVEL:-no_aug}"
+VALIDATION_ARGS=(
+  --validation_mode "${VALIDATION_MODE}"
+  --validation_split_seed "${VALIDATION_SPLIT_SEED:-4096}"
+)
+if [[ -n "${VALIDATION_MANIFEST:-}" ]]; then
+  VALIDATION_ARGS+=(--validation_manifest "${VALIDATION_MANIFEST}")
+fi
 
 ODE_BLOCK="${ODE_BLOCK:-ODEXInitFFFB}"
 
@@ -453,6 +468,7 @@ run_one_combo () {
     --input_quant_bits "${INPUT_QUANT_BITS}" \
     --center_student_input "${CENTER_STUDENT_INPUT}" \
     --dataset       "${TASK}" \
+    "${VALIDATION_ARGS[@]}" \
     --num_classes   "${N_CLASSES}" \
     --num_epochs    300 \
     --eval_every    5 \
@@ -560,7 +576,7 @@ eval_one_combo_model() {
   mkdir -p "$dir"
 
   local ckpt="best"
-  if [[ "${FINAL_EVAL_ONLY}" == true ]]; then
+  if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
     ckpt="last"
   fi
 
@@ -729,7 +745,7 @@ finetune_one_combo_model() {
   echo "[FINETUNE] comb=${comb_tag} ${name} (block=${train_block}) → $logfile"
 
   local ckpt="best"
-  if [[ "${FINAL_EVAL_ONLY}" == true ]]; then
+  if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
     ckpt="last"
   fi
   local t_end="1.75"
@@ -756,6 +772,7 @@ finetune_one_combo_model() {
     --save_path     "${PRETRAIN_SAVE_PATH}" \
     --output_save_path "${FT_OUTPUT_SAVE_PATH}" \
     --dataset       "${TASK}" \
+    "${VALIDATION_ARGS[@]}" \
     --timm_trainer  "${IS_TIMM}" \
     --timm_sched    "cosine" \
     --timm_aug_level "${FT_TIMM_AUG_LEVEL}" \
@@ -869,7 +886,9 @@ for comb in "${COMBS[@]}"; do
   train_log="${LOGDIR}/${comb_tag}/train_${EXP}_${comb_tag}_${TRAIN_ODE_BLOCK}.log"
   if [[ "$mode" == ft_only || "$mode" == ft_and_eval ]]; then
     selection=best
-    [[ "${FINAL_EVAL_ONLY}" != true ]] || selection=last
+    if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
+      selection=last
+    fi
     mn="$(python launch_scripts/find_tc_pretrain.py --root "${PRETRAIN_SAVE_PATH}" \
       --inp "$inp_str" --out "$out_str" --pool "$pool_str" \
       --stride "${STRIDE[*]}" --kernel "${KERNEL[*]}" \

@@ -20,6 +20,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
+from cifar_validation import (
+    IndexedSubset,
+    extract_labels,
+    load_or_create_validation_split,
+)
 import torchvision.transforms as transforms
 import torchvision.models as models
 
@@ -204,6 +209,13 @@ def load_hankyul_efficientnet_v2_4ch(
     return model
 
 
+def positive_int(value: str) -> int:
+    value = int(value)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Train EfficientNetV2 teacher on noisy CIFAR')
     parser.add_argument(
@@ -277,6 +289,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--mismatch_ramp_epochs', type=int, default=0,
                         help='epochs over which to linearly ramp from start to target mismatch level')
     parser.add_argument('--num_workers', default=1, type=int, help='number of dataloader workers')
+    parser.add_argument(
+        '--validation_mode', action='store_true',
+        default=os.environ.get('VALIDATION_MODE', 'false').lower() == 'true',
+                        help='select the teacher on the persistent CIFAR 5k validation split')
+    parser.add_argument(
+        '--validation_manifest', default=os.environ.get('VALIDATION_MANIFEST'), type=str)
+    parser.add_argument(
+        '--validation_split_seed',
+        default=int(os.environ.get('VALIDATION_SPLIT_SEED', '4096')), type=int)
+    parser.add_argument('--validation_data_root', default='../data', type=str)
+    parser.add_argument('--eval_every', default=1, type=positive_int)
     parser.add_argument('--test_only', action='store_true',
                         help='skip training and only evaluate an existing checkpoint')
     return parser.parse_args()
@@ -580,6 +603,28 @@ def create_datasets(args: argparse.Namespace) -> tuple[MyNoiseCIFARDataset, MyNo
     return train_set, test_set
 
 
+def create_validation_source(args: argparse.Namespace):
+    """Create the training split again with deterministic validation transforms."""
+    _, test_transform = build_transforms(args)
+    if args.img_type.lower() == 'rgb':
+        from torchvision.datasets import CIFAR10, CIFAR100
+        dataset = CIFAR100 if args.dataset == 'cifar100' else CIFAR10
+        root = args.root or os.environ.get('RGB_DATA_ROOT', '../data')
+        return dataset(
+            root=root, train=True, download=False, transform=test_transform)
+    dataset_name = _normalize_dataset_name(args.dataset)
+    return MyNoiseCIFARDataset(
+        root=resolve_noise_data_root(args.root, dataset_name, args.img_type),
+        input_name=_data_input_name(args.img_type, dataset_name),
+        train=True,
+        noise_config=load_noise_config(args.noise_config, dataset_name),
+        device=torch.device("cpu"),
+        transform=test_transform,
+        noisy_inp=False,
+        seed=0,
+    )
+
+
 def mixup_data(
     inputs: torch.Tensor,
     targets: torch.Tensor,
@@ -826,14 +871,21 @@ def save_teacher_checkpoint(
     acc: float | None = None,
     top5: float | None = None,
     training_complete: bool = False,
+    checkpoint_kind: str = 'last',
+    validation_split: dict | None = None,
+    test_acc: float | None = None,
+    test_top5: float | None = None,
 ) -> None:
     """Atomically replace the teacher checkpoint with the latest epoch state."""
     payload = {
         'net': teacher_core.state_dict(),
         'acc': acc,
         'epoch': epoch,
-        'checkpoint_kind': 'last',
+        'checkpoint_kind': checkpoint_kind,
         'training_complete': training_complete,
+        'validation_split': validation_split,
+        **({'test_acc': test_acc} if test_acc is not None else {}),
+        **({'test_top5': test_top5} if test_top5 is not None else {}),
         **({'top5': top5} if top5 is not None else {}),
         **({'teacher_preprocessing': rgb_teacher_metadata(
             args.dataset, args.test_size), 'training_args': vars(args)}
@@ -879,6 +931,27 @@ def main() -> None:
     print("device :", device)
 
     train_set, test_set = create_datasets(args)
+    validation_split_metadata = None
+    validation_set = None
+    if args.validation_mode:
+        validation_source = create_validation_source(args)
+        train_labels = extract_labels(train_set)
+        if not np.array_equal(train_labels, extract_labels(validation_source)):
+            raise ValueError(
+                "Teacher training and validation-source dataset orders do not match")
+        split = load_or_create_validation_split(
+            dataset_name=args.dataset,
+            labels=train_labels,
+            data_root=args.validation_data_root,
+            seed=args.validation_split_seed,
+            manifest_path=args.validation_manifest,
+        )
+        train_set = IndexedSubset(train_set, split.train_indices)
+        validation_set = IndexedSubset(validation_source, split.val_indices)
+        validation_split_metadata = split.checkpoint_metadata()
+        print(
+            f"Validation mode: train={len(train_set)} validation={len(validation_set)} "
+            f"manifest={split.manifest_path} checksum={split.manifest_checksum}")
     testloader = DataLoader(
         test_set,
         batch_size=10,
@@ -1000,6 +1073,15 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=device.type == 'cuda',
     )
+    validation_loader = None
+    if validation_set is not None:
+        validation_loader = DataLoader(
+            validation_set,
+            batch_size=10,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=device.type == 'cuda',
+        )
 
     optimizer = optim.SGD(teacher_core.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.wd)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=args.nsc, gamma=args.gamma)
@@ -1028,6 +1110,11 @@ def main() -> None:
 
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
+    best_validation_acc = float('-inf')
+    best_validation_top5 = None
+    best_validation_epoch = None
+    latest_checkpoint_path = checkpoint_path.with_name(
+        checkpoint_path.stem + '_latest' + checkpoint_path.suffix)
     for epoch in range(args.ne):
         if manual_noise_schedule and noisy_wrapper:
             scheduled_level = manual_noise_schedule(epoch)
@@ -1036,15 +1123,41 @@ def main() -> None:
         train_one_epoch(net, trainloader, optimizer, criterion, device, epoch, args)
         scheduler.step()
         save_teacher_checkpoint(
-            checkpoint_path,
+            latest_checkpoint_path if args.validation_mode else checkpoint_path,
             teacher_core,
             args,
             epoch,
             mismatch_levels,
+            checkpoint_kind='latest' if args.validation_mode else 'last',
+            validation_split=validation_split_metadata,
         )
         print(f'Last checkpoint updated after epoch {epoch + 1}/{args.ne}')
 
+        if (validation_loader is not None and
+                (epoch + 1) % args.eval_every == 0):
+            validation_acc, validation_top5 = evaluate(
+                net, validation_loader, criterion, device,
+                dataset_name=args.dataset)
+            print(
+                f'Validation epoch {epoch + 1}: top1={validation_acc:.2f}%'
+                + ('' if validation_top5 is None
+                   else f', top5={validation_top5:.2f}%'))
+            if validation_acc > best_validation_acc:
+                best_validation_acc = validation_acc
+                best_validation_top5 = validation_top5
+                best_validation_epoch = epoch
+                save_teacher_checkpoint(
+                    checkpoint_path, teacher_core, args, epoch,
+                    mismatch_levels, acc=validation_acc,
+                    top5=validation_top5, checkpoint_kind='best',
+                    validation_split=validation_split_metadata)
+
     final_epoch = args.ne - 1
+    if args.validation_mode:
+        if best_validation_epoch is None:
+            raise RuntimeError("Validation mode did not produce a best teacher checkpoint")
+        teacher_core.load_state_dict(
+            load_checkpoint_state_dict(checkpoint_path, device), strict=True)
     print('==> Final test evaluation..')
     final_acc, final_top5 = evaluate(
         net, testloader, criterion, device, dataset_name=args.dataset)
@@ -1052,11 +1165,15 @@ def main() -> None:
         checkpoint_path,
         teacher_core,
         args,
-        final_epoch,
+        best_validation_epoch if args.validation_mode else final_epoch,
         mismatch_levels,
-        acc=final_acc,
-        top5=final_top5,
+        acc=(best_validation_acc if args.validation_mode else final_acc),
+        top5=(best_validation_top5 if args.validation_mode else final_top5),
         training_complete=True,
+        checkpoint_kind='best' if args.validation_mode else 'last',
+        validation_split=validation_split_metadata,
+        test_acc=final_acc if args.validation_mode else None,
+        test_top5=final_top5 if args.validation_mode else None,
     )
     if final_top5 is not None:
         print(

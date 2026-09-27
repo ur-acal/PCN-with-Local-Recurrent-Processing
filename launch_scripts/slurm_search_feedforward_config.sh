@@ -9,6 +9,7 @@ export mode="${mode:-default}"
 REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
 SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/feedforward_pretrain_then_ft.sbatch"
 cd "${REPO_ROOT}"
+source ./launch_scripts/normalize_validation_mode.sh || return 2
 source ./launch_scripts/tc_feedforward_args.sh ft
 mkdir -p logs/slurm_jobs
 
@@ -21,6 +22,10 @@ case "${IMG_TYPE,,}" in
 esac
 export EXP_PREFIX="${EXP_PREFIX:-feedforward_physical}"
 export DATA_DIR="${DATA_DIR:-../data}"
+export VALIDATION_SPLIT_SEED="${VALIDATION_SPLIT_SEED:-4096}"
+if [[ "${VALIDATION_MODE}" == "true" && "${EXP_PREFIX}" != *"_val5k"* ]]; then
+  export EXP_PREFIX+="_val5k"
+fi
 
 # Teacher and distillation.
 source ./launch_scripts/rgb_teacher_defaults.sh
@@ -35,6 +40,9 @@ else
   _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
 fi
 export TEACHER_CKPT="${TEACHER_CKPT:-${_DEFAULT_TEACHER_CKPT}}"
+if [[ "${VALIDATION_MODE}" == true && "${TEACHER_CKPT}" != *"_val5k"* ]]; then
+  export TEACHER_CKPT="${TEACHER_CKPT%.pth}_val5k.pth"
+fi
 export TEACHER_ARCH="${TEACHER_ARCH:-${_DEFAULT_TEACHER_ARCH}}"
 export DISTILL_METHOD="${DISTILL_METHOD:-srrl}"
 export TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
@@ -122,6 +130,9 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
 else
   export WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
   export FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-false}"
+fi
+if [[ "${VALIDATION_MODE}" == "true" ]]; then
+  export FINAL_EVAL_ONLY=false
 fi
 export WARMUP_FT="${WARMUP_FT:-0}"
 export PRETRAIN_LEARNING_RATE="${PRETRAIN_LEARNING_RATE:-0.1}"

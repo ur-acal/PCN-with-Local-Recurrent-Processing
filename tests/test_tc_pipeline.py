@@ -162,6 +162,19 @@ source launch_scripts/slurm_search_feedforward_config.sh
                 self.assertEqual(args['--timm_aug_level'], 'no_aug')
                 self.assertEqual(args['--override'], 'lr=0.003,num_epochs=2')
 
+    def test_validation_mode_normalizes_custom_stage_directories_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, rows = self.run_pipeline(directory, VALIDATION_MODE='true')
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertEqual([row['stage'] for row in rows], ['pretrain', 'ft', 'eval'])
+            pretrain = dict(zip(rows[0]['argv'][1::2], rows[0]['argv'][2::2]))
+            finetune = dict(zip(rows[1]['argv'][1::2], rows[1]['argv'][2::2]))
+            evaluation = dict(zip(rows[2]['argv'][1::2], rows[2]['argv'][2::2]))
+            self.assertEqual(pretrain['--output_dir'], directory + '/pre_val5k')
+            self.assertEqual(finetune['--output_dir'], directory + '/ft_val5k')
+            self.assertIn(directory + '/ft_val5k/', evaluation['--checkpoint'])
+            self.assertNotIn('_val5k_val5k', evaluation['--checkpoint'])
+
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--fake-python':

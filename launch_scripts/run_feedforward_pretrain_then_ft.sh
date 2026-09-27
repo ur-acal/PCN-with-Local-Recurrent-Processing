@@ -5,6 +5,7 @@ set -eo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+source ./launch_scripts/normalize_validation_mode.sh || exit 2
 mode="${mode:-default}"
 case "$mode" in default|pretrain_only|ft_only|ft_and_eval) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
 if [[ "$mode" != default && "${TC_FEEDFORWARD:-false}" != true ]]; then
@@ -15,8 +16,13 @@ fi
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
 TASK="${TASK:-cifar100}"
 EXP_PREFIX="${EXP_PREFIX:-feedforward_physical}"
+if [[ "${VALIDATION_MODE}" == true && "${EXP_PREFIX}" != *"_val5k"* ]]; then
+  EXP_PREFIX+="_val5k"
+fi
 PRETRAIN_OUTPUT_DIR="${PRETRAIN_OUTPUT_DIR:-./saved_ckpt_runs/${EXP_PREFIX}_pretrain}"
 FT_OUTPUT_DIR="${FT_OUTPUT_DIR:-./saved_ckpt_runs/${EXP_PREFIX}_ft}"
+PRETRAIN_OUTPUT_DIR="$(validation_output_path "${PRETRAIN_OUTPUT_DIR}")"
+FT_OUTPUT_DIR="$(validation_output_path "${FT_OUTPUT_DIR}")"
 export MODEL_NAME TASK
 
 if [[ "${INPUT_QUANT_BITS:-none}" != "none" &&
@@ -49,7 +55,7 @@ if [[ "$mode" == pretrain_only ]]; then exit 0; fi
 
 checkpoint_name="custom_noresize_${TASK}_${MODEL_NAME}"
 checkpoint_selection=best
-if [[ "${FINAL_EVAL_ONLY:-false}" == true ]]; then
+if [[ "${FINAL_EVAL_ONLY:-false}" == true && "${VALIDATION_MODE}" != true ]]; then
   checkpoint_selection=last
 fi
 MODEL_CKPT="${PRETRAIN_OUTPUT_DIR}/${TASK}/custom_noresize/${MODEL_NAME}/${checkpoint_name}/${checkpoint_name}_${checkpoint_selection}_ckpt.pth"

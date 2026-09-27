@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source ./launch_scripts/normalize_validation_mode.sh || return 2
 if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
   source ./launch_scripts/tc_nonideality_args.sh ft || return 2
 fi
@@ -49,6 +50,9 @@ else
   _DEFAULT_TEACHER_ARCH="efficientnet_v2_l"
 fi
 TEACHER_CKPT="${TEACHER_CKPT:-${_DEFAULT_TEACHER_CKPT}}"
+if [[ "${VALIDATION_MODE:-false}" == true && "${TEACHER_CKPT}" != *"_val5k"* ]]; then
+  TEACHER_CKPT="${TEACHER_CKPT%.pth}_val5k.pth"
+fi
 TEACHER_ARCH="${TEACHER_ARCH:-${_DEFAULT_TEACHER_ARCH}}"
 TEACHER_ARCH_SOURCE="${TEACHER_ARCH_SOURCE:-auto}"
 TEACHER_INPUT_SIZE="${TEACHER_INPUT_SIZE:-224}"
@@ -173,6 +177,10 @@ else
   WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
   FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-false}"
 fi
+VALIDATION_SPLIT_SEED="${VALIDATION_SPLIT_SEED:-4096}"
+if [[ "${VALIDATION_MODE}" == "true" ]]; then
+  FINAL_EVAL_ONLY=false
+fi
 WARMUP_FT="${WARMUP_FT:-0}"
 FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
 FT_NUM_EPOCHS="${FT_NUM_EPOCHS:-140}"
@@ -266,6 +274,9 @@ SUMMARY_CSV_SCRIPT="${REPO_ROOT}/shell_utils/summary_csvs_as_dict.py"
 ####################################################
 RUN_DATE="${RUN_DATE:-$(date +%m%d)}"
 EXP_PREFIX="${EXP_PREFIX:-${RUN_DATE}_${TRAIN_MODE}_${ODE_BLOCK}}"
+if [[ "${VALIDATION_MODE,,}" == "true" && "${EXP_PREFIX}" != *"_val5k"* ]]; then
+  EXP_PREFIX+="_val5k"
+fi
 INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-none}"
 CENTER_STUDENT_INPUT="${CENTER_STUDENT_INPUT:-false}"
 INPUT_PREPROCESS_SUFFIX=""
@@ -276,14 +287,20 @@ if [[ "${CENTER_STUDENT_INPUT,,}" == "true" ]]; then
   INPUT_PREPROCESS_SUFFIX+="_ctr"
 fi
 RUN_TAG="${EXP_PREFIX}${INPUT_PREPROCESS_SUFFIX}"
+if [[ "${VALIDATION_MODE,,}" == "true" && "${RUN_TAG}" != *"_val5k"* ]]; then
+  RUN_TAG+="_val5k"
+fi
 if [[ "${TOGGLE_MODE}" != "none" ]]; then
   RUN_TAG+="_toggle_${TOGGLE_MODE}"
 elif [[ "${SWITCH_INF}" == "true" ]]; then
   RUN_TAG+="_switch_inf"
 fi
 OUTPUT_SAVE_PATH="${OUTPUT_SAVE_PATH:-saved_ckpt_runs/${RUN_TAG}}"
+OUTPUT_SAVE_PATH="$(validation_output_path "${OUTPUT_SAVE_PATH}")"
 PRETRAIN_SAVE_PATH="${PRETRAIN_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
 FT_OUTPUT_SAVE_PATH="${FT_OUTPUT_SAVE_PATH:-${OUTPUT_SAVE_PATH}}"
+PRETRAIN_SAVE_PATH="$(validation_output_path "${PRETRAIN_SAVE_PATH}")"
+FT_OUTPUT_SAVE_PATH="$(validation_output_path "${FT_OUTPUT_SAVE_PATH}")"
 SUMMARY_PKL_OUT="${MERGE_OUT_DIR}/summary_dict_${EXP_PREFIX}_AvgPool_TIMM_SRRL.pkl"
 ####################################################
 # Change EXP in submit_chunk
@@ -654,6 +671,8 @@ submit_chunk() {
   sbatch_exports+=",ODE_BLOCK=${ODE_BLOCK},TOGGLE_MODE=${TOGGLE_MODE}"
   sbatch_exports+=",WARMUP_PRETRAIN=${WARMUP_PRETRAIN},WARMUP_FT=${WARMUP_FT}"
   sbatch_exports+=",FINAL_EVAL_ONLY=${FINAL_EVAL_ONLY}"
+  sbatch_exports+=",VALIDATION_MODE=${VALIDATION_MODE},VALIDATION_SPLIT_SEED=${VALIDATION_SPLIT_SEED}"
+  [[ -z "${VALIDATION_MANIFEST:-}" ]] || sbatch_exports+=",VALIDATION_MANIFEST=${VALIDATION_MANIFEST}"
   sbatch_exports+=",INPUT_QUANT_BITS=${INPUT_QUANT_BITS},CENTER_STUDENT_INPUT=${CENTER_STUDENT_INPUT}"
   sbatch_exports+=",FT_LEARNING_RATE=${FT_LEARNING_RATE}"
   sbatch_exports+=",FT_NUM_EPOCHS=${FT_NUM_EPOCHS}"

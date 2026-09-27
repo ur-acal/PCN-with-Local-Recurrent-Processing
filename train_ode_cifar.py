@@ -28,6 +28,7 @@ from measured_activation import (
 from measured_pooling import configure_measured_pooling
 from input_preprocessing import (
     append_preprocessing_suffix, resolve_preprocessing, write_run_config)
+from cifar_validation import require_matching_validation_split
 
 
 def str2bool(v):
@@ -140,6 +141,18 @@ def get_args():
         "--center_student_input", type=str2bool, default=None,
         help="Apply 2*x-1 to the student input; inferred from _ctr run directories when omitted.")
     p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], default="cifar10")
+    p.add_argument(
+        "--validation_mode", type=str2bool,
+        default=None,
+        help="Select checkpoints on a persistent 5k split of the CIFAR training set. "
+             "Validation-aware launchers must pass this argument explicitly.")
+    p.add_argument(
+        "--validation_manifest", type=str,
+        default=os.environ.get("VALIDATION_MANIFEST"),
+        help="Optional split manifest path; defaults to ../data/validation_splits/.")
+    p.add_argument(
+        "--validation_split_seed", type=int,
+        default=int(os.environ.get("VALIDATION_SPLIT_SEED", "4096")))
     p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--timm_trainer", type=str2bool, default=False)
     p.add_argument("--timm_aug_level", type=str,
@@ -446,6 +459,13 @@ def get_args():
     from tc_cli import add_tc_arguments, validate_tc
     add_tc_arguments(p)
     args = p.parse_args()
+    if args.validation_mode is None:
+        if str2bool(os.environ.get("VALIDATION_MODE", "false")):
+            p.error(
+                "VALIDATION_MODE=true was inherited, but this launcher did not "
+                "pass --validation_mode explicitly. Use a validation-aware "
+                "launcher so checkpoint, teacher, log, and result names are isolated.")
+        args.validation_mode = False
     validate_tc(args)
     return args
 
@@ -474,7 +494,13 @@ def evaluate_teacher(model: torch.nn.Module, trainer: TrainerCiFar) -> float:
     with torch.no_grad():
         for batch in dataloader:
             if isinstance(batch, (list, tuple)):
-                inputs, labels = batch[:2]
+                if getattr(trainer, "orig_t_inp", False) and len(batch) >= 3:
+                    # Paired scan/CiFAIR validation batches are
+                    # (student_input, teacher_input, label, ...).  Evaluate the
+                    # teacher on its own view, matching the distillation path.
+                    inputs, labels = batch[1], batch[2]
+                else:
+                    inputs, labels = batch[:2]
             else:
                 inputs, labels = batch
             inputs = inputs.to(device)
@@ -1182,6 +1208,9 @@ def main():
             health_check_seed=args.health_check_seed,
             img_type=args.img_type,
             dataset_name=args.dataset,
+            validation_mode=args.validation_mode,
+            validation_manifest=args.validation_manifest,
+            validation_split_seed=args.validation_split_seed,
 
             # Distillation related args.
             distill_method=args.distill_method,
@@ -1244,6 +1273,19 @@ def main():
                 raise ValueError("--srrl_weight must be non-negative")
             trainer_kwargs.update(srrl_beta=args.srrl_weight)
         trainer = timm_trainer_cls(**trainer_kwargs)
+        if args.validation_mode:
+            if args.model_name is not None:
+                source_checkpoint = torch.load(
+                    ckpt_path, map_location="cpu", weights_only=False)
+                require_matching_validation_split(
+                    source_checkpoint, trainer.validation_split_metadata,
+                    "PCN source checkpoint")
+            if teacher_model is not None:
+                teacher_checkpoint = torch.load(
+                    args.teacher_ckpt, map_location="cpu", weights_only=False)
+                require_matching_validation_split(
+                    teacher_checkpoint, trainer.validation_split_metadata,
+                    "distillation teacher checkpoint")
         if args.model_name is not None and hasattr(trainer, "load_feature_kd_from_ckpt"):
             # Make sure the original model's distillation method matches the distillation method used now.
             # For example, loaded model trained with MGD, now finetuning with SRRL might throw error.
@@ -1296,8 +1338,24 @@ def main():
             adapt_PIL_teacher = args.adapt_PIL_teacher,
             input_quant_bits = args.input_quant_bits,
             center_student_input = args.center_student_input,
+            validation_mode=args.validation_mode,
+            validation_manifest=args.validation_manifest,
+            validation_split_seed=args.validation_split_seed,
             skip_eval_epochs=args.skip_eval_epochs if (not args.test_only and args.cosine_t0 is None) else 0,
         )
+        if args.validation_mode:
+            if args.model_name is not None:
+                source_checkpoint = torch.load(
+                    ckpt_path, map_location="cpu", weights_only=False)
+                require_matching_validation_split(
+                    source_checkpoint, trainer.validation_split_metadata,
+                    "PCN source checkpoint")
+            if teacher_model is not None:
+                teacher_checkpoint = torch.load(
+                    args.teacher_ckpt, map_location="cpu", weights_only=False)
+                require_matching_validation_split(
+                    teacher_checkpoint, trainer.validation_split_metadata,
+                    "distillation teacher checkpoint")
 
     if teacher_model is not None:
         evaluate_teacher(teacher_model, trainer)
@@ -1307,6 +1365,9 @@ def main():
 
     trainer.recovery_checkpoint = ckpt_path if args.model_name is not None else None
     trainer.recovery_config = vars(args).copy()
+    trainer.recovery_config["validation_manifest_checksum"] = (
+        trainer.validation_split_metadata.get("manifest_checksum")
+        if trainer.validation_split_metadata else None)
     trainer.train()
 
 if __name__ == "__main__":

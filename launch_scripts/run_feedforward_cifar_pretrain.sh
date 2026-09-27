@@ -1,11 +1,11 @@
 #!/bin/bash
-
 # Unitless physical WRN/ResNet-like pretraining. CiFAIR uses the same existing
 # TrainerCiFarTimmStyle non-RGB augmentation path as PCN pretraining.
 set -e
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
+source ./launch_scripts/normalize_validation_mode.sh || exit 2
 source ./launch_scripts/tc_feedforward_args.sh pretrain
 
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
@@ -13,6 +13,7 @@ TASK="${TASK:-cifar100}"
 IMG_TYPE="${IMG_TYPE:-CiFAIR}"
 source ./launch_scripts/rgb_teacher_defaults.sh
 OUTPUT_DIR="${OUTPUT_DIR:-./saved_ckpt_runs/feedforward_pretrain}"
+OUTPUT_DIR="$(validation_output_path "${OUTPUT_DIR}")"
 INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-none}"
 CENTER_STUDENT_INPUT="${CENTER_STUDENT_INPUT:-false}"
 if [[ "${INPUT_QUANT_BITS,,}" != "none" && -n "${INPUT_QUANT_BITS}" &&
@@ -23,6 +24,13 @@ if [[ "${CENTER_STUDENT_INPUT,,}" == "true" && "${OUTPUT_DIR,,}" != *"_ctr"* ]];
   OUTPUT_DIR+="_ctr"
 fi
 DATA_DIR="${DATA_DIR:-../data}"
+VALIDATION_ARGS=(
+  --validation_mode "${VALIDATION_MODE}"
+  --validation_split_seed "${VALIDATION_SPLIT_SEED:-4096}"
+)
+if [[ -n "${VALIDATION_MANIFEST:-}" ]]; then
+  VALIDATION_ARGS+=(--validation_manifest "${VALIDATION_MANIFEST}")
+fi
 if [[ -n "${SLURM_JOB_ID:-}" ]]; then
   NUM_WORKERS="${NUM_WORKERS:-2}"
 else
@@ -65,6 +73,7 @@ cmd=(
   --model_name "${MODEL_NAME}"
   --dataset "${TASK}"
   --data_dir "${DATA_DIR}"
+  "${VALIDATION_ARGS[@]}"
   --output_dir "${OUTPUT_DIR}"
   --case custom_noresize
   --seed "${TRAINING_SEED:-4096}"

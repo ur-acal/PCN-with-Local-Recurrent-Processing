@@ -37,6 +37,8 @@ PROJECT_ROOT = THIS_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from cifar_validation import require_matching_validation_split
+
 # Required local baseline utilities.
 # Make sure baseline/__init__.py exists.
 import baseline.cifar_resnet  # registers custom CIFAR models into timm
@@ -189,6 +191,18 @@ def parse_args():
     parser.add_argument("--wrn_first_stage_channels", type=int, default=None)
     parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
+    parser.add_argument(
+        "--validation_mode", type=str2bool,
+        default=None,
+        help="Select checkpoints on a persistent 5k split of the CIFAR training set. "
+             "Validation-aware launchers must pass this argument explicitly.")
+    parser.add_argument(
+        "--validation_manifest", type=str,
+        default=os.environ.get("VALIDATION_MANIFEST"),
+        help="Optional split manifest path; defaults to ../data/validation_splits/.")
+    parser.add_argument(
+        "--validation_split_seed", type=int,
+        default=int(os.environ.get("VALIDATION_SPLIT_SEED", "4096")))
     parser.add_argument("--eval_every", type=int, default=None)
     parser.add_argument("--final_eval_only", type=str2bool, default=False,
                         help="Skip test-set model selection and evaluate once after the final epoch.")
@@ -346,7 +360,15 @@ def parse_args():
 
     from tc_feedforward_cli import add_arguments, initialize_args
     add_arguments(parser)
-    return initialize_args(parser.parse_args())
+    args = parser.parse_args()
+    if args.validation_mode is None:
+        if str2bool(os.environ.get("VALIDATION_MODE", "false")):
+            parser.error(
+                "VALIDATION_MODE=true was inherited, but this launcher did not "
+                "pass --validation_mode explicitly. Use a validation-aware "
+                "launcher so checkpoint, teacher, log, and result names are isolated.")
+        args.validation_mode = False
+    return initialize_args(args)
 
 
 def infer_num_classes(dataset_name: str) -> int:
@@ -434,6 +456,10 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
         health_check_seed=args.health_check_seed,
         img_type=args.img_type,
         dataset_name=args.dataset,
+        validation_mode=args.validation_mode,
+        validation_data_root=args.data_dir,
+        validation_manifest=args.validation_manifest,
+        validation_split_seed=args.validation_split_seed,
 
         # Plain baseline training keeps distill_method=none and teacher_model=None.
         noise_level=(args.noise_level if args.noise_level is not None
@@ -874,6 +900,17 @@ def main():
         return
 
     trainer = trainer_cls(**trainer_kwargs)
+    if args.validation_mode:
+        if checkpoint is not None:
+            require_matching_validation_split(
+                checkpoint, trainer.validation_split_metadata,
+                "feedforward source checkpoint")
+        if teacher_model is not None:
+            teacher_checkpoint = torch.load(
+                args.teacher_ckpt, map_location="cpu", weights_only=False)
+            require_matching_validation_split(
+                teacher_checkpoint, trainer.validation_split_metadata,
+                "distillation teacher checkpoint")
     if (args.resume_checkpoint is not None and
             hasattr(trainer, "load_feature_kd_from_ckpt")):
         logging.warning(
@@ -884,6 +921,9 @@ def main():
         evaluate_teacher(teacher_model, trainer)
     trainer.recovery_checkpoint = args.resume_checkpoint
     trainer.recovery_config = vars(args).copy()
+    trainer.recovery_config["validation_manifest_checksum"] = (
+        trainer.validation_split_metadata.get("manifest_checksum")
+        if trainer.validation_split_metadata else None)
     trainer.train()
 
 

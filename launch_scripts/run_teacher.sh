@@ -8,6 +8,7 @@
 #SBATCH --error=logs/test_%j.err
 #SBATCH --job-name=Teacher
 
+source ./launch_scripts/normalize_validation_mode.sh || exit 2
 SCANGEN_DATA_ROOT="${SCANGEN_DATA_ROOT:-../cifar-10-data/scanGFI}"
 DATASET_NAME="${DATASET_NAME:-cifar100}"
 IMG_TYPE="${IMG_TYPE:-${img_type:-scanGFI}}"
@@ -17,6 +18,7 @@ MATCH_DISTILL_AUG_ORDER="${MATCH_DISTILL_AUG_ORDER:-${match_distill_aug_order:-f
 USE_DIRECT_RESIZE_FOR_TIMM_AUGS="${USE_DIRECT_RESIZE_FOR_TIMM_AUGS:-false}"
 MATCH_DISTILL_PREPROCESS="${MATCH_DISTILL_PREPROCESS:-${match_distill_preprocess:-false}}"
 INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-${input_quant_bits:-}}"
+VALIDATION_SPLIT_SEED="${VALIDATION_SPLIT_SEED:-4096}"
 if [[ -n "${SLURM_JOB_ID:-}" ]]; then
   NUM_WORKERS="${NUM_WORKERS:-4}"
 else
@@ -45,6 +47,30 @@ if [[ "${USE_TIMM,,}" == "true" && "${MATCH_DISTILL_AUG_ORDER,,}" == "true" ]]; 
   TIMM_RECIPE_LABEL="timm_distill_order"
 fi
 TEACHER_CHECKPOINT="${TEACHER_CHECKPOINT:-checkpoint/efficientnet_v2_l_${DATASET_NAME}_${TEACHER_IMG_LABEL}_${TIMM_RECIPE_LABEL}.pth}"
+VALIDATION_SUFFIX=""
+if [[ "${VALIDATION_MODE}" == "true" ]]; then
+  VALIDATION_SUFFIX="_val5k"
+  if [[ "${TEACHER_CHECKPOINT}" != *"_val5k"* ]]; then
+    TEACHER_CHECKPOINT="${TEACHER_CHECKPOINT%.pth}_val5k.pth"
+  fi
+fi
+TIMM_VALIDATION_ARGS=(
+  --validation_mode "${VALIDATION_MODE}"
+  --validation_split_seed "${VALIDATION_SPLIT_SEED}"
+  --validation_data_root "../data"
+)
+LEGACY_VALIDATION_ARGS=(
+  --validation_split_seed "${VALIDATION_SPLIT_SEED}"
+  --validation_data_root "../data"
+  --eval_every "${EVAL_EVERY:-1}"
+)
+if [[ "${VALIDATION_MODE}" == "true" ]]; then
+  LEGACY_VALIDATION_ARGS+=(--validation_mode)
+fi
+if [[ -n "${VALIDATION_MANIFEST:-}" ]]; then
+  TIMM_VALIDATION_ARGS+=(--validation_manifest "${VALIDATION_MANIFEST}")
+  LEGACY_VALIDATION_ARGS+=(--validation_manifest "${VALIDATION_MANIFEST}")
+fi
 
 if [[ "${USE_TIMM,,}" == "true" ]]; then
   TIMM_RE_ARGS=()
@@ -63,7 +89,7 @@ if [[ "${USE_TIMM,,}" == "true" ]]; then
   if [[ -n "${TIMM_DECAY_RATE:-}" ]]; then TIMM_CONFIG_ARGS+=(--decay_rate "${TIMM_DECAY_RATE}"); fi
   if [[ -n "${TIMM_FIRST_EVAL_EPOCH:-}" ]]; then TIMM_CONFIG_ARGS+=(--first_eval_epoch "${TIMM_FIRST_EVAL_EPOCH}"); fi
   TEACHER_LOG_DIR="${TEACHER_LOG_DIR:-logs/teacher_timm}"
-  TEACHER_LOG="${TEACHER_LOG:-${TEACHER_LOG_DIR}/${DATASET_NAME}_${TEACHER_IMG_LABEL}_${TIMM_RECIPE_LABEL}.log}"
+  TEACHER_LOG="${TEACHER_LOG:-${TEACHER_LOG_DIR}/${DATASET_NAME}_${TEACHER_IMG_LABEL}_${TIMM_RECIPE_LABEL}${VALIDATION_SUFFIX}.log}"
   mkdir -p "${TEACHER_LOG_DIR}"
   set -o pipefail
   python -u train_teacher_timm.py \
@@ -71,6 +97,7 @@ if [[ "${USE_TIMM,,}" == "true" ]]; then
     --img_type "${IMG_TYPE}" \
     --data_root "${SCANGEN_DATA_ROOT}" \
     --checkpoint "${TEACHER_CHECKPOINT}" \
+    "${TIMM_VALIDATION_ARGS[@]}" \
     --pretrained "${TIMM_PRETRAINED:-true}" \
     --arch_source "${TIMM_ARCH_SOURCE:-hankyul2}" \
     --use_old_augs_for_timm "${USE_OLD_AUGS_FOR_TIMM}" \
@@ -105,6 +132,7 @@ else
     "${INIT_CHECKPOINT_ARGS[@]}" \
     "${PREPROCESS_ARGS[@]}" \
     --checkpoint "${TEACHER_CHECKPOINT}" \
+    "${LEGACY_VALIDATION_ARGS[@]}" \
     --lr 0.002 \
     --gamma 0.1 \
     --wd 1e-6 \

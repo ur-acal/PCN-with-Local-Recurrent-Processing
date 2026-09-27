@@ -19,6 +19,11 @@ from train_teacher import (
 )
 from trainer_timm import TrainerCiFarTimmStyle
 from rgb_teacher_preprocessing import rgb_teacher_metadata, rgb_teacher_transforms
+from cifar_validation import (
+    IndexedSubset,
+    extract_labels,
+    load_or_create_validation_split,
+)
 
 
 def str2bool(value: str | bool) -> bool:
@@ -63,6 +68,7 @@ class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
         self.use_old_augs_for_timm = use_old_augs_for_timm
         self.use_direct_resize_for_timm_augs = use_direct_resize_for_timm_augs
         self.match_distill_aug_order = match_distill_aug_order
+        self._validation_best_saved_this_run = False
         super().__init__(*args, **kwargs)
         self._distill_order_pre_hook = None
         if self.match_distill_aug_order:
@@ -197,6 +203,7 @@ class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
     def _save_model_ckpt(self, acc, epoch, suffix=""):
         if suffix == "_best_ckpt.pth":
             save_path = self.teacher_checkpoint
+            self._validation_best_saved_this_run = True
         else:
             save_path = self.teacher_checkpoint.with_name(
                 self.teacher_checkpoint.stem + "_last.pth"
@@ -230,6 +237,7 @@ class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
                 "timm_input_size": self.timm_input_size,
                 "timm_mean": self.timm_mean,
                 "timm_std": self.timm_std,
+                "validation_split": self.validation_split_metadata,
             },
             save_path,
         )
@@ -249,7 +257,31 @@ class RGBResizeFineTuneTrainer(RGGBResizeFineTuneTrainer):
         train_transform, test_transform = rgb_teacher_transforms(
             dataset_name, self.timm_input_size[-1], self.timm_input_size[-1])
         self.train_set = dataset(self.rgb_data_root, train=True, download=False, transform=train_transform)
-        self.val_set = dataset(self.rgb_data_root, train=False, download=False, transform=test_transform)
+        if getattr(self, "validation_mode", False):
+            validation_source = dataset(
+                self.rgb_data_root, train=True, download=False,
+                transform=test_transform)
+            official_test_set = dataset(
+                self.rgb_data_root, train=False, download=False,
+                transform=test_transform)
+            split = load_or_create_validation_split(
+                dataset_name=dataset_name,
+                labels=extract_labels(self.train_set),
+                data_root=self.validation_data_root,
+                seed=self.validation_split_seed,
+                manifest_path=self.validation_manifest,
+            )
+            self.train_set = IndexedSubset(self.train_set, split.train_indices)
+            self.val_set = IndexedSubset(validation_source, split.val_indices)
+            self.validation_split_metadata = split.checkpoint_metadata()
+            self.official_test_loader = DataLoader(
+                official_test_set, batch_size=self.test_batch_size,
+                shuffle=False, num_workers=self.num_workers,
+                pin_memory=self.pin_memory)
+        else:
+            self.val_set = dataset(
+                self.rgb_data_root, train=False, download=False,
+                transform=test_transform)
         self.train_dataloader = DataLoader(self.train_set, batch_size=self.batch_size,
             shuffle=True, drop_last=True, num_workers=self.num_workers, pin_memory=self.pin_memory,
             persistent_workers=self.persistent_workers and self.num_workers > 0)
@@ -329,6 +361,15 @@ def parse_args() -> argparse.Namespace:
         help="Override the timm Random Erasing probability (0 disables it).",
     )
     parser.add_argument("--eval_every", type=int, default=5)
+    parser.add_argument(
+        "--validation_mode", type=str2bool,
+        default=str2bool(os.environ.get("VALIDATION_MODE", "false")))
+    parser.add_argument(
+        "--validation_manifest", default=os.environ.get("VALIDATION_MANIFEST"))
+    parser.add_argument(
+        "--validation_split_seed", type=int,
+        default=int(os.environ.get("VALIDATION_SPLIT_SEED", "4096")))
+    parser.add_argument("--validation_data_root", default="../data")
     return parser.parse_args()
 
 
@@ -476,6 +517,10 @@ def main() -> None:
         eval_every=args.eval_every,
         img_type=args.img_type,
         dataset_name=args.dataset,
+        validation_mode=args.validation_mode,
+        validation_data_root=args.validation_data_root,
+        validation_manifest=args.validation_manifest,
+        validation_split_seed=args.validation_split_seed,
         distill_method="none",
         distill_alpha=0.0,
         teacher_model=None,
@@ -519,6 +564,25 @@ def main() -> None:
         persistent_workers=args.num_workers > 0,
     )
     trainer.train()
+    if args.validation_mode:
+        if not trainer._validation_best_saved_this_run:
+            raise RuntimeError(
+                "Validation mode did not produce a best teacher checkpoint")
+        checkpoint_path = Path(args.checkpoint).expanduser()
+        checkpoint = torch.load(
+            checkpoint_path, map_location=trainer.device, weights_only=False)
+        trainer.model.load_state_dict(checkpoint["net"], strict=True)
+        if trainer.official_test_loader is None:
+            raise RuntimeError(
+                "Validation-mode teacher training did not construct an official test loader")
+        test_acc, test_top5, _, _ = trainer.evaluate(trainer.official_test_loader)
+        checkpoint["training_complete"] = True
+        checkpoint["test_acc"] = test_acc
+        checkpoint["test_top5"] = test_top5
+        torch.save(checkpoint, checkpoint_path)
+        print(
+            f"Final official test: top1={test_acc}"
+            + ("" if test_top5 is None else f", top5={test_top5}"))
 
 
 if __name__ == "__main__":

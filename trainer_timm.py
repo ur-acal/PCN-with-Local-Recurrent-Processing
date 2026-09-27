@@ -705,16 +705,30 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                 transform_test,
                 set_teacher=False,
             )
+            if self.official_test_loader is not None:
+                self._set_transform_recursive(
+                    self.official_test_loader.dataset,
+                    transform_test,
+                    set_teacher=False,
+                )
         elif img_type.lower() in {"scangfi", "cifair"} and self.timm_aug and self.convert_non_rgb_to_rgb:
             transform_train, transform_test = self._build_scanGFI_to_rgb_timm_transforms(dataset_name)
             self._set_transform_recursive(self.train_set, transform_train, set_teacher=False)
             self._set_transform_recursive(self.val_set, transform_test, set_teacher=False)
+            if self.official_test_loader is not None:
+                self._set_transform_recursive(
+                    self.official_test_loader.dataset, transform_test,
+                    set_teacher=False)
         elif img_type.lower() in {"scangfi", "cifair"} and self.timm_aug:
             transform_train, transform_test = self._build_non_rgb_timm_transforms(img_type)
             if transform_train is not None:
                 self._set_transform_recursive(self.train_set, transform_train, set_teacher=False)
             if transform_test is not None:
                 self._set_transform_recursive(self.val_set, transform_test, set_teacher=False)
+                if self.official_test_loader is not None:
+                    self._set_transform_recursive(
+                        self.official_test_loader.dataset, transform_test,
+                        set_teacher=False)
 
         elif img_type != "rgb":
             logging.warning(
@@ -741,6 +755,15 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             pin_memory=self.pin_memory,
             drop_last=False,
         )
+        if self.official_test_loader is not None:
+            self.official_test_loader = torch.utils.data.DataLoader(
+                self.official_test_loader.dataset,
+                batch_size=self.test_batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+                drop_last=False,
+            )
         ##########################################################################################
         # Note: We are not using create_loader of timm because it will overwrite the transform
         # of the dataset. Since we already set the transforms before, we don't need to set
@@ -1085,6 +1108,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             "timm_mean": self.timm_mean,
             "timm_std": self.timm_std,
             "interpolation": self.interpolation,
+            "validation_split": self.validation_split_metadata,
         }
 
         if hasattr(self.model, "init_args"):

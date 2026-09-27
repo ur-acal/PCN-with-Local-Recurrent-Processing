@@ -6,6 +6,8 @@ import tempfile
 import numpy as np
 import torch
 
+from cifar_validation import require_matching_validation_split
+
 
 HISTORY = ('train_loss_list', 'val_acc_list', 'best_acc', 'val_acc',
            'best_epoch', 'best_top5', 'val_top5', 'best_model_path')
@@ -47,6 +49,8 @@ def save_latest(trainer, epoch, history):
                  'timm_std', 'interpolation'):
         if hasattr(trainer, name):
             state[name] = getattr(trainer, name)
+    state['validation_split'] = getattr(
+        trainer, 'validation_split_metadata', None)
     if hasattr(trainer.model, 'init_args'):
         state['init_args'] = trainer.model.init_args
     if any('parametrizations.weight.original' in key for key in state['net']):
@@ -87,6 +91,10 @@ def restore_latest(trainer):
         return None  # Existing weights-only resume/FT behavior.
     if recovery['version'] != 1:
         raise ValueError('Unsupported training recovery version')
+    require_matching_validation_split(
+        checkpoint,
+        getattr(trainer, 'validation_split_metadata', None),
+        'training-recovery checkpoint')
     # Recovery is continuation, not conversion into another physical stage.
     current = getattr(trainer, 'recovery_config', {})
     for key in ('physical_pretraining', 'physical_feedforward', 'physical_level',
@@ -95,7 +103,8 @@ def restore_latest(trainer):
                 'override', 'distill_method', 'input_quant_bits',
                 'center_student_input', 'timm_aug_level', 'final_eval_only',
                 'health_check_epochs', 'health_check_batches',
-                'health_check_seed'):
+                'health_check_seed', 'validation_mode',
+                'validation_manifest_checksum'):
         if key in current and key in recovery['config'] and current[key] != recovery['config'][key]:
             raise ValueError(f'Full recovery requires unchanged {key}; use an ordinary checkpoint for a new stage')
     for name in ('train_dataloader', 'val_dataloader'):

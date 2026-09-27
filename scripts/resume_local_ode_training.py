@@ -11,6 +11,14 @@ import torch
 import train_ode_cifar as training
 
 
+def _backfill_validation_defaults(config):
+    """Supply parser defaults absent from recovery files made before validation mode."""
+    config.setdefault("validation_mode", False)
+    config.setdefault("validation_manifest", None)
+    config.setdefault("validation_split_seed", 4096)
+    return config
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path, help="Latest checkpoint or its run directory")
@@ -24,7 +32,7 @@ def main():
         path = paths[0]
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     recovery = checkpoint["training_recovery"]
-    config = recovery["config"].copy()
+    config = _backfill_validation_defaults(recovery["config"].copy())
     model_name = path.parent.name
     config.update(model_name=model_name, ckpt="latest",
                   save_path=str(path.parent.parent),

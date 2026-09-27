@@ -102,7 +102,7 @@ class RGBTeacherTests(unittest.TestCase):
                 self.assertEqual(args.arch_source,'torchvision');self.assertEqual(args.lr,.002)
                 self.assertIn(dataset,args.checkpoint)
                 if recipe=='legacy':
-                    self.assertEqual(args.root,'/rgb-data');self.assertEqual(args.ne,100)
+                    self.assertEqual(args.root,'/rgb-data');self.assertEqual(args.ne,15)
                     self.assertTrue(args.match_distill_preprocess)
                 else:
                     self.assertEqual(args.data_root,'/rgb-data');self.assertEqual(args.epochs,100)

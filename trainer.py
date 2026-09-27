@@ -25,6 +25,12 @@ from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, ge
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions
 from training_recovery import restore_latest, save_latest, remove_latest
+from cifar_validation import (
+    DEFAULT_SPLIT_SEED,
+    IndexedSubset,
+    extract_labels,
+    load_or_create_validation_split,
+)
 
 
 class DatasetWithIndex(torch.utils.data.Dataset):
@@ -339,7 +345,10 @@ class TrainerCiFar(object):
                  fb_train_scale=1.0,
                  pulse_mismatch_training_mode="post_quant_amplitude",
                  final_eval_only=False, health_check_epochs=None,
-                 health_check_batches=4, health_check_seed=4096):
+                 health_check_batches=4, health_check_seed=4096,
+                 validation_mode=False, validation_data_root="../data",
+                 validation_manifest=None,
+                 validation_split_seed=DEFAULT_SPLIT_SEED):
         self.skip_eval_epochs = skip_eval_epochs
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('----- Using {} device -----'.format(self.device))
@@ -372,7 +381,17 @@ class TrainerCiFar(object):
         self.max_norm = max_norm
         self.aug = aug # use the augmentation in convMixer or not
         self.eval_every = eval_every
+        self.validation_mode = bool(validation_mode)
+        self.validation_data_root = validation_data_root
+        self.validation_manifest = validation_manifest
+        self.validation_split_seed = int(validation_split_seed)
+        self.validation_split_metadata = None
         self.final_eval_only = bool(final_eval_only)
+        if self.validation_mode and self.final_eval_only:
+            logging.warning(
+                "Validation mode uses the saved 5k split for checkpoint selection; "
+                "disabling final_eval_only.")
+            self.final_eval_only = False
         if isinstance(health_check_epochs, str):
             health_check_epochs = [
                 int(value) for value in health_check_epochs.split(",")
@@ -395,6 +414,7 @@ class TrainerCiFar(object):
         self.scangen_noise_config = None
         self.scangen_noise_root = None
         self.teacher_eval_loader = None
+        self.official_test_loader = None
         self.teacher_model = None
         self.teacher_input_size = teacher_input_size
         self.teacher_center_crop = teacher_center_crop
@@ -990,6 +1010,7 @@ class TrainerCiFar(object):
                 'net_type': self.model.__class__.__name__,
                 'acc': acc,
                 'epoch': epoch,
+                'validation_split': self.validation_split_metadata,
             }
             if self._crd_enabled and self._crd_loss is not None:
                 flat_state['crd'] = self._crd_loss.state_dict()
@@ -1004,6 +1025,7 @@ class TrainerCiFar(object):
             'net_type': self.model.__class__.__name__,
             'acc': acc,
             'epoch': epoch,
+            'validation_split': self.validation_split_metadata,
         }
         if self._crd_enabled and self._crd_loss is not None:
             state['crd'] = self._crd_loss.state_dict()
@@ -1074,11 +1096,9 @@ class TrainerCiFar(object):
             raise ValueError("Unknown optimizer: {}".format(optim_type))
 
     def _prepare_cifar(self, img_type, dataset_name):
-        """
-        Todo: Actually the validation dataset should be split from the train_set.
-        After the split, we can change the scheduler into other types depending on the validation result.
-        """
         dataset_name = _normalize_dataset_name(dataset_name)
+        validation_source_set = None
+        official_test_set = None
         if img_type in {"rgb", "rggb"}:
             mean, std = _CIFAR_STATS[dataset_name]
             dataset_cls = torchvision.datasets.CIFAR100 if dataset_name == "cifar100" else torchvision.datasets.CIFAR10
@@ -1125,7 +1145,14 @@ class TrainerCiFar(object):
                     transforms.ToTensor(),
                     ToPackedRGGB(return_orig=False), ])
             self.train_set = dataset_cls(root='../data', train=True, download=True, transform=transform_train)
-            self.val_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
+            if self.validation_mode:
+                validation_source_set = dataset_cls(
+                    root='../data', train=True, download=True, transform=transform_test)
+                official_test_set = dataset_cls(
+                    root='../data', train=False, download=True, transform=transform_test)
+            else:
+                self.val_set = dataset_cls(
+                    root='../data', train=False, download=True, transform=transform_test)
         elif _is_scan_cifar(img_type):
             with tempfile.TemporaryDirectory() as tmpdir:
                 conf_path = Path(os.path.join(tmpdir, "config.json"))
@@ -1151,6 +1178,15 @@ class TrainerCiFar(object):
                     transforms.RandomHorizontalFlip(),
                 ])
             )
+            if self.validation_mode:
+                validation_source_set = MyNoiseCIFARDataset(
+                    root=noise_data_root,
+                    input_name=data_input_name,
+                    train=True,
+                    noise_config=self.scangen_noise_config,
+                    device=self.device,
+                    seed=0,
+                )
             if self.orig_t_inp:
                 # Use the original cifar data for the teacher model.
                 teacher_train_transform_steps = []
@@ -1170,14 +1206,43 @@ class TrainerCiFar(object):
                 )
                 self.train_set = StudentTeacherPairDataset(self.train_set, teacher_train_set)
 
-            self.val_set = MyNoiseCIFARDataset(
-                root=noise_data_root,
-                input_name=data_input_name,
-                train=False,
-                noise_config=self.scangen_noise_config,
-                device=self.device,
-                seed=0,
-            )
+                if self.validation_mode:
+                    teacher_validation_transform_steps = []
+                    if self.teacher_input_size and self.teacher_input_size > 0:
+                        teacher_validation_transform_steps.append(
+                            transforms.Resize(self.teacher_input_size))
+                        if self.teacher_center_crop:
+                            teacher_validation_transform_steps.append(
+                                transforms.CenterCrop(self.teacher_input_size))
+                    teacher_validation_transform_steps.append(transforms.ToTensor())
+                    teacher_validation_set = teacher_dataset_cls(
+                        root='../data',
+                        train=True,
+                        download=True,
+                        transform=transforms.Compose(
+                            teacher_validation_transform_steps),
+                    )
+                    validation_source_set = StudentTeacherPairDataset(
+                        validation_source_set, teacher_validation_set)
+
+            if not self.validation_mode:
+                self.val_set = MyNoiseCIFARDataset(
+                    root=noise_data_root,
+                    input_name=data_input_name,
+                    train=False,
+                    noise_config=self.scangen_noise_config,
+                    device=self.device,
+                    seed=0,
+                )
+            else:
+                official_test_set = MyNoiseCIFARDataset(
+                    root=noise_data_root,
+                    input_name=data_input_name,
+                    train=False,
+                    noise_config=self.scangen_noise_config,
+                    device=self.device,
+                    seed=0,
+                )
             if created_temp_config and config_to_use.exists():
                 config_to_use.unlink()
 
@@ -1228,6 +1293,38 @@ class TrainerCiFar(object):
             self.train_set = RawImgDataset(root=str(raw_root), train=True, transform=transform_train)
             self.val_set = RawImgDataset(root=str(raw_root), train=False, transform=transform_test)
 
+        if self.validation_mode:
+            if validation_source_set is None:
+                raise ValueError(
+                    f"Validation mode is not supported for img_type={img_type!r}")
+            if official_test_set is None:
+                raise RuntimeError("Validation mode did not construct an official test set")
+            train_labels = extract_labels(self.train_set)
+            validation_labels = extract_labels(validation_source_set)
+            if not np.array_equal(train_labels, validation_labels):
+                raise ValueError(
+                    "Training and validation-source dataset orders do not match")
+            split = load_or_create_validation_split(
+                dataset_name=dataset_name,
+                labels=train_labels,
+                data_root=self.validation_data_root,
+                seed=self.validation_split_seed,
+                manifest_path=self.validation_manifest,
+            )
+            self.train_set = IndexedSubset(self.train_set, split.train_indices)
+            self.val_set = IndexedSubset(validation_source_set, split.val_indices)
+            self.validation_split_metadata = split.checkpoint_metadata()
+            self.official_test_loader = torch.utils.data.DataLoader(
+                official_test_set,
+                batch_size=self.test_batch_size,
+                shuffle=False,
+                num_workers=getattr(self, "num_workers", 2),
+            )
+            logging.warning(
+                "Validation mode: train=%d validation=%d manifest=%s checksum=%s",
+                len(self.train_set), len(self.val_set), split.manifest_path,
+                split.manifest_checksum)
+
         if self._crd_enabled:
             assert self.neg_sample in {"label", "index"}
             if self.orig_t_inp and _is_scan_cifar(img_type):
@@ -1267,7 +1364,7 @@ class TrainerCiFar(object):
         )
         self.val_dataloader = torch.utils.data.DataLoader(self.val_set, batch_size=self.test_batch_size, shuffle=False,
                                                           num_workers=getattr(self, "num_workers", 2))
-        if self.teacher_eval_loader is None:
+        if self.validation_mode or self.teacher_eval_loader is None:
             self.teacher_eval_loader = self.val_dataloader
 
 
