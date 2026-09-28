@@ -19,6 +19,8 @@ mkdir -p logs/slurm_jobs results/tc_ft_slurm_gap
 TC_STATE="${TC_STATE:-1}"
 FT_TIMM_AUG_LEVEL="${FT_TIMM_AUG_LEVEL:-none}"
 DIAG_TAG="${DIAG_TAG:-$(date +%Y%m%d_%H%M%S)}"
+TC_FT_DIAG_PLACEMENTS="${TC_FT_DIAG_PLACEMENTS:-default gpu_local gpu_remote}"
+TC_FT_DIAG_TIMING_REPEATS="${TC_FT_DIAG_TIMING_REPEATS:-2}"
 case "$TC_STATE" in
   1) DIAG_BLOCK=ODEXInitFFFB ;;
   2) DIAG_BLOCK=S2NoisyIYAsXZAs0 ;;
@@ -32,7 +34,7 @@ esac
 run_name="tc_rgb_cifar10_state${TC_STATE}_pcn_22L6l7l6_ft_optimized_${FT_TIMM_AUG_LEVEL}"
 pretrain_root="./saved_ckpt_runs/tc_rgb_cifar10_state${TC_STATE}_pcn_resnet_depth_study"
 DIAG_ROOT="$REPO/results/tc_ft_slurm_gap/${DIAG_TAG}_job${SLURM_JOB_ID}_state${TC_STATE}_${FT_TIMM_AUG_LEVEL}"
-mkdir -p "$DIAG_ROOT" "$DIAG_ROOT/timing" "$DIAG_ROOT/profile" "$DIAG_ROOT/system"
+mkdir -p "$DIAG_ROOT" "$DIAG_ROOT/placements" "$DIAG_ROOT/system"
 
 # These are the exact n06/n17/n26 architecture arrays selected by the failed
 # 22-layer pipeline task (COMB_SEL_SET=2).
@@ -73,6 +75,51 @@ REAL_PYTHON="$(command -v python)"
 LOGDIR="$DIAG_ROOT/production_logs"
 mkdir -p "$LOGDIR"
 
+# Resolve the assigned GPU's physical NUMA node.  Binding the diagnostic Python
+# process before it starts also binds its data-loader children and CUDA control
+# thread, making this a production-realistic placement experiment.
+GPU_PCI_BUS_ID="$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader,nounits \
+  | sed -n '1p' | tr -d '[:space:]')"
+case "$GPU_PCI_BUS_ID" in
+  00000000:*) GPU_SYSFS_ID="0000:${GPU_PCI_BUS_ID#00000000:}" ;;
+  *) GPU_SYSFS_ID="$GPU_PCI_BUS_ID" ;;
+esac
+GPU_NUMA_FILE="/sys/bus/pci/devices/${GPU_SYSFS_ID}/numa_node"
+[[ -r "$GPU_NUMA_FILE" ]] || {
+  echo "Cannot determine GPU NUMA node from $GPU_NUMA_FILE" >&2
+  exit 2
+}
+read -r GPU_NUMA_NODE < "$GPU_NUMA_FILE"
+[[ "$GPU_NUMA_NODE" =~ ^[0-9]+$ ]] || {
+  echo "GPU has no usable NUMA node: $GPU_NUMA_NODE" >&2
+  exit 2
+}
+GPU_REMOTE_NUMA_NODE=""
+for node_path in /sys/devices/system/node/node[0-9]*; do
+  node_id="${node_path##*node}"
+  if [[ "$node_id" != "$GPU_NUMA_NODE" ]]; then
+    GPU_REMOTE_NUMA_NODE="$node_id"
+    break
+  fi
+done
+read -r -a DIAG_PLACEMENT_LIST <<< "$TC_FT_DIAG_PLACEMENTS"
+for placement in "${DIAG_PLACEMENT_LIST[@]}"; do
+  case "$placement" in
+    default|gpu_local) ;;
+    gpu_remote)
+      [[ -n "$GPU_REMOTE_NUMA_NODE" ]] || {
+        echo "gpu_remote requested on a single-NUMA host" >&2
+        exit 2
+      }
+      ;;
+    *) echo "Unknown diagnostic placement: $placement" >&2; exit 2 ;;
+  esac
+done
+[[ "$TC_FT_DIAG_TIMING_REPEATS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "TC_FT_DIAG_TIMING_REPEATS must be a positive integer" >&2
+  exit 2
+}
+
 # The production prefix installs a process-group trap; replace it with a local
 # sampler cleanup so an interrupted diagnostic does not kill its Slurm shell.
 GPU_SAMPLER_PID=""
@@ -105,6 +152,12 @@ trap 'exit 130' TERM INT
   echo "state=$TC_STATE"
   echo "augmentation=$FT_TIMM_AUG_LEVEL"
   echo "block=$DIAG_BLOCK"
+  echo "gpu_pci_bus_id=$GPU_PCI_BUS_ID"
+  echo "gpu_sysfs_id=$GPU_SYSFS_ID"
+  echo "gpu_numa_node=$GPU_NUMA_NODE"
+  echo "gpu_remote_numa_node=$GPU_REMOTE_NUMA_NODE"
+  echo "diagnostic_placements=$TC_FT_DIAG_PLACEMENTS"
+  echo "diagnostic_timing_repeats=$TC_FT_DIAG_TIMING_REPEATS"
   echo "pretrain_root=$pretrain_root"
   echo "diagnostic_root=$DIAG_ROOT"
   env | sort | grep -E '^(SLURM|CUDA|NVIDIA|CONDA|OMP|MKL|OPENBLAS|PYTORCH|TORCH|TRITON|TC_|REUSE_|CHECKPOINT_)' || true
@@ -138,6 +191,12 @@ cp diagnostic_scripts/profile_tc_ft_slurm_gap.py \
 lscpu > "$DIAG_ROOT/system/lscpu.txt" 2>&1 || true
 taskset -pc $$ > "$DIAG_ROOT/system/taskset.txt" 2>&1 || true
 numactl --show > "$DIAG_ROOT/system/numactl.txt" 2>&1 || true
+numactl --hardware > "$DIAG_ROOT/system/numactl_hardware.txt" 2>&1 || true
+cp "$GPU_NUMA_FILE" "$DIAG_ROOT/system/gpu_numa_node.txt"
+if [[ -r "/sys/bus/pci/devices/${GPU_SYSFS_ID}/local_cpulist" ]]; then
+  cp "/sys/bus/pci/devices/${GPU_SYSFS_ID}/local_cpulist" \
+    "$DIAG_ROOT/system/gpu_local_cpulist.txt"
+fi
 nvidia-smi -q > "$DIAG_ROOT/system/nvidia_smi_q.txt" 2>&1 || true
 nvidia-smi topo -m > "$DIAG_ROOT/system/nvidia_smi_topology.txt" 2>&1 || true
 nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory \
@@ -169,28 +228,61 @@ printf '%s\n' "$SOURCE_CKPT" > "$DIAG_ROOT/system/source_checkpoint.txt"
 sha256sum "$SOURCE_CKPT" "$TEACHER_CKPT" > "$DIAG_ROOT/system/checkpoint_sha256.txt"
 stat "$SOURCE_CKPT" "$TEACHER_CKPT" > "$DIAG_ROOT/system/checkpoint_stat.txt"
 
-# Intercept only the production train_ode_cifar.py process.  All arguments
-# remain exactly those assembled by finetune_one_combo_model.
+# Intercept only the production train_ode_cifar.py process.  All training
+# arguments remain exactly those assembled by finetune_one_combo_model.  The
+# placement prefix is the sole experimental change.
+run_diagnostic_python() {
+  local placement="$1"
+  shift
+  case "$placement" in
+    default)
+      "$REAL_PYTHON" "$@"
+      ;;
+    gpu_local)
+      numactl --cpunodebind="$GPU_NUMA_NODE" --membind="$GPU_NUMA_NODE" \
+        "$REAL_PYTHON" "$@"
+      ;;
+    gpu_remote)
+      numactl --cpunodebind="$GPU_REMOTE_NUMA_NODE" \
+        --membind="$GPU_REMOTE_NUMA_NODE" "$REAL_PYTHON" "$@"
+      ;;
+  esac
+}
+
 python() {
   if [[ "${1:-}" == -u && "${2:-}" == train_ode_cifar.py ]]; then
     shift 2
-    "$REAL_PYTHON" -u diagnostic_scripts/profile_tc_ft_slurm_gap.py "$@"
+    run_diagnostic_python "${TC_FT_DIAG_PLACEMENT:-default}" \
+      -u diagnostic_scripts/profile_tc_ft_slurm_gap.py "$@"
   else
     "$REAL_PYTHON" "$@"
   fi
 }
 
-export TC_FT_DIAG_MODE=timing
-export TC_FT_DIAG_BATCHES="${TC_FT_DIAG_TIMING_BATCHES:-20}"
-export TC_FT_DIAG_WARMUP_BATCHES="${TC_FT_DIAG_WARMUP_BATCHES:-2}"
-export TC_FT_DIAG_OUTPUT="$DIAG_ROOT/timing"
-finetune_one_combo_model "${COMB_TAG}_timing" "$MODEL_NAME" "$FT_ODE_BLOCK" || exit $?
+for (( repeat=1; repeat<=TC_FT_DIAG_TIMING_REPEATS; repeat++ )); do
+  for placement in "${DIAG_PLACEMENT_LIST[@]}"; do
+    export TC_FT_DIAG_PLACEMENT="$placement"
+    export TC_FT_DIAG_RUN_LABEL="timing_${placement}_repeat${repeat}"
+    export TC_FT_DIAG_MODE=timing
+    export TC_FT_DIAG_BATCHES="${TC_FT_DIAG_TIMING_BATCHES:-20}"
+    export TC_FT_DIAG_WARMUP_BATCHES="${TC_FT_DIAG_WARMUP_BATCHES:-2}"
+    export TC_FT_DIAG_OUTPUT="$DIAG_ROOT/placements/$placement/timing_repeat${repeat}"
+    finetune_one_combo_model \
+      "${COMB_TAG}_${placement}_timing_repeat${repeat}" \
+      "$MODEL_NAME" "$FT_ODE_BLOCK" || exit $?
+  done
+done
 
-export TC_FT_DIAG_MODE=profile
-export TC_FT_DIAG_BATCHES="${TC_FT_DIAG_PROFILE_BATCHES:-1}"
-export TC_FT_DIAG_WARMUP_BATCHES=0
-export TC_FT_DIAG_OUTPUT="$DIAG_ROOT/profile"
-finetune_one_combo_model "${COMB_TAG}_profile" "$MODEL_NAME" "$FT_ODE_BLOCK" || exit $?
+for placement in "${DIAG_PLACEMENT_LIST[@]}"; do
+  export TC_FT_DIAG_PLACEMENT="$placement"
+  export TC_FT_DIAG_RUN_LABEL="profile_${placement}"
+  export TC_FT_DIAG_MODE=profile
+  export TC_FT_DIAG_BATCHES="${TC_FT_DIAG_PROFILE_BATCHES:-1}"
+  export TC_FT_DIAG_WARMUP_BATCHES=0
+  export TC_FT_DIAG_OUTPUT="$DIAG_ROOT/placements/$placement/profile"
+  finetune_one_combo_model "${COMB_TAG}_${placement}_profile" \
+    "$MODEL_NAME" "$FT_ODE_BLOCK" || exit $?
+done
 
 cleanup
 GPU_SAMPLER_PID=""

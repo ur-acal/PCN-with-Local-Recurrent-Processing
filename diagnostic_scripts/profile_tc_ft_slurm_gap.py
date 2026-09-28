@@ -38,6 +38,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MODE = os.environ.get("TC_FT_DIAG_MODE", "timing").strip().lower()
 if MODE not in {"timing", "profile"}:
     raise ValueError("TC_FT_DIAG_MODE must be timing or profile")
+PLACEMENT = os.environ.get("TC_FT_DIAG_PLACEMENT", "default").strip()
+RUN_LABEL = os.environ.get("TC_FT_DIAG_RUN_LABEL", f"{MODE}_{PLACEMENT}").strip()
 OUTPUT = Path(os.environ.get("TC_FT_DIAG_OUTPUT", ROOT / "tc_ft_diagnostic"))
 MAX_BATCHES = int(os.environ.get(
     "TC_FT_DIAG_BATCHES", "20" if MODE == "timing" else "1"))
@@ -74,6 +76,8 @@ def _jsonable(value: Any, depth: int = 0) -> Any:
 RESULT: dict[str, Any] = {
     "status": "starting",
     "mode": MODE,
+    "placement": PLACEMENT,
+    "run_label": RUN_LABEL,
     "max_batches": MAX_BATCHES,
     "warmup_batches_excluded_from_summary": WARMUP_BATCHES,
     "argv": sys.argv,
@@ -99,6 +103,27 @@ def _run(command: list[str], timeout: int = 30) -> dict[str, Any]:
         }
     except Exception as exc:  # diagnostic collection must not abort training
         return {"command": command, "error": repr(exc)}
+
+
+def _current_cpu_snapshot() -> dict[str, Any]:
+    """Record the main thread's CPU, NUMA node, and current reported clock."""
+    result: dict[str, Any] = {}
+    try:
+        stat = Path("/proc/self/stat").read_text()
+        fields_after_comm = stat[stat.rfind(")") + 2:].split()
+        cpu = int(fields_after_comm[36])
+        result["cpu"] = cpu
+        node_paths = sorted(
+            Path(f"/sys/devices/system/cpu/cpu{cpu}").glob("node[0-9]*"))
+        if node_paths:
+            result["numa_node"] = int(node_paths[0].name.removeprefix("node"))
+        frequency = Path(
+            f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq")
+        if frequency.is_file():
+            result["scaling_cur_freq_khz"] = int(frequency.read_text().strip())
+    except Exception as exc:
+        result["error"] = repr(exc)
+    return result
 
 
 def _relevant_environment() -> dict[str, str]:
@@ -143,8 +168,12 @@ def _collect_environment() -> dict[str, Any]:
         "git_status": _run(["git", "status", "--short"]),
         "git_diff_stat": _run(["git", "diff", "--stat"]),
         "lscpu": _run(["lscpu"]),
+        "lscpu_extended": _run([
+            "lscpu", "-e=CPU,NODE,SOCKET,CORE,ONLINE,MHZ,MAXMHZ,MINMHZ"],
+            timeout=30),
         "taskset": _run(["taskset", "-pc", str(os.getpid())]),
         "numactl": _run(["numactl", "--show"]),
+        "numactl_hardware": _run(["numactl", "--hardware"]),
         "nvidia_smi_query": _run([
             "nvidia-smi", "--query-gpu=index,name,uuid,pci.bus_id,pstate,"
             "memory.total,memory.used,utilization.gpu,utilization.memory,"
@@ -168,6 +197,7 @@ def _collect_environment() -> dict[str, Any]:
         "gpu": gpu,
         "cpu_count": os.cpu_count(),
         "cpu_affinity": affinity,
+        "current_cpu": _current_cpu_snapshot(),
         "torch_num_threads": torch.get_num_threads(),
         "torch_num_interop_threads": torch.get_num_interop_threads(),
         "backend": {
@@ -251,6 +281,7 @@ class _BoundedTimedLoader:
                 previous["reserved_bytes_after"] = torch.cuda.memory_reserved()
                 previous["peak_allocated_bytes"] = torch.cuda.max_memory_allocated()
                 previous["peak_reserved_bytes"] = torch.cuda.max_memory_reserved()
+                previous["host_cpu_after"] = _current_cpu_snapshot()
                 if self.on_last_batch is not None:
                     self.on_last_batch(index - 1)
 
@@ -280,6 +311,7 @@ class _BoundedTimedLoader:
             previous["reserved_bytes_after"] = torch.cuda.memory_reserved()
             previous["peak_allocated_bytes"] = torch.cuda.max_memory_allocated()
             previous["peak_reserved_bytes"] = torch.cuda.max_memory_reserved()
+            previous["host_cpu_after"] = _current_cpu_snapshot()
             if self.on_last_batch is not None:
                 self.on_last_batch(self.limit - 1)
 
@@ -508,9 +540,17 @@ def _profiler_rows(profiler) -> list[dict[str, Any]]:
 
 
 def _microbenchmarks() -> dict[str, Any]:
-    if not torch.cuda.is_available():
-        return {"skipped": "CUDA unavailable"}
     result = {}
+    checksum = 0
+    start = time.perf_counter()
+    for index in range(5_000_000):
+        checksum = (checksum * 1_664_525 + index + 1_013_904_223) & 0xFFFFFFFF
+    result["python_integer_loop_5m_seconds"] = time.perf_counter() - start
+    result["python_integer_loop_checksum"] = checksum
+    result["cpu_after_python_loop"] = _current_cpu_snapshot()
+    if not torch.cuda.is_available():
+        result["cuda_skipped"] = "CUDA unavailable"
+        return result
     with torch.no_grad():
         x = torch.randn(1024, 1024, device="cuda")
         y = torch.randn(1024, 1024, device="cuda")
