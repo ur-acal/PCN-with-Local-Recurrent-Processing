@@ -73,14 +73,13 @@ Full-test checks at tolerance **1e-6**, using the same final RGB FT weights:
   clamping nor adaptive solving alone is a demonstrated cause of the new gap.
 - Old TC did not train with measured ReLU; toggle has different state headroom
   and dynamics. These references do not isolate their interaction in RGB TC.
-- **The cause remains unresolved.** Inference ablations cannot determine
-  which effects impaired optimization. Priority matched FT controls, on both
-  states: basic quantized/clamped hardware only; then add fixed measured ReLU;
-  separately repeat all-on FT without dynamic noise.
+- Inference ablations alone did not determine which effects impaired
+  optimization. The matched FT augmentation controls below now provide the
+  strongest evidence that insufficient FT augmentation was a major cause.
 
 ## Completed controlled FT results
 
-### Train–test gap and next augmentation control
+### Most important finding: FT augmentation recovers much of the loss
 
 Full 50,000-image training-split evaluation, with validation preprocessing,
 dropout disabled and no gradients, using each model's dense FT hardware
@@ -100,17 +99,28 @@ mapping-only fits training images better without improving test accuracy.
 They do not isolate the cause of the entire PT→FT drop or when overfitting began;
 all-on evaluation also has stochastic hardware variation.
 
-Next control: restart state-1 `mapping_only` and `all_on` from their same
-pretrained 2REP checkpoint, changing **only `--timm_aug_level no_aug` to
-`--timm_aug_level none`** (plus distinct output/log paths). Despite its name,
-`none` selects the default timm augmentation recipe, not disabled augmentation.
-Keep `--timm_re_prob 0.0`, SRRL, 140 epochs, LR 0.005, zero warmup and all
-other settings unchanged. Studies below: `mapping_only_timm_aug`, `all_on_timm_aug`.
+The two matched state-1 controls restarted from the same pretrained 2REP
+checkpoint and changed only `--timm_aug_level no_aug` to `none`, apart from
+separate output/log paths and the operational memory allowance. Despite its
+name, `none` selects the default TIMM augmentation recipe. Random erasing
+remained disabled (`--timm_re_prob 0.0`); SRRL, 140 epochs, LR 0.005, zero
+warmup and the hardware settings were unchanged.
 
-After the all-on augmentation run hit the 90% process-memory cap, both
-augmentation studies now use `--mem_frac 1.0` instead of `0.9`. This changes
-the GPU memory allowance only, not the training recipe; it does not guarantee
-that physical GPU memory is sufficient. Other study defaults remain unchanged.
+| FT configuration | Pretrain top-1 | No-augmentation FT | TIMM-augmentation FT | Recovery from augmentation | PT→augmented-FT gap |
+|---|---:|---:|---:|---:|---:|
+| State 1, mapping-only | 76.22% | 68.03% | **73.04%** | **+5.01 pp** | **3.18 pp** |
+| State 1, all nonidealities | 76.22% | 68.28% | **70.33%** | **+2.05 pp** | **5.89 pp** |
+
+These are the most important findings for the RGB TC FT accuracy drop so far.
+The large mapping-only recovery shows that removing augmentation caused a
+substantial part of the apparent FT loss. The smaller but clear all-on recovery
+shows the same effect persists with every TC nonideality enabled. Augmentation
+does not explain the entire all-on gap: 5.89 pp remains, so hardware-aware
+optimization and generalization under the nonidealities still require study.
+
+The augmentation studies used `--mem_frac 1.0` after the first all-on attempt
+hit the 90% process-memory cap. This changes only the permitted GPU-memory
+fraction, not the training recipe.
 
 ### Priority 6: five-step Euler, state 1 — completed
 
