@@ -6,11 +6,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH -t 02:00:00
 #SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082
-#SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/tc_ft_gap_%j.out
+#SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
 # Diagnose the state-1/state-2 CIFAR-10 TC fine-tuning performance gap while
 # reusing the production launcher's own finetune_one_combo_model function.
-set -Eeuo pipefail
+set -o pipefail
 
 REPO=/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
 cd "$REPO"
@@ -90,7 +90,7 @@ finalize() {
   tar -C "$(dirname "$DIAG_ROOT")" -czf "${DIAG_ROOT}.tar.gz" "$(basename "$DIAG_ROOT")" || true
   echo "DIAGNOSTIC_DIRECTORY=$DIAG_ROOT"
   echo "DIAGNOSTIC_ARCHIVE=${DIAG_ROOT}.tar.gz"
-  echo "SLURM_STDOUT=$REPO/logs/slurm_jobs/tc_ft_gap_${SLURM_JOB_ID}.out"
+  echo "SLURM_STDOUT=$REPO/logs/slurm_jobs/slurm_${SLURM_JOB_ID}.out"
   exit "$status"
 }
 trap finalize EXIT
@@ -110,13 +110,18 @@ trap 'exit 130' TERM INT
   env | sort | grep -E '^(SLURM|CUDA|NVIDIA|CONDA|OMP|MKL|OPENBLAS|PYTORCH|TORCH|TRITON|TC_|REUSE_|CHECKPOINT_)' || true
 } > "$DIAG_ROOT/system/launch_environment.txt"
 
-git rev-parse HEAD > "$DIAG_ROOT/system/git_head.txt"
-git branch --show-current > "$DIAG_ROOT/system/git_branch.txt"
-git status --short > "$DIAG_ROOT/system/git_status.txt"
-git diff --stat > "$DIAG_ROOT/system/git_diff_stat.txt"
-git diff --binary > "$DIAG_ROOT/system/git_diff.patch"
-git diff --cached --binary > "$DIAG_ROOT/system/git_diff_cached.patch"
-git log -1 --decorate --stat > "$DIAG_ROOT/system/git_last_commit.txt"
+if command -v git >/dev/null 2>&1; then
+  git rev-parse HEAD > "$DIAG_ROOT/system/git_head.txt" 2>&1 || true
+  git branch --show-current > "$DIAG_ROOT/system/git_branch.txt" 2>&1 || true
+  git status --short > "$DIAG_ROOT/system/git_status.txt" 2>&1 || true
+  git diff --stat > "$DIAG_ROOT/system/git_diff_stat.txt" 2>&1 || true
+  git diff --binary > "$DIAG_ROOT/system/git_diff.patch" 2>&1 || true
+  git diff --cached --binary > "$DIAG_ROOT/system/git_diff_cached.patch" 2>&1 || true
+  git log -1 --decorate --stat > "$DIAG_ROOT/system/git_last_commit.txt" 2>&1 || true
+else
+  printf '%s\n' 'git is unavailable on this compute node; use code_sha256.txt.' \
+    > "$DIAG_ROOT/system/git_unavailable.txt"
+fi
 sha256sum train_ode_cifar.py trainer_timm.py ode_pc.py tc_shared_correction.py \
   TorchDiffEqPack/odesolver/ode_solver.py \
   TorchDiffEqPack/odesolver/adaptive_grid_solver.py \
@@ -155,8 +160,10 @@ MODEL_NAME="$($REAL_PYTHON launch_scripts/find_tc_pretrain.py \
   --stride "${STRIDE[*]}" --kernel "${KERNEL[*]}" \
   --task "$TASK" --img_type "$IMG_TYPE" --block "$FT_ODE_BLOCK" --pcn "$PCN" \
   --bits "$INPUT_QUANT_BITS" --center "$CENTER_STUDENT_INPUT" --selection "$selection" \
-  2> >(tee "$DIAG_ROOT/system/checkpoint_discovery_stderr.txt" >&2))"
+  2> >(tee "$DIAG_ROOT/system/checkpoint_discovery_stderr.txt" >&2))" || exit 2
 SOURCE_CKPT="$pretrain_root/$MODEL_NAME/${MODEL_NAME}_${selection}_ckpt.pth"
+[[ -s "$SOURCE_CKPT" ]] || { echo "Missing source checkpoint: $SOURCE_CKPT" >&2; exit 2; }
+[[ -s "$TEACHER_CKPT" ]] || { echo "Missing teacher checkpoint: $TEACHER_CKPT" >&2; exit 2; }
 printf '%s\n' "$MODEL_NAME" > "$DIAG_ROOT/system/model_name.txt"
 printf '%s\n' "$SOURCE_CKPT" > "$DIAG_ROOT/system/source_checkpoint.txt"
 sha256sum "$SOURCE_CKPT" "$TEACHER_CKPT" > "$DIAG_ROOT/system/checkpoint_sha256.txt"
@@ -177,13 +184,13 @@ export TC_FT_DIAG_MODE=timing
 export TC_FT_DIAG_BATCHES="${TC_FT_DIAG_TIMING_BATCHES:-20}"
 export TC_FT_DIAG_WARMUP_BATCHES="${TC_FT_DIAG_WARMUP_BATCHES:-2}"
 export TC_FT_DIAG_OUTPUT="$DIAG_ROOT/timing"
-finetune_one_combo_model "${COMB_TAG}_timing" "$MODEL_NAME" "$FT_ODE_BLOCK"
+finetune_one_combo_model "${COMB_TAG}_timing" "$MODEL_NAME" "$FT_ODE_BLOCK" || exit $?
 
 export TC_FT_DIAG_MODE=profile
 export TC_FT_DIAG_BATCHES="${TC_FT_DIAG_PROFILE_BATCHES:-1}"
 export TC_FT_DIAG_WARMUP_BATCHES=0
 export TC_FT_DIAG_OUTPUT="$DIAG_ROOT/profile"
-finetune_one_combo_model "${COMB_TAG}_profile" "$MODEL_NAME" "$FT_ODE_BLOCK"
+finetune_one_combo_model "${COMB_TAG}_profile" "$MODEL_NAME" "$FT_ODE_BLOCK" || exit $?
 
 cleanup
 GPU_SAMPLER_PID=""
