@@ -19,6 +19,7 @@ mkdir -p logs/slurm_jobs results/tc_ft_slurm_gap
 TC_STATE="${TC_STATE:-1}"
 FT_TIMM_AUG_LEVEL="${FT_TIMM_AUG_LEVEL:-none}"
 DIAG_TAG="${DIAG_TAG:-$(date +%Y%m%d_%H%M%S)}"
+TC_FT_DIAG_SUITE="${TC_FT_DIAG_SUITE:-training_gap}"
 TC_FT_DIAG_PLACEMENTS="${TC_FT_DIAG_PLACEMENTS:-default gpu_local gpu_remote}"
 TC_FT_DIAG_TIMING_REPEATS="${TC_FT_DIAG_TIMING_REPEATS:-2}"
 case "$TC_STATE" in
@@ -29,6 +30,10 @@ esac
 case "$FT_TIMM_AUG_LEVEL" in
   none|no_aug) ;;
   *) echo "FT_TIMM_AUG_LEVEL must be none or no_aug" >&2; exit 2 ;;
+esac
+case "$TC_FT_DIAG_SUITE" in
+  training_gap|host_execution) ;;
+  *) echo "TC_FT_DIAG_SUITE must be training_gap or host_execution" >&2; exit 2 ;;
 esac
 
 run_name="tc_rgb_cifar10_state${TC_STATE}_pcn_22L6l7l6_ft_optimized_${FT_TIMM_AUG_LEVEL}"
@@ -158,6 +163,7 @@ trap 'exit 130' TERM INT
   echo "gpu_remote_numa_node=$GPU_REMOTE_NUMA_NODE"
   echo "diagnostic_placements=$TC_FT_DIAG_PLACEMENTS"
   echo "diagnostic_timing_repeats=$TC_FT_DIAG_TIMING_REPEATS"
+  echo "diagnostic_suite=$TC_FT_DIAG_SUITE"
   echo "pretrain_root=$pretrain_root"
   echo "diagnostic_root=$DIAG_ROOT"
   env | sort | grep -E '^(SLURM|CUDA|NVIDIA|CONDA|OMP|MKL|OPENBLAS|PYTORCH|TORCH|TRITON|TC_|REUSE_|CHECKPOINT_)' || true
@@ -181,10 +187,12 @@ sha256sum train_ode_cifar.py trainer_timm.py ode_pc.py tc_shared_correction.py \
   TorchDiffEqPack/odesolver/base.py \
   launch_scripts/run_kdcrd_then_ft.sbatch \
   diagnostic_scripts/profile_tc_ft_slurm_gap.py \
+  diagnostic_scripts/profile_tc_host_execution.py \
   launch_scripts/run_tc_ft_slurm_diagnostic.sbatch \
   > "$DIAG_ROOT/system/code_sha256.txt"
 mkdir -p "$DIAG_ROOT/system/diagnostic_sources"
 cp diagnostic_scripts/profile_tc_ft_slurm_gap.py \
+  diagnostic_scripts/profile_tc_host_execution.py \
   launch_scripts/run_tc_ft_slurm_diagnostic.sbatch \
   launch_scripts/submit_tc_ft_slurm_diagnostic.sh \
   "$DIAG_ROOT/system/diagnostic_sources/"
@@ -212,6 +220,14 @@ ps -eo pid,ppid,psr,pcpu,pmem,stat,comm,args --sort=-pcpu \
 nvidia-smi --query-gpu=timestamp,index,name,pstate,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,power.limit,clocks.sm,clocks.mem,temperature.gpu \
   --format=csv -l 1 > "$DIAG_ROOT/system/gpu_samples.csv" 2>&1 &
 GPU_SAMPLER_PID=$!
+
+if [[ "$TC_FT_DIAG_SUITE" == host_execution ]]; then
+  export TC_HOST_DIAG_OUTPUT="$DIAG_ROOT/host_execution"
+  echo "Starting host execution diagnostic: $TC_HOST_DIAG_OUTPUT"
+  "$REAL_PYTHON" -u diagnostic_scripts/profile_tc_host_execution.py
+  echo "Completed host execution diagnostic"
+  exit 0
+fi
 
 selection=last
 MODEL_NAME="$($REAL_PYTHON launch_scripts/find_tc_pretrain.py \
