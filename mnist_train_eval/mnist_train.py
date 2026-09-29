@@ -140,7 +140,8 @@ def build_pcn(args, device, checkpoint=None):
     model = make_ode_block(model, ode_block=block_cls, noise_level=0., method='dopri5',
         t_end=args.t_end, tol=args.tol, n_steps=5, offset_eps=0., sde_noise_type='add',
         reuse_accepted_step_training=args.reuse_accepted_step_training,
-        checkpoint_ode_rhs_training=args.checkpoint_ode_rhs_training)
+        checkpoint_ode_rhs_training=args.checkpoint_ode_rhs_training,
+        checkpoint_ode_rhs_portion=args.checkpoint_ode_rhs_portion)
     if checkpoint is not None:
         model.load_state_dict(checkpoint['net'], strict=True)
     wrappers = []
@@ -167,6 +168,12 @@ def main(argv=None):
     name = model_name(args) + '_' + args.stage
     print(f'Model: {name}; parameters={sum(p.numel() for p in model.parameters())}', flush=True)
     trainer = MNISTTrainer(model, args, name)
+    from checkpoint_memory_profiler import configure_trainer_checkpointing
+    configure_trainer_checkpointing(
+        trainer,
+        enabled=args.checkpoint_ode_rhs_training,
+        portion=args.checkpoint_ode_rhs_portion,
+        memory_fraction=args.mem_frac)
     trainer.train()
 
 

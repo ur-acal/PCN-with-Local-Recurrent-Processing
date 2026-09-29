@@ -1,17 +1,73 @@
-# Adaptive accepted-step reuse
+# TC training and inference optimizations
 
-## Optimization summary
+## Training results at a glance
+
+Batch-128 TC training OOMs without activation checkpointing. Activation
+checkpointing is therefore the fixed memory-saving baseline for the
+batch-128 speed comparison below; it is not counted as a speed optimization.
+The three speed optimizations are accepted-step reuse, the live-QAT weight
+cache, and fused measured ReLU.
+
+### Batch 64: all OFF versus speed optimizations plus checkpointing
+
+Current CIFAR-10 state-1/state-2 models, all TC nonidealities, production
+shared/histogram convolution, and matched randomness. The four optimizations
+are activation checkpointing plus the three speed optimizations. Values are
+five-repeat post-warm-up medians from the current `colab_all` branch.
+
+| Model and ON checkpoint policy | Total time OFF → ON | Peak allocated OFF → ON | PyTorch CUDA launches OFF → ON |
+|---|---:|---:|---:|
+| State 1; full (original) | 1.371 s → 1.049 s (-23.5%) | 14.06 GiB → 2.88 GiB (-79.5%) | 199,631 → 78,715 (-60.6%) |
+| State 2; full (original) | 1.649 s → 1.162 s (-29.5%) | 16.07 GiB → 5.43 GiB (-66.2%) | 248,465 → 106,050 (-57.3%) |
+| State 1; 0.5 (11/22 layers) | 1.369 s → 0.770 s (-43.7%) | 14.06 GiB → 4.62 GiB (-67.1%) | 199,631 → 74,695 (-62.6%) |
+| State 2; 0.5 (11/22 layers) | 1.644 s → 0.960 s (-41.6%) | 16.07 GiB → 6.77 GiB (-57.9%) | 248,465 → 103,194 (-58.5%) |
+
+The launch column records PyTorch `cudaLaunchKernel` calls. The profiler used
+for this matched rerun did not count Triton `cuLaunchKernelEx` separately.
+
+### Batch 128: full checkpointing versus speed optimizations plus checkpointing
+
+| Model and ON checkpoint policy | Total time OFF → ON | Time reduction | Peak allocated OFF → ON | CUDA launches OFF → ON |
+|---|---:|---:|---:|---:|
+| State 1; full (original) | 2.289 s → 1.162 s | 49.2% | 5.79 GiB → 5.78 GiB | Not recorded → 86,178 |
+| State 2; full (original) | 2.723 s → 1.424 s | 47.7% | 10.90 GiB → 10.85 GiB | Not recorded → 112,106 |
+| State 1; auto = 2/22 layers | 2.348 s → 0.871 s | 62.9% | 5.79 GiB → 16.15 GiB | 245,273 → 72,927 |
+| State 2; auto = 5/22 layers | 2.729 s → 1.145 s | 58.0% | 10.87 GiB → 16.33 GiB | 291,287 → 102,000 |
+
+The new batch-128 rows compare the slow, full-checkpoint baseline with the
+three speed optimizations and the smallest checkpointed prefix selected by
+the automatic memory guard. Partial checkpointing deliberately spends more
+memory than full checkpointing while remaining below the guard's 80% limit.
+
+**OOM boundary:** with activation checkpointing disabled, both batch-128
+models OOM during forward, regardless of accepted-step reuse: state 1 exceeds
+22.37 GiB and state 2 exceeds 19.50 GiB before failure. This is why
+checkpointing remains enabled on both sides of the batch-128 speed table.
+
+### Local versus Slurm slowdown
+
+A matched profile measured 2.930 s/batch on the local RTX 4090 and 5.257
+s/batch on the Slurm L40S. Actual GPU kernel execution was nearly identical
+(1.056 versus 1.018 s), and both runs submitted 186,992 kernels. The gap was
+host-side: PyTorch/autograd work and CUDA submission were slower on Slurm,
+including about 3.5 us per kernel launch versus 2.0 us locally. CPU/NUMA
+binding tests did not remove the gap, and the exact driver/platform component
+was not isolated. Reducing PyTorch operations and CUDA submissions benefits
+both systems and should help Slurm more because its per-operation host
+overhead is higher.
+
+## Optimization controls and applicability
 
 | Optimization | Purpose | Control | Training | Inference | Main exclusions/no-op |
 |---|---|---|---|---|---|
-| Accepted-step reuse | Speed | `REUSE_ACCEPTED_STEP_TRAINING` / `reuse_accepted_step_training` | Opt-in for RK12, RK23, Dopri5, and ProjDopri5 | Automatic for adaptive Dopri5 and ProjDopri5; the training flag does not control it | Energy metering and `reload_state`; predefined grids have no replay. Training additionally excludes ODE23s, Sym12Async, `regenerate_graph`, and cached-RHS variants |
-| RHS activation checkpoint | Memory | `CHECKPOINT_ODE_RHS_TRAINING` / `checkpoint_ode_rhs_training` | Yes | No-op under `no_grad` | Adjoint, energy metering, training BatchNorm, cached-RHS variants, ODE23s, Sym12Async |
-| Live-QAT weight cache | Speed | Automatic; no public flag | Yes | Yes when live QAT exists; baked QAT inference is a no-op | Non-QAT and stochastic parametrizations |
+| Accepted-step reuse (training and inference) | Speed | `REUSE_ACCEPTED_STEP_TRAINING` / `reuse_accepted_step_training` | Opt-in for RK12, RK23, Dopri5, and ProjDopri5 | Automatic for adaptive Dopri5 and ProjDopri5; the training flag does not control it | Energy metering and `reload_state`; predefined grids have no replay. Training additionally excludes ODE23s, Sym12Async, `regenerate_graph`, and cached-RHS variants |
+| RHS activation checkpoint | Memory | `CHECKPOINT_ODE_RHS_TRAINING` plus `CHECKPOINT_ODE_RHS_PORTION`; Python: `checkpoint_ode_rhs_training`, `checkpoint_ode_rhs_portion` | Yes; numeric portion or `auto` | No-op under `no_grad` | Adjoint, energy metering, training BatchNorm, cached-RHS variants, ODE23s, Sym12Async |
+| Live-QAT weight cache | Speed | Default ON; auto fallback for unsupported cases | Yes | Yes when live QAT exists; baked QAT inference is a no-op | Non-QAT and stochastic parametrizations |
 | Fused measured ReLU | Speed | `FUSE_MEASURED_ACTIVATION` / `fuse_measured_activation` | Yes | Yes | PyTorch fallback for CPU, non-FP32 CUDA, missing Triton, trainable/mismatched curves, cubic spline, or higher-order gradients |
+| Fused per-edge nonlinear-R convolution | Speed | Default ON; auto fallback for unsupported cases | No | Yes | Combines resistance interpolation, edge-current calculation, and output accumulation for CUDA float32 TC Gaussian per-coupler curves. Unsupported cases include empirical banks, energy metering, unsupported projections/devices/dtypes, and enabled gradients |
+| Nonzero-edge TC resistance-curve storage | Memory | Default ON; auto fallback for unsupported cases | No | Yes | Stores sampled curves only for nonzero expanded TC edges; empirical banks and toggle storage are unchanged |
 
-Branch: `perf/tc-training-step-reuse`
-
-Worktree: `ScAN-PCN-tc-training-step-reuse`
+Production branch: `colab_all`
 
 ## Purpose
 
@@ -38,12 +94,12 @@ REUSE_ACCEPTED_STEP_TRAINING=true ...
 ```
 
 The corresponding Python option is
-`reuse_accepted_step_training=True`. It defaults to false while this branch is
-experimental. The training entry points put it into each ODE block's solver
-options before wrappers are constructed, so dynamic wrapper snapshots retain
-it. It is not shipped through the TC wrapper. No-gradient adaptive Dopri5 and
-ProjDopri5 inference automatically reuse accepted candidates; the training
-option does not control that inference behavior.
+`reuse_accepted_step_training=True`. It defaults to false. The training entry
+points put it into each ODE block's solver options before wrappers are
+constructed, so dynamic wrapper snapshots retain it. It is not shipped through
+the TC wrapper. No-gradient adaptive Dopri5 and ProjDopri5 inference
+automatically reuse accepted candidates; the training option does not control
+that inference behavior.
 
 The launcher audit covered every shell/Slurm file under `launch_scripts`.
 CIFAR and ImageNet PCN launchers converge on their respective `train_ode_*`
@@ -180,17 +236,38 @@ the TC training benchmarks above.
 
 ## ODE RHS activation checkpointing
 
-The second training optimization is enabled with:
+Checkpointing is controlled with two arguments:
 
 ```bash
-CHECKPOINT_ODE_RHS_TRAINING=true ...
+CHECKPOINT_ODE_RHS_TRAINING=true CHECKPOINT_ODE_RHS_PORTION=0.5 ...
 ```
 
-The Python option is `checkpoint_ode_rhs_training=True`. It is installed in
-`ODEBlockPC.option_aca` when the block is constructed, inherited by
-`option_init`, `option_patch`, interval copies, and wrapper snapshots, and
-consumed at the common solver RHS boundary. It is not a TC wrapper option and
-is not shipped through the nonlinear-resistance package.
+The Python options are `checkpoint_ode_rhs_training=True` and
+`checkpoint_ode_rhs_portion`. The portion defaults to `1.0`, accepts a number
+in `[0,1]`, or the literal `auto`. A numeric value selects the first
+`floor(portion * N + 0.5)` ODE layers. The decision remains layerwise: each
+selected layer checkpoints every RHS evaluation, and each unselected layer
+checkpoints none. The Boolean remains the master switch.
+
+With `auto`, a pre-training guard profiles three real training batches per
+candidate, including forward, loss, backward, and optimizer update. It first
+verifies that all layers fit, binary-searches the smallest safe prefix, and
+confirms the selected prefix with a second three-batch run. Safe means peak
+reserved CUDA memory is at most 80% of usable capacity. Model, optimizer,
+scheduler, RNG, data-loader RNG, hardware-noise state, and cached QAT state are
+restored between candidates. The original first-epoch sample stream is
+preserved: multi-worker loaders replay the three profiled batches and continue
+their retained iterator, while zero-worker loaders restore their RNG and
+recreate the iterator. The guard runs inside
+the existing trainer process; no separate launcher or third public threshold
+argument is used.
+
+The per-layer Boolean is installed in `ODEBlockPC.option_aca` when the block
+is constructed, inherited by `option_init`, `option_patch`, interval copies,
+and wrapper snapshots, and consumed at the common solver RHS boundary.
+Runtime portion selection updates those live dictionaries and wrapper
+snapshots together. It is not a TC wrapper option and is not shipped through
+the nonlinear-resistance package.
 
 Gradient-enabled RHS calls use non-reentrant PyTorch activation checkpointing.
 No-gradient evaluation calls the original RHS directly. Tensor and tuple
@@ -227,6 +304,29 @@ constructs a solver. Do not construct a solver under `torch.no_grad()` with
 that unusual sequence retains the no-gradient decision. Ordinary training and
 evaluation construct and execute the solver in the same gradient context and
 are unaffected.
+
+### Partial-checkpoint correctness and automatic selection
+
+For the current CIFAR-10 state-1 and state-2 all-nonideality models at batch
+64, checkpoint portions `0.25`, `0.5`, and `0.75` produced bit-identical
+logits and every parameter gradient relative to full checkpointing. These
+were full production shared/histogram forward/backward runs with accepted-step
+reuse, live-QAT caching, and fused measured ReLU enabled.
+
+At batch 128, the automatic guard selected and confirmed:
+
+| Model | Selected prefix | Effective portion | Smallest lower trial | Selected peak reserved | 80% limit |
+|---|---:|---:|---:|---:|---:|
+| State 1 | 2/22 layers | 0.090909 | 1/22 unsafe | 18.21 GiB | 18.36 GiB |
+| State 2 | 5/22 layers | 0.227273 | 4/22 unsafe | 17.90 GiB | 18.36 GiB |
+
+Each candidate and the final confirmation used three batches. The reported
+search memory includes the real teacher, CE/SRRL loss, backward, and SGD path;
+each 22-layer search evaluated six candidates including confirmation, for 18
+profile batch executions. The profiled data are then reused by the real first
+epoch rather than discarded. The compact timing table at the top uses the
+established student-only matched
+benchmark so it remains comparable with the original rows.
 
 ### CIFAR-10 batch-128 OOM result
 
@@ -391,6 +491,111 @@ submissions per measured batch. The weight cache gives the larger wall-time
 gain even though ReLU fusion removes more launches, because it also removes
 quantization dispatch, copies, and custom-autograd work.
 
+## TC inference optimizations
+
+No launcher changes are required. Production inference automatically uses two
+optimizations when their guards permit:
+
+1. Adaptive Dopri5/ProjDopri5 reuses the accepted search result instead of
+   replaying the accepted step. This solver optimization also applies to
+   non-TC inference; it is not controlled by the training flag.
+2. Expanded Gaussian per-coupler TC evaluation fuses curve interpolation,
+   signed edge-current calculation, and convolution accumulation in one
+   Triton kernel on CUDA float32.
+
+Energy-metered solves use the original paths. Gaussian edge fusion also falls
+back for training or any enabled gradient, empirical curve banks, unsupported
+devices/dtypes/projections, or modules outside evaluation mode. Neither
+optimization changes curve sampling, quantization, solver tolerances, rail
+projection, or the accepted-step/noise lifecycle. Atomic accumulation can
+change floating-point summation order, so GPU logits are not expected to be
+bitwise identical.
+
+For diagnostics only, `profile_tc_eval_cost.py --optimization` selects
+`reference`, `reuse`, `fused`, or `both`; `--timing-only` disables nested
+profiling events. Raw results and logits are stored under
+`results/tc_inference_optimizations/`.
+
+### What the fused per-edge nonlinear-R convolution does
+
+The fused operation is the expanded physical-edge calculation:
+
+1. read the edge's pre-sampled nonlinear-resistance curve;
+2. interpolate its effective resistance at the source voltage;
+3. calculate the signed current contribution; and
+4. atomically accumulate that contribution into the destination output.
+
+Curve **sampling is not performed by this kernel**. Curves are sampled before
+the solve and retain the existing fixed-per-realization lifetime.
+
+TC and toggle use separate lookup backends because they model different
+hardware encodings:
+
+| Property | TC | Toggle |
+|---|---|---|
+| Weight magnitude | One of 15 resistance/conductance codes | Pulse duration/count at one nominal resistance |
+| Curve distribution | Code-specific mean plus shared covariance | Finite empirical common-resistance curve bank |
+| Per-coupler draw | Independent Gaussian draw conditioned on code | Empirical curve sampled with replacement |
+| Fused runtime layout | Common voltage grid plus a pre-sampled curve row per active edge | Per-curve grids/slopes/lengths plus an assignment index and instantaneous pulse value |
+
+The final current operation is structurally the same, so a future common
+expanded-edge interface could share dispatch and accumulation. The lookup
+backends must remain distinct. TC empirical-bank sampling could use a
+generalized empirical kernel only if assignment remains conditioned on the TC
+resistance code; toggle's common-resistance bank cannot represent all TC
+codes. Toggle's existing empirical-current fusion is recorded separately in
+`docs/toggle_inference_optimization_audit.md`.
+
+### Nonzero-edge TC resistance-curve storage
+
+TC expanded inference stores curves only for nonzero programmed weights. An
+int64 physical-edge-to-curve index preserves CSR connectivity, zero-weight
+physical-site counting, sampling order/seeds, and fixed-per-trial lifetimes.
+Both fused and fallback lookup paths use this index; energy accounting is
+unchanged. Empirical banks and toggle storage are unchanged. No launcher
+argument or expanded-weight-cache rebuild is required; evaluation must be
+restarted to use newly loaded code.
+
+For `E` physical edge slots, `A` active edges, and `K` float32 curve points,
+persistent curve storage changes from `4EK` bytes to `4AK + 8E` bytes. This is
+not the total GPU footprint or a guarantee against OOM.
+
+### End-to-end inference benchmark
+
+RTX 4090; finished CIFAR-100 state-1 22Layers6l7l6/64C `last_ckpt`,
+`QATTester1State`, all TC nonidealities, independent Gaussian curves per
+physical coupler, ENOB disabled, tolerance `1e-6`, and batch size 4. The first
+of three batches is warm-up; initialization is excluded.
+
+| Measurement | Reference | Both inference optimizations |
+|---|---:|---:|
+| Measured batch times | 11.830 s, 12.359 s | 0.784 s, 0.820 s |
+| Mean measured time | 12.095 s | 0.802 s |
+| Peak forward allocated memory | 22.012 GiB | 21.971 GiB |
+
+This bounded check measured a **15.08x speedup**. All 12 predictions matched.
+Maximum absolute logit difference was `1.5116e-4` and RMS difference was
+`1.3525e-5`; the arrays satisfied `atol=1e-4, rtol=1e-4`. Two reference runs
+also differed by up to `8.49e-5`, so this is numerical rather than bitwise
+equivalence and is not a full-test accuracy claim.
+
+Nested-event isolated profiles, mean of batches two and three:
+
+| Path | Seconds/batch | RK step calls across three batches |
+|---|---:|---:|
+| Reference | 12.622 | 264, 272, 283 |
+| Accepted-step reuse only | 7.397 | 151, 155, 161 |
+| Fused Gaussian edge operation only | 1.340 | 264, 272, 283 |
+| Both | 0.887 | 151, 155, 161 |
+
+The original validation covered 46 targeted tests, including CUDA numerical
+checks at batch 1/4/128, signed and zero weights, padding, projection,
+one-/two-state solver noise, rejection, endpoint behavior, training fallback,
+energy fallback, and legacy regressions. `tests/test_tc_compact_curves.py` also
+runs batch-two CNN/one-state/two-state production expansion validators, checks
+compact storage and actual fused calls, and compares outputs and the energy
+fallback with the former full-table layout.
+
 ## Verification coverage
 
 The automated and end-to-end checks cover:
@@ -424,5 +629,7 @@ The automated and end-to-end checks cover:
   one backward and recomputation on the next iteration;
 - exact fused measured-activation forward and first-order backward results for
   every supported grid, curve-sharing, and pullback mode;
+- TC Gaussian edge-fusion and compact-storage CUDA checks, including
+  one-/two-state models, fallback conditions, and energy accounting;
 - batch-64 old TC, current state-1/state-2 TC, and toggle output, gradient,
   timing, and kernel-launch comparisons.

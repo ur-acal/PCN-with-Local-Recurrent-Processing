@@ -1,11 +1,21 @@
 import os
 import sys
+import types
 import unittest
 from unittest.mock import patch
 
 import torch
 
 from TorchDiffEqPack.odesolver import odesolve
+from checkpoint_memory_profiler import (
+    _TrainerSnapshot,
+    _ProfiledFirstEpochLoader,
+    apply_checkpoint_ode_rhs_portion,
+    checkpoint_layer_count,
+    find_minimum_safe_checkpoint_layers,
+    parse_checkpoint_ode_rhs_portion,
+    set_checkpoint_ode_rhs_layer_count,
+)
 
 
 class ParameterRHS(torch.nn.Module):
@@ -40,6 +50,143 @@ def solve(method, checkpoint_rhs, *, project=False, full_traj=False):
 
 
 class ODERHSCheckpointingTests(unittest.TestCase):
+    def test_profiled_batches_continue_original_worker_iterator(self):
+        class Loader:
+            def __init__(self):
+                self.epochs = 0
+
+            def __len__(self):
+                return 4
+
+            def __iter__(self):
+                self.epochs += 1
+                yield from range(4)
+
+        loader = Loader()
+        iterator = iter(loader)
+        batches = [next(iterator), next(iterator)]
+        replay = _ProfiledFirstEpochLoader(loader, batches, iterator)
+        self.assertEqual(list(replay), [0, 1, 2, 3])
+        self.assertEqual(list(replay), [0, 1, 2, 3])
+        self.assertEqual(loader.epochs, 2)
+
+    def test_profiler_snapshot_restores_lazy_crd_optimizer_group(self):
+        model = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+        loader_generator = torch.Generator().manual_seed(17)
+        trainer = types.SimpleNamespace(
+            model=model,
+            optimizer=optimizer,
+            scheduler=None,
+            warmup_scheduler=None,
+            grad_scaler=None,
+            scaler=None,
+            _feature_kd_loss=None,
+            _crd_loss=None,
+            _crd_initialized=False,
+            train_dataloader=types.SimpleNamespace(
+                generator=loader_generator),
+        )
+        snapshot = _TrainerSnapshot(trainer)
+        crd = torch.nn.Linear(2, 2)
+        trainer._crd_loss = crd
+        trainer._crd_initialized = True
+        optimizer.add_param_group({"params": crd.parameters()})
+        optimizer.state[next(crd.parameters())]["momentum_buffer"] = torch.ones(2, 2)
+        torch.rand(1, generator=loader_generator)
+
+        snapshot.restore(trainer)
+
+        self.assertEqual(len(optimizer.param_groups), 1)
+        self.assertIsNone(trainer._crd_loss)
+        self.assertFalse(trainer._crd_initialized)
+        restored = torch.rand(1, generator=loader_generator)
+        expected = torch.rand(1, generator=torch.Generator().manual_seed(17))
+        self.assertTrue(torch.equal(restored, expected))
+
+    def test_non_ode_pcn_layers_are_not_selected(self):
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.PcConvs = torch.nn.ModuleList([torch.nn.Conv2d(1, 1, 1)])
+
+        model = Model()
+        metadata = apply_checkpoint_ode_rhs_portion(model, True, 1.0)
+        self.assertEqual(metadata["total_layers"], 0)
+        self.assertFalse(hasattr(
+            model.PcConvs[0], "checkpoint_ode_rhs_training"))
+
+    def test_checkpoint_portion_parser_and_rounding(self):
+        self.assertEqual(parse_checkpoint_ode_rhs_portion('auto'), 'auto')
+        self.assertEqual(parse_checkpoint_ode_rhs_portion('0.5'), 0.5)
+        self.assertEqual(checkpoint_layer_count(0.25, 6), 2)
+        self.assertEqual(checkpoint_layer_count(0.5, 5), 3)
+        self.assertEqual(checkpoint_layer_count(0.75, 6), 5)
+        self.assertEqual(checkpoint_layer_count('auto', 6), 6)
+        for invalid in (-0.1, 1.1, 'invalid', float('nan')):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                parse_checkpoint_ode_rhs_portion(invalid)
+
+    def test_automatic_layer_search_advances_toward_safe_prefix(self):
+        attempted = []
+
+        def safe(count):
+            attempted.append(count)
+            return count >= 13
+
+        self.assertEqual(find_minimum_safe_checkpoint_layers(19, safe), 13)
+        self.assertEqual(attempted[0], 19)
+        self.assertIn(9, attempted)
+        with self.assertRaisesRegex(RuntimeError, 'Full ODE RHS'):
+            find_minimum_safe_checkpoint_layers(4, lambda _count: False)
+
+    def test_runtime_layer_selection_updates_wrapper_snapshots(self):
+        class Block(torch.nn.Module):
+            def __init__(self, index):
+                super().__init__()
+                self.layer_idx = index
+                self.checkpoint_ode_rhs_training = True
+                self.option_init = {'checkpoint_ode_rhs_training': True}
+                self.option_patch = {'checkpoint_ode_rhs_training': True}
+                self.option_aca = {'checkpoint_ode_rhs_training': True}
+
+            def forward(self, value):
+                return value
+
+        class Wrapper:
+            def __init__(self, block):
+                self.ode_block = block
+                self.orig_option_init = dict(block.option_init)
+                self.orig_option_patch = dict(block.option_patch)
+                self.orig_option_aca = dict(block.option_aca)
+
+            def prehook(self, _module, _inputs):
+                return None
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.PcConvs = torch.nn.ModuleList([Block(i) for i in range(4)])
+                self.wrappers = []
+                for block in self.PcConvs:
+                    wrapper = Wrapper(block)
+                    block.register_forward_pre_hook(wrapper.prehook)
+                    self.wrappers.append(wrapper)
+
+        model = Model()
+        metadata = set_checkpoint_ode_rhs_layer_count(model, 2)
+        self.assertEqual(metadata['selected_indices'], [0, 1])
+        for index, (block, wrapper) in enumerate(
+                zip(model.PcConvs, model.wrappers)):
+            expected = index < 2
+            self.assertEqual(block.checkpoint_ode_rhs_training, expected)
+            for name in ('option_init', 'option_patch', 'option_aca'):
+                self.assertEqual(
+                    getattr(block, name)['checkpoint_ode_rhs_training'], expected)
+                self.assertEqual(
+                    getattr(wrapper, 'orig_' + name)[
+                        'checkpoint_ode_rhs_training'], expected)
+
     def test_supported_solvers_match_outputs_and_gradients(self):
         for method in ('euler', 'rk2', 'rk4', 'rk12', 'rk23', 'dopri5'):
             with self.subTest(method=method):
@@ -266,6 +413,27 @@ class ODERHSCheckpointingTests(unittest.TestCase):
                         '--checkpoint_ode_rhs_training', 'false']):
                 self.assertFalse(parser().checkpoint_ode_rhs_training)
 
+    def test_training_parsers_support_checkpoint_portion(self):
+        from mnist_train_eval.mnist_config import parse_args as mnist_args
+        from train_ode_cifar import get_args as cifar_args
+        from train_ode_imagenet import get_args as imagenet_args
+
+        cases = (
+            (cifar_args, ['train_ode_cifar.py']),
+            (imagenet_args, ['train_ode_imagenet.py', '--imagenet_root', '/tmp']),
+            (lambda: mnist_args(), ['mnist_train']),
+        )
+        for parser, argv in cases:
+            with self.subTest(parser=argv[0]), patch.dict(
+                    os.environ, {'CHECKPOINT_ODE_RHS_PORTION': 'auto'}), \
+                    patch.object(sys, 'argv', argv):
+                self.assertEqual(parser().checkpoint_ode_rhs_portion, 'auto')
+            with self.subTest(parser=argv[0] + '_override'), patch.dict(
+                    os.environ, {'CHECKPOINT_ODE_RHS_PORTION': 'auto'}), \
+                    patch.object(sys, 'argv', argv + [
+                        '--checkpoint_ode_rhs_portion', '0.5']):
+                self.assertEqual(parser().checkpoint_ode_rhs_portion, 0.5)
+
     def test_block_and_derived_options_inherit_setting(self):
         from ode_pc import S2NoMinusZChargeZ
         from pc_conv import PCConvReLU6
@@ -278,6 +446,25 @@ class ODERHSCheckpointingTests(unittest.TestCase):
             tol=1e-3, checkpoint_ode_rhs_training=True)
         self.assertTrue(block.option_aca['checkpoint_ode_rhs_training'])
         self.assertTrue(block.option_init['checkpoint_ode_rhs_training'])
+
+    def test_make_ode_block_applies_rounded_checkpoint_prefix(self):
+        from ode_pc import ODEXInitFFFB, make_ode_block
+        from pc_conv import PCConvReLU6
+        from pc_model import PCNetNoBatchNorm
+
+        model = PCNetNoBatchNorm(
+            inp_channels=[2, 2, 2, 2], out_channels=[2, 2, 2, 2],
+            max_pool=[False] * 4, num_classes=2,
+            pc_conv_layer=PCConvReLU6, first_bn=False, kernel_size=3,
+            stride=1, dropout=0.0)
+        make_ode_block(
+            model, ode_block=ODEXInitFFFB, method='dopri5', t_end=0.2,
+            tol=1e-3, n_steps=2, checkpoint_ode_rhs_training=True,
+            checkpoint_ode_rhs_portion=0.5)
+        self.assertEqual(
+            [block.option_aca['checkpoint_ode_rhs_training']
+             for block in model.PcConvs],
+            [True, True, False, False])
 
     def test_recovery_override_precedence(self):
         from scripts.resume_local_ode_training import apply_rhs_checkpoint_override

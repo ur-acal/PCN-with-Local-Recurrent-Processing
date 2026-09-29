@@ -124,10 +124,14 @@ class TCCommandTests(unittest.TestCase):
 
     def test_rhs_checkpointing_is_block_option_not_wrapper_option(self):
         disabled = resolved('ft')
-        enabled = resolved('ft', CHECKPOINT_ODE_RHS_TRAINING='true')
+        enabled = resolved(
+            'ft', CHECKPOINT_ODE_RHS_TRAINING='true',
+            CHECKPOINT_ODE_RHS_PORTION='0.5')
         self.assertFalse(disabled.checkpoint_ode_rhs_training)
         self.assertTrue(enabled.checkpoint_ode_rhs_training)
+        self.assertEqual(enabled.checkpoint_ode_rhs_portion, 0.5)
         self.assertNotIn('checkpoint_ode_rhs_training', wrapper_options(enabled))
+        self.assertNotIn('checkpoint_ode_rhs_portion', wrapper_options(enabled))
         block = make_block()
         block.option_aca['checkpoint_ode_rhs_training'] = True
         wrapper = wrap(block)

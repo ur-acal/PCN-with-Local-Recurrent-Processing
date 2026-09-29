@@ -20,6 +20,10 @@ ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
+from checkpoint_memory_profiler import (
+    configure_trainer_checkpointing,
+    parse_checkpoint_ode_rhs_portion,
+)
 from inference_utils import load_and_prepare_model, test_once
 from measured_activation import (
     CubicBSplineActivation, MeasuredPiecewiseLinearReLU6Activation,
@@ -219,6 +223,11 @@ def get_args():
         "--checkpoint_ode_rhs_training", type=str2bool,
         default=str2bool(os.environ.get("CHECKPOINT_ODE_RHS_TRAINING", "false")),
         help="Checkpoint ODE RHS evaluations during gradient-enabled training.")
+    p.add_argument(
+        "--checkpoint_ode_rhs_portion", type=parse_checkpoint_ode_rhs_portion,
+        default=parse_checkpoint_ode_rhs_portion(
+            os.environ.get("CHECKPOINT_ODE_RHS_PORTION", "1.0")),
+        help="Checkpointed ODE-layer portion in [0,1], or 'auto'.")
     p.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     p.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
@@ -968,7 +977,7 @@ def main():
     # convert block to Neural ode
     # Todo: The offset eps in ode_block is currently useless. Need to pass that to the wrapper.
     ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "reuse_accepted_step_training",
-                          "checkpoint_ode_rhs_training",
+                          "checkpoint_ode_rhs_training", "checkpoint_ode_rhs_portion",
                           "patch_node", "patch_stride",
                           "patch_cycle", "patch_pad", "fold_scalar", "n_iters",
                           "toggle_n_cycles", "toggle_time_split", "toggle_fast_path",
@@ -1390,6 +1399,11 @@ def main():
     trainer.recovery_config["validation_manifest_checksum"] = (
         trainer.validation_split_metadata.get("manifest_checksum")
         if trainer.validation_split_metadata else None)
+    configure_trainer_checkpointing(
+        trainer,
+        enabled=args.checkpoint_ode_rhs_training,
+        portion=args.checkpoint_ode_rhs_portion,
+        memory_fraction=args.mem_frac)
     trainer.train()
 
 if __name__ == "__main__":

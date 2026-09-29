@@ -654,6 +654,10 @@ class TrainerCiFar(object):
                 self.warmup_scheduler._last_lr.append(last_lr)
         self._crd_initialized = True
 
+    def _maybe_profile_ode_rhs_checkpointing(self):
+        from checkpoint_memory_profiler import maybe_profile_checkpoint_ode_rhs
+        return maybe_profile_checkpoint_ode_rhs(self)
+
     def train(self):
         train_loss_list, val_acc_list = [], []
         best_acc, val_acc, best_epoch = 0.0, 0.0, 0
@@ -667,6 +671,7 @@ class TrainerCiFar(object):
             train_loss_list, val_acc_list = history['train_loss_list'], history['val_acc_list']
             best_acc, val_acc, best_epoch = history['best_acc'], history['val_acc'], history['best_epoch']
             best_top5, val_top5, best_model_path = history['best_top5'], history['val_top5'], history['best_model_path']
+        self._maybe_profile_ode_rhs_checkpointing()
         for epoch in range(start_epoch, self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
             train_loss = self.train_one_epoch(epoch)

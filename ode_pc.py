@@ -130,6 +130,8 @@ class ODEBlockPC(nn.Module):
 
         # Directly return the init result
         self.return_init = return_init
+        self.checkpoint_ode_rhs_training = bool(
+            checkpoint_ode_rhs_training)
 
         # noise type used in sde simulation; only useful when option["eps"] is set.
         self.sde_noise_type = sde_noise_type
@@ -4846,6 +4848,16 @@ class QATWrapper1StateWithX(ODEWrapper1StateWithX):
 
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
                    return_init=False, n_steps=None, **kwargs):
+    from checkpoint_memory_profiler import (
+        checkpoint_layer_count,
+        parse_checkpoint_ode_rhs_portion,
+    )
+    checkpoint_portion = parse_checkpoint_ode_rhs_portion(
+        kwargs.pop("checkpoint_ode_rhs_portion", 1.0))
+    checkpoint_requested = bool(
+        kwargs.get("checkpoint_ode_rhs_training", False))
+    checkpoint_count = checkpoint_layer_count(
+        checkpoint_portion, pc_net.num_layers)
     for i in range(pc_net.num_layers):
         cls = pc_net.PcConvs[i].cls if n_steps is None else n_steps
         t_step = pc_net.PcConvs[i].lr
@@ -4855,12 +4867,21 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
             t_step = t_end / cls if cls != 0 else 1.0
         t_step = t_step / ts_scale
         ode_kwargs = dict(kwargs)
+        ode_kwargs["checkpoint_ode_rhs_training"] = (
+            checkpoint_requested and i < checkpoint_count)
         if isinstance(ode_block, type) and issubclass(ode_block, ToggleBaseFFFB):
             ode_kwargs.setdefault("toggle_n_cycles", int(cls))
         pc_net.PcConvs[i] = ode_block(
             pc_conv=pc_net.PcConvs[i], noise_level=noise_level, method=method, t_end=t_end, t_step=t_step, tol=tol,
             return_init=return_init[i] if isinstance(return_init, list) else False,
             **ode_kwargs)
+    pc_net.checkpoint_ode_rhs_requested_portion = checkpoint_portion
+    pc_net.checkpoint_ode_rhs_selected_layers = (
+        checkpoint_count if checkpoint_requested else 0)
+    pc_net.checkpoint_ode_rhs_total_layers = pc_net.num_layers
+    pc_net.checkpoint_ode_rhs_effective_portion = (
+        float(pc_net.checkpoint_ode_rhs_selected_layers) /
+        pc_net.num_layers if pc_net.num_layers else 0.0)
     return pc_net
 
 

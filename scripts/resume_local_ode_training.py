@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 import train_ode_cifar as training
+from checkpoint_memory_profiler import parse_checkpoint_ode_rhs_portion
 
 
 def _backfill_validation_defaults(config):
@@ -42,6 +43,18 @@ def apply_rhs_checkpoint_override(config, cli_override):
         config["checkpoint_ode_rhs_training"] = override
 
 
+def apply_rhs_checkpoint_portion_override(config, cli_override):
+    """Apply the two-argument checkpoint policy to local recovery."""
+    override = cli_override
+    if override is None and "CHECKPOINT_ODE_RHS_PORTION" in os.environ:
+        override = parse_checkpoint_ode_rhs_portion(
+            os.environ["CHECKPOINT_ODE_RHS_PORTION"])
+    if override is None:
+        config.setdefault("checkpoint_ode_rhs_portion", 1.0)
+    else:
+        config["checkpoint_ode_rhs_portion"] = override
+
+
 def apply_fused_measured_activation_override(config, cli_override):
     """Apply CLI/env override and backfill recovery files from before fusion."""
     override = cli_override
@@ -61,6 +74,8 @@ def main():
                         default=None)
     parser.add_argument("--checkpoint_ode_rhs_training", type=training.str2bool,
                         default=None)
+    parser.add_argument("--checkpoint_ode_rhs_portion",
+                        type=parse_checkpoint_ode_rhs_portion, default=None)
     parser.add_argument("--fuse_measured_activation", type=training.str2bool,
                         default=None)
     args = parser.parse_args()
@@ -75,6 +90,8 @@ def main():
     config = _backfill_validation_defaults(recovery["config"].copy())
     apply_training_step_reuse_override(config, args.reuse_accepted_step_training)
     apply_rhs_checkpoint_override(config, args.checkpoint_ode_rhs_training)
+    apply_rhs_checkpoint_portion_override(
+        config, args.checkpoint_ode_rhs_portion)
     apply_fused_measured_activation_override(
         config, args.fuse_measured_activation)
     model_name = path.parent.name

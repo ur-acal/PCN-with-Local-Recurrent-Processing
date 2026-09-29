@@ -1,6 +1,7 @@
 """Opt-in wiring for resistance-coded feedforward CNNs."""
 import os
 import torch
+from checkpoint_memory_profiler import parse_checkpoint_ode_rhs_portion
 
 
 def add_arguments(parser):
@@ -19,6 +20,10 @@ def add_arguments(parser):
     parser.add_argument('--checkpoint_ode_rhs_training', type=boolean,
                         default=boolean(os.environ.get(
                             'CHECKPOINT_ODE_RHS_TRAINING', 'false')))
+    parser.add_argument('--checkpoint_ode_rhs_portion',
+                        type=parse_checkpoint_ode_rhs_portion,
+                        default=parse_checkpoint_ode_rhs_portion(os.environ.get(
+                            'CHECKPOINT_ODE_RHS_PORTION', '1.0')))
     parser.add_argument('--tc_tol', type=float, default=1e-6)
     parser.add_argument('--tc_step_size', type=float, default=None)
     parser.add_argument('--tc_noise_reference_R', type=float, default=50e3)

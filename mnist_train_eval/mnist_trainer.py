@@ -80,6 +80,7 @@ class MNISTTrainer(TrainerCiFarTimmStyle):
     def train(self):
         # No best/latest selection, no intermediate test access. Full-parameter
         # last is the QAT continuation artifact; ordinary last has baked weights.
+        self._maybe_profile_ode_rhs_checkpointing()
         history = []
         for epoch in range(self.num_epochs):
             lr = self.optimizer.param_groups[0]['lr']

@@ -928,6 +928,12 @@ def main():
     trainer.recovery_config["validation_manifest_checksum"] = (
         trainer.validation_split_metadata.get("manifest_checksum")
         if trainer.validation_split_metadata else None)
+    from checkpoint_memory_profiler import configure_trainer_checkpointing
+    configure_trainer_checkpointing(
+        trainer,
+        enabled=args.checkpoint_ode_rhs_training,
+        portion=args.checkpoint_ode_rhs_portion,
+        memory_fraction=getattr(args, "mem_frac", 1.0))
     trainer.train()
 
 

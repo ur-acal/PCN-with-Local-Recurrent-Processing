@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from checkpoint_memory_profiler import parse_checkpoint_ode_rhs_portion
 
 from mnist_train_eval.mnist_data import DEFAULT_DATA_DIR
 
@@ -56,6 +57,9 @@ def parse_args(argv=None, *, evaluation=False):
                    default=boolean(os.environ.get('REUSE_ACCEPTED_STEP_TRAINING', 'false')))
     p.add_argument('--checkpoint_ode_rhs_training', type=boolean,
                    default=boolean(os.environ.get('CHECKPOINT_ODE_RHS_TRAINING', 'false')))
+    p.add_argument('--checkpoint_ode_rhs_portion', type=parse_checkpoint_ode_rhs_portion,
+                   default=parse_checkpoint_ode_rhs_portion(
+                       os.environ.get('CHECKPOINT_ODE_RHS_PORTION', '1.0')))
     p.add_argument('--one_shot_conv', type=boolean, default=False)
     p.add_argument('--download', type=boolean, default=False)
     p.add_argument('--dry_run', type=boolean, default=False)

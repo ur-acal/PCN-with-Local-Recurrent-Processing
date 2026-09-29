@@ -865,6 +865,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             train_loss_list, val_acc_list = history['train_loss_list'], history['val_acc_list']
             best_acc, val_acc, best_epoch = history['best_acc'], history['val_acc'], history['best_epoch']
             best_top5, val_top5, best_model_path = history['best_top5'], history['val_top5'], history['best_model_path']
+        self._maybe_profile_ode_rhs_checkpointing()
         for epoch in range(start_epoch, self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
 

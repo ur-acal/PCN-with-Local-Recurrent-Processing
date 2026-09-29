@@ -12,6 +12,10 @@ from inference_utils import load_and_prepare_model
 from ode_pc import (ODEXInitFFFB, QATWrapper1State, QATWrapper2State,
                     S2NoisyIYAsXZAs0)
 from pc_conv import PCConvReLU6Noisy, PCConvReLU6
+from checkpoint_memory_profiler import (
+    apply_checkpoint_ode_rhs_portion,
+    parse_checkpoint_ode_rhs_portion,
+)
 p=argparse.ArgumentParser()
 p.add_argument('--batch',type=int,default=128)
 p.add_argument('--memory-fraction',type=float,default=.75)
@@ -26,6 +30,8 @@ p.add_argument('--repeats',type=int,default=5)
 p.add_argument('--conv-method',choices=['loop','grouped','shared'],default=None)
 p.add_argument('--curve-sampling',choices=['histogram','uniform'],default='histogram')
 p.add_argument('--rhs-checkpoint',action='store_true',help='Enable production ODE-RHS activation checkpointing.')
+p.add_argument('--rhs-checkpoint-portion',type=parse_checkpoint_ode_rhs_portion,
+               default=1.0,help='Checkpointed ODE-layer portion in [0,1].')
 p.add_argument('--sampling-repeats',type=int,default=0)
 p.add_argument('--sensitivity-projections',type=int,default=0)
 p.add_argument('--input-offset',type=int,default=0)
@@ -40,6 +46,8 @@ p.add_argument('--compare-correction',action='store_true',help='Alternate optimi
 p.add_argument('--training-step-reuse',action='store_true',help='Retain the accepted adaptive-training candidate instead of replaying it.')
 p.add_argument('--compare-training-step-reuse',action='store_true',help='Alternate baseline/reuse adaptive training in one process.')
 p.add_argument('--compare-rhs-checkpoint',action='store_true',help='Alternate ODE-RHS checkpointing off/on in one process.')
+p.add_argument('--compare-checkpoint-portions',default=None,
+               help='Diagnostic comma-separated checkpoint portions.')
 p.add_argument('--compare-training-optimizations',action='store_true',help='Benchmark baseline, step reuse only, RHS checkpointing only, and both.')
 p.add_argument('--save-final-tensors',action='store_true',help='Diagnostic final logits and parameter gradients.')
 p.add_argument('--optimizer-step',action='store_true',help='Apply an SGD update after each measured backward pass.')
@@ -47,18 +55,30 @@ p.add_argument('--disable-qat-weight-cache',action='store_true',help='Diagnostic
 p.add_argument('--disable-fused-measured-activation',action='store_true',help='Diagnostic baseline: use the unfused measured piecewise-linear activation.')
 p.add_argument('--compare-common-training-optimizations',action='store_true',help='Benchmark QAT-weight caching and measured-activation fusion separately and together.')
 p.add_argument('--profile-common-training-optimizations',action='store_true',help='Record one PyTorch CPU/CUDA profile for each common-optimization configuration.')
+p.add_argument('--profile-current',action='store_true',help='Record one profile for the requested non-comparison configuration.')
 
 a=p.parse_args()
+if a.rhs_checkpoint_portion == 'auto':
+ p.error("Use benchmark_tc_real_ft.py for automatic portion selection.")
+checkpoint_portions = (
+ [parse_checkpoint_ode_rhs_portion(value)
+  for value in a.compare_checkpoint_portions.split(',')]
+ if a.compare_checkpoint_portions else [])
+if any(value == 'auto' for value in checkpoint_portions):
+ p.error('--compare-checkpoint-portions accepts numeric portions only.')
 comparison_count=sum((a.compare_sampling, a.compare_correction,
                       a.compare_training_step_reuse, a.compare_rhs_checkpoint,
                       a.compare_training_optimizations,
-                      a.compare_common_training_optimizations))
+                      a.compare_common_training_optimizations,
+                      bool(checkpoint_portions)))
 if comparison_count > 1:
  p.error('Choose only one --compare-* option per benchmark.')
 if a.optimizer_step and comparison_count:
  p.error('--optimizer-step cannot be combined with a comparison benchmark.')
 if a.profile_common_training_optimizations and not a.compare_common_training_optimizations:
  p.error('--profile-common-training-optimizations requires --compare-common-training-optimizations.')
+if a.profile_current and comparison_count:
+ p.error('--profile-current cannot be combined with a comparison benchmark.')
 effective_conv_method=(a.conv_method or
  ('grouped' if a.mode=='grouped' else 'shared' if a.mode=='all' else 'loop'))
 if a.reference_correction or a.compare_correction:
@@ -108,7 +128,8 @@ model=load_and_prepare_model(str(checkpoint_path),'cuda',
  conv_only=True,fuse_bn=False,noise_level=0.,
  ode_params=dict(ode_block=block_cls,method=a.method,t_end=1.75,tol=a.tol,n_steps=5,
                  reuse_accepted_step_training=a.training_step_reuse,
-                 checkpoint_ode_rhs_training=a.rhs_checkpoint),
+                 checkpoint_ode_rhs_training=a.rhs_checkpoint,
+                 checkpoint_ode_rhs_portion=a.rhs_checkpoint_portion),
  ode_wrapper_params=dict(ode_wrapper=wrapper_cls,tc_nonidealities=a.mode!='legacy',
  tc_conv_method=effective_conv_method,tc_curve_sampling=a.curve_sampling,
  R=10e3,R_max=150e3,C=49e-15,v_dd=.1,one_over_q=1,w_bits=5,enob=a.enob,weight_quant_factor_bits=None,thermal_noise=False,
@@ -209,14 +230,8 @@ def set_training_step_reuse(enabled):
    if option is not None:option['reuse_accepted_step_training']=enabled
 
 def set_rhs_checkpoint(enabled):
- for block in model.PcConvs:
-  for name in ('option_aca','option_init','option_patch'):
-   option=getattr(block,name,None)
-   if option is not None:option['checkpoint_ode_rhs_training']=enabled
- for wrapper in wrappers.get('wrappers',[]):
-  for name in ('orig_option_aca','orig_option_init','orig_option_patch'):
-   option=getattr(wrapper,name,None)
-   if option is not None:option['checkpoint_ode_rhs_training']=enabled
+ apply_checkpoint_ode_rhs_portion(
+     model, enabled, a.rhs_checkpoint_portion if enabled else 0.0)
 
 if a.count_stages:
  class CountedRHS(torch.nn.Module):
@@ -242,6 +257,7 @@ if a.count_stages:
 
 result=dict(batch=a.batch,dataset=a.dataset,mode=a.mode,
  checkpoint_ode_rhs_training=a.rhs_checkpoint,
+ checkpoint_ode_rhs_portion=a.rhs_checkpoint_portion,
  qat_weight_cache=not a.disable_qat_weight_cache,
  fused_measured_activation=not a.disable_fused_measured_activation,
  compare_common_training_optimizations=a.compare_common_training_optimizations,
@@ -260,8 +276,10 @@ path=Path(a.output);path.parent.mkdir(parents=True,exist_ok=True)
 def save():path.write_text(json.dumps(result,indent=2))
 save()
 paired=a.compare_sampling or a.compare_correction or a.compare_training_step_reuse or a.compare_rhs_checkpoint
-width=4 if (a.compare_training_optimizations or
+width=(len(checkpoint_portions) if checkpoint_portions else
+       4 if (a.compare_training_optimizations or
             a.compare_common_training_optimizations) else 2 if paired else 1
+       )
 for iteration in range((a.repeats+1)*width):
  repeat=iteration//width
  correction_mode='reference' if a.reference_correction else 'optimized'
@@ -276,7 +294,12 @@ for iteration in range((a.repeats+1)*width):
   training_step_reuse=bool((iteration%2)^(repeat%2))
   set_training_step_reuse(training_step_reuse)
  else:training_step_reuse=a.training_step_reuse
- if a.compare_training_optimizations:
+ checkpoint_portion = a.rhs_checkpoint_portion
+ if checkpoint_portions:
+  checkpoint_portion=checkpoint_portions[(iteration+repeat)%width]
+  rhs_checkpoint=True
+  apply_checkpoint_ode_rhs_portion(model,True,checkpoint_portion)
+ elif a.compare_training_optimizations:
   configurations=((False,False),(True,False),(False,True),(True,True))
   training_step_reuse,rhs_checkpoint=configurations[(iteration+repeat)%4]
   set_training_step_reuse(training_step_reuse)
@@ -301,6 +324,7 @@ for iteration in range((a.repeats+1)*width):
  row=dict(repeat=repeat,warmup=repeat==0,phase='forward',sampling=sampling,
           correction=correction_mode,training_step_reuse=training_step_reuse,
           checkpoint_ode_rhs_training=rhs_checkpoint,
+          checkpoint_ode_rhs_portion=checkpoint_portion,
           qat_weight_cache=qat_weight_cache,
           fused_measured_activation=fused_measured_activation)
  y=None
@@ -324,6 +348,7 @@ for iteration in range((a.repeats+1)*width):
    label=(f'sampling-{sampling}' if a.compare_sampling else
           f'correction-{correction_mode}' if a.compare_correction else
           f'reuse-{str(training_step_reuse).lower()}' if a.compare_training_step_reuse
+          else f'rhs-portion-{str(checkpoint_portion).replace(".","p")}' if checkpoint_portions
           else f'rhs-checkpoint-{str(rhs_checkpoint).lower()}' if a.compare_rhs_checkpoint
           else f'reuse-{str(training_step_reuse).lower()}_rhs-checkpoint-{str(rhs_checkpoint).lower()}' if a.compare_training_optimizations
           else f'qat-cache-{str(qat_weight_cache).lower()}_fused-activation-{str(fused_measured_activation).lower()}' if a.compare_common_training_optimizations
@@ -340,6 +365,7 @@ for iteration in range((a.repeats+1)*width):
  result['rows'].append(row);save();print(json.dumps(row),flush=True)
  if row['status']!='ok':
   if (a.compare_training_optimizations or a.compare_rhs_checkpoint or
+      checkpoint_portions or
       a.compare_common_training_optimizations):
    model.zero_grad(set_to_none=True);torch.cuda.empty_cache();continue
   break
@@ -373,6 +399,11 @@ if rows:
       for k in ('forward_seconds','backward_seconds','total_seconds','peak_allocated','peak_reserved')}
       for mode in (False,True)}
   save();print(json.dumps(result['by_rhs_checkpoint']),flush=True)
+ if checkpoint_portions:
+  result['by_checkpoint_portion']={str(portion):summarize(
+      [r for r in rows if r['checkpoint_ode_rhs_portion']==portion])
+      for portion in checkpoint_portions}
+  save();print(json.dumps(result['by_checkpoint_portion']),flush=True)
  if a.compare_training_optimizations:
   result['by_training_optimizations']={
    f'reuse-{str(reuse).lower()}_rhs-checkpoint-{str(rhs).lower()}':
@@ -420,6 +451,30 @@ if a.profile_common_training_optimizations:
   del profiled_output
  result['profile_by_common_training_optimizations']=profiles
  save();print(json.dumps(profiles),flush=True)
+
+if a.profile_current:
+ reset_benchmark_rng()
+ model.zero_grad(set_to_none=True)
+ with torch.profiler.profile(activities=(
+         torch.profiler.ProfilerActivity.CPU,
+         torch.profiler.ProfilerActivity.CUDA)) as profiler:
+  profiled_output=runtime_model(x)
+  profiled_output.square().mean().backward()
+  torch.cuda.synchronize()
+ events=profiler.key_averages()
+ launch=next((event for event in events if event.key=='cudaLaunchKernel'),None)
+ memcpy=next((event for event in events if event.key=='cudaMemcpyAsync'),None)
+ result['current_profile']=dict(
+     cuda_kernel_launches=0 if launch is None else int(launch.count),
+     cuda_launch_self_cpu_seconds=(0. if launch is None else
+         float(launch.self_cpu_time_total)/1e6),
+     cuda_memcpy_calls=0 if memcpy is None else int(memcpy.count),
+     profiler_self_cpu_seconds=float(sum(
+         event.self_cpu_time_total for event in events))/1e6,
+     profiler_self_cuda_seconds=float(sum(
+         event.self_device_time_total for event in events))/1e6)
+ del profiled_output
+ save();print(json.dumps(result['current_profile']),flush=True)
 
 if a.sampling_repeats:
  # Includes detached code mapping, histogram (where selected), categorical

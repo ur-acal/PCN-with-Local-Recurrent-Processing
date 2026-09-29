@@ -62,7 +62,7 @@ if [[ "$stage" == ft ]]; then
     --health_check_epochs "${FT_HEALTH_CHECK_EPOCHS:-20,50}"
     --health_check_batches "${HEALTH_CHECK_BATCHES:-4}"
     --health_check_seed "${HEALTH_CHECK_SEED:-4096}"
-    --timm_sched cosine --timm_aug_level no_aug --timm_re_prob "${TIMM_RE_PROB:-0}"
+    --timm_sched cosine --timm_aug_level "${FT_TIMM_AUG_LEVEL:-no_aug}" --timm_re_prob "${TIMM_RE_PROB:-0}"
     --pcn PCNetNoBatchNorm --pc_conv PCConvReLU6 --avg_pooling true --dropout .25
     --t_end 1.75 --tol "${TOL:-1e-6}" --batch_size 128
     --distill_method "${DISTILL_METHOD:-srrl}" --teacher_ckpt "${TEACHER_CKPT:?Set TEACHER_CKPT}"

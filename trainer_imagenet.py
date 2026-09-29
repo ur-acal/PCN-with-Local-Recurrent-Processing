@@ -705,6 +705,8 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
         best_top5 = None
         best_model_path = None
 
+        self._maybe_profile_ode_rhs_checkpointing()
+
         for epoch in range(self.num_epochs):
             print("Training epoch {} / {}".format(epoch, self.num_epochs))
 

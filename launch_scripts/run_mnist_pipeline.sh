@@ -52,6 +52,7 @@ mnist_run_stage() {
         --seed "${SEED:-4096}" --num_workers "${NUM_WORKERS:-4}"
         --dropout "${DROPOUT:-0.25}" --t_end "${T_END:-1.75}"
         --one_shot_conv "${ONE_SHOT_CONV:-false}" --mem_frac "${MEM_FRAC:-0.9}"
+        --checkpoint_ode_rhs_portion "${CHECKPOINT_ODE_RHS_PORTION:-1.0}"
         --device "${DEVICE:-auto}"
         --limit_train_samples "${LIMIT_TRAIN_SAMPLES:-0}"
         --limit_test_samples "${LIMIT_TEST_SAMPLES:-0}"

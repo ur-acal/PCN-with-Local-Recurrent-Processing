@@ -34,6 +34,7 @@ p.add_argument('--tc-state',type=int,choices=(1,2),default=None)
 p.add_argument('--teacher-checkpoint',default=None)
 p.add_argument('--training-step-reuse',action='store_true')
 p.add_argument('--rhs-checkpoint',action='store_true')
+p.add_argument('--rhs-checkpoint-portion',default='1.0')
 a=p.parse_args()
 assert a.batches>a.warmup>=0
 out=Path(a.output).resolve();out.mkdir(parents=True,exist_ok=True)
@@ -57,6 +58,8 @@ for flag,enabled in (
     value=str(enabled).lower()
     argv += [flag,value]
     command += [flag,value]
+argv += ['--checkpoint_ode_rhs_portion', a.rhs_checkpoint_portion]
+command += ['--checkpoint_ode_rhs_portion', a.rhs_checkpoint_portion]
 (out/'resolved_command.txt').write_text(shlex.join(command)+'\n')
 report=dict(command=command,rows=[],warmup_batches=a.warmup,
             scope='Actual train_one_epoch: data/H2D, student, teacher, CE/KD/SRRL, backward, SGD. No checkpoint saves.',
@@ -82,10 +85,12 @@ class TimedLoader:
             print('FT_BENCH '+json.dumps(row),flush=True)
 
 def train_benchmark(self):
+    checkpoint_profile = self._maybe_profile_ode_rhs_checkpointing()
     report.update(options=self.recovery_config,trainer=type(self).__name__,
                   teacher=type(self.teacher_model).__name__,batch_size=self.batch_size,
                   optimizer=type(self.optimizer).__name__,train_batches_per_epoch=len(self.train_dataloader),
-                  feature_kd_initialized=self._feature_kd_loss is not None)
+                  feature_kd_initialized=self._feature_kd_loss is not None,
+                  checkpoint_profile=checkpoint_profile)
     report['optimizer_groups']=[{k:v for k,v in g.items() if k!='params'} for g in self.optimizer.param_groups]
     assert self._feature_kd_loss is not None and self.teacher_model is not None
     original_loader=self.train_dataloader

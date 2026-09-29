@@ -18,6 +18,10 @@ from switch import SWITCH_CLASSES
 from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCN_CLASSES, PC_CONV_CLASS
 from inference_utils import load_and_prepare_model
+from checkpoint_memory_profiler import (
+    configure_trainer_checkpointing,
+    parse_checkpoint_ode_rhs_portion,
+)
 
 from train_ode_cifar import (
     str2bool,
@@ -113,6 +117,11 @@ def get_args():
         "--checkpoint_ode_rhs_training", type=str2bool,
         default=str2bool(os.environ.get("CHECKPOINT_ODE_RHS_TRAINING", "false")),
         help="Checkpoint ODE RHS evaluations during gradient-enabled training.")
+    p.add_argument(
+        "--checkpoint_ode_rhs_portion", type=parse_checkpoint_ode_rhs_portion,
+        default=parse_checkpoint_ode_rhs_portion(
+            os.environ.get("CHECKPOINT_ODE_RHS_PORTION", "1.0")),
+        help="Checkpointed ODE-layer portion in [0,1], or 'auto'.")
     p.add_argument("--tol", type=float, default=1e-3)
     p.add_argument("--n_steps", type=float, default=10)
     p.add_argument("--t_end", type=float, default=1.0)
@@ -334,6 +343,7 @@ def main():
         "sde_noise_type",
         "reuse_accepted_step_training",
         "checkpoint_ode_rhs_training",
+        "checkpoint_ode_rhs_portion",
         "patch_node",
         "patch_stride",
         "patch_cycle",
@@ -523,6 +533,11 @@ def main():
     )
 
     trainer = timm_trainer_cls(**trainer_kwargs)
+    configure_trainer_checkpointing(
+        trainer,
+        enabled=args.checkpoint_ode_rhs_training,
+        portion=args.checkpoint_ode_rhs_portion,
+        memory_fraction=args.mem_frac)
 
     if args.model_name is not None and hasattr(trainer, "load_feature_kd_from_ckpt"):
         logging.warning("Loading distillation method's auxiliary module for FT.")

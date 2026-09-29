@@ -192,7 +192,7 @@ THREADS_PER_PROC=$(( CPUS / PROCS ))
 if (( THREADS_PER_PROC < 1 )); then THREADS_PER_PROC=1; fi
 
 # ---- Per-process GPU memory fraction ----------------------------------
-MAX_MEM_FRAC=${MAX_MEM_FRAC:-0.9}
+MAX_MEM_FRAC=${MAX_MEM_FRAC:-1.0}
 PROCS=${#BLOCKS[@]}
 MEM_FRAC=$(awk -v m="$MAX_MEM_FRAC" -v n="$PROCS" 'BEGIN{printf "%.6f", m/n}')
 echo "Per-proc --mem_frac=${MEM_FRAC}  (MAX_MEM_FRAC=${MAX_MEM_FRAC}, PROCS=${PROCS})"

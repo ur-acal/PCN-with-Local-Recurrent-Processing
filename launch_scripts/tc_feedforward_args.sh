@@ -29,6 +29,7 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     --one_shot_conv "${ONE_SHOT_CONV:-false}"
     --reuse_accepted_step_training "${REUSE_ACCEPTED_STEP_TRAINING:-false}"
     --checkpoint_ode_rhs_training "${CHECKPOINT_ODE_RHS_TRAINING:-false}"
+    --checkpoint_ode_rhs_portion "${CHECKPOINT_ODE_RHS_PORTION:-1.0}"
     --w_bits 5 --enob none --weight_quant_factor_bits -1
     --tc_method "${TC_METHOD:-dopri5}" --tc_tol "${TC_TOL:-1e-6}"
     --tc_curve_sampling "${TC_CURVE_SAMPLING:-histogram}"
