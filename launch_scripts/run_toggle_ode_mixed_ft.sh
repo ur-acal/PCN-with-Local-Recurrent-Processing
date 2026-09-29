@@ -259,6 +259,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --k             "${K_VAL}" \
             --v_dd          "${V_DD}" \
             --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}" \
+            --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}" \
             --enable_measured_pooling "${ENABLE_MEASURED_POOLING}" \
             --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
             --activation_corner "${ACTIVATION_CORNER:-TT}" \

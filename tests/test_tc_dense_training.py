@@ -1,15 +1,19 @@
 """CPU checks of the opt-in TC dense path, not hardware accuracy experiments."""
 from dataclasses import replace
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from ode_pc import (ODEXInitFFFB, S2NoisyIYAsXZAs0, QATWrapper1State,
-                    QATWrapper2State, ToggleODEXInitFFFB, ToggleQATWrapper1State)
+                    QATWrapper1StateWithX, QATWrapper2State,
+                    QuantizationImpl, ToggleODEXInitFFFB,
+                    ToggleQATWrapper1State)
 from pc_conv import PCConvReLU6
 from tc_nonidealities import TCResistanceCurves
 from measured_activation import PiecewiseLinearActivation
@@ -47,6 +51,130 @@ def synthetic_package(block):
 
 
 class TCDenseTests(unittest.TestCase):
+    def test_recovery_fused_activation_override_precedence(self):
+        from scripts.resume_local_ode_training import (
+            apply_fused_measured_activation_override)
+
+        with patch.dict(os.environ, {}, clear=True):
+            saved = {"fuse_measured_activation": False}
+            apply_fused_measured_activation_override(saved, None)
+            self.assertFalse(saved["fuse_measured_activation"])
+            old = {}
+            apply_fused_measured_activation_override(old, None)
+            self.assertTrue(old["fuse_measured_activation"])
+        with patch.dict(
+                os.environ, {"FUSE_MEASURED_ACTIVATION": "false"}):
+            config = {"fuse_measured_activation": True}
+            apply_fused_measured_activation_override(config, None)
+            self.assertFalse(config["fuse_measured_activation"])
+            apply_fused_measured_activation_override(config, True)
+            self.assertTrue(config["fuse_measured_activation"])
+
+    def test_abandoned_backward_cache_can_be_released(self):
+        block = make_block()
+        wrapper = wrap(block, False)
+        for options in (block.option_aca, wrapper.orig_option_aca):
+            options.update(
+                method="euler", h=.1,
+                checkpoint_ode_rhs_training=True)
+
+        output = block(torch.full((1, 2, 2, 2), .2, requires_grad=True))
+        self.assertIsNotNone(wrapper._pending_qat_weight_cache)
+        self.assertTrue(wrapper._clear_pending_qat_weight_cache())
+        self.assertIsNone(wrapper._pending_qat_weight_cache)
+        for quantizer in (wrapper.FF_quantizer, wrapper.FB_quantizer):
+            self.assertFalse(quantizer._solve_cache_enabled)
+            self.assertIsNone(quantizer._solve_cached_weight)
+        del output
+
+    def test_qat_weights_are_shared_across_forwards_before_backward(self):
+        original_forward = QuantizationImpl.forward
+        cases = ((False, True, QATWrapper1State),
+                 (True, True, QATWrapper2State),
+                 (False, False, QATWrapper1State),
+                 (True, False, QATWrapper2State),
+                 (False, False, QATWrapper1StateWithX))
+        for two, tc_enabled, wrapper_cls in cases:
+            with self.subTest(
+                    two=two, tc_enabled=tc_enabled,
+                    wrapper=wrapper_cls.__name__):
+                calls = 0
+
+                def counted_forward(ctx, *args):
+                    nonlocal calls
+                    calls += 1
+                    return original_forward(ctx, *args)
+
+                QuantizationImpl.forward = staticmethod(counted_forward)
+                try:
+                    block = make_block(two)
+                    tc_options = (
+                        dict(tc_conv_method="shared",
+                             enable_spin_variation=True,
+                             spin_variation_seed=9)
+                        if tc_enabled else {})
+                    wrapper = wrapper_cls(
+                        ode_block=block, tc_nonidealities=tc_enabled,
+                        R=1e4, R_max=150e3, C=49e-15, k=1e3,
+                        v_dd=.1, state_bound=1., w_bits=5,
+                        thermal_noise=False, offset_eps=0.,
+                        is_first=True, is_last=True, **tc_options)
+                    if tc_enabled:
+                        package = synthetic_package(block)
+                        block._tc_curve_package = replace(
+                            package, factor=torch.zeros_like(package.factor))
+                        block._tc_curve_generator = torch.Generator().manual_seed(4)
+                    for options in (block.option_aca, wrapper.orig_option_aca):
+                        options.update(
+                            method="euler", h=.1,
+                            checkpoint_ode_rhs_training=True)
+                    calls = 0
+                    x = torch.full((1, 2, 2, 2), .2, requires_grad=True)
+                    (block(x).sum() + block(x * .75).sum()).backward()
+                    self.assertEqual(calls, 2)
+                    self.assertIsNone(getattr(
+                        wrapper, "_pending_qat_weight_cache", None))
+                    for module in (block.FFconv, block.FBconv):
+                        gradient = module.parametrizations.weight.original.grad
+                        self.assertIsNotNone(gradient)
+                        self.assertTrue(torch.isfinite(gradient).all())
+                    block(torch.full_like(x, .1)).sum().backward()
+                    self.assertEqual(calls, 4)
+                finally:
+                    QuantizationImpl.forward = staticmethod(original_forward)
+
+    def test_toggle_qat_weights_are_quantized_once_per_block_call(self):
+        pc = PCConvReLU6(
+            inp_chan=2, out_chan=2, kernel_size=1, padding=0, cls=2,
+            bypass=False, tie_weights=False, tie_bp=False, layer_idx=0)
+        block = ToggleODEXInitFFFB(
+            pc_conv=pc, noise_level=0., method="euler", t_end=.3,
+            t_step=.1, tol=1e-6, toggle_n_cycles=3,
+            odexinit_scaling_mode="direct")
+        ToggleQATWrapper1State(
+            ode_block=block, R=1e4, R_max=150e3, C=49e-15, k=1e3,
+            v_dd=.1, state_bound=1., w_bits=5, thermal_noise=False,
+            offset_eps=0., is_first=True, is_last=True)
+        calls = 0
+        original_forward = QuantizationImpl.forward
+
+        def counted_forward(ctx, *args):
+            nonlocal calls
+            calls += 1
+            return original_forward(ctx, *args)
+
+        QuantizationImpl.forward = staticmethod(counted_forward)
+        try:
+            x = torch.full((1, 2, 2, 2), .2, requires_grad=True)
+            block(x).sum().backward()
+            self.assertEqual(calls, 2)
+            for module in (block.FFconv, block.FBconv):
+                gradient = module.parametrizations.weight.original.grad
+                self.assertIsNotNone(gradient)
+                self.assertTrue(torch.isfinite(gradient).all())
+        finally:
+            QuantizationImpl.forward = staticmethod(original_forward)
+
     def test_dense_matches_direct_kernel_sum_and_gradients(self):
         block = make_block()
         block.q_hi, block.weight_scale, block.v_dd = 3, 1., .1
@@ -173,6 +301,32 @@ class TCDenseTests(unittest.TestCase):
             self.assertIs(block.act_fn,activation)
             self.assertTrue(torch.isfinite(out).all())
             self.assertTrue(torch.isfinite(x.grad).all())
+
+    def test_non_tc_wrapper_installs_measured_activation(self):
+        for two in (False, True):
+            with self.subTest(two=two):
+                block = make_block(two)
+                wrap(
+                    block, enabled=False, enable_measured_activation=True,
+                    fuse_measured_activation=False)
+                self.assertIsInstance(
+                    block.act_fn, PiecewiseLinearActivation)
+                self.assertFalse(block.act_fn.fuse_measured_activation)
+
+    def test_existing_measured_activation_updates_fusion_setting(self):
+        for requested in (False, True):
+            with self.subTest(requested=requested):
+                block = make_block()
+                activation = PiecewiseLinearActivation(
+                    ROOT / "hardware_data/relu_current_0p2uA_finer.csv",
+                    v_dd=.1, fuse_measured_activation=not requested)
+                block.act_fn = activation
+                wrap(
+                    block, enabled=False, enable_measured_activation=True,
+                    fuse_measured_activation=requested)
+                self.assertIs(block.act_fn, activation)
+                self.assertEqual(
+                    block.act_fn.fuse_measured_activation, requested)
 
     def test_shared_pooling_installer_preserves_final_relu_and_scales(self):
         model = nn.Module()

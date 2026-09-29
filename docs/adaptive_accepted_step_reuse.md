@@ -1,5 +1,14 @@
 # Adaptive accepted-step reuse
 
+## Optimization summary
+
+| Optimization | Purpose | Control | Training | Inference | Main exclusions/no-op |
+|---|---|---|---|---|---|
+| Accepted-step reuse | Speed | `REUSE_ACCEPTED_STEP_TRAINING` / `reuse_accepted_step_training` | Opt-in for RK12, RK23, Dopri5, and ProjDopri5 | Automatic for adaptive Dopri5 and ProjDopri5; the training flag does not control it | Energy metering and `reload_state`; predefined grids have no replay. Training additionally excludes ODE23s, Sym12Async, `regenerate_graph`, and cached-RHS variants |
+| RHS activation checkpoint | Memory | `CHECKPOINT_ODE_RHS_TRAINING` / `checkpoint_ode_rhs_training` | Yes | No-op under `no_grad` | Adjoint, energy metering, training BatchNorm, cached-RHS variants, ODE23s, Sym12Async |
+| Live-QAT weight cache | Speed | Automatic; no public flag | Yes | Yes when live QAT exists; baked QAT inference is a no-op | Non-QAT and stochastic parametrizations |
+| Fused measured ReLU | Speed | `FUSE_MEASURED_ACTIVATION` / `fuse_measured_activation` | Yes | Yes | PyTorch fallback for CPU, non-FP32 CUDA, missing Triton, trainable/mismatched curves, cubic spline, or higher-order gradients |
+
 Branch: `perf/tc-training-step-reuse`
 
 Worktree: `ScAN-PCN-tc-training-step-reuse`
@@ -32,7 +41,9 @@ The corresponding Python option is
 `reuse_accepted_step_training=True`. It defaults to false while this branch is
 experimental. The training entry points put it into each ODE block's solver
 options before wrappers are constructed, so dynamic wrapper snapshots retain
-it. It is not shipped through the TC wrapper. Inference behavior is unchanged.
+it. It is not shipped through the TC wrapper. No-gradient adaptive Dopri5 and
+ProjDopri5 inference automatically reuse accepted candidates; the training
+option does not control that inference behavior.
 
 The launcher audit covered every shell/Slurm file under `launch_scripts`.
 CIFAR and ImageNet PCN launchers converge on their respective `train_ode_*`
@@ -47,13 +58,14 @@ with `--export=ALL`. No wrapper receives a second public copy of the option.
 
 `accepted_step_reuse_safe` is an internal per-block guard, not a second user
 option. It controls only gradient-enabled training reuse; it does not disable
-the existing no-gradient TC inference reuse.
+automatic no-gradient Dopri5/ProjDopri5 inference reuse.
 
 ## Applicability
 
 - Adaptive solvers can use the optimization when their search candidate is
-  also a valid state advancement. It is enabled for RK12, RK23, and Dopri5
-  (including ProjDopri5).
+  also a valid state advancement. Training enables it for RK12, RK23, and
+  Dopri5 (including ProjDopri5). No-gradient inference enables it automatically
+  for Dopri5 and ProjDopri5, independently of TC nonidealities.
 - ODE23s is not enabled. Its step implementation requests a differentiable
   Jacobian only when the state requires gradients. A grad-enabled search
   candidate therefore produces a different error estimate and step sequence
@@ -277,6 +289,108 @@ successful checkpointed backward at 10.33 GiB. Separate solver tests cover
 forced rejection, full trajectories, predefined grids, tuple states, and
 projection output/gradient equivalence.
 
+## Common QAT training host-overhead optimizations
+
+These optimizations are independent of TC state count, dataset, and solver.
+They are enabled on the normal production paths and require no TC-specific
+training scheme.
+
+### Per-solve live-QAT weight cache
+
+Every RHS evaluation used to read `FFconv.weight` and `FBconv.weight` through
+their live QAT parametrizations, repeating the same deterministic
+quantization many times although an optimizer cannot update a weight in the
+middle of one ODE solve. Each `SymQuantizeWeight`-family parametrization now
+caches its quantized tensor for the wrapped block call. With RHS activation
+checkpointing, the cache remains available through backward recomputation and
+is released after its accumulated gradient. The next training iteration then
+recomputes the scale and quantized weight from the updated parameter.
+
+This is implemented at the common QAT wrapper boundary. It covers symmetric,
+pulse, and LSQ QAT; one-state, two-state, With-X, and toggle blocks; TC and
+non-TC training; and direct physical feedforward blocks. With RHS
+checkpointing, multiple forwards before one combined backward share the cache
+when the parameters are unchanged. An in-place parameter update while a
+checkpointed solve is still pending raises an explicit error instead of
+silently using a stale weight.
+
+There is no model-name, dataset, adaptive-solver, or inference exclusion.
+Baked `QATTester` inference has no live QAT parametrization, so it takes the
+natural no-op path. Full-parameter evaluation that deliberately retains live
+QAT parametrizations can use the same deterministic cache safely. Arbitrary
+non-QAT or stochastic parametrizations are not cached.
+
+### Fused measured piecewise-linear activation
+
+The single control is:
+
+```bash
+FUSE_MEASURED_ACTIVATION=true ...
+```
+
+Its Python form is `fuse_measured_activation=True`, and it is forwarded by
+the CIFAR PCN, toggle, feedforward, MNIST, local, and Slurm launch paths. When
+piecewise-linear measured activation is active, CUDA float32, Triton is
+available, and the fixed curve buffers match the input device and dtype, one
+Triton kernel performs interpolation and scaling in forward and one performs
+the input gradient in backward. Uniform and nonuniform grids, explicit and
+sampled corners, per-model/per-layer/per-spin sharing, endpoint normalization,
+and a fixed coordinate pullback are supported.
+
+CPU, non-float32 CUDA, unavailable Triton, empty input, trainable or mismatched
+curve buffers, and a trainable or nonscalar pullback use the original PyTorch
+implementation. Cubic-spline activation is unchanged. The fused custom
+backward is first-order only, so a workload requiring higher-order activation
+gradients must disable this option; no repository training path currently
+requests those gradients.
+
+The first fused prototype differed because reassociation, approximate
+division, and fused multiply-add changed float32 rounding. The final kernel
+preserves the unfused operation order, uses correctly rounded division, and
+disables floating-point contraction. Unit tests cover all supported sharing,
+grid, and pullback combinations with bitwise-identical forward and backward
+results.
+
+### Batch-64 full-model results
+
+RTX 4090; deterministic cuDNN and TF32 disabled. The three TC rows use all
+nonidealities, the production shared/histogram path, Dopri5, accepted-step
+reuse, and RHS checkpointing. Times are medians of two post-warm-up
+forward/backward runs.
+
+| Model | Neither | Weight cache | Fused ReLU | Both |
+|---|---:|---:|---:|---:|
+| Legacy CIFAR-100 TC | 1.006 s | 0.748 s (-25.6%) | 0.782 s (-22.3%) | 0.560 s (-44.4%) |
+| Current CIFAR-100 TC state 1 | 1.587 s | 1.165 s (-26.6%) | 1.367 s (-13.8%) | 0.943 s (-40.6%) |
+| Current CIFAR-100 TC state 2 | 1.626 s | 1.265 s (-22.2%) | 1.402 s (-13.8%) | 1.037 s (-36.2%) |
+| Legacy toggle | 0.113 s | 0.094 s (-16.8%) | 0.107 s (-5.2%) | 0.087 s (-22.8%) |
+
+All four models produced bitwise-identical logits and zero class changes.
+Fused-activation-only gradients were bitwise identical for every parameter.
+Weight caching changes the order in which repeated quantizer-gradient
+contributions are accumulated: maximum absolute differences were
+`4.47e-8`, `2.24e-8`, `1.12e-8`, and `2.33e-10` for legacy TC, current state
+1, current state 2, and toggle respectively; relative L2 differences were
+between `4.71e-8` and `1.43e-7`. Three matched toggle optimizer steps retained
+bitwise-identical logits, with no growth in this gradient-scale roundoff.
+Four consecutive matched optimizer updates on each current TC state-1/state-2
+model likewise retained bitwise-identical logits; their gradient relative L2
+differences remained in the same `1.27e-7` to `1.45e-7` range.
+
+On the current state-1 model, profiler counts explain the host-side saving:
+
+| Configuration | CUDA kernel launches | CUDA memcpy calls | Profiler self CPU |
+|---|---:|---:|---:|
+| Neither | 166,495 | 10,886 | 1.759 s |
+| Weight cache | 128,215 | 3,326 | 1.304 s |
+| Fused ReLU | 111,415 | 10,886 | 1.426 s |
+| Both | 73,135 | 3,326 | 0.961 s |
+
+Together they remove 93,360 kernel submissions (56.1%) and 7,560 memory-copy
+submissions per measured batch. The weight cache gives the larger wall-time
+gain even though ReLU fusion removes more launches, because it also removes
+quantization dispatch, copies, and custom-autograd work.
+
 ## Verification coverage
 
 The automated and end-to-end checks cover:
@@ -287,11 +401,13 @@ The automated and end-to-end checks cover:
 - cached interval noise, confirming unchanged accepted-interval advancement;
 - fresh-per-RHS noise, confirming fresh draws for stages and retries but no
   second evaluation of the accepted step;
+- automatic non-TC Dopri5 and ProjDopri5 inference reuse, confirming bitwise
+  deterministic outputs and the documented RNG change for fresh-noise RHSs;
 - fixed-grid solves, confirming that the option is ignored;
 - parser-to-block and parser-to-direct-CNN-solver wiring for CIFAR, ImageNet,
   MNIST, feedforward launchers, and local recovery;
 - wrapper snapshot restoration and the internal cached-RHS safety guard;
-- peak training memory and elapsed time on the production configuration.
+- peak training memory and elapsed time on the production configuration;
 - parser/environment-to-block RHS-checkpoint wiring for CIFAR, ImageNet,
   MNIST, feedforward CNN, local recovery, derived options, and wrapper
   snapshots;
@@ -302,4 +418,11 @@ The automated and end-to-end checks cover:
 - explicit failures for adjoint, energy-metered, cached-RHS, and deferred
   solver combinations;
 - batch-128 one-state and two-state OOM recovery with optimization 2 alone and
-  combined with accepted-step reuse.
+  combined with accepted-step reuse;
+- automatic live-QAT cache coverage for one-state, two-state, With-X, toggle,
+  non-TC, and direct feedforward wrappers, including multiple forwards before
+  one backward and recomputation on the next iteration;
+- exact fused measured-activation forward and first-order backward results for
+  every supported grid, curve-sharing, and pullback mode;
+- batch-64 old TC, current state-1/state-2 TC, and toggle output, gradient,
+  timing, and kernel-launch comparisons.

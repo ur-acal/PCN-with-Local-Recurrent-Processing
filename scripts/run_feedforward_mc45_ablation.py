@@ -84,6 +84,7 @@ def parse_args():
     p.add_argument("--activation_curve_sharing", default="per_model",
                    choices=("per_model", "per_layer", "per_spin"))
     p.add_argument("--activation_interpolation", default="piecewise_linear")
+    p.add_argument("--fuse_measured_activation", type=str2bool, default=True)
     p.add_argument("--activation_fit_constraint", default="auto")
     p.add_argument("--activation_normalize_positive_endpoint", type=str2bool, default=False)
     p.add_argument("--compile_measured_activation", type=str2bool, default=False)
@@ -170,6 +171,7 @@ def run_corner(args, corner, relu_indices):
         "--activation_curve_sharing", args.activation_curve_sharing,
         "--activation_curve_seed", str(args.base_seed),
         "--activation_interpolation", args.activation_interpolation,
+        "--fuse_measured_activation", bool_text(args.fuse_measured_activation),
         "--activation_fit_constraint", args.activation_fit_constraint,
         "--activation_normalize_positive_endpoint", bool_text(
             args.activation_normalize_positive_endpoint),

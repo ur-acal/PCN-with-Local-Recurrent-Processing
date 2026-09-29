@@ -34,7 +34,7 @@ p.add_argument('--toggle-log', help='Replay the COMMAND line from a recorded cor
 p.add_argument('--cpu-unroll', action='store_true', help='Use the existing MNIST CPU cache-construction helper; timing excludes initialization.')
 p.add_argument('--force-toggle-ff-capture', action='store_true', help='Diagnostic only: trigger the missing FF module hook during shape capture.')
 a = p.parse_args()
-Dopri5.tc_reuse_accepted_step = a.optimization in ('reuse','both')
+Dopri5.reuse_accepted_step_inference = a.optimization in ('reuse','both')
 MVMConv._tc_fused_edges = a.optimization in ('fused','both')
 checkpoint = Path(a.checkpoint).resolve()
 assert checkpoint.is_file(), checkpoint

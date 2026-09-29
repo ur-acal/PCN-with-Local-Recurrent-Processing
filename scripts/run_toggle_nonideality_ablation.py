@@ -249,6 +249,10 @@ def parse_args():
         "--activation_interpolation",
         choices=("cubic_bspline", "piecewise_linear"),
         default="piecewise_linear")
+    parser.add_argument(
+        "--fuse_measured_activation",
+        type=lambda v: v.lower() in ("yes", "true", "t", "1"),
+        default=True)
     parser.add_argument("--activation_fit_constraint",
                         choices=("none", "nonnegative", "auto"), default="auto")
     parser.add_argument("--activation_normalize_positive_endpoint",
@@ -345,6 +349,7 @@ def build_command(args, case_name):
         "--activation_curve_sharing", args.activation_curve_sharing,
         "--activation_curve_seed", str(args.base_seed),
         "--activation_interpolation", args.activation_interpolation,
+        "--fuse_measured_activation", bool_arg(args.fuse_measured_activation),
         "--activation_spline_parameters", "10",
         "--activation_fit_constraint", args.activation_fit_constraint,
         "--activation_normalize_positive_endpoint",

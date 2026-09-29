@@ -90,7 +90,8 @@ def configure_unitless_measured_activation(model, curve_path, corner,
                                            normalize_positive_endpoint,
                                            fit_constraint="auto",
                                            physical_v_dd=None,
-                                           interpolation="piecewise_linear"):
+                                           interpolation="piecewise_linear",
+                                           fuse_measured_activation=True):
     """Configure the measured curve once for ordinary or pullback pretraining."""
     interpolation = str(interpolation).lower()
     if interpolation not in {"cubic_bspline", "piecewise_linear"}:
@@ -109,6 +110,8 @@ def configure_unitless_measured_activation(model, curve_path, corner,
                 MeasuredReLU6Activation if physical_v_dd is None
                 else CubicBSplineActivation)
         else:
+            activation_kwargs["fuse_measured_activation"] = (
+                fuse_measured_activation)
             activation_cls = (
                 MeasuredPiecewiseLinearReLU6Activation
                 if physical_v_dd is None else PiecewiseLinearActivation)
@@ -330,6 +333,8 @@ def get_args():
         choices=["cubic_bspline", "piecewise_linear"],
         default="piecewise_linear",
         help="Interpolation backend for measured activation tables.")
+    p.add_argument("--fuse_measured_activation", type=str2bool, default=True,
+                   help="Fuse fixed piecewise-linear measured activation on supported CUDA inputs.")
     p.add_argument("--activation_spline_parameters", type=int, default=10)
     p.add_argument("--activation_fit_constraint", type=str,
                    choices=["none", "nonnegative", "auto"], default="auto")
@@ -822,6 +827,10 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
+    # Recovery and diagnostic scripts may reconstruct Namespaces saved before
+    # this option existed instead of going through the current parser.
+    if not hasattr(args, "fuse_measured_activation"):
+        args.fuse_measured_activation = True
     seed_training(args.seed)
     inference_path = args.save_path if args.model_name is not None else ""
     args.input_quant_bits, args.center_student_input = resolve_preprocessing(
@@ -1042,7 +1051,8 @@ def main():
             normalize_positive_endpoint=args.activation_normalize_positive_endpoint,
             fit_constraint=args.activation_fit_constraint,
             physical_v_dd=args.v_dd,
-            interpolation=args.activation_interpolation)
+            interpolation=args.activation_interpolation,
+            fuse_measured_activation=args.fuse_measured_activation)
         logging.warning(
             "Using unitless measured pullback: mode=%s, corner=%s, q=%s, "
             "k=%s, R=%s, v_dd=%s",
@@ -1059,7 +1069,8 @@ def main():
             num_parameters=args.activation_spline_parameters,
             normalize_positive_endpoint=args.activation_normalize_positive_endpoint,
             fit_constraint=args.activation_fit_constraint,
-            interpolation=args.activation_interpolation)
+            interpolation=args.activation_interpolation,
+            fuse_measured_activation=args.fuse_measured_activation)
         logging.warning(
             "Using unitless measured activation: corner=%s, endpoint_normalized=%s",
             args.activation_corner, args.activation_normalize_positive_endpoint)
@@ -1094,6 +1105,7 @@ def main():
                           "activation_curve_path": args.activation_curve_path,
                           "activation_corner": args.activation_corner,
                           "activation_interpolation": args.activation_interpolation,
+                          "fuse_measured_activation": args.fuse_measured_activation,
                           "activation_spline_parameters": args.activation_spline_parameters,
                           "activation_fit_constraint": args.activation_fit_constraint,
                           "activation_normalize_positive_endpoint":

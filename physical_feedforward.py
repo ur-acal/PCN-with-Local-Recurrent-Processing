@@ -577,6 +577,8 @@ class FeedForwardPhysicalWrapper(WrapQuantizeW):
             getattr(self.block, "scale1" if name == "conv1" else "scale2").copy_(scale)
 
     def _refresh_qat_scales(self):
+        if self._validate_pending_qat_weight_cache():
+            return
         for name, module in (("conv1", self.block.conv1),
                              ("conv2", self.block.conv2)):
             if module is None or name not in self.quantizers:
@@ -732,7 +734,8 @@ class FeedForwardPhysicalWrapper(WrapQuantizeW):
     def forward(self, x, layer_idx=None):
         if self._qat_enabled:
             self._refresh_qat_scales()
-        return self.block(x, layer_idx=layer_idx)
+        with self._qat_weight_cache():
+            return self.block(x, layer_idx=layer_idx)
 
 
 class AveragedFeedForwardPhysicalWrapper(FeedForwardPhysicalWrapper):

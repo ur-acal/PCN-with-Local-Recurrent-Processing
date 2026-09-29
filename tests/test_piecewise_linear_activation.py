@@ -3,12 +3,14 @@ from unittest.mock import patch
 
 import torch
 import torch.nn as nn
+import pytest
 
 from measured_activation import (
     MeasuredPiecewiseLinearReLU6Activation,
     PiecewiseLinearActivation,
     configure_measured_activation_corner_mode,
 )
+from measured_activation_fused import triton
 
 
 ALL_CURVES = (Path(__file__).resolve().parents[1] / "hardware_data" /
@@ -24,6 +26,16 @@ def _write_curve(tmp_path):
         "Vin,Vout_TT,Vout_SS\n"
         "-0.3,0.0,-0.01\n"
         "0.0,0.03,0.02\n"
+        "0.3,0.21,0.18\n")
+    return curve_path
+
+
+def _write_nonuniform_curve(tmp_path):
+    curve_path = tmp_path / "nonuniform_curve.csv"
+    curve_path.write_text(
+        "Vin,Vout_TT,Vout_SS\n"
+        "-0.3,0.0,-0.01\n"
+        "-0.07,0.02,0.01\n"
         "0.3,0.21,0.18\n")
     return curve_path
 
@@ -114,6 +126,99 @@ def test_piecewise_linear_gradient_is_local_segment_slope(tmp_path):
     assert torch.allclose(
         x.grad, torch.tensor([0.0, 0.1, 0.6, 0.0]),
         atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or triton is None,
+    reason="CUDA and Triton are required for fused activation")
+def test_fused_piecewise_linear_matches_torch_forward_and_backward(
+        tmp_path, monkeypatch):
+    activation = PiecewiseLinearActivation(
+        _write_curve(tmp_path), v_dd=0.1, corner="TT",
+        fuse_measured_activation=True).cuda()
+    activation.set_coordinate_pullback_scale(0.37)
+    fused_input = torch.linspace(
+        -0.2, 0.2, 1003, device="cuda", requires_grad=True)
+    fused = activation(fused_input)
+    fused.square().sum().backward()
+    fused_gradient = fused_input.grad.clone()
+    assert activation._last_interpolation_backend == "triton"
+
+    monkeypatch.setattr(
+        "measured_activation.fused_piecewise_linear",
+        lambda *args, **kwargs: None)
+    torch_input = fused_input.detach().clone().requires_grad_()
+    expected = activation(torch_input)
+    expected.square().sum().backward()
+
+    assert torch.equal(fused, expected)
+    assert torch.equal(fused_gradient, torch_input.grad)
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or triton is None,
+    reason="CUDA and Triton are required for fused activation")
+def test_fused_piecewise_linear_matches_torch_nan_gradient(tmp_path):
+    activation = PiecewiseLinearActivation(
+        _write_curve(tmp_path), v_dd=0.1, corner="TT",
+        fuse_measured_activation=True).cuda()
+    fused_input = torch.tensor([float("nan")], device="cuda",
+                               requires_grad=True)
+    fused = activation(fused_input)
+    fused.sum().backward()
+    assert activation._last_interpolation_backend == "triton"
+
+    activation.fuse_measured_activation = False
+    torch_input = fused_input.detach().clone().requires_grad_()
+    expected = activation(torch_input)
+    expected.sum().backward()
+
+    assert torch.isnan(fused).all() and torch.isnan(expected).all()
+    assert torch.equal(fused_input.grad, torch_input.grad)
+    assert torch.equal(fused_input.grad, torch.zeros_like(fused_input))
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or triton is None,
+    reason="CUDA and Triton are required for fused activation")
+@pytest.mark.parametrize("uniform", (False, True))
+@pytest.mark.parametrize("sharing", ("per_model", "per_layer", "per_spin"))
+@pytest.mark.parametrize("pullback", (None, 0.37))
+def test_fused_piecewise_linear_matches_all_training_modes(
+        tmp_path, uniform, sharing, pullback):
+    curve_path = (
+        _write_curve(tmp_path) if uniform else
+        _write_nonuniform_curve(tmp_path))
+    activation = PiecewiseLinearActivation(
+        curve_path, v_dd=0.1, corner="TT", curve_sharing=sharing,
+        curve_seed=23, fuse_measured_activation=True).cuda()
+    activation.set_coordinate_pullback_scale(pullback)
+    source = torch.linspace(-0.2, 0.2, 120, device="cuda").reshape(
+        2, 3, 4, 5)
+    upstream = torch.linspace(-0.7, 0.9, source.numel(), device="cuda").reshape_as(
+        source)
+
+    fused_input = source.clone().requires_grad_()
+    fused = activation(fused_input)
+    fused.backward(upstream)
+    fused_gradient = fused_input.grad.clone()
+    assert activation._last_interpolation_backend == "triton"
+
+    activation.fuse_measured_activation = False
+    torch_input = source.clone().requires_grad_()
+    expected = activation(torch_input)
+    expected.backward(upstream)
+
+    assert torch.equal(fused, expected)
+    assert torch.equal(fused_gradient, torch_input.grad)
+
+
+def test_piecewise_linear_fusion_option_disables_fused_backend(tmp_path):
+    activation = PiecewiseLinearActivation(
+        _write_curve(tmp_path), v_dd=0.1, corner="TT",
+        fuse_measured_activation=False)
+    activation(torch.tensor([0.01]))
+    assert activation._last_interpolation_backend == "torch"
 
 
 def test_endpoint_normalization_scales_entire_curve(tmp_path):

@@ -241,16 +241,17 @@ class AdaptiveGridSolver(ODESolver):
 
         self.before_integrate(y0, t_eval)
 
-        # Inference can reuse the final accepted TC trial directly. Training
-        # may opt in for any solver whose candidate is also a valid state
-        # advancement. Rejected candidate graphs are released before retrying.
+        # Dopri5 inference can reuse the final accepted trial directly.
+        # Training may opt in for any solver whose candidate is also a valid
+        # state advancement. Rejected candidate graphs are released before
+        # retrying.
         can_reuse_accepted = (
             not reload_state
             and getattr(self, 'energy_meter', None) is None)
         reuse_accepted_inference = (
-            can_reuse_accepted and getattr(self, 'tc_context', None) is not None
-            and isinstance(self, Dopri5) and not torch.is_grad_enabled()
-            and getattr(self, 'tc_reuse_accepted_step', True))
+            can_reuse_accepted and isinstance(self, Dopri5)
+            and not torch.is_grad_enabled()
+            and getattr(self, 'reuse_accepted_step_inference', True))
         reuse_accepted_training = (
             can_reuse_accepted and torch.is_grad_enabled()
             and not self.regenerate_graph

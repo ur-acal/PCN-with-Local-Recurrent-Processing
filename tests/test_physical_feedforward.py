@@ -40,6 +40,7 @@ from physical_feedforward import (
 )
 from trainer_timm import TrainerCiFarTimmStyle
 from trainer import TrainerCiFar
+from ode_pc import QuantizationImpl
 
 
 def test_derived_stage_matches_quantized_convolution():
@@ -63,6 +64,31 @@ def test_derived_stage_matches_quantized_convolution():
         expected = F.conv2d(
             x, levels / (15 * block.scale1), None, stride=2, padding=1)
         torch.testing.assert_close(actual, expected, atol=5e-8, rtol=1e-6)
+
+
+def test_feedforward_qat_weight_is_quantized_once_per_block_call():
+    block = AveragedPhysicalBasicBlock(
+        torch.nn.Conv2d(4, 6, 3, padding=1, bias=False),
+        R=50e3, C=500e-15, v_dd=1.0, w_bits=5,
+        weight_quant_factor_bits=None, enable_coupler_noise=True,
+        coupler_noise_seed=3)
+    wrapper = AveragedFeedForwardPhysicalWrapper(block, qat=True)
+    calls = 0
+    original_forward = QuantizationImpl.forward
+
+    def counted_forward(ctx, *args):
+        nonlocal calls
+        calls += 1
+        return original_forward(ctx, *args)
+
+    QuantizationImpl.forward = staticmethod(counted_forward)
+    try:
+        x = torch.randn(2, 4, 8, 8, requires_grad=True)
+        wrapper(x).sum().backward()
+        assert calls == 1
+        assert block.conv1.parametrizations.weight.original.grad is not None
+    finally:
+        QuantizationImpl.forward = staticmethod(original_forward)
 
 
 def test_unitless_fixed_timing_recipe_matches_plain_convolution():

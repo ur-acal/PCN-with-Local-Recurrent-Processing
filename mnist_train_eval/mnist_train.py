@@ -39,6 +39,7 @@ def pcn_wrapper_options(args, *, inference=False, seed=None):
         activation_curve_path=args.activation_curve_path, activation_corner=args.activation_corner,
         activation_curve_sharing='per_spin' if inference else 'per_model', activation_curve_seed=seed,
         activation_interpolation='piecewise_linear', activation_normalize_positive_endpoint=False,
+        fuse_measured_activation=args.fuse_measured_activation,
         **noise_options(args, seed))
 
 
@@ -105,7 +106,9 @@ def build_cnn(args, device, *, inference=False, checkpoint=None, seed=None):
         configure_feedforward_measured_activation(model,
             feedforward_measured_activation_factory(args.activation_curve_path, args.v_dd,
                 corner=args.activation_corner, curve_sharing='per_spin' if inference else 'per_model',
-                curve_seed=seed, normalize_positive_endpoint=False, interpolation='piecewise_linear'))
+                curve_seed=seed, normalize_positive_endpoint=False,
+                interpolation='piecewise_linear',
+                fuse_measured_activation=args.fuse_measured_activation))
     if args.enable_nonlinear_R:
         method = wrappers[0].configure_nonlinear_R_inference if inference else wrappers[0].configure_nonlinear_R_training
         package = method(args.nonlinear_R_table, curve_seed=seed)

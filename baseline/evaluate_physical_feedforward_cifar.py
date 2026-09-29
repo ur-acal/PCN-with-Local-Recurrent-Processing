@@ -119,6 +119,7 @@ def parse_args():
     p.add_argument("--activation_mc_curve_indices", type=index_list, default=None)
     p.add_argument("--activation_interpolation", default="piecewise_linear",
                    choices=("piecewise_linear", "cubic_bspline"))
+    p.add_argument("--fuse_measured_activation", type=str2bool, default=True)
     p.add_argument("--activation_spline_parameters", type=int, default=10)
     p.add_argument("--activation_fit_constraint", default="auto",
                    choices=("none", "nonnegative", "auto"))
@@ -245,7 +246,8 @@ def evaluate_once(args):
             interpolation=args.activation_interpolation,
             spline_parameters=args.activation_spline_parameters,
             fit_constraint=args.activation_fit_constraint,
-            compile_evaluator=args.compile_measured_activation)
+            compile_evaluator=args.compile_measured_activation,
+            fuse_measured_activation=args.fuse_measured_activation)
         configure_feedforward_measured_activation(model, activation_factory)
     nonlinear_R_package = None
     if args.enable_nonlinear_R and args.nonlinear_R_train_mode != "none":

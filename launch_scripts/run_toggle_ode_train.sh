@@ -148,6 +148,7 @@ python train_ode_cifar.py \
   --enable_spin_variation "${ENABLE_SPIN_VARIATION}" \
   --sigma_spin "${SIGMA_SPIN}" \
   --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}" \
+  --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}" \
   --activation_curve_path "${ACTIVATION_CURVE_PATH}" \
   --activation_corner "${ACTIVATION_CORNER}" \
   --activation_corner_mode "${ACTIVATION_CORNER_MODE}" \

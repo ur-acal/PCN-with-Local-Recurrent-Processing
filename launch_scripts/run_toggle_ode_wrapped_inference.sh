@@ -187,6 +187,7 @@ run_model(){
     --sigma_spin "${SIGMA_SPIN:-0.10}" \
     --spin_variation_seed "${SPIN_VARIATION_SEED:-none}" \
     --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}" \
+    --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}" \
     --activation_curve_path "${ACTIVATION_CURVE_PATH:-${PWD}/hardware_data/relu_current_0p2uA_finer.csv}" \
     --activation_corner "${ACTIVATION_CORNER:-TT}" \
     --activation_interpolation "${ACTIVATION_INTERPOLATION:-piecewise_linear}" \

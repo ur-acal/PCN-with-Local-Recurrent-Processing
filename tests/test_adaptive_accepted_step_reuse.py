@@ -81,6 +81,86 @@ class AdaptiveAcceptedStepReuseTests(unittest.TestCase):
         torch.testing.assert_close(reused[2], baseline[2], rtol=0, atol=0)
         self.assertLess(reused[3], baseline[3])
 
+    def solve_inference(self, *, reuse, project=False):
+        initial = torch.tensor([[0.2]])
+        options = dict(
+            method='dopri5', t0=0.0, t1=0.2, h=0.1, t_eval=[0.2],
+            rtol=1e-5, atol=1e-7)
+        if project:
+            options['proj_fn'] = torch.nn.Hardtanh(-1.0, 1.0)
+        solver = odesolve(
+            QuadraticRHS(), initial, options, return_solver=True)
+        if reuse is not None:
+            solver.reuse_accepted_step_inference = reuse
+        original_adapt = solver.adapt_stepsize
+        attempts = [0]
+
+        def reject_first(*args, **kwargs):
+            attempts[0] += 1
+            if attempts[0] == 1:
+                return args[3] / 2, False, True
+            return original_adapt(*args, **kwargs)
+
+        with torch.no_grad(), \
+                patch.object(solver, 'adapt_stepsize', side_effect=reject_first), \
+                patch.object(solver, 'step', wraps=solver.step) as step:
+            output, times = solver.integrate(
+                initial, 0.0, t_eval=[0.2], return_steps=True)
+        return output, times, step.call_count
+
+    def test_non_tc_dopri5_inference_reuses_without_changing_output(self):
+        baseline = self.solve_inference(reuse=False)
+        reused = self.solve_inference(reuse=None)
+        torch.testing.assert_close(reused[0], baseline[0], rtol=0, atol=0)
+        torch.testing.assert_close(reused[1], baseline[1], rtol=0, atol=0)
+        self.assertLess(reused[2], baseline[2])
+
+    def test_non_tc_projected_dopri5_inference_reuses_without_changing_output(self):
+        baseline = self.solve_inference(reuse=False, project=True)
+        reused = self.solve_inference(reuse=None, project=True)
+        torch.testing.assert_close(reused[0], baseline[0], rtol=0, atol=0)
+        torch.testing.assert_close(reused[1], baseline[1], rtol=0, atol=0)
+        self.assertLess(reused[2], baseline[2])
+
+    def test_non_tc_fresh_randomness_changes_seed_replay_in_inference(self):
+        class FreshNoiseRHS(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.draws = []
+
+            def forward(self, _t, y):
+                draw = torch.randn_like(y)
+                self.draws.append(draw.clone())
+                return -0.2 * y + draw * 1e-4
+
+        def solve(reuse):
+            torch.manual_seed(37)
+            initial = torch.tensor([[0.2]])
+            rhs = FreshNoiseRHS()
+            solver = odesolve(rhs, initial, dict(
+                method='dopri5', t0=0.0, t1=0.2, h=0.1, t_eval=[0.2],
+                rtol=1e-3, atol=1e-3), return_solver=True)
+            if reuse is not None:
+                solver.reuse_accepted_step_inference = reuse
+            original_adapt = solver.adapt_stepsize
+            attempts = [0]
+
+            def reject_first(*args, **kwargs):
+                attempts[0] += 1
+                if attempts[0] == 1:
+                    return args[3] / 2, False, True
+                return original_adapt(*args, **kwargs)
+
+            with torch.no_grad(), patch.object(
+                    solver, 'adapt_stepsize', side_effect=reject_first):
+                output = solver.integrate(initial, 0.0, t_eval=[0.2])
+            return output, len(rhs.draws)
+
+        baseline = solve(False)
+        reused = solve(None)
+        self.assertFalse(torch.equal(reused[0], baseline[0]))
+        self.assertLess(reused[1], baseline[1])
+
     def test_automatic_initial_step_preserves_legacy_first_step(self):
         baseline = self.solve('dopri5', False, initial_step=None)
         reused = self.solve('dopri5', True, initial_step=None)

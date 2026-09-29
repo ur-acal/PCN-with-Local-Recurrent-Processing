@@ -47,6 +47,7 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
       --enable_coupler_noise "${ENABLE_COUPLER_NOISE:-true}"
       --coupler_noise_p "${COUPLER_NOISE_P:-0.6e-12}"
       --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}"
+      --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}"
       --enable_measured_pooling "${ENABLE_MEASURED_POOLING:-true}")
   fi
 fi

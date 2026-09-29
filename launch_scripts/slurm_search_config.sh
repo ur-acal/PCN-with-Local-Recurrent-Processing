@@ -98,6 +98,7 @@ fi
 # Measured activation
 ##############################################################################################
 ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
+FUSE_MEASURED_ACTIVATION="${FUSE_MEASURED_ACTIVATION:-true}"
 ENABLE_PRETRAIN_MEASURED_ACTIVATION="${ENABLE_PRETRAIN_MEASURED_ACTIVATION:-false}"
 SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
 # This controls if we are using different measure activation curves per forward pass in training.
@@ -687,6 +688,7 @@ submit_chunk() {
   sbatch_exports+=",Z_OVER_Y_TIME=${Z_OVER_Y_TIME},SCALE_TRAIN_RECIPE=${SCALE_TRAIN_RECIPE}"
   sbatch_exports+=",R_VAL=${R_VAL},R_MAX=${R_MAX},C_VAL=${C_VAL},V_DD=${V_DD},MISMATCH_LEVEL=${MISMATCH_LEVEL}"
   sbatch_exports+=",ENABLE_MEASURED_ACTIVATION=${ENABLE_MEASURED_ACTIVATION}"
+  sbatch_exports+=",FUSE_MEASURED_ACTIVATION=${FUSE_MEASURED_ACTIVATION}"
   sbatch_exports+=",ENABLE_MEASURED_POOLING=${ENABLE_MEASURED_POOLING}"
   sbatch_exports+=",ENABLE_PRETRAIN_MEASURED_ACTIVATION=${ENABLE_PRETRAIN_MEASURED_ACTIVATION}"
   sbatch_exports+=",SCALE_MEASURED_ACTIVATION=${SCALE_MEASURED_ACTIVATION}"

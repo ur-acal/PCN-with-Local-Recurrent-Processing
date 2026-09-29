@@ -169,6 +169,9 @@ def parse_args():
         "--activation_interpolation", type=str,
         choices=["cubic_bspline", "piecewise_linear"],
         default="piecewise_linear")
+    parser.add_argument("--fuse_measured_activation",
+                        type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=True)
     parser.add_argument("--activation_spline_parameters", type=int, default=10)
     parser.add_argument("--activation_fit_constraint", type=str,
                         choices=["none", "nonnegative", "auto"], default="auto")
@@ -492,6 +495,7 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "activation_curve_sharing": args.activation_curve_sharing,
                       "activation_curve_seed": args.activation_curve_seed,
                       "activation_interpolation": args.activation_interpolation,
+                      "fuse_measured_activation": args.fuse_measured_activation,
                       "activation_spline_parameters": args.activation_spline_parameters,
                       "activation_fit_constraint": args.activation_fit_constraint,
                       "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
@@ -628,6 +632,7 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "activation_curve_sharing": args.activation_curve_sharing,
                       "activation_curve_seed": args.activation_curve_seed,
                       "activation_interpolation": args.activation_interpolation,
+                      "fuse_measured_activation": args.fuse_measured_activation,
                       "activation_spline_parameters": args.activation_spline_parameters,
                       "activation_fit_constraint": args.activation_fit_constraint,
                       "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,
@@ -877,6 +882,7 @@ def run_ode_inference(linear_study=None):
                           "activation_curve_sharing": args.activation_curve_sharing,
                           "activation_curve_seed": args.activation_curve_seed,
                           "activation_interpolation": args.activation_interpolation,
+                          "fuse_measured_activation": args.fuse_measured_activation,
                           "activation_spline_parameters": args.activation_spline_parameters,
                           "activation_fit_constraint": args.activation_fit_constraint,
                           "activation_normalize_positive_endpoint": args.activation_normalize_positive_endpoint,

@@ -3,7 +3,7 @@
 All-on defaults reproduce the TC training nonideality recipe. No optimizer
 updates are performed.
 """
-import argparse, collections, json, logging, pickle, sys, time, types
+import argparse, collections, contextlib, json, logging, pickle, sys, time, types
 from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -43,15 +43,22 @@ p.add_argument('--compare-rhs-checkpoint',action='store_true',help='Alternate OD
 p.add_argument('--compare-training-optimizations',action='store_true',help='Benchmark baseline, step reuse only, RHS checkpointing only, and both.')
 p.add_argument('--save-final-tensors',action='store_true',help='Diagnostic final logits and parameter gradients.')
 p.add_argument('--optimizer-step',action='store_true',help='Apply an SGD update after each measured backward pass.')
+p.add_argument('--disable-qat-weight-cache',action='store_true',help='Diagnostic baseline: recompute live QAT weights on every access.')
+p.add_argument('--disable-fused-measured-activation',action='store_true',help='Diagnostic baseline: use the unfused measured piecewise-linear activation.')
+p.add_argument('--compare-common-training-optimizations',action='store_true',help='Benchmark QAT-weight caching and measured-activation fusion separately and together.')
+p.add_argument('--profile-common-training-optimizations',action='store_true',help='Record one PyTorch CPU/CUDA profile for each common-optimization configuration.')
 
 a=p.parse_args()
 comparison_count=sum((a.compare_sampling, a.compare_correction,
                       a.compare_training_step_reuse, a.compare_rhs_checkpoint,
-                      a.compare_training_optimizations))
+                      a.compare_training_optimizations,
+                      a.compare_common_training_optimizations))
 if comparison_count > 1:
  p.error('Choose only one --compare-* option per benchmark.')
 if a.optimizer_step and comparison_count:
  p.error('--optimizer-step cannot be combined with a comparison benchmark.')
+if a.profile_common_training_optimizations and not a.compare_common_training_optimizations:
+ p.error('--profile-common-training-optimizations requires --compare-common-training-optimizations.')
 effective_conv_method=(a.conv_method or
  ('grouped' if a.mode=='grouped' else 'shared' if a.mode=='all' else 'loop'))
 if a.reference_correction or a.compare_correction:
@@ -110,7 +117,8 @@ model=load_and_prepare_model(str(checkpoint_path),'cuda',
  enable_spin_variation='spin' in effects,sigma_spin=.1,spin_variation_seed=4096,
  enable_summing_current_noise='summing' in effects,summing_current_p=.6e-12,summing_noise_seed=4096,
  enable_coupler_noise='coupler' in effects,coupler_noise_p=.6e-12,coupler_noise_seed=4096,
- enable_measured_activation='relu' in effects,activation_curve_path='hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv',activation_corner='MC18'))
+ enable_measured_activation='relu' in effects,activation_curve_path='hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv',activation_corner='MC18',
+ fuse_measured_activation=not a.disable_fused_measured_activation))
 if 'pooling' in effects:
  from tc_cli import pooling_options
  from measured_pooling import configure_measured_pooling
@@ -144,6 +152,26 @@ if a.sensitivity_projections:
  sys.exit(0)
 
 model.train()
+from measured_activation import PiecewiseLinearActivation
+qat_wrappers=tuple(wrappers.get('wrappers',[]))
+original_qat_cache_methods={wrapper:wrapper._qat_weight_cache for wrapper in qat_wrappers}
+def clear_pending_qat_weight_caches():
+ for wrapper in qat_wrappers:
+  wrapper._clear_pending_qat_weight_cache()
+def set_qat_weight_cache(enabled):
+ clear_pending_qat_weight_caches()
+ for wrapper in qat_wrappers:
+  if enabled:
+   wrapper._qat_weight_cache=original_qat_cache_methods[wrapper]
+  else:
+   wrapper._qat_weight_cache=types.MethodType(
+       lambda self:contextlib.nullcontext(),wrapper)
+def set_fused_measured_activation(enabled):
+ for module in model.modules():
+  if isinstance(module,PiecewiseLinearActivation):
+   module.fuse_measured_activation=enabled
+set_qat_weight_cache(not a.disable_qat_weight_cache)
+set_fused_measured_activation(not a.disable_fused_measured_activation)
 runtime_model=model
 if a.mode=='legacy':
  from trainer import WrappedNoisyModel
@@ -214,6 +242,9 @@ if a.count_stages:
 
 result=dict(batch=a.batch,dataset=a.dataset,mode=a.mode,
  checkpoint_ode_rhs_training=a.rhs_checkpoint,
+ qat_weight_cache=not a.disable_qat_weight_cache,
+ fused_measured_activation=not a.disable_fused_measured_activation,
+ compare_common_training_optimizations=a.compare_common_training_optimizations,
  compare_training_optimizations=a.compare_training_optimizations,
  matched_rng_reset=True,
  reference_correction=a.reference_correction,
@@ -229,7 +260,8 @@ path=Path(a.output);path.parent.mkdir(parents=True,exist_ok=True)
 def save():path.write_text(json.dumps(result,indent=2))
 save()
 paired=a.compare_sampling or a.compare_correction or a.compare_training_step_reuse or a.compare_rhs_checkpoint
-width=4 if a.compare_training_optimizations else 2 if paired else 1
+width=4 if (a.compare_training_optimizations or
+            a.compare_common_training_optimizations) else 2 if paired else 1
 for iteration in range((a.repeats+1)*width):
  repeat=iteration//width
  correction_mode='reference' if a.reference_correction else 'optimized'
@@ -253,6 +285,14 @@ for iteration in range((a.repeats+1)*width):
   rhs_checkpoint=bool((iteration%2)^(repeat%2))
   set_rhs_checkpoint(rhs_checkpoint)
  else:rhs_checkpoint=a.rhs_checkpoint
+ if a.compare_common_training_optimizations:
+  configurations=((False,False),(True,False),(False,True),(True,True))
+  qat_weight_cache,fused_measured_activation=configurations[(iteration+repeat)%4]
+  set_qat_weight_cache(qat_weight_cache)
+  set_fused_measured_activation(fused_measured_activation)
+ else:
+  qat_weight_cache=not a.disable_qat_weight_cache
+  fused_measured_activation=not a.disable_fused_measured_activation
  reset_benchmark_rng()
  model.zero_grad(set_to_none=True)
  stage_counts.clear()
@@ -260,7 +300,9 @@ for iteration in range((a.repeats+1)*width):
  torch.cuda.synchronize();torch.cuda.reset_peak_memory_stats()
  row=dict(repeat=repeat,warmup=repeat==0,phase='forward',sampling=sampling,
           correction=correction_mode,training_step_reuse=training_step_reuse,
-          checkpoint_ode_rhs_training=rhs_checkpoint)
+          checkpoint_ode_rhs_training=rhs_checkpoint,
+          qat_weight_cache=qat_weight_cache,
+          fused_measured_activation=fused_measured_activation)
  y=None
  try:
   start=time.perf_counter()
@@ -284,18 +326,21 @@ for iteration in range((a.repeats+1)*width):
           f'reuse-{str(training_step_reuse).lower()}' if a.compare_training_step_reuse
           else f'rhs-checkpoint-{str(rhs_checkpoint).lower()}' if a.compare_rhs_checkpoint
           else f'reuse-{str(training_step_reuse).lower()}_rhs-checkpoint-{str(rhs_checkpoint).lower()}' if a.compare_training_optimizations
+          else f'qat-cache-{str(qat_weight_cache).lower()}_fused-activation-{str(fused_measured_activation).lower()}' if a.compare_common_training_optimizations
           else 'result')
    tensor_path=path.with_name(f'{path.stem}_{label}_repeat-{repeat}.pt')
    torch.save(dict(logits=y.detach().cpu(),gradients={n:p.grad.detach().cpu() for n,p in model.named_parameters() if p.grad is not None}),tensor_path)
    row['tensor_path']=str(tensor_path)
  except torch.OutOfMemoryError as exc:
+  clear_pending_qat_weight_caches()
   row.update(status='OOM',error=str(exc),peak_allocated=torch.cuda.max_memory_allocated(),
              peak_reserved=torch.cuda.max_memory_reserved())
  finally:
   del y
  result['rows'].append(row);save();print(json.dumps(row),flush=True)
  if row['status']!='ok':
-  if a.compare_training_optimizations or a.compare_rhs_checkpoint:
+  if (a.compare_training_optimizations or a.compare_rhs_checkpoint or
+      a.compare_common_training_optimizations):
    model.zero_grad(set_to_none=True);torch.cuda.empty_cache();continue
   break
 rows=[r for r in result['rows'] if not r['warmup'] and r['status']=='ok']
@@ -335,6 +380,46 @@ if rows:
         if r['training_step_reuse']==reuse and r['checkpoint_ode_rhs_training']==rhs])
    for reuse,rhs in ((False,False),(True,False),(False,True),(True,True))}
   save();print(json.dumps(result['by_training_optimizations']),flush=True)
+ if a.compare_common_training_optimizations:
+  result['by_common_training_optimizations']={
+   f'qat-cache-{str(cache).lower()}_fused-activation-{str(fused).lower()}':
+    summarize([r for r in rows
+        if r['qat_weight_cache']==cache and
+           r['fused_measured_activation']==fused])
+   for cache,fused in ((False,False),(True,False),(False,True),(True,True))}
+  save();print(json.dumps(result['by_common_training_optimizations']),flush=True)
+
+if a.profile_common_training_optimizations:
+ profiles={}
+ for cache,fused in ((False,False),(True,False),(False,True),(True,True)):
+  set_qat_weight_cache(cache)
+  set_fused_measured_activation(fused)
+  reset_benchmark_rng()
+  model.zero_grad(set_to_none=True)
+  with torch.profiler.profile(activities=(
+          torch.profiler.ProfilerActivity.CPU,
+          torch.profiler.ProfilerActivity.CUDA)) as profiler:
+   profiled_output=runtime_model(x)
+   profiled_output.square().mean().backward()
+   torch.cuda.synchronize()
+  events=profiler.key_averages()
+  launch=next((event for event in events
+               if event.key=='cudaLaunchKernel'),None)
+  memcpy=next((event for event in events
+               if event.key=='cudaMemcpyAsync'),None)
+  label=f'qat-cache-{str(cache).lower()}_fused-activation-{str(fused).lower()}'
+  profiles[label]=dict(
+      cuda_kernel_launches=0 if launch is None else int(launch.count),
+      cuda_launch_self_cpu_seconds=(0. if launch is None else
+          float(launch.self_cpu_time_total)/1e6),
+      cuda_memcpy_calls=0 if memcpy is None else int(memcpy.count),
+      profiler_self_cpu_seconds=float(sum(
+          event.self_cpu_time_total for event in events))/1e6,
+      profiler_self_cuda_seconds=float(sum(
+          event.self_device_time_total for event in events))/1e6)
+  del profiled_output
+ result['profile_by_common_training_optimizations']=profiles
+ save();print(json.dumps(profiles),flush=True)
 
 if a.sampling_repeats:
  # Includes detached code mapping, histogram (where selected), categorical

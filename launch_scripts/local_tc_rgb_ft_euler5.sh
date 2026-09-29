@@ -31,7 +31,7 @@ cmd=(python -u train_ode_cifar.py
   --tie_cap false --qat_cls SymQuantizeWeight --pcn PCNetNoBatchNorm --pc_conv PCConvReLU6
   --noise_type mul --pulse_mismatch_training_mode post_quant_amplitude
   --activation_corner_mode fixed --activation_random_curve_sharing per_layer
-  --activation_interpolation piecewise_linear --activation_spline_parameters 10
+  --activation_interpolation piecewise_linear --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}" --activation_spline_parameters 10
   --activation_fit_constraint auto --activation_normalize_positive_endpoint false
   --slow_summing_current 2.47e-9 --slow_coupler_noise 2.47e-9
   --nonlinear_R_mc_quantity conductance --train_conv_expanded false --nonlinear_R_corner_range all

@@ -223,6 +223,7 @@ python scripts/run_toggle_nonideality_ablation.py \
   --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING}" \
   --nonlinear_R_curve_edge_chunk_size "${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE}" \
   --activation_interpolation "${ACTIVATION_INTERPOLATION}" \
+  --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}" \
   --activation_curve_sharing "${ACTIVATION_CURVE_SHARING}" \
   --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT}" \
   --activation_normalize_positive_endpoint "${ACTIVATION_NORMALIZE_POSITIVE_ENDPOINT}" \

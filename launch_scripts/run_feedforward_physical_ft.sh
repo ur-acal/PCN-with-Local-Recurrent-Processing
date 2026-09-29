@@ -130,6 +130,7 @@ cmd=(
   --dtc_leading_edge_jitter_std "${DTC_LEADING_EDGE_JITTER_STD:-0.005}"
   --dtc_falling_edge_jitter_std "${DTC_FALLING_EDGE_JITTER_STD:-0.005}"
   --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}"
+  --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}"
   --activation_curve_path "${ACTIVATION_CURVE_PATH}"
   --activation_corner "${ACTIVATION_CORNER:-TT}"
   --activation_corner_mode "${ACTIVATION_CORNER_MODE}"

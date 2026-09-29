@@ -213,6 +213,7 @@ def _model_parameters(args, trial_index):
         "activation_curve_sharing": args.activation_curve_sharing,
         "activation_curve_seed": args.activation_curve_seed + trial_index,
         "activation_interpolation": args.activation_interpolation,
+        "fuse_measured_activation": args.fuse_measured_activation,
         "activation_spline_parameters": args.activation_spline_parameters,
         "activation_fit_constraint": args.activation_fit_constraint,
         "activation_normalize_positive_endpoint": (

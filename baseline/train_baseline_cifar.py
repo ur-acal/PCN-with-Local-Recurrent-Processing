@@ -332,6 +332,7 @@ def parse_args():
     parser.add_argument("--activation_curve_seed", type=int, default=None)
     parser.add_argument("--activation_interpolation", default="piecewise_linear",
                         choices=("piecewise_linear", "cubic_bspline"))
+    parser.add_argument("--fuse_measured_activation", type=str2bool, default=True)
     parser.add_argument("--activation_spline_parameters", type=int, default=10)
     parser.add_argument("--activation_fit_constraint", default="auto",
                         choices=("none", "nonnegative", "auto"))
@@ -762,7 +763,8 @@ def main():
                 interpolation=args.activation_interpolation,
                 spline_parameters=args.activation_spline_parameters,
                 fit_constraint=args.activation_fit_constraint,
-                compile_evaluator=args.compile_measured_activation)
+                compile_evaluator=args.compile_measured_activation,
+                fuse_measured_activation=args.fuse_measured_activation)
             configure_feedforward_measured_activation(
                 model, activation_factory)
             if args.physical_pretraining:
@@ -858,6 +860,8 @@ def main():
                         "enable_measured_activation": args.enable_measured_activation,
                         "enable_pretrain_measured_activation": (
                             args.enable_pretrain_measured_activation),
+                        "fuse_measured_activation": (
+                            args.fuse_measured_activation),
                         "activation_corner_mode": args.activation_corner_mode,
                         "unitless_measured_pullback_mode": (
                             args.unitless_measured_pullback_mode),

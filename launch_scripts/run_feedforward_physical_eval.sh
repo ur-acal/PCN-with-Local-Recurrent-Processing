@@ -54,6 +54,7 @@ cmd=(
   --activation_corner "${ACTIVATION_CORNER:-TT}"
   --activation_curve_sharing "${ACTIVATION_CURVE_SHARING:-per_model}"
   --activation_interpolation "${ACTIVATION_INTERPOLATION:-piecewise_linear}"
+  --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}"
   --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT:-auto}"
   --activation_normalize_positive_endpoint "${ACTIVATION_NORMALIZE_POSITIVE_ENDPOINT:-false}"
   --compile_measured_activation "${COMPILE_MEASURED_ACTIVATION:-false}"

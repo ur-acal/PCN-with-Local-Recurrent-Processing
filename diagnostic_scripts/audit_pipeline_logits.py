@@ -35,7 +35,7 @@ if command[0] == '-u': command = command[1:]
 assert command[0] == '-m'
 torch.set_num_threads(2)
 if a.reference:
-    Dopri5.tc_reuse_accepted_step = False
+    Dopri5.reuse_accepted_step_inference = False
     MVMConv._tc_fused_edges = False
 report = dict(reference=a.reference, command=command, layers={}, batches=[], calls={})
 out = Path(a.output)

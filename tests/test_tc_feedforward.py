@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from physical_feedforward_tc import TCPhysicalBasicBlock, TCFeedForwardPhysicalWrapper
 from physical_feedforward import convert_wide_resnet_to_physical
 from feedforward_validation import FeedForwardCNNValidator
+from ode_pc import QuantizationImpl
 from tc_nonidealities import TCResistanceCurves
 from test_tc_dense_training import make_block, wrap
 
@@ -74,6 +75,32 @@ class TCFeedForwardTests(unittest.TestCase):
         torch.testing.assert_close(x0.grad, x1.grad, rtol=0, atol=0)
         torch.testing.assert_close(
             baseline.conv1.weight.grad, reused.conv1.weight.grad, rtol=0, atol=0)
+
+    def test_checkpointed_qat_weight_is_cached_through_backward(self):
+        physical = block(
+            one_shot_conv=False, tc_method='euler', tc_step_size=4.9e-10,
+            checkpoint_ode_rhs_training=True)
+        wrapper = TCFeedForwardPhysicalWrapper(physical, qat=True)
+        calls = 0
+        original_forward = QuantizationImpl.forward
+
+        def counted_forward(ctx, *args):
+            nonlocal calls
+            calls += 1
+            return original_forward(ctx, *args)
+
+        QuantizationImpl.forward = staticmethod(counted_forward)
+        try:
+            x = (torch.rand(2, 2, 3, 3, dtype=torch.float64) * .01
+                 ).requires_grad_()
+            (wrapper(x).sum() + wrapper(x * .5).sum()).backward()
+            self.assertEqual(calls, 1)
+            self.assertIsNone(getattr(
+                wrapper, "_pending_qat_weight_cache", None))
+            self.assertIsNotNone(
+                physical.conv1.parametrizations.weight.original.grad)
+        finally:
+            QuantizationImpl.forward = staticmethod(original_forward)
 
     def test_qat_compensation(self):
         a=block(one_shot_conv=True)

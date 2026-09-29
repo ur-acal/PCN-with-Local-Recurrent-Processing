@@ -50,6 +50,7 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
     --tc_fb_asd_path "${TC_FB_ASD_PATH:-./hardware_data/coupler_asd_vs_freq.csv}"
     --tc_noise_reference_R "${TC_NOISE_REFERENCE_R:-50e3}" --tc_asd_reference_p "${TC_ASD_REFERENCE_P:-0.6e-12}"
     --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}"
+    --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}"
     --activation_curve_path "${ACTIVATION_CURVE_PATH:-${tc_activation_path}}"
     --activation_corner "${ACTIVATION_CORNER:-${tc_activation_corner}}"
     --enable_measured_pooling "${ENABLE_MEASURED_POOLING:-true}"

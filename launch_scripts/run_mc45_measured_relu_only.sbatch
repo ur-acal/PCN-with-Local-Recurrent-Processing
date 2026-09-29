@@ -64,6 +64,7 @@ python scripts/run_toggle_nonideality_ablation.py \
   --nonlinear_R_curve_sampling empirical_with_replacement \
   --activation_curve_sharing per_layer \
   --activation_interpolation piecewise_linear \
+  --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}" \
   --activation_fit_constraint auto \
   --activation_normalize_positive_endpoint false \
   --compile_measured_activation false \

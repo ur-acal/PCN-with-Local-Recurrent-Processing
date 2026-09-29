@@ -145,6 +145,7 @@ class TCLaunchAlignmentTests(unittest.TestCase):
                       tc_noise_reference_R=50e3, tc_curve_sampling='histogram',
                       enable_measured_activation=True, enable_measured_pooling=True,
                       activation_interpolation='piecewise_linear',
+                      fuse_measured_activation=True,
                       activation_fit_constraint='auto',
                       activation_normalize_positive_endpoint=False,
                       measured_pooling_nominal_R=1e4,
@@ -185,12 +186,15 @@ class TCLaunchAlignmentTests(unittest.TestCase):
 
     def test_explicit_ablation_and_common_source_overrides(self):
         options = dict(ENABLE_MEASURED_POOLING='false', ENABLE_COUPLER_NOISE='false',
+                       FUSE_MEASURED_ACTIVATION='false',
                        TC_MEAN_TABLE='./custom_means.csv', TC_COVARIANCE_TABLE='./custom_cov.csv')
         _, ft, evaluation = cnn_stages(**options)
         for stage, cnn in (('ft', ft), ('eval', evaluation)):
             pcn = pcn_stage(stage, **options)
             for key in ('enable_measured_pooling', 'enable_coupler_noise'):
                 self.assertFalse(getattr(pcn, key) or getattr(cnn, key))
+            self.assertFalse(pcn.fuse_measured_activation)
+            self.assertFalse(cnn.fuse_measured_activation)
             for key in ('nonlinear_R_table', 'tc_covariance_table', 'measured_pooling_curve_path'):
                 self.assertEqual(getattr(pcn, key), getattr(cnn, key))
 

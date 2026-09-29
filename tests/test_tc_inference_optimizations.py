@@ -32,7 +32,7 @@ class AcceptedReuseTests(unittest.TestCase):
         options['accepted_step_reuse_safe'] = safe
         if project: options['proj_fn'] = torch.nn.Hardtanh(-.03,.03)
         solver = odesolve(rhs, state, options,return_solver=True)
-        solver.tc_reuse_accepted_step = reuse
+        solver.reuse_accepted_step_inference = reuse
         if project:
             solver.proj_fn = torch.nn.Hardtanh(-.03,.03)
         if meter is not None:

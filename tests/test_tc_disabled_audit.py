@@ -5,6 +5,7 @@ worktree mutation, training or dataset evaluation occurs.
 """
 import ast
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -90,9 +91,23 @@ class TCDisabledAuditTests(unittest.TestCase):
             cls.results.append(json.loads(next(line[len('AUDIT_JSON '):]
                 for line in run.stdout.splitlines() if line.startswith('AUDIT_JSON '))))
 
-    def test_seeded_outputs_and_gradients_exactly_match_baseline(self):
+    def test_seeded_outputs_match_and_qat_weight_gradients_are_close(self):
         old,new = self.results
-        self.assertEqual(old['models'],new['models'])
+        self.assertEqual(set(old['models']), set(new['models']))
+        for case, old_fields in old['models'].items():
+            self.assertEqual(
+                set(old_fields), set(new['models'][case]), case)
+            for field, expected in old_fields.items():
+                actual = new['models'][case][field]
+                if field not in ('ff_grad', 'fb_grad'):
+                    self.assertEqual(expected, actual, case+':'+field)
+                    continue
+                self.assertEqual(len(expected), len(actual), case+':'+field)
+                for old_value, new_value in zip(expected, actual):
+                    self.assertTrue(
+                        math.isclose(old_value, new_value,
+                                     rel_tol=5e-7, abs_tol=5e-8),
+                        f'{case}:{field}: {old_value} != {new_value}')
         self.assertEqual(old['solvers'],new['solvers'])
 
     def test_existing_cli_defaults_and_known_failure_unchanged(self):

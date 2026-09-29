@@ -4,6 +4,7 @@ import os
 import time
 import random
 from copy import deepcopy
+from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
@@ -318,7 +319,8 @@ class ODEBlockPC(nn.Module):
             if getattr(self, '_tc_conv_method', 'loop') == 'shared':
                 self._tc_curve_samples = {
                     name: package.sample_shared(
-                        self._values_to_level_idx(getattr(self, name).weight.detach()),
+                        self._values_to_level_idx(
+                            getattr(self, name).weight.detach()),
                         sampling=self._tc_curve_sampling, generator=self._tc_curve_generator)
                     for name in ("FFconv", "FBconv")}
             else:
@@ -809,12 +811,16 @@ class ODEXInitFFFB(ODEBlockXInit):
             context, sy, sz = self._tc_prepare_noise(x)
             def tc_func(t, y):
                 meter = getattr(self, "_tc_energy_meter", None)
-                z = self._tc_dense_conv(self.FBconv, y, None if curves is None else curves["FBconv"])
+                z = self._tc_dense_conv(
+                    self.FBconv, y,
+                    None if curves is None else curves["FBconv"])
                 if meter is not None:
                     meter.observe("FB", self.FBconv)
                 noise = 0. if context is None else context.fb_current()
                 h = self.act_fn(sz * (z * self._tc_fb_gain + noise * self._tc_fb_gain * self.R))
-                out = self._tc_dense_conv(self.FFconv, h, None if curves is None else curves["FFconv"])
+                out = self._tc_dense_conv(
+                    self.FFconv, h,
+                    None if curves is None else curves["FFconv"])
                 if meter is not None:
                     meter.observe("FF", self.FFconv)
                 return sy * out
@@ -2868,8 +2874,12 @@ class S2NoisyIYAsXZAs0(State2NoMinusZ):
         def tc_func(t, yz):
             y, z = yz
             return (
-                sy * self._tc_dense_conv(self.FFconv, self.act_fn(z), None if curves is None else curves["FFconv"]),
-                sz * self._tc_dense_conv(self.FBconv, y, None if curves is None else curves["FBconv"]))
+                sy * self._tc_dense_conv(
+                    self.FFconv, self.act_fn(z),
+                    None if curves is None else curves["FFconv"]),
+                sz * self._tc_dense_conv(
+                    self.FBconv, y,
+                    None if curves is None else curves["FBconv"]))
         result = _FuncWrapper(tc_func)
         result.tc_context = context
         return result
@@ -3188,9 +3198,19 @@ class SymQuantizeWeight(nn.Module):
         self.register_buffer("lower", -self.upper)
         self.register_buffer("s_w", torch.tensor(1.0))
         self.register_buffer("w_scalar", torch.tensor(w_scalar))
+        self._solve_cache_enabled = False
+        self._solve_cached_weight = None
+
+    def _cache_for_solve(self, compute):
+        if not self._solve_cache_enabled:
+            return compute()
+        if self._solve_cached_weight is None:
+            self._solve_cached_weight = compute()
+        return self._solve_cached_weight
 
     def forward(self, layer_weight: nn.Parameter):
-        return QuantizationImpl.apply(layer_weight, self.s_w, self.lower, self.upper, self.w_scalar)
+        return self._cache_for_solve(lambda: QuantizationImpl.apply(
+            layer_weight, self.s_w, self.lower, self.upper, self.w_scalar))
 
     def compute_s(self, layer_weight: nn.Parameter):
         self.s_w.copy_(_symmetric_qat_weight_scale(
@@ -3223,8 +3243,8 @@ class PulseSymQuantizeWeight(SymQuantizeWeight):
         super().__init__(w_scalar=w_scalar, **kwargs)
 
     def forward(self, layer_weight: nn.Parameter):
-        return PulseQuantizationImpl.apply(
-            layer_weight, self.s_w, self.lower, self.upper)
+        return self._cache_for_solve(lambda: PulseQuantizationImpl.apply(
+            layer_weight, self.s_w, self.lower, self.upper))
 
 
 class LSQImpl(torch.autograd.Function):
@@ -3264,7 +3284,9 @@ class LSQWeight(SymQuantizeWeight):
             self.register_buffer("s_g_scale", 1 / torch.sqrt(layer_weight.numel() * self.upper))
 
     def forward(self, layer_weight: nn.Parameter):
-        return LSQImpl.apply(layer_weight, self.s_w_Param, self.lower, self.upper, self.s_g_scale, self.w_scalar)
+        return self._cache_for_solve(lambda: LSQImpl.apply(
+            layer_weight, self.s_w_Param, self.lower, self.upper,
+            self.s_g_scale, self.w_scalar))
 
     def compute_s(self, layer_weight: nn.Parameter):
         # Set the parameter to registered buffer for saving purpose
@@ -3447,6 +3469,8 @@ class WrapQuantizeW(ODEWrapperRC):
             "activation_normalize_positive_endpoint", False)
         self.adapt_relu_offset = kwargs.pop("adapt_relu_offset", True)
         self.compile_measured_activation = kwargs.pop("compile_measured_activation", False)
+        self.fuse_measured_activation = kwargs.pop(
+            "fuse_measured_activation", True)
 
         self.v_grid, self.R_codes, self.R_table = None, None, None
         self.R_left, self.R_slope = None, None # Use piecewise-linear function as interpolant
@@ -3472,6 +3496,129 @@ class WrapQuantizeW(ODEWrapperRC):
         if patch:
             self._patch()
 
+    def _live_qat_weight_modules(self):
+        return tuple(
+            module for module in self.ode_block.modules()
+            if P.is_parametrized(module, "weight") and
+            any(isinstance(parametrization, SymQuantizeWeight)
+                for parametrization in module.parametrizations.weight))
+
+    @staticmethod
+    def _qat_parameter_versions(modules):
+        """Record the trainable state backing each live quantized weight."""
+        versions = {}
+        for module in modules:
+            for parameter in module.parametrizations.weight.parameters():
+                versions[id(parameter)] = (parameter, parameter._version)
+        return tuple(versions.values())
+
+    @staticmethod
+    def _qat_weight_quantizers(modules):
+        quantizers = {}
+        for module in modules:
+            for parametrization in module.parametrizations.weight:
+                if isinstance(parametrization, SymQuantizeWeight):
+                    quantizers[id(parametrization)] = parametrization
+        return tuple(quantizers.values())
+
+    @staticmethod
+    def _close_qat_weight_cache(quantizers):
+        for quantizer in quantizers:
+            quantizer._solve_cache_enabled = False
+            quantizer._solve_cached_weight = None
+
+    def _clear_pending_qat_weight_cache(self, expected=None):
+        """Release a retained checkpoint cache after an abandoned backward."""
+        pending = getattr(self, "_pending_qat_weight_cache", None)
+        if pending is None or (expected is not None and pending is not expected):
+            return False
+        self._pending_qat_weight_cache = None
+        self._close_qat_weight_cache(pending["quantizers"])
+        return True
+
+    def _validate_pending_qat_weight_cache(self):
+        pending = getattr(self, "_pending_qat_weight_cache", None)
+        if pending is None:
+            return False
+        if any(parameter._version != version
+               for parameter, version in pending["parameter_versions"]):
+            raise RuntimeError(
+                "A live QAT weight changed while its checkpointed ODE cache "
+                "was still needed for backward.")
+        return True
+
+    def _checkpointed_rhs_requested(self):
+        if getattr(self.ode_block, "return_init", False):
+            return False
+        direct_checkpoint = bool(getattr(
+            self.ode_block, "checkpoint_ode_rhs_training", False))
+        direct_solver_path = (
+            bool(getattr(self.ode_block, "physical", True)) and
+            not bool(getattr(self.ode_block, "one_shot_conv", False)) and
+            not bool(getattr(self.ode_block, "_capture_dense_modules", False)))
+        if direct_checkpoint and direct_solver_path:
+            return True
+        return any(
+            bool(getattr(self.ode_block, name, {}).get(
+                "checkpoint_ode_rhs_training", False))
+            for name in ("option_init", "option_patch", "option_aca"))
+
+    @contextmanager
+    def _qat_weight_cache(self):
+        """Cache deterministic live-QAT weights for one wrapped block call.
+
+        Baked quantized models have no live ``SymQuantizeWeight``
+        parametrization and therefore take the no-op path.  Checking the
+        installed parametrization, rather than a model or dataset name, also
+        covers one-state, two-state, toggle, and feedforward QAT wrappers.
+        """
+        modules = self._live_qat_weight_modules()
+        if not modules:
+            yield
+            return
+        if self._validate_pending_qat_weight_cache():
+            # Multiple loss terms may call the same block before a combined
+            # backward.  The parameters have not changed, so share the live
+            # cache retained by the first checkpointed forward.
+            yield
+            return
+
+        quantizers = self._qat_weight_quantizers(modules)
+        for quantizer in quantizers:
+            quantizer._solve_cached_weight = None
+            quantizer._solve_cache_enabled = True
+        try:
+            # Populate the cache before an adaptive solver enters any no-grad
+            # error-estimation pass.  This keeps the cached tensors connected
+            # to the original trainable weights.
+            weights = tuple(module.weight for module in modules)
+            yield
+        except BaseException:
+            self._close_qat_weight_cache(quantizers)
+            raise
+        else:
+            grad_weights = tuple(weight for weight in weights
+                                 if weight.requires_grad)
+            keep_for_replay = (
+                self.ode_block.training and torch.is_grad_enabled() and
+                grad_weights and
+                self._checkpointed_rhs_requested())
+            if not keep_for_replay:
+                self._close_qat_weight_cache(quantizers)
+                return
+
+            pending = {
+                "quantizers": quantizers,
+                "parameter_versions": self._qat_parameter_versions(modules),
+            }
+            self._pending_qat_weight_cache = pending
+
+            def release_after_accumulated_gradients(gradients):
+                self._clear_pending_qat_weight_cache(expected=pending)
+
+            torch.autograd.graph.register_multi_grad_hook(
+                grad_weights, release_after_accumulated_gradients)
+
     def _configure_measured_activation(self):
         if not self.enable_measured_activation:
             return
@@ -3480,6 +3627,9 @@ class WrapQuantizeW(ODEWrapperRC):
             if self.activation_interpolation == "cubic_bspline"
             else PiecewiseLinearActivation)
         if isinstance(self.ode_block.act_fn, activation_cls):
+            if isinstance(self.ode_block.act_fn, PiecewiseLinearActivation):
+                self.ode_block.act_fn.fuse_measured_activation = bool(
+                    self.fuse_measured_activation)
             return
         curve_path = self.activation_curve_path
         if curve_path is None:
@@ -3499,6 +3649,9 @@ class WrapQuantizeW(ODEWrapperRC):
                 num_parameters=self.activation_spline_parameters,
                 compile_evaluator=self.compile_measured_activation,
                 fit_constraint=self.activation_fit_constraint)
+        else:
+            activation_kwargs.update(
+                fuse_measured_activation=self.fuse_measured_activation)
         activation = activation_cls(**activation_kwargs)
         device = self.ode_block.FFconv.weight.device
         self.ode_block.act_fn = activation.to(device=device)
@@ -3981,7 +4134,10 @@ class ODEWrapper2State(WrapQuantizeW):
         orig_call = self.original_forward
         @wraps(orig_call)
         def patched_forward(x, *args, **kwargs):
-            return self._quantize_output(orig_call(self.proj_fn(self.inp_scale * x), *args, **kwargs)) / self.out_scale
+            with self._qat_weight_cache():
+                return self._quantize_output(orig_call(
+                    self.proj_fn(self.inp_scale * x),
+                    *args, **kwargs)) / self.out_scale
         self.ode_block.forward = patched_forward
 
     def _patch_init_y(self):
@@ -4027,7 +4183,7 @@ class ODEWrapper2State(WrapQuantizeW):
             self._patch_make_z_fn()
         self._ship_nonlinear_R_pkg()
 
-        if self.tc_nonidealities:
+        if self.enable_measured_activation:
             self._configure_measured_activation()
 
     @staticmethod
@@ -4105,6 +4261,8 @@ class QATWrapper2State(ODEWrapper2State):
     def _set_quantize_s(self, module):
         # Set the quantization step size before each patched forward call
         # the quantization step size s is set in compute_s
+        if self._validate_pending_qat_weight_cache():
+            return
         self.FF_quantizer.compute_s(module.FFconv.parametrizations.weight.original)
         self.FB_quantizer.compute_s(module.FBconv.parametrizations.weight.original)
         # For saving and loading purpose
@@ -4267,6 +4425,8 @@ class QATWrapper1State(ODEWrapper1State):
     def _set_quantize_s(self, module):
         # Set the quantization step size before each patched forward call
         # the quantization step size s is set in compute_s
+        if self._validate_pending_qat_weight_cache():
+            return
         self.FF_quantizer.compute_s(module.FFconv.parametrizations.weight.original)
         self.FB_quantizer.compute_s(module.FBconv.parametrizations.weight.original)
         # For saving and loading purpose
@@ -4541,9 +4701,10 @@ class ODEWrapper1StateWithX(ODEWrapper1State):
         def patched_forward(x, *args, **kwargs):
             # For the first layer, x is x;
             # For layers after, x is z_T, in the scaled domain.
-            return self._quantize_output(orig_call(self.proj_fn(
-                self.beta_c * x / (self.q / self.inp_scale)
-            ), *args, **kwargs)) / self.out_scale
+            with self._qat_weight_cache():
+                return self._quantize_output(orig_call(self.proj_fn(
+                    self.beta_c * x / (self.q / self.inp_scale)
+                ), *args, **kwargs)) / self.out_scale
 
         self.ode_block.forward = patched_forward
 
@@ -4627,6 +4788,8 @@ class QATWrapper1StateWithX(ODEWrapper1StateWithX):
     def _set_quantize_s(self, module):
         # Set the quantization step size before each patched forward call
         # the quantization step size s is set in compute_s
+        if self._validate_pending_qat_weight_cache():
+            return
         self.FF_quantizer.compute_s(module.FFconv.parametrizations.weight.original)
         self.FB_quantizer.compute_s(module.FBconv.parametrizations.weight.original)
         # For saving and loading purpose

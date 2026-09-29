@@ -133,6 +133,7 @@ else
 fi
 ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT}"
 ACTIVATION_INTERPOLATION="${ACTIVATION_INTERPOLATION:-piecewise_linear}"
+FUSE_MEASURED_ACTIVATION="${FUSE_MEASURED_ACTIVATION:-true}"
 ACTIVATION_SPLINE_PARAMETERS="${ACTIVATION_SPLINE_PARAMETERS:-10}"
 ACTIVATION_FIT_CONSTRAINT="${ACTIVATION_FIT_CONSTRAINT:-auto}"
 MEASURED_ACTIVATION_CONFIG_ARGS=(
@@ -141,6 +142,7 @@ MEASURED_ACTIVATION_CONFIG_ARGS=(
   --activation_corner_mode "${ACTIVATION_CORNER_MODE}"
   --activation_random_curve_sharing "${ACTIVATION_RANDOM_CURVE_SHARING}"
   --activation_interpolation "${ACTIVATION_INTERPOLATION}"
+  --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION}"
   --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS}"
   --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT}"
   --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION}"
@@ -642,6 +644,7 @@ eval_one_combo_model() {
       --nonlinear_R_curve_sampling empirical_with_replacement \
       --nonlinear_R_curve_edge_chunk_size 65536 \
       --activation_interpolation piecewise_linear \
+      --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION}" \
       --activation_fit_constraint auto \
       --activation_normalize_positive_endpoint false \
       --compile_measured_activation false \

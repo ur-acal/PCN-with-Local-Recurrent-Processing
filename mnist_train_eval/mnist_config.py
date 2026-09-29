@@ -85,6 +85,7 @@ def parse_args(argv=None, *, evaluation=False):
         'coupler_noise_p': ('COUPLER_NOISE_P', float, .6e-12),
         'enable_nonlinear_R': ('ENABLE_NONLINEAR_R', boolean, True),
         'enable_measured_activation': ('ENABLE_MEASURED_ACTIVATION', boolean, True),
+        'fuse_measured_activation': ('FUSE_MEASURED_ACTIVATION', boolean, True),
         'enable_measured_pooling': ('ENABLE_MEASURED_POOLING', boolean, True),
         'measured_pooling_nominal_R': ('MEASURED_POOLING_NOMINAL_R', float, 10e3),
     }

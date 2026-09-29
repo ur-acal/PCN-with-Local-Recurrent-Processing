@@ -6,6 +6,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from measured_activation_fused import fused_piecewise_linear
+
 
 _FIT_CONSTRAINTS = {"none", "nonnegative", "auto"}
 _CORNER_MODES = {"fixed", "random_per_forward"}
@@ -599,7 +601,8 @@ class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
 
     def __init__(self, curve_path, v_dd, corner="TT",
                  normalize_positive_endpoint=False,
-                 curve_sharing="per_model", curve_seed=None, adapt_relu_offset=True):
+                 curve_sharing="per_model", curve_seed=None,
+                 adapt_relu_offset=True, fuse_measured_activation=True):
         super().__init__()
         vin, curves, column_names = CubicBSplineActivation._load_csv(curve_path, adapt_relu_offset)
         if vin.numel() < 2:
@@ -638,6 +641,8 @@ class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
         self.register_buffer(
             "v_dd", torch.as_tensor(float(v_dd), dtype=vin.dtype),
             persistent=False)
+        self.register_buffer(
+            "voltage_scale", self.v_dd / self.v_char, persistent=False)
         self.curves = _CurveValueBuffers(scaled_curves)
         self.register_buffer(
             "curve_bank",
@@ -647,6 +652,8 @@ class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
         self.active_corner = self._resolve_corner(corner)
         self.default_corner = self.active_corner
         self._coordinate_pullback_scale = None
+        self._last_interpolation_backend = None
+        self.fuse_measured_activation = bool(fuse_measured_activation)
 
         first_spacing = spacing[0]
         uniform_tolerance = (
@@ -681,6 +688,7 @@ class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
 
     def set_v_dd(self, v_dd):
         self.v_dd.fill_(float(v_dd))
+        self.voltage_scale.copy_(self.v_dd / self.v_char)
 
     def set_coordinate_pullback_scale(self, scale):
         """Temporarily evaluate Phi(scale*x)/scale without changing the table."""
@@ -742,24 +750,46 @@ class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
             self.active_corner if corner is None else
             self._resolve_corner(corner))
         pullback_scale = self._coordinate_pullback_scale
+        curve_indices = None if corner is not None else self._curve_indices_for(x)
+
+        def as_input(value):
+            if value.device == x.device and value.dtype == x.dtype:
+                return value
+            return value.to(device=x.device, dtype=x.dtype)
+
+        vin = as_input(self.vin)
+        values = as_input(
+            self.curves[selected] if curve_indices is None else self.curve_bank)
+        v_dd = as_input(self.v_dd)
+        v_char = as_input(self.v_char)
+        voltage_scale = as_input(self.voltage_scale)
+        grid_spacing = as_input(self.grid_spacing)
         if pullback_scale is not None:
-            pullback_scale = pullback_scale.to(device=x.device, dtype=x.dtype)
+            pullback_scale = as_input(pullback_scale)
+        if self.fuse_measured_activation:
+            fused = fused_piecewise_linear(
+                x, vin, values, curve_indices, v_dd, voltage_scale, grid_spacing,
+                pullback_scale, self.uniform_grid)
+            if fused is not None:
+                self._last_interpolation_backend = "triton"
+                return fused
+
+        self._last_interpolation_backend = "torch"
+        if pullback_scale is not None:
             x = pullback_scale * x
 
-        scale = (
-            self.v_dd.to(device=x.device, dtype=x.dtype) /
-            self.v_char.to(device=x.device, dtype=x.dtype))
+        scale = v_dd / v_char
         x_char = (x / scale).clamp(
-            min=self.vin_min.to(device=x.device, dtype=x.dtype),
-            max=self.vin_max.to(device=x.device, dtype=x.dtype))
-        curve_indices = None if corner is not None else self._expanded_curve_indices(x_char)
+            min=vin[0], max=vin[-1])
+        expanded_curve_indices = (
+            None if curve_indices is None else
+            curve_indices.expand_as(x_char).reshape(-1))
         y_char = (
-            self._interpolate(x_char, self.curves[selected])
-            if curve_indices is None else
-            self._interpolate_banked(x_char, curve_indices))
+            self._interpolate(x_char, values)
+            if expanded_curve_indices is None else
+            self._interpolate_banked(x_char, expanded_curve_indices))
         output = scale * y_char
         output = output if pullback_scale is None else output / pullback_scale
-        v_dd = self.v_dd.to(device=output.device, dtype=output.dtype)
         return output.clamp(min=-v_dd, max=v_dd)
 
 
@@ -767,7 +797,8 @@ class MeasuredPiecewiseLinearReLU6Activation(PiecewiseLinearActivation):
     """Piecewise-linear measured activation in unitless ReLU6 coordinates."""
 
     def __init__(self, curve_path, corner="TT",
-                 normalize_positive_endpoint=False, max_value=6.0):
+                 normalize_positive_endpoint=False, max_value=6.0,
+                 fuse_measured_activation=True):
         max_value = float(max_value)
         if max_value <= 0:
             raise ValueError("Measured ReLU6 max_value must be positive.")
@@ -775,7 +806,8 @@ class MeasuredPiecewiseLinearReLU6Activation(PiecewiseLinearActivation):
             curve_path=curve_path,
             v_dd=max_value,
             corner=corner,
-            normalize_positive_endpoint=normalize_positive_endpoint)
+            normalize_positive_endpoint=normalize_positive_endpoint,
+            fuse_measured_activation=fuse_measured_activation)
         self.max_value = max_value
 
 
@@ -869,7 +901,8 @@ def feedforward_measured_activation_factory(
         curve_path, v_dd, corner="TT", curve_sharing="per_model",
         curve_seed=None, normalize_positive_endpoint=False,
         interpolation="piecewise_linear", spline_parameters=10,
-        fit_constraint="auto", compile_evaluator=False):
+        fit_constraint="auto", compile_evaluator=False,
+        fuse_measured_activation=True):
     """Build measured activations for the stages of a feedforward CNN."""
     sharing = str(curve_sharing).lower()
 
@@ -889,7 +922,8 @@ def feedforward_measured_activation_factory(
                 compile_evaluator=compile_evaluator, **common)
         if interpolation != "piecewise_linear":
             raise ValueError("Unknown measured-activation interpolation.")
-        return PiecewiseLinearActivation(**common)
+        return PiecewiseLinearActivation(
+            fuse_measured_activation=fuse_measured_activation, **common)
 
     return factory
 

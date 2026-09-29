@@ -42,6 +42,17 @@ def apply_rhs_checkpoint_override(config, cli_override):
         config["checkpoint_ode_rhs_training"] = override
 
 
+def apply_fused_measured_activation_override(config, cli_override):
+    """Apply CLI/env override and backfill recovery files from before fusion."""
+    override = cli_override
+    if override is None and "FUSE_MEASURED_ACTIVATION" in os.environ:
+        override = training.str2bool(os.environ["FUSE_MEASURED_ACTIVATION"])
+    if override is None:
+        config.setdefault("fuse_measured_activation", True)
+    else:
+        config["fuse_measured_activation"] = override
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path, help="Latest checkpoint or its run directory")
@@ -49,6 +60,8 @@ def main():
     parser.add_argument("--reuse_accepted_step_training", type=training.str2bool,
                         default=None)
     parser.add_argument("--checkpoint_ode_rhs_training", type=training.str2bool,
+                        default=None)
+    parser.add_argument("--fuse_measured_activation", type=training.str2bool,
                         default=None)
     args = parser.parse_args()
     path = args.checkpoint
@@ -62,6 +75,8 @@ def main():
     config = _backfill_validation_defaults(recovery["config"].copy())
     apply_training_step_reuse_override(config, args.reuse_accepted_step_training)
     apply_rhs_checkpoint_override(config, args.checkpoint_ode_rhs_training)
+    apply_fused_measured_activation_override(
+        config, args.fuse_measured_activation)
     model_name = path.parent.name
     config.update(model_name=model_name, ckpt="latest",
                   save_path=str(path.parent.parent),
