@@ -554,9 +554,14 @@ def parse_n0n1n2(inp, out):
     def count_same(l, r):
         return sum(1 for i in range(l, r) if inp[i] == out[i])
 
-    if len(exps) < 2:
+    if len(exps) == 0:
         n0 = count_same(1, len(inp))  # all same-channel layers are c0->c0
         n1 = 0
+        n2 = 0
+    elif len(exps) == 1:
+        e1 = exps[0]
+        n0 = count_same(1, e1)
+        n1 = count_same(e1 + 1, len(inp))
         n2 = 0
     else:
         e1, e2 = exps[0], exps[1]     # now these are c0->c1 and c1->c2
@@ -593,7 +598,11 @@ def _constr_model_name(args, rep=1):
                   + str(len(args.inp_channels)) + "Layers{}_".format(parse_n0n1n2(args.inp_channels, args.out_channels)) \
                   + str(len([_ for _ in args.max_pool if _])) + "Pool"
 
-    if len(set(args.out_channels)) == 1 and len([_ for _ in args.max_pool if _]) >= 1:
+    channel_expansions = sum(
+        i != 0 and oc > ic
+        for i, (ic, oc) in enumerate(zip(args.inp_channels, args.out_channels)))
+    if (len(set(args.out_channels)) == 1 or channel_expansions == 1) \
+            and len([_ for _ in args.max_pool if _]) >= 1:
         pooling_pos = [str(_pos + 1) for _pos, _has_pool in enumerate(args.max_pool) if _has_pool]
         model_name += "p".join(pooling_pos)
     if args.tie_method is not None:

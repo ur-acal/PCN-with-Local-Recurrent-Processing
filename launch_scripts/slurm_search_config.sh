@@ -224,6 +224,7 @@ read -r -a CHAN_0_LIST <<< "${PCN_CHAN_0_LIST:-24}"
 
 # NUM_LAYERS dict: key=CHAN_0, value="layers...". The optional override is
 # applied unchanged to every selected CHAN_0, e.g. PCN_NUM_LAYERS_LIST="22 28".
+# For two_stage_fixed, an entry can instead be STAGE0:STAGE1, e.g. "13:7 11:9".
 declare -A NUM_LAYERS_BY_CHAN0
 # For the default three pattern
 #NUM_LAYERS_BY_CHAN0[18]="20 22"
@@ -252,6 +253,14 @@ done
 SHOW_COMB_ONLY="${SHOW_COMB_ONLY:-0}"   # 1 => print comb_tag only and exit
 COMB_MODE="${COMB_MODE:-balanced_A}"      # choose in (n_params | balanced_A)
 SEARCH_ARCH="${SEARCH_ARCH:-default}"     # choose in (default | two_stage_fixed | one_stage_fixed)
+TWO_STAGE_POOL_POSITION="${TWO_STAGE_POOL_POSITION:-after_expansion}"
+case "${TWO_STAGE_POOL_POSITION}" in
+  before_expansion|after_expansion) ;;
+  *)
+    echo "ERROR: TWO_STAGE_POOL_POSITION must be before_expansion or after_expansion, got '${TWO_STAGE_POOL_POSITION}'." >&2
+    return 2 2>/dev/null || exit 2
+    ;;
+esac
 ##############################################################################################
 
 TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
@@ -508,11 +517,28 @@ generate_ruleA_combs() {
 
 generate_two_stage_fixed_combs() {
   local chan0="$1"
-  local num_layers="$2"
+  local num_layers_spec="$2"
   local k="$3"
 
   local chan1=$((chan0 * 2))
   local K2=9  # 3x3
+  local stage0_layers stage1_layers
+
+  if [[ "${num_layers_spec}" =~ ^([0-9]+):([0-9]+)$ ]]; then
+    stage0_layers="${BASH_REMATCH[1]}"
+    stage1_layers="${BASH_REMATCH[2]}"
+  elif [[ "${num_layers_spec}" =~ ^[0-9]+$ ]]; then
+    # Backward compatibility: one value means equal depths in both stages.
+    stage0_layers="${num_layers_spec}"
+    stage1_layers="${num_layers_spec}"
+  else
+    echo "ERROR: two_stage_fixed depth '${num_layers_spec}' must be N or STAGE0:STAGE1." >&2
+    return 2
+  fi
+  if (( stage0_layers < 1 || stage1_layers < 1 )); then
+    echo "ERROR: two_stage_fixed requires at least one same-channel layer in each stage." >&2
+    return 2
+  fi
 
   local -a INP OUT POOL
   local i params
@@ -523,32 +549,47 @@ generate_two_stage_fixed_combs() {
   # 3 -> chan0
   INP+=(3); OUT+=("$chan0"); POOL+=(0)
 
-  # chan0 -> chan0 * num_layers
-  for ((i=1; i<=num_layers; i++)); do
-    INP+=("$chan0"); OUT+=("$chan0"); POOL+=(0)
+  # chan0 -> chan0 * stage0_layers
+  for ((i=1; i<=stage0_layers; i++)); do
+    INP+=("$chan0"); OUT+=("$chan0")
+    if [[ "${TWO_STAGE_POOL_POSITION}" == "before_expansion" ]] && (( i == stage0_layers )); then
+      POOL+=(1)
+    else
+      POOL+=(0)
+    fi
   done
 
-  # chan0 -> chan1, only pooling after this layer
-  INP+=("$chan0"); OUT+=("$chan1"); POOL+=(1)
+  # chan0 -> chan1; legacy behavior pools after this expansion layer.
+  INP+=("$chan0"); OUT+=("$chan1")
+  if [[ "${TWO_STAGE_POOL_POSITION}" == "after_expansion" ]]; then
+    POOL+=(1)
+  else
+    POOL+=(0)
+  fi
 
-  # chan1 -> chan1 * num_layers
-  for ((i=1; i<=num_layers; i++)); do
+  # chan1 -> chan1 * stage1_layers
+  for ((i=1; i<=stage1_layers; i++)); do
     INP+=("$chan1"); OUT+=("$chan1"); POOL+=(0)
   done
 
   params=$(( K2 * (
     3*chan0 +
-    num_layers*chan0*chan0 +
+    stage0_layers*chan0*chan0 +
     chan0*chan1 +
-    num_layers*chan1*chan1
+    stage1_layers*chan1*chan1
   ) ))
 
-  comb_tag="TwoStage_N${num_layers}_C${chan0}"
+  comb_tag="TwoStage_C${chan0}_n0${stage0_layers}_n1${stage1_layers}"
+  if [[ "${TWO_STAGE_POOL_POSITION}" == "before_expansion" ]]; then
+    comb_tag+="_poolPreExp"
+  else
+    comb_tag+="_poolPostExp"
+  fi
 
   # keep same output format as existing generate_combs:
   # params \t comb_tag \t chan0 \t num_layers \t inp_str \t out_str \t pool_str
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "${params}" "${comb_tag}" "${chan0}" "${num_layers}" \
+    "${params}" "${comb_tag}" "${chan0}" "${num_layers_spec}" \
     "${INP[*]}" "${OUT[*]}" "${POOL[*]}"
 }
 

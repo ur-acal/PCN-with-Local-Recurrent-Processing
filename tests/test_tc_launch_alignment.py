@@ -120,6 +120,37 @@ class TCLaunchAlignmentTests(unittest.TestCase):
         self.assertNotIn('N22_C16_n06_n17_n26', output)
         self.assertIn('N22_C16_n07_n16_n26', output)
 
+    def test_pcn_two_stage_independent_depths_and_pool_order(self):
+        env = environment(
+            SHOW_COMB_ONLY='1', SEARCH_ARCH='two_stage_fixed',
+            PCN_CHAN_0_LIST='32', PCN_NUM_LAYERS_LIST='13:7 11:9',
+            NUM_COMB_PER_NUM_LAYER='1',
+            TWO_STAGE_POOL_POSITION='before_expansion')
+        output = subprocess.check_output(
+            ['bash', 'launch_scripts/slurm_search_config.sh'],
+            cwd=ROOT, text=True, env=env)
+        self.assertIn('TwoStage_C32_n013_n17_poolPreExp', output)
+        self.assertIn('TwoStage_C32_n011_n19_poolPreExp', output)
+
+        source = (ROOT/'launch_scripts/slurm_search_config.sh').read_text()
+        prefix = source[:source.index('# Main launch:')]
+        command = prefix + '\ngenerate_two_stage_fixed_combs 32 13:7 1\n'
+        generated = subprocess.check_output(
+            ['bash', '-c', command], cwd=ROOT, text=True, env=env).strip()
+        _, _, _, _, inp, out, pool = generated.split('\t')
+        inp, out, pool = inp.split(), out.split(), list(map(int, pool.split()))
+        self.assertEqual((len(inp), len(out), len(pool)), (22, 22, 22))
+        self.assertEqual(pool.count(1), 1)
+        self.assertEqual(pool.index(1), 13)
+        self.assertEqual((inp[14], out[14], pool[14]), ('32', '64', 0))
+
+        env['TWO_STAGE_POOL_POSITION'] = 'after_expansion'
+        generated = subprocess.check_output(
+            ['bash', '-c', command], cwd=ROOT, text=True, env=env).strip()
+        pool = list(map(int, generated.split('\t')[-1].split()))
+        self.assertEqual(pool.count(1), 1)
+        self.assertEqual(pool.index(1), 14)
+
     def test_pcn_slurm_defaults_select_rgb_teacher(self):
         out = subprocess.check_output(['bash', 'launch_scripts/slurm_search_config.sh'],
             cwd=ROOT, text=True, env=environment(TC_NONIDEALITIES='true', TC_DRY_RUN='true'))
