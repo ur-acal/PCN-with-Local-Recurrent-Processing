@@ -585,7 +585,7 @@ eval_one_combo_model() {
   local test_bs=128
 
   if [[ "${TOGGLE_MODE}" != "none" ]]; then
-    echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V2_T1 all-on, 10 trials, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
+    echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V2_T1 all-on, 10 trials, per-spin ReLU, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
     OMP_NUM_THREADS=${THREADS_PER_PROC} \
     python -u scripts/run_toggle_nonideality_ablation.py \
       --full_45_corner_test true \
@@ -645,6 +645,7 @@ eval_one_combo_model() {
       --nonlinear_R_curve_edge_chunk_size 65536 \
       --activation_interpolation piecewise_linear \
       --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION}" \
+      --activation_curve_sharing per_spin \
       --activation_fit_constraint auto \
       --activation_normalize_positive_endpoint false \
       --compile_measured_activation false \

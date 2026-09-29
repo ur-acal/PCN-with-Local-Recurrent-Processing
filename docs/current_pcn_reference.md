@@ -114,9 +114,9 @@ echo Scheduler PID: $!
 ACTIVATION_CORNER_MODE defaults to fixed in this search launcher. FT selects
 `0906_RELU_Voltage/tt_25_1.csv`, MC18. Training-time validation uses the same
 fixed curve. The automatic post-FT evaluation is FS_V2_T1, 10 trials, with
-**per-model** ReLU sampling from `fs_25_2.csv`. It is not the per-spin 45-corner
-evaluation below. MC18 is V1, so adaptive subtraction leaves its 0.600 V offset
-unchanged.
+**per-spin** ReLU sampling from `fs_25_2.csv`, matching the pinned 45-corner
+protocol for that same corner. MC18 is V1, so adaptive subtraction leaves its
+0.600 V offset unchanged.
 
 ## Main-model 45-corner SLURM evaluation
 
