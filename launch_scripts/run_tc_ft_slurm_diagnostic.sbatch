@@ -80,11 +80,38 @@ REAL_PYTHON="$(command -v python)"
 LOGDIR="$DIAG_ROOT/production_logs"
 mkdir -p "$LOGDIR"
 
+# Install diagnostic cleanup before any hardware discovery can fail.  The
+# production prefix installs its own signal trap, so this must come after it.
+GPU_SAMPLER_PID=""
+cleanup() {
+  if [[ -n "$GPU_SAMPLER_PID" ]]; then
+    kill "$GPU_SAMPLER_PID" 2>/dev/null || true
+    wait "$GPU_SAMPLER_PID" 2>/dev/null || true
+  fi
+}
+finalize() {
+  status=$?
+  trap - EXIT
+  cleanup
+  printf '%s\n' "$status" > "$DIAG_ROOT/system/worker_exit_status.txt"
+  tar -C "$(dirname "$DIAG_ROOT")" -czf "${DIAG_ROOT}.tar.gz" "$(basename "$DIAG_ROOT")" || true
+  echo "DIAGNOSTIC_DIRECTORY=$DIAG_ROOT"
+  echo "DIAGNOSTIC_ARCHIVE=${DIAG_ROOT}.tar.gz"
+  echo "SLURM_STDOUT=$REPO/logs/slurm_jobs/slurm_${SLURM_JOB_ID}.out"
+  exit "$status"
+}
+trap finalize EXIT
+trap 'exit 130' TERM INT
+
 # Resolve the assigned GPU's physical NUMA node.  Binding the diagnostic Python
 # process before it starts also binds its data-loader children and CUDA control
 # thread, making this a production-realistic placement experiment.
 GPU_PCI_BUS_ID="$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader,nounits \
-  | sed -n '1p' | tr -d '[:space:]')"
+  | sed -n '1p' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+[[ -n "$GPU_PCI_BUS_ID" ]] || {
+  echo "nvidia-smi did not return an assigned GPU PCI bus ID" >&2
+  exit 2
+}
 case "$GPU_PCI_BUS_ID" in
   00000000:*) GPU_SYSFS_ID="0000:${GPU_PCI_BUS_ID#00000000:}" ;;
   *) GPU_SYSFS_ID="$GPU_PCI_BUS_ID" ;;
@@ -124,29 +151,6 @@ done
   echo "TC_FT_DIAG_TIMING_REPEATS must be a positive integer" >&2
   exit 2
 }
-
-# The production prefix installs a process-group trap; replace it with a local
-# sampler cleanup so an interrupted diagnostic does not kill its Slurm shell.
-GPU_SAMPLER_PID=""
-cleanup() {
-  if [[ -n "$GPU_SAMPLER_PID" ]]; then
-    kill "$GPU_SAMPLER_PID" 2>/dev/null || true
-    wait "$GPU_SAMPLER_PID" 2>/dev/null || true
-  fi
-}
-finalize() {
-  status=$?
-  trap - EXIT
-  cleanup
-  printf '%s\n' "$status" > "$DIAG_ROOT/system/worker_exit_status.txt"
-  tar -C "$(dirname "$DIAG_ROOT")" -czf "${DIAG_ROOT}.tar.gz" "$(basename "$DIAG_ROOT")" || true
-  echo "DIAGNOSTIC_DIRECTORY=$DIAG_ROOT"
-  echo "DIAGNOSTIC_ARCHIVE=${DIAG_ROOT}.tar.gz"
-  echo "SLURM_STDOUT=$REPO/logs/slurm_jobs/slurm_${SLURM_JOB_ID}.out"
-  exit "$status"
-}
-trap finalize EXIT
-trap 'exit 130' TERM INT
 
 {
   echo "date=$(date --iso-8601=seconds)"

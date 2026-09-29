@@ -223,7 +223,10 @@ def _measure_cuda(iterations: int,
 def _compile_shared_library(name: str, suffix: str, source: str,
                             command: list[str]) -> tuple[Path, dict[str, Any]]:
     digest = hashlib.sha256(source.encode()).hexdigest()[:16]
-    build = Path(tempfile.gettempdir()) / f"tc_host_diag_{os.getuid()}"
+    # Separate concurrent Slurm jobs from the same user.  They may otherwise
+    # compile and load the same partially-written shared object.
+    build = Path(tempfile.gettempdir()) / (
+        f"tc_host_diag_{os.getuid()}_{os.getpid()}")
     build.mkdir(parents=True, exist_ok=True)
     source_path = build / f"{name}_{digest}.{suffix}"
     library_path = build / f"{name}_{digest}.so"
@@ -354,12 +357,17 @@ def _environment() -> dict[str, Any]:
     }
 
 
-def _run_suite(native_cpu: Callable[[int], int],
-               native_cuda: dict[str, Callable[[int], None]]) -> dict[str, Any]:
+def _run_suite(
+        native_cpu: Callable[[int], int] | None,
+        native_cuda: dict[str, Callable[[int], None]] | None,
+) -> dict[str, Any]:
     suite: dict[str, Any] = {}
 
-    suite["native_cpu_loop"] = _measure_cpu(
-        COUNTS["native_cpu_loop"], native_cpu)
+    if native_cpu is None:
+        suite["native_cpu_loop_skipped"] = "native CPU helper did not build"
+    else:
+        suite["native_cpu_loop"] = _measure_cpu(
+            COUNTS["native_cpu_loop"], native_cpu)
 
     def python_integer_loop(iterations: int) -> int:
         value = 0
@@ -394,10 +402,13 @@ def _run_suite(native_cpu: Callable[[int], int],
     suite["cpu_mul_backward"] = _measure_cpu(
         COUNTS["cpu_autograd"], cpu_autograd)
 
-    suite["native_cuda_empty_async"] = _measure_cuda(
-        COUNTS["cuda_async_launch"], native_cuda["async"])
-    suite["native_cuda_empty_launch_and_sync"] = _measure_cuda(
-        COUNTS["cuda_launch_and_sync"], native_cuda["launch_and_sync"])
+    if native_cuda is None:
+        suite["native_cuda_skipped"] = "native CUDA helper did not build"
+    else:
+        suite["native_cuda_empty_async"] = _measure_cuda(
+            COUNTS["cuda_async_launch"], native_cuda["async"])
+        suite["native_cuda_empty_launch_and_sync"] = _measure_cuda(
+            COUNTS["cuda_launch_and_sync"], native_cuda["launch_and_sync"])
 
     cuda_x = torch.ones(1, device="cuda")
     cuda_y = torch.ones(1, device="cuda")
@@ -511,13 +522,27 @@ def main() -> None:
     RESULT["environment"] = _environment()
     _write_result()
 
-    native_cpu, cpu_build = _load_native_cpu()
-    RESULT["native_cpu_build"] = cpu_build
+    native_cpu = None
+    try:
+        native_cpu, cpu_build = _load_native_cpu()
+        RESULT["native_cpu_build"] = cpu_build
+    except Exception as exc:
+        RESULT["native_cpu_build"] = {
+            "status": "skipped", "error": repr(exc),
+            "traceback": traceback.format_exc(),
+        }
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for the host execution diagnostic")
     torch.cuda.init()
-    native_cuda, cuda_build = _load_native_cuda()
-    RESULT["native_cuda_build"] = cuda_build
+    native_cuda = None
+    try:
+        native_cuda, cuda_build = _load_native_cuda()
+        RESULT["native_cuda_build"] = cuda_build
+    except Exception as exc:
+        RESULT["native_cuda_build"] = {
+            "status": "skipped", "error": repr(exc),
+            "traceback": traceback.format_exc(),
+        }
     _write_result()
 
     inherited_affinity = set(os.sched_getaffinity(0))
