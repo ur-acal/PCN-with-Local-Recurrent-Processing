@@ -536,10 +536,11 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
             nonnegative = self.nonnegative_curve_mask.to(
                 device=x.device)[curve_indices].reshape_as(x_char)
             y_char = torch.where(nonnegative, y_char.clamp_min(0), y_char)
-        output = scale * y_char
+        output = (scale * y_char).clamp(
+            min=-self.v_dd.to(device=x.device, dtype=x.dtype),
+            max=self.v_dd.to(device=x.device, dtype=x.dtype))
         output = output if pullback_scale is None else output / pullback_scale
-        v_dd = self.v_dd.to(device=output.device, dtype=output.dtype)
-        return output.clamp(min=-v_dd, max=v_dd)
+        return output
 
 
 class MeasuredReLU6Activation(CubicBSplineActivation):
@@ -788,9 +789,8 @@ class PiecewiseLinearActivation(_CurveSharingMixin, nn.Module):
             self._interpolate(x_char, values)
             if expanded_curve_indices is None else
             self._interpolate_banked(x_char, expanded_curve_indices))
-        output = scale * y_char
-        output = output if pullback_scale is None else output / pullback_scale
-        return output.clamp(min=-v_dd, max=v_dd)
+        output = (scale * y_char).clamp(min=-v_dd, max=v_dd)
+        return output if pullback_scale is None else output / pullback_scale
 
 
 class MeasuredPiecewiseLinearReLU6Activation(PiecewiseLinearActivation):

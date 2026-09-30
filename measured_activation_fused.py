@@ -79,10 +79,9 @@ if triton is not None:
             characterized - x_left, x_right - x_left)
         y_characterized = y_left + fraction * (y_right - y_left)
         output_before_clamp = scale * y_characterized
-        if HAS_PULLBACK:
-            output_before_clamp = tl_math.div_rn(
-                output_before_clamp, pullback)
         output = tl.minimum(tl.maximum(output_before_clamp, -v_dd), v_dd)
+        if HAS_PULLBACK:
+            output = tl_math.div_rn(output, pullback)
         output = tl.where(x != x, float("nan"), output)
         tl.store(Y + offsets, output, mask=mask)
 
@@ -142,18 +141,16 @@ if triton is not None:
             characterized - x_left, x_right - x_left)
         y_characterized = y_left + fraction * (y_right - y_left)
         output_before_clamp = scale * y_characterized
-        if HAS_PULLBACK:
-            output_before_clamp = tl_math.div_rn(
-                output_before_clamp, pullback)
 
         # Preserve the operation order of the unfused PyTorch autograd graph:
-        # output clamp, pullback division, output scale, interpolation, input
-        # clamp, input scale, and finally the coordinate pullback.
+        # pullback division, physical-output clamp, output scale,
+        # interpolation, input clamp, input scale, and finally the coordinate
+        # pullback.
         output_active = ((output_before_clamp >= -v_dd) &
                          (output_before_clamp <= v_dd))
-        grad = tl.where(output_active, grad, 0.0)
         if HAS_PULLBACK:
             grad = tl_math.div_rn(grad, pullback)
+        grad = tl.where(output_active, grad, 0.0)
         grad = grad * scale
         grad = grad * (y_right - y_left)
         grad = tl_math.div_rn(grad, x_right - x_left)

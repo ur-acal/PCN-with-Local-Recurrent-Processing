@@ -245,7 +245,7 @@ def test_coordinate_pullback_matches_phi_beta_x_over_beta(tmp_path):
     beta_c = torch.tensor(0.4)
     x = torch.tensor([-0.15, 0.05, 0.2], requires_grad=True)
 
-    expected = (reference(beta_c * x) / beta_c).clamp(-0.1, 0.1)
+    expected = reference(beta_c * x) / beta_c
     pullback.set_coordinate_pullback_scale(beta_c)
     actual = pullback(x)
     actual.sum().backward()
