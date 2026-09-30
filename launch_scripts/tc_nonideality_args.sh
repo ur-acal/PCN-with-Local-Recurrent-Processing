@@ -3,10 +3,15 @@ TC_ARGS=()
 if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
   source "$(dirname "${BASH_SOURCE[0]}")/tc_hardware_defaults.sh" "$1"
   export MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-0906_RELU_Voltage}"
-  # Fixed TT MC18 for FT; the full measured bank for per-spin evaluation.
+  # Fixed TT MC18 for fixed FT; the full measured bank for random FT and eval.
   if [[ "$1" == ft ]]; then
-    tc_activation_path=./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv
-    tc_activation_corner=MC18
+    if [[ "${ACTIVATION_CORNER_MODE:-fixed}" == random_per_forward ]]; then
+      tc_activation_path=./hardware_data/mc_45_corners/0906_RELU_Voltage
+      tc_activation_corner=TT_25_1_MC18
+    else
+      tc_activation_path=./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv
+      tc_activation_corner=MC18
+    fi
   else
     tc_activation_path=./hardware_data/mc_45_corners/0906_RELU_Voltage
     tc_activation_corner=TT_25_1_MC18

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -13,7 +14,8 @@ import numpy as np
 import torch
 
 
-AUTO_CHECKPOINT_MEMORY_THRESHOLD = 0.8
+LOCAL_AUTO_CHECKPOINT_MEMORY_THRESHOLD = 0.65
+SLURM_AUTO_CHECKPOINT_MEMORY_THRESHOLD = 0.8
 AUTO_CHECKPOINT_PROFILE_BATCHES = 3
 AUTO_CHECKPOINT_PORTION = "auto"
 _OPTION_NAMES = ("option_init", "option_patch", "option_aca")
@@ -25,6 +27,23 @@ _RUNTIME_TENSOR_NAMES = {
     "_spin_factor_z",
     "_nonlinear_R_training_curve_indices",
 }
+
+
+def slurm_job_id(environ=None):
+    """Return the active Slurm job ID, including the legacy variable alias."""
+    environ = os.environ if environ is None else environ
+    for name in ("SLURM_JOB_ID", "SLURM_JOBID"):
+        value = environ.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def auto_checkpoint_memory_threshold(environ=None):
+    """Use the conservative local limit while retaining the Slurm limit."""
+    if slurm_job_id(environ) is not None:
+        return SLURM_AUTO_CHECKPOINT_MEMORY_THRESHOLD
+    return LOCAL_AUTO_CHECKPOINT_MEMORY_THRESHOLD
 
 
 def parse_checkpoint_ode_rhs_portion(value):
@@ -437,6 +456,7 @@ def _profile_candidate(trainer, snapshot, batches, layer_count, limit_bytes):
 
 def maybe_profile_checkpoint_ode_rhs(trainer):
     """Choose the smallest safe checkpointed prefix for ``portion=auto``."""
+    memory_threshold = auto_checkpoint_memory_threshold()
     portion = getattr(trainer, "checkpoint_ode_rhs_portion", 1.0)
     enabled = bool(getattr(trainer, "checkpoint_ode_rhs_training", False))
     if portion != AUTO_CHECKPOINT_PORTION:
@@ -458,7 +478,7 @@ def maybe_profile_checkpoint_ode_rhs(trainer):
             "total_layers": 0,
             "effective_portion": 0.0,
             "selected_indices": [],
-            "threshold": AUTO_CHECKPOINT_MEMORY_THRESHOLD,
+            "threshold": memory_threshold,
             "profile_batches": 0,
             "trials": [],
         }
@@ -486,7 +506,7 @@ def maybe_profile_checkpoint_ode_rhs(trainer):
     torch.cuda.empty_cache()
     capacity, physical_total, initial_free = _usable_cuda_capacity(
         getattr(trainer, "checkpoint_memory_fraction", 1.0))
-    limit = int(AUTO_CHECKPOINT_MEMORY_THRESHOLD * capacity)
+    limit = int(memory_threshold * capacity)
     trials = []
 
     def evaluate(count):
@@ -507,7 +527,7 @@ def maybe_profile_checkpoint_ode_rhs(trainer):
         except RuntimeError as exc:
             raise RuntimeError(
                 "Full ODE RHS checkpointing cannot keep the three-batch "
-                f"profile below {AUTO_CHECKPOINT_MEMORY_THRESHOLD:.0%} of "
+                f"profile below {memory_threshold:.0%} of "
                 "usable CUDA memory.") from exc
 
         # A separate confirmation uses the same three batches and pristine state.
@@ -527,7 +547,7 @@ def maybe_profile_checkpoint_ode_rhs(trainer):
         trainer.train_dataloader = _ProfiledFirstEpochLoader(
             original_loader, batches, iterator)
     metadata.update(
-        threshold=AUTO_CHECKPOINT_MEMORY_THRESHOLD,
+        threshold=memory_threshold,
         profile_batches=AUTO_CHECKPOINT_PROFILE_BATCHES,
         usable_capacity=capacity,
         physical_total=physical_total,
@@ -544,5 +564,5 @@ def maybe_profile_checkpoint_ode_rhs(trainer):
         "Automatic ODE RHS checkpoint selection: %d/%d layers "
         "(effective portion %.6f), threshold %.0f%% of %.2f GiB",
         selected, len(layers), metadata["effective_portion"],
-        100 * AUTO_CHECKPOINT_MEMORY_THRESHOLD, capacity / 2**30)
+        100 * memory_threshold, capacity / 2**30)
     return metadata

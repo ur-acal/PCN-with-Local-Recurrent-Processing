@@ -11,10 +11,12 @@ from checkpoint_memory_profiler import (
     _TrainerSnapshot,
     _ProfiledFirstEpochLoader,
     apply_checkpoint_ode_rhs_portion,
+    auto_checkpoint_memory_threshold,
     checkpoint_layer_count,
     find_minimum_safe_checkpoint_layers,
     parse_checkpoint_ode_rhs_portion,
     set_checkpoint_ode_rhs_layer_count,
+    slurm_job_id,
 )
 
 
@@ -50,6 +52,17 @@ def solve(method, checkpoint_rhs, *, project=False, full_traj=False):
 
 
 class ODERHSCheckpointingTests(unittest.TestCase):
+    def test_auto_memory_threshold_distinguishes_local_and_slurm(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(slurm_job_id())
+            self.assertEqual(auto_checkpoint_memory_threshold(), 0.65)
+        with patch.dict(os.environ, {'SLURM_JOB_ID': '2001620'}, clear=True):
+            self.assertEqual(slurm_job_id(), '2001620')
+            self.assertEqual(auto_checkpoint_memory_threshold(), 0.8)
+        with patch.dict(os.environ, {'SLURM_JOBID': 'legacy-id'}, clear=True):
+            self.assertEqual(slurm_job_id(), 'legacy-id')
+            self.assertEqual(auto_checkpoint_memory_threshold(), 0.8)
+
     def test_profiled_batches_continue_original_worker_iterator(self):
         class Loader:
             def __init__(self):

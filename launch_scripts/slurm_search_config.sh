@@ -212,7 +212,8 @@ esac
 SWITCH_INF="${SWITCH_INF:-false}"
 ##############################################################################################
 
-PCNS=( "PCNetNoBatchNorm" )
+# Space-separated model variants; the default preserves all existing launches.
+read -r -a PCNS <<< "${PCN_LIST:-PCNetNoBatchNorm}"
 IMG_TYPES=( "${IMG_TYPE}" )
 CIRC_CONFS=( "" )
 

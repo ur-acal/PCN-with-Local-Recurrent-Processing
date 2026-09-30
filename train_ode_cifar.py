@@ -21,8 +21,10 @@ from pc_conv import PCConv, PartialTiedPCConv
 from pc_model import PCNet, PCNetWithMiddleConv, PCN_CLASSES, PC_CONV_CLASS
 from trainer import TrainerCiFar
 from checkpoint_memory_profiler import (
+    auto_checkpoint_memory_threshold,
     configure_trainer_checkpointing,
     parse_checkpoint_ode_rhs_portion,
+    slurm_job_id,
 )
 from inference_utils import load_and_prepare_model, test_once
 from measured_activation import (
@@ -845,6 +847,12 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
+    job_id = slurm_job_id()
+    logging.warning(
+        "Training environment: slurm=%s, SLURM_JOB_ID=%s; automatic ODE RHS "
+        "checkpoint memory threshold=%.0f%%",
+        job_id is not None, job_id if job_id is not None else "unset",
+        100 * auto_checkpoint_memory_threshold())
     # Recovery and diagnostic scripts may reconstruct Namespaces saved before
     # this option existed instead of going through the current parser.
     if not hasattr(args, "fuse_measured_activation"):

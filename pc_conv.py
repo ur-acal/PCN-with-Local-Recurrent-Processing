@@ -637,6 +637,13 @@ class PCConvReLU6(PCConv):
         super().__init__(**kwargs)
         self.relu = nn.ReLU6(inplace=False)
 
+class PCConvReLU5(PCConv):
+    """PCConv control with the unitless physical output rail at five."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.relu = ReLUX(5)
+
 class PCConvReLU6Sep(PCConvReLU6):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

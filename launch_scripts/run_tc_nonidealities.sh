@@ -70,7 +70,9 @@ if [[ "$stage" == ft ]]; then
     --teacher_arch "${TEACHER_ARCH:-${default_teacher_arch}}"
     --teacher_arch_source "${TEACHER_ARCH_SOURCE:-auto}"
     --teacher_input_size "${TEACHER_INPUT_SIZE:-224}" --teacher_center_crop "${TEACHER_CENTER_CROP:-true}"
-    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER:-false}")
+    --adapt_PIL_teacher "${ADAPT_PIL_TEACHER:-false}"
+    --activation_corner_mode "${ACTIVATION_CORNER_MODE:-fixed}"
+    --activation_random_curve_sharing "${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}")
 else
   cmd=(python -u ode_inference.py --model_name "$MODEL_NAME" --model_dir "${MODEL_DIR:-./saved_ckpt_runs}"
     --task "${TASK:-cifar100}" --img_type "${IMG_TYPE:-CiFAIR}" --ckpt "${CKPT:-best}"

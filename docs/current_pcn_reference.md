@@ -6,6 +6,196 @@ the generic launchers' defaults. Update this document when the agreed recipe
 changes. Historical `scan_test` summaries and `coupler_monte_v2` results are not
 the reference for this recipe.
 
+## TC RGB CIFAR-10 model launches
+
+This section is the copy-paste reference for the 22-layer, 16/32/64-channel
+TC PCN with 6/7/6 same-channel layers. It is separate from the toggle
+CiFAIR-100 reference below. The launch chain is:
+
+- local FT/evaluation: `run_tc_nonidealities.sh` -> `train_ode_cifar.py` or
+  `ode_inference.py`;
+- Slurm pipeline: `slurm_search_config.sh` -> `run_kdcrd_then_ft.sbatch` ->
+  the same Python entry points.
+
+### Defaults supplied by the TC launchers
+
+Do not repeat these in launch commands unless running an ablation: nonlinear-R,
+spin variation, fast summing-current noise, fast coupler noise, measured ReLU,
+and measured pooling are enabled; slow-current and differential mismatch are
+disabled. R/Rmax/C/VDD are 10 kOhm/150 kOhm/49 fF/0.1 V; weights are 5-bit with
+no output ENOB; FT uses shared convolution with histogram curve sampling;
+expanded evaluation uses loop convolution with per-coupler nonlinear-R curves;
+and seeds default to 4096. FT uses fixed TT/25C/VDD1 MC18 measured ReLU, while
+evaluation uses the full measured bank with per-spin assignment.
+
+For local or Slurm FT, set `ACTIVATION_CORNER_MODE=random_per_forward` to sample
+a new measured ReLU curve on each forward; `per_layer` is already the sharing
+default. This mode selects the full `0906_RELU_Voltage` directory rather than
+the fixed `tt_25_1.csv` file. `run_tc_nonidealities.sh ft` forwards both
+activation-mode controls.
+
+FT also defaults to batch 128, 140 epochs, LR 0.005, zero warmup, SRRL, the RGB
+EfficientNet-V2-L teacher, and final-only evaluation. `FT_TIMM_AUG_LEVEL=none`
+is retained below because `none` means normal timm augmentation; the launcher's
+default `no_aug` means no augmentation.
+
+The live-QAT weight cache and fused measured ReLU are already on automatically.
+The three explicit settings below enable accepted-step reuse, RHS checkpointing,
+and automatic selection of the checkpointed layer portion.
+
+### Supported stage matrix
+
+| Environment | Pipeline | Pretrain only | FT only | Eval only | FT then eval |
+|---|---|---|---|---|---|
+| Local | No exact TC pipeline launcher | No exact TC pretrain launcher | `run_tc_nonidealities.sh ft` | `run_tc_nonidealities.sh eval` | Run the two local stages sequentially after reading the FT model name |
+| Slurm | `mode=default` | `mode=pretrain_only` | `mode=ft_only` | Not implemented | `mode=ft_and_eval` |
+
+Do not substitute `run_ode_train.sh` for the missing local pipeline entry: its
+generic defaults do not reproduce the TC Slurm pretraining recipe. Likewise,
+do not claim that the Slurm worker supports `eval_only`; its accepted modes are
+exactly the four shown above.
+
+### TC model and path selection
+
+Set this block first for local FT/evaluation. These are the established CIFAR-10
+pretrained 22Layers6l7l6 model names. Set `ft_model` from the final `Model Name`
+line printed by the FT log before launching evaluation.
+
+```bash
+tc_state=1  # 1 or 2
+
+case "$tc_state" in
+  1)
+    pretrain_model='TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_22Layers6l7l6_2Pool_srrlDistill_a0p3_t2p0_2REP'
+    ;;
+  2)
+    pretrain_model='TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_22Layers6l7l6_2Pool_srrlDistill_a0p3_t2p0_2REP'
+    ;;
+  *) echo 'tc_state must be 1 or 2' >&2; return 2 ;;
+esac
+
+run_name="tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_ft_5opt_auto_none"
+pretrain_root="./saved_ckpt_runs/tc_rgb_cifar10_state${tc_state}_pcn_resnet_depth_study"
+ft_root="./saved_ckpt_runs/${run_name}"
+ft_log="./logs/local_runs/${run_name}.log"
+
+# Fill this only after FT completes.
+ft_model='<FT Model Name from the log>'
+```
+
+### Local FT only
+
+Run from an activated `scanbase` environment. Only non-default settings are
+passed. The redirection is part of the `nohup` command; do not leave a trailing
+backslash or blank line before it.
+
+```bash
+cd /home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN
+conda activate scanbase
+mkdir -p logs/local_runs
+
+nohup env \
+  MODEL_NAME="$pretrain_model" \
+  MODEL_DIR="$pretrain_root" \
+  OUTPUT_DIR="$ft_root" \
+  TC_STATE="$tc_state" \
+  FT_TIMM_AUG_LEVEL=none \
+  REUSE_ACCEPTED_STEP_TRAINING=true \
+  CHECKPOINT_ODE_RHS_TRAINING=true \
+  CHECKPOINT_ODE_RHS_PORTION=auto \
+  bash ./launch_scripts/run_tc_nonidealities.sh ft \
+  > "$ft_log" 2>&1 < /dev/null &
+
+echo "PID=$!  LOG=$ft_log"
+```
+
+### Local eval only
+
+This is the standard expanded all-on TC evaluation: batch 128, ten trials,
+full measured-ReLU bank with per-spin assignment, and per-coupler nonlinear-R.
+`last` is already the launcher's default evaluation checkpoint.
+
+```bash
+eval_log="./logs/local_runs/${run_name}_eval.log"
+
+nohup env \
+  MODEL_NAME="$ft_model" \
+  MODEL_DIR="$ft_root" \
+  TC_STATE="$tc_state" \
+  bash ./launch_scripts/run_tc_nonidealities.sh eval \
+  > "$eval_log" 2>&1 < /dev/null &
+
+echo "PID=$!  LOG=$eval_log"
+```
+
+For local FT followed by evaluation, run the FT block, copy its final printed
+model name into `ft_model`, and then run the evaluation block. This explicit
+boundary prevents evaluation from silently selecting a stale or partial FT
+checkpoint.
+
+### Slurm pipeline, pretrain only, FT only, or FT then eval
+
+Use a fresh module-configured login shell. Set `pipeline_mode` to one of the
+four values in the table. For `default` or `pretrain_only`, point
+`pretrain_root` to the intended new pretraining output. For `ft_only` or
+`ft_and_eval`, it must contain exactly one matching completed 300-epoch
+pretrained model; verified checkpoint discovery rejects zero or multiple
+matches. Use a fresh `ft_root` for any mode that runs FT.
+
+```bash
+module swap slurm slurm/24.05.0.b1
+cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
+mkdir -p logs/scheduler_slurm logs/slurm_jobs
+
+pipeline_mode=ft_only  # default | pretrain_only | ft_only | ft_and_eval
+
+for tc_state in 1 2; do
+  case "$pipeline_mode" in
+    default|pretrain_only)
+      run_name="tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_${pipeline_mode}_5opt_auto_none"
+      pretrain_root="./saved_ckpt_runs/${run_name}_pretrain"
+      ;;
+    ft_only|ft_and_eval)
+      run_name="tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_${pipeline_mode}_5opt_auto_none"
+      pretrain_root="./saved_ckpt_runs/tc_rgb_cifar10_state${tc_state}_pcn_resnet_depth_study"
+      ;;
+    *)
+      echo "Unsupported pipeline_mode: $pipeline_mode" >&2
+      break
+      ;;
+  esac
+  ft_root="./saved_ckpt_runs/${run_name}"
+
+  (
+    export mode="$pipeline_mode" \
+           TC_NONIDEALITIES=true \
+           TC_STATE="$tc_state" \
+           TASK=cifar10 \
+           IMG_TYPE=rgb \
+           EXP_PREFIX="$run_name" \
+           PRETRAIN_SAVE_PATH="$pretrain_root" \
+           FT_OUTPUT_SAVE_PATH="$ft_root" \
+           FT_TIMM_AUG_LEVEL=none \
+           PCN_CHAN_0_LIST=16 \
+           PCN_NUM_LAYERS_LIST=22 \
+           COMB_SEL_SET=2 \
+           REUSE_ACCEPTED_STEP_TRAINING=true \
+           CHECKPOINT_ODE_RHS_TRAINING=true \
+           CHECKPOINT_ODE_RHS_PORTION=auto
+
+    source ./launch_scripts/slurm_search_config.sh
+  ) > "./logs/scheduler_slurm/${run_name}_${pipeline_mode}.log" 2>&1 < /dev/null &
+
+  echo "${run_name}: scheduler PID $!"
+done
+```
+
+`COMB_SEL_SET=2` selects exactly `N22_C16_n06_n17_n26`, i.e. the 6/7/6
+architecture. `NUM_COMB_PER_NUM_LAYER=3`, `MAX_TASKS_PER_GPU=1`, the teacher,
+all TC hardware settings, and fused measured ReLU are defaults and are therefore
+not repeated above. The scheduler log prints the submitted experiment and Slurm
+job ID.
+
 ## Model and recipe
 
 The main reference is the CiFAIR-100 PCN with 24/48/96 channels, stage depths
@@ -36,6 +226,73 @@ Fixed base timing still uses the quantized weight-factor scaling in the pulse
 implementation; 10 ns is not a promise that every layer's realized stage time
 is exactly 10 ns. Training recipe compensation is already in the trained
 weights; do not add SCALE_TRAIN_RECIPE to the Level-3 evaluation command.
+
+### Measured-ReLU pretraining depth stability (2026-09-30)
+
+For two-stage, no-BN CiFAIR-100 models using the fixed 0906 MC18 ReLU with
+`UNITLESS_MEASURED_PULLBACK_MODE=direct`, excessive depth can prevent early
+training convergence. Five-epoch LR warmup can mitigate this failure. This does not happen when we use ideal ReLU6 in the pretrain stage.
+
+| Control | Mean CE by epoch | Observation |
+|---|---|---|
+| 36->72, 9:9 stages, no warmup | 4.5216 -> 4.2132 -> 4.0380 | Converges |
+| 36->72, 11:11 stages, no warmup | 4.6842 -> 4.6066 -> 4.6060 | Stays at chance |
+| 32->64, 11:11 stages, no warmup | 4.7554 -> 4.6083 -> 4.6074 | Stays at chance |
+| 32->64, 11:11 stages, 5-epoch warmup | 4.7681 -> 4.6039 -> 4.4281 -> 4.2881 -> 4.1996 | Converges; 13.94% validation top-1 at epoch 5 |
+
+Other three-epoch C32->64, 11:11 controls isolate the failure mechanism:
+
+| Control | Mean CE by epoch | Observation |
+|---|---|---|
+| Original baseline | 4.7554 -> 4.6083 -> 4.6074 | Stays at chance |
+| Boundary BN | 4.4712 -> 4.1534 -> 3.9779 | Clearly learns |
+| No SRRL | 4.7547 -> 4.6063 -> 4.6059 | Stays at chance |
+| SRRL weight 0.1 | 4.6713 -> 4.6121 -> 4.6061 | Stays at chance |
+| No timm augmentation | 4.6415 -> 4.6063 -> 4.6058 | Stays at chance |
+
+The controlled 36->72 comparison identifies depth as the immediate cause:
+9:9 learns, while 11:11 fails with width and recipe unchanged. This establishes
+only a tested boundary, not a universal maximum depth. Prefer 9:9 or shallower;
+for 11:11, use LR warmup and verify convergence before a full run. Logs and the
+reproducible launcher are under `logs/local_runs/c32_pullback_controls_*` and
+`diagnostic_scripts/run_c32_pullback_pretrain_controls.sh`.
+
+Removing SRRL, reducing its weight, or removing timm augmentation does not
+restore learning, so none is the primary cause. Boundary BN does restore
+learning, supporting depth-related activation/gradient propagation as the
+failure mechanism; LR warmup provides a second mitigation without changing the
+architecture.
+
+#### Activation-shape diagnostic
+
+Four five-epoch runs used the same C32->64, 11:11, no-BN configuration, seed,
+data, optimizer, SRRL, augmentation, and zero-warmup recipe. Only the
+pretraining activation was changed. The CE values below are epoch means over
+all 390 minibatches, not the last progress-bar minibatch.
+
+| Pretraining activation | Mean CE by epoch | Epoch-5 validation | Result |
+|---|---|---|---|
+| Ideal ReLU5 | 4.5977 -> 4.3277 -> 3.9571 -> 3.7871 -> 3.6310 | 32.66% top-1 / 65.33% top-5 | Learns |
+| Endpoint-normalized MC18 | 5.0356 -> 4.6063 -> 4.6058 -> 4.6056 -> 4.6055 | 1.00% / 5.00% | Stays at chance |
+| Zero-offset MC18, `phi_m(x) - phi_m(0)` | 4.4237 -> 4.0132 -> 3.8230 -> 3.6898 -> 3.5444 | 34.86% / 67.84% | Learns |
+| Zero-offset and rectified MC18, `max(phi_m(x) - phi_m(0), 0)` | 4.6059 -> 4.5987 -> 4.5911 -> 4.5780 -> 4.5469 | 6.58% / 21.50% | Only weak recovery |
+
+For the direct-pullback MC18 curve, `phi_m(0) = 0.2136` in unitless model
+coordinates. Endpoint normalization preserves this positive zero-input output
+and does not restore training, whereas subtracting only `phi_m(0)` does. Along
+with the boundary-BN result, **this strongly identifies `phi_m(0) > 0` as a major cause of the deep no-BN model's failure**. It is not the only
+relevant curve property: rectifying the centered curve removes the offset but
+also removes its negative-input branch and gives only weak recovery. This might suggest that non-dead negative-input region might be helpful.
+
+These are diagnostics, not changes to the production measured-ReLU behavior.
+The reproducible cases are `ideal_relu5`, `endpoint_normalized`, `zero_offset`,
+and `zero_offset_relu` in
+`diagnostic_scripts/run_c32_pullback_pretrain_controls.sh`. The two transformed
+diagnostic tables are generated by
+`diagnostic_scripts/generate_mc18_activation_controls.py`. Raw logs are under
+`logs/local_runs/c32_pullback_controls_activation_*_20260930_161036/`, and the
+service/run manifest is
+`logs/local_runs/c32_activation_variants_20260930_161036/services.txt`.
 
 ## Recent non-ideality audit
 
