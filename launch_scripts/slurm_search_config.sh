@@ -262,6 +262,14 @@ case "${TWO_STAGE_POOL_POSITION}" in
     return 2 2>/dev/null || exit 2
     ;;
 esac
+ONE_STAGE_POOL_MODE="${ONE_STAGE_POOL_MODE:-search}"
+case "${ONE_STAGE_POOL_MODE}" in
+  search|no_pool) ;;
+  *)
+    echo "ERROR: ONE_STAGE_POOL_MODE must be search or no_pool, got '${ONE_STAGE_POOL_MODE}'." >&2
+    return 2 2>/dev/null || exit 2
+    ;;
+esac
 ##############################################################################################
 
 TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
@@ -606,6 +614,21 @@ generate_one_stage_fixed_combs() {
   local mid_pos=$(( (num_layers + 1) / 2 ))   # if even, picks the smaller middle
   local pool_pos
   local i
+
+  if [[ "${ONE_STAGE_POOL_MODE}" == "no_pool" ]]; then
+    local -a INP=(3) OUT=("$chan0") POOL=(0)
+    for ((i=1; i<=num_layers; i++)); do
+      INP+=("$chan0"); OUT+=("$chan0"); POOL+=(0)
+    done
+    params=$(( K2 * (
+      3*chan0 +
+      num_layers*chan0*chan0
+    ) ))
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${params}" "OneStage_N${num_layers}_C${chan0}_noPool" \
+      "${chan0}" "${num_layers}" "${INP[*]}" "${OUT[*]}" "${POOL[*]}"
+    return
+  fi
 
   # ranked pool positions:
   # middle, then all the way left, then continue right

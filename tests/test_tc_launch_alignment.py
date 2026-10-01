@@ -151,6 +151,30 @@ class TCLaunchAlignmentTests(unittest.TestCase):
         self.assertEqual(pool.count(1), 1)
         self.assertEqual(pool.index(1), 14)
 
+    def test_pcn_one_stage_no_pool(self):
+        env = environment(
+            SHOW_COMB_ONLY='1', SEARCH_ARCH='one_stage_fixed',
+            ONE_STAGE_POOL_MODE='no_pool', PCN_CHAN_0_LIST='56',
+            PCN_NUM_LAYERS_LIST='18', NUM_COMB_PER_NUM_LAYER='2')
+        output = subprocess.check_output(
+            ['bash', 'launch_scripts/slurm_search_config.sh'],
+            cwd=ROOT, text=True, env=env)
+        self.assertIn('OneStage_N18_C56_noPool', output)
+        self.assertEqual(output.count('OneStage_N18_C56_noPool'), 1)
+
+        source = (ROOT/'launch_scripts/slurm_search_config.sh').read_text()
+        prefix = source[:source.index('# Main launch:')]
+        generated = subprocess.check_output(
+            ['bash', '-c', prefix + '\ngenerate_one_stage_fixed_combs 56 18 2\n'],
+            cwd=ROOT, text=True, env=env).strip()
+        fields = generated.split('\t')
+        self.assertEqual(len(fields), 7)
+        _, tag, _, _, inp, out, pool = fields
+        self.assertEqual(tag, 'OneStage_N18_C56_noPool')
+        self.assertEqual((len(inp.split()), len(out.split()), len(pool.split())),
+                         (19, 19, 19))
+        self.assertEqual(set(pool.split()), {'0'})
+
     def test_pcn_slurm_defaults_select_rgb_teacher(self):
         out = subprocess.check_output(['bash', 'launch_scripts/slurm_search_config.sh'],
             cwd=ROOT, text=True, env=environment(TC_NONIDEALITIES='true', TC_DRY_RUN='true'))
