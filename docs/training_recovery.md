@@ -10,9 +10,12 @@ checkpoint.
 Use the same architecture, training stage, recipe, dataset and device layout.
 Explicitly supply the latest file through the existing CNN
 `PRETRAIN_RESUME_CKPT` (pretraining) or `MODEL_CKPT` (fine-tuning) environment
-variable. These forward to `--resume_checkpoint`. PCN uses its existing
-`--model_name`, `--save_path`, and `--ckpt latest` selection. No latest file is
-discovered automatically. Ordinary checkpoints retain weights-only loading.
+variable. These forward to `--resume_checkpoint`. For PCN training, pass the
+explicit latest checkpoint to `launch_scripts/run_local_ode_recovery.sh`; it
+restores the saved arguments and preserves the existing model name. No latest
+file is discovered automatically. Normal PCN launchers treat every selected
+checkpoint suffix, including `latest`, as weights-only initialization for a new
+training branch.
 
 Recovery resumes at the next epoch and restores RNG state after trainer and
 teacher setup. Exact reproducibility requires non-persistent data-loader workers,

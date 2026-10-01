@@ -1,6 +1,6 @@
-"""Resume PCN pretraining from an explicit epoch-recovery checkpoint.
+"""Resume PCN training from an explicit epoch-recovery checkpoint.
 
-Restores saved arguments and preserves the model name. Does not start FT.
+Restores the saved training stage and arguments and preserves the model name.
 """
 import argparse
 import os
@@ -66,6 +66,16 @@ def apply_fused_measured_activation_override(config, cli_override):
         config["fuse_measured_activation"] = override
 
 
+def configure_exact_recovery(config, path):
+    """Preserve the saved recipe while selecting in-place full-state recovery."""
+    model_name = path.parent.name
+    config.update(model_name=model_name, ckpt="latest",
+                  save_path=str(path.parent.parent),
+                  output_save_path=str(path.parent.parent), num_workers=0,
+                  _exact_training_recovery=True)
+    return model_name
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path, help="Latest checkpoint or its run directory")
@@ -94,10 +104,7 @@ def main():
         config, args.checkpoint_ode_rhs_portion)
     apply_fused_measured_activation_override(
         config, args.fuse_measured_activation)
-    model_name = path.parent.name
-    config.update(model_name=model_name, ckpt="latest",
-                  save_path=str(path.parent.parent),
-                  output_save_path=str(path.parent.parent), num_workers=0)
+    model_name = configure_exact_recovery(config, path)
     print(f"Recovery checkpoint: {path}", flush=True)
     print(f"Completed epochs: {checkpoint['epoch']}; target: {config['num_epochs']}", flush=True)
     print(f"Recovery components: {list(recovery['components'])}; DataLoader workers: 0", flush=True)

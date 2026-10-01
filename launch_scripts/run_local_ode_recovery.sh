@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Activate scanbase first. Optional first argument: checkpoint or run directory.
-# Resumes pretraining only; does not automatically start finetuning.
+# Restores the training stage and arguments saved in the recovery checkpoint.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 checkpoint="${1:-saved_ckpt_runs/cifar100_CiFAIR_C7_14_28_4l5l4_20260908_124210_iq12}"

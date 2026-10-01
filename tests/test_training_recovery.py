@@ -67,7 +67,46 @@ def make_trainer(tmp_path):
                                 lr=.1, momentum=.9)
     return SimpleNamespace(model=model, _feature_kd_loss=aux, optimizer=optimizer,
                            scheduler=torch.optim.lr_scheduler.StepLR(optimizer, 1, .8),
-                           device='cpu', save_path=str(tmp_path), model_name='toy')
+                           device='cpu', save_path=str(tmp_path), model_name='toy',
+                           _maybe_profile_ode_rhs_checkpointing=lambda: None)
+
+
+def test_normal_checkpoint_branch_does_not_enable_full_recovery():
+    from train_ode_cifar import _configure_training_recovery
+
+    trainer = SimpleNamespace()
+    args = SimpleNamespace(model_name='source')
+    _configure_training_recovery(trainer, args, '/tmp/source_latest_ckpt.pth')
+    assert trainer.recovery_checkpoint is None
+
+    args._exact_training_recovery = True
+    _configure_training_recovery(trainer, args, '/tmp/source_latest_ckpt.pth')
+    assert trainer.recovery_checkpoint == '/tmp/source_latest_ckpt.pth'
+
+
+def test_exact_recovery_preserves_saved_recipe_and_model_directory(tmp_path):
+    from scripts.resume_local_ode_training import configure_exact_recovery
+
+    model_name = 'model_2REP'
+    checkpoint = tmp_path / model_name / f'{model_name}_latest_ckpt.pth'
+    config = {
+        'activation_corner_mode': 'random_per_forward',
+        'activation_random_curve_sharing': 'per_layer',
+        'checkpoint_ode_rhs_portion': 4 / 22,
+        'teacher_ckpt': '/saved/teacher.pth',
+    }
+    selected = configure_exact_recovery(config, checkpoint)
+    assert selected == model_name
+    assert config['model_name'] == model_name
+    assert config['save_path'] == str(tmp_path)
+    assert config['output_save_path'] == str(tmp_path)
+    assert config['ckpt'] == 'latest'
+    assert config['num_workers'] == 0
+    assert config['_exact_training_recovery'] is True
+    assert config['activation_corner_mode'] == 'random_per_forward'
+    assert config['activation_random_curve_sharing'] == 'per_layer'
+    assert config['checkpoint_ode_rhs_portion'] == 4 / 22
+    assert config['teacher_ckpt'] == '/saved/teacher.pth'
 
 
 def step(trainer):

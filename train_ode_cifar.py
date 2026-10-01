@@ -845,6 +845,27 @@ def _get_feature_kd_trainer(args):
         return TrainerCiFarTimmStyleReviewKD
     return TrainerCiFarTimmStyle
 
+
+def _configure_training_recovery(trainer, args, checkpoint_path):
+    """Separate weights-only branches from explicit full-state recovery."""
+    exact_recovery = bool(getattr(args, "_exact_training_recovery", False))
+    if exact_recovery and args.model_name is None:
+        raise ValueError("Exact training recovery requires a model checkpoint.")
+    trainer.recovery_checkpoint = checkpoint_path if exact_recovery else None
+    if exact_recovery:
+        logging.warning(
+            "Training mode: exact recovery; preserving model name %s and "
+            "restoring full training state from %s",
+            args.model_name, checkpoint_path)
+    elif args.model_name is not None:
+        logging.warning(
+            "Training mode: weights-only branch from %s; optimizer, scheduler, "
+            "history, and epoch start from a new training run",
+            checkpoint_path)
+    else:
+        logging.warning("Training mode: new training run from initialization")
+
+
 def main():
     args = get_args()
     job_id = slurm_job_id()
@@ -963,6 +984,7 @@ def main():
     logging.warning("----- Using PCN model: {} -----".format(pcn_model.__name__))
 
     # build model
+    ckpt_path = None
     if args.model_name is None:
         model = pcn_model(**model_args)
         model = model.to("cuda" if torch.cuda.is_available() else "cpu")
@@ -1411,7 +1433,7 @@ def main():
     if args.test_only:
         logging.warning("Test only. Run 2 epochs.")
 
-    trainer.recovery_checkpoint = ckpt_path if args.model_name is not None else None
+    _configure_training_recovery(trainer, args, ckpt_path)
     trainer.recovery_config = vars(args).copy()
     trainer.recovery_config["validation_manifest_checksum"] = (
         trainer.validation_split_metadata.get("manifest_checksum")
