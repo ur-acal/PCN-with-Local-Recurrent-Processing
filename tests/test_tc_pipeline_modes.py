@@ -51,6 +51,58 @@ class DiscoveryTests(unittest.TestCase):
         self.write(self.name.replace('1REP','2REP'))
         with self.assertRaisesRegex(ValueError,'found 2'): find_pretrain(self.root, **self.request)
 
+    def test_toggle_pretrain_discovery(self):
+        checkpoint = copy.deepcopy(self.checkpoint)
+        checkpoint['init_args']['model_args']['inp_channels'] = [4, 16]
+        checkpoint['net']['PcConvs.0.FFconv.weight'] = torch.zeros(16, 4, 3, 3)
+        name = self.name.replace('_ODEXInitFFFB_', '_ToggleODEXInitFFFB_').replace(
+            '_1REP', '_CiFAIR_1REP')
+        path = self.write(name, checkpoint)
+        request = dict(self.request, inp=[4, 16], img_type='CiFAIR',
+                       block='ToggleODEXInitFFFB')
+        self.assertEqual(find_pretrain(self.root, **request), path)
+
+    def test_toggle_ft_and_eval_routes_from_verified_checkpoint(self):
+        checkpoint = copy.deepcopy(self.checkpoint)
+        checkpoint['init_args']['model_args']['inp_channels'] = [4, 16]
+        checkpoint['net']['PcConvs.0.FFconv.weight'] = torch.zeros(16, 4, 3, 3)
+        name = self.name.replace('_ODEXInitFFFB_', '_ToggleODEXInitFFFB_').replace(
+            '_1REP', '_CiFAIR_1REP')
+        last = self.write(name, checkpoint)
+        torch.save(checkpoint, last.with_name(f'{name}_best_ckpt.pth'))
+
+        worker = (ROOT/'launch_scripts/run_kdcrd_then_ft.sbatch').read_text()
+        guard = worker[worker.index('mode="${mode:-default}"'):worker.index('# ---- Conda activation')]
+        guard_result = subprocess.run(['bash', '-c', guard], cwd=ROOT,
+            env=dict(os.environ, mode='ft_and_eval', TOGGLE_MODE='odexinit',
+                     SWITCH_INF='false', TC_NONIDEALITIES='false'),
+            text=True, capture_output=True)
+        self.assertEqual(guard_result.returncode, 0, guard_result.stderr)
+
+        phases = worker[worker.index('echo "==== PHASE 1:'):worker.index('# Merge summaries')]
+        preamble = '''
+set -o pipefail
+COMBS=($'combo\\t0\\t4 16\\t16 32\\t1 0')
+STRIDE=(1); KERNEL=(3)
+run_one_combo() { echo CALL:pretrain; return 99; }
+extract_model_name() { sed -n 's/.*Model Name: \\(.*\\) -----.*/\\1/p' "$1"; }
+finetune_one_combo_model() { echo "CALL:ft:$2"; mkdir -p "$LOGDIR/$1"; echo 'Train finished, Model Name: fixture_ft -----' > "$LOGDIR/$1/finetune_${FT_ODE_BLOCK}.log"; }
+eval_one_combo_model() { echo "CALL:eval:$2"; }
+'''
+        env = dict(os.environ, PATH=str(Path(sys.executable).parent)+':'+os.environ['PATH'],
+            mode='ft_and_eval', OUTPUT_SAVE_PATH=str(self.root), PRETRAIN_SAVE_PATH=str(self.root),
+            FT_OUTPUT_SAVE_PATH=str(self.root), LOGDIR=str(self.root/'toggle_logs'),
+            TRAIN_ODE_BLOCK='ToggleODEXInitFFFB', FT_ODE_BLOCK='ToggleODEXInitFFFB',
+            INF_ODE_BLOCK='TogglePulseODEXInitFFFB', FINAL_EVAL_ONLY='false',
+            TASK='cifar10', IMG_TYPE='CiFAIR', PCN='PCNetNoBatchNorm',
+            INPUT_QUANT_BITS='none', CENTER_STUDENT_INPUT='false')
+        result = subprocess.run(['bash', '-c', preamble+phases], cwd=ROOT,
+                                env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr+result.stdout)
+        self.assertNotIn('CALL:pretrain', result.stdout)
+        self.assertIn('CALL:ft:'+name, result.stdout)
+        self.assertIn('CALL:eval:fixture_ft', result.stdout)
+
     def test_real_pcn_phase_routing(self):
         worker=(ROOT/'launch_scripts/run_kdcrd_then_ft.sbatch').read_text()
         phases=worker[worker.index('echo "==== PHASE 1:'):worker.index('# Merge summaries')]
@@ -58,7 +110,7 @@ class DiscoveryTests(unittest.TestCase):
 set -o pipefail
 COMBS=($'combo\\t0\\t3 16\\t16 32\\t1 0')
 STRIDE=(1); KERNEL=(3)
-run_one_combo() { mkdir -p "$LOGDIR/combo"; echo "Train finished, Model Name: $FIXTURE -----" > "$LOGDIR/combo/train_${EXP}_combo_${TRAIN_ODE_BLOCK}.log"; echo CALL:pretrain; }
+run_one_combo() { mkdir -p "$LOGDIR/combo"; echo "Train finished, Model Name: $FIXTURE -----" > "$LOGDIR/combo/train_${TRAIN_ODE_BLOCK}.log"; echo CALL:pretrain; }
 extract_model_name() { sed -n 's/.*Model Name: \\(.*\\) -----.*/\\1/p' "$1"; }
 finetune_one_combo_model() { echo "CALL:ft:$2"; [[ "${FAIL_FT:-false}" != true ]] || return 9; mkdir -p "$LOGDIR/$1"; echo 'Train finished, Model Name: fixture_ft -----' > "$LOGDIR/$1/finetune_${FT_ODE_BLOCK}.log"; }
 eval_one_combo_model() { echo "CALL:eval:$2"; }

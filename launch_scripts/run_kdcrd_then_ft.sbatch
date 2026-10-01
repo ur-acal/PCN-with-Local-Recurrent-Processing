@@ -14,8 +14,12 @@ source ./launch_scripts/tc_nonideality_args.sh ft || exit 2
 source ./launch_scripts/normalize_validation_mode.sh || exit 2
 mode="${mode:-default}"
 case "$mode" in default|pretrain_only|ft_only|ft_and_eval) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
-if [[ "$mode" != default && ( "${TC_NONIDEALITIES:-false}" != true || "${TOGGLE_MODE:-none}" != none || "${SWITCH_INF:-false}" != false ) ]]; then
-  echo 'Pipeline modes are supported only for TC nonidealities, not toggle/switch/legacy.' >&2
+if [[ "$mode" != default && "${TC_NONIDEALITIES:-false}" != true && "${TOGGLE_MODE:-none}" == none ]]; then
+  echo 'Pipeline modes are supported only for TC nonidealities or toggle dynamics.' >&2
+  exit 2
+fi
+if [[ "$mode" != default && "${SWITCH_INF:-false}" != false ]]; then
+  echo 'Pipeline modes are not supported for switched dynamics.' >&2
   exit 2
 fi
 
@@ -445,7 +449,9 @@ run_one_combo () {
   local comb_logdir="${LOGDIR}/${comb_tag}"
   mkdir -p "${comb_logdir}"
 
-  local logfile="${comb_logdir}/train_${EXP}_${comb_tag}_${block}.log"
+  # EXP and comb_tag are already encoded by the parent directories.  Keeping
+  # them in the filename can exceed Linux's 255-byte component limit.
+  local logfile="${comb_logdir}/train_${block}.log"
   echo "[$(date +%T)] TRAIN start comb=${comb_tag} params=${params} block=${block} -> ${logfile}"
   echo "  INP=(${INP[*]})" | tee -a "${logfile}"
   echo "  OUT=(${OUT[*]})" | tee -a "${logfile}"
@@ -887,7 +893,7 @@ for comb in "${COMBS[@]}"; do
   # record: comb_tag<TAB>params<TAB>inp_str<TAB>out_str<TAB>pool_str
   IFS=$'\t' read -r comb_tag params inp_str out_str pool_str <<< "${comb}"
   COMB_TAGS+=( "${comb_tag}" )
-  train_log="${LOGDIR}/${comb_tag}/train_${EXP}_${comb_tag}_${TRAIN_ODE_BLOCK}.log"
+  train_log="${LOGDIR}/${comb_tag}/train_${TRAIN_ODE_BLOCK}.log"
   if [[ "$mode" == ft_only || "$mode" == ft_and_eval ]]; then
     selection=best
     if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
