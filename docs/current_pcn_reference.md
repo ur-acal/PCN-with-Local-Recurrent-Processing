@@ -196,6 +196,68 @@ all TC hardware settings, and fused measured ReLU are defaults and are therefore
 not repeated above. The scheduler log prints the submitted experiment and Slurm
 job ID.
 
+### Active TC non-idealities: FT and expanded evaluation
+
+This is the active-only audit of the pinned TC commands above against the
+[scientific TC definition](../../papers/hardware-native-neural-ode/shared/true_continuous_nonidealities.md).
+A *forward* is one full-model batch forward; an *accepted interval* includes its
+adaptive-step trials and any checkpoint replay; a *validation pass* or *trial*
+is one traversal of the evaluation dataset; a *spin/site* is one
+`(channel, row, column)` destination, shared across batch items.
+
+Audit result: no enabled TC non-ideality is missing from the implementation.
+There are two deliberate fidelity differences to keep visible:
+
+- FT uses the documented low-cost nonlinear-R method 2a: one
+  histogram-selected, Gaussian R(V) curve per FF/FB tensor, rather than the
+  scientific exact-training target of one curve for every represented weight
+  code. Final expanded evaluation does not use this approximation.
+- Evaluation during FT remains on that dense/shared FT implementation. It is
+  not the final expanded evaluator with independently sampled physical
+  couplers.
+
+`TC_CURVE_SAMPLING=histogram` controls the first approximation; it does not
+change expanded evaluation, which samples code-conditioned curves per physical
+coupler. The final classifier and the final ideal ReLU remain outside the TC
+hardware model by design.
+
+| Non-ideality | Fine-tuning | Final expanded TC evaluation | Evaluation during FT |
+|---|---|---|---|
+| PC FF/FB weight quantization | Symmetric 5-bit live QAT (`q_hi=15`) on every FF/FB tensor. Codes 1--15 map to nominal `R/|W|` from 10 to 150 kOhm; code 0 is open. No scale-factor quantization. | Loads the baked 5-bit weights. Every FF/FB convolution is spatially unrolled; code 0 remains open. | Same live-QAT path as FT. |
+| Fast summing-current noise | ASD `0.6e-12 A/sqrt(Hz)`, scaled by `sqrt(50 kOhm/R)`. FF and two-state FB use `J/C*sqrt(dt)` diffusion after an accepted update. One-state FB is band-integrated and added in amperes before the measured ReLU; one sample is held throughout an accepted interval and redrawn after acceptance. | Same equations and lifetimes. Trial seeds make the stochastic sequence reproducible; dynamic samples still advance during the dataset traversal. | Same as FT. |
+| Fast coupler-current noise | Same branch placement and lifetime as summing noise, with ASD multiplied by `sqrt(sum(abs(W_code)))`. The sum uses nominal quantized conductance levels; zero/open and padding entries contribute no noise, and nonlinear R(V) does not modulate its amplitude. | Same equations, using the active unrolled physical couplers. | Same as FT. |
+| Nonlinear coupler R(V) and static curve variation | Code-specific mean curves from `res_vs_vin_10k_150k.csv` plus the shared absolute covariance from `CU_4500_r_vs_vin.csv`. Method 2a histogram-selects one code, samples one positive-floored Gaussian curve independently for each FF/FB tensor/layer/forward, and shares it across that tensor. The draw is held for the ODE solve and backward replay. | Every FF/FB convolution is unrolled. Each nonzero physical coupler gets an independent positive-floored Gaussian curve from its code-specific mean and the common covariance; zero/padding entries are open and consume no draw. Curves stay fixed for the whole trial. | Dense method 2a. Fresh FF/FB assignments are made at the start of the validation pass and then fixed for that pass. |
+| Measured ReLU | Fixed 0906 `tt_25_1.csv`, MC18 curve shared by all measured-activation modules and spins for the pinned FT job. Piecewise-linear input/output is rail-clamped. Optional `random_per_forward` overrides this recipe. | Full 0906 measured bank with independent `per_spin` assignment in each layer, shared across batch items and fixed for the whole trial. | Same fixed curve as pinned FT. |
+| Measured average pooling | The 10-kOhm mean plus the common covariance supplies one Gaussian R(V) curve per output channel and pooling window, shared across the window inputs and batch. Redrawn every training forward for both intermediate pooling and GAP. | Same source and granularity, fixed for the whole trial; intermediate pooling and GAP have separate assignments. | Fresh assignments at the start of the validation pass, fixed for that pass. |
+| Spin/conversion-gain variation | Gaussian mean 1.0, standard deviation 0.10; independent per spin/site, branch, and layer, shared across batch, redrawn every training forward, and held through the solve. In one state, the FB factor multiplies both FB signal and algebraic FB noise before ReLU; in two state, the independent y/z factors multiply their respective drifts, not the diffusion increments. | Same distribution and granularity, fixed for the whole trial. | Fresh factors at the start of the validation pass, fixed for that pass. |
+| Voltage-rail saturation | Each accepted dynamical-state update, including diffusion, is projected to `[-0.1,+0.1] V`; nonlinear-R lookup coordinates and measured-ReLU input/output are also clamped to their characterized/rail ranges. | Same. | Same. |
+
+The common physical point is `R=10 kOhm`, `R_max=150 kOhm`, `C=49 fF`,
+and `V_DD=0.1 V`. The selected one-state equation is `ODEXInitFFFB`; the
+selected two-state equation is `S2NoisyIYAsXZAs0` with simultaneous y/z
+evolution and separate FF/FB capacitance scaling.
+
+Supported but inactive in this reference, and therefore excluded from the
+table, are differential/generic mismatch, slow-current offsets, DTC effects,
+output ENOB, weight-scale-factor quantization, and the legacy thermal-noise
+path.
+
+Source trail checked for this audit:
+
+- Launch/default wiring: [TC hardware defaults](../launch_scripts/tc_hardware_defaults.sh)
+  -> [TC argument construction](../launch_scripts/tc_nonideality_args.sh) ->
+  [local TC launcher](../launch_scripts/run_tc_nonidealities.sh), or
+  [Slurm scheduler](../launch_scripts/slurm_search_config.sh) ->
+  [Slurm worker](../launch_scripts/run_kdcrd_then_ft.sbatch).
+- Python entry and validation: [training](../train_ode_cifar.py) or
+  [expanded inference](../ode_inference.py) -> [TC CLI validation](../tc_cli.py).
+- Implementations: [TC dynamics, wrappers, and physical scaling](../ode_pc.py),
+  [noise lifecycle and Gaussian R(V) construction](../tc_nonidealities.py),
+  [expanded physical-coupler convolution](../validation.py),
+  [measured activation](../measured_activation.py),
+  [measured pooling](../measured_pooling.py), and
+  [adaptive accepted-step/noise handling](../TorchDiffEqPack/odesolver/).
+
 ## Model and recipe
 
 The main reference is now the CiFAIR-100 two-stage PCN with 36/72 channels,

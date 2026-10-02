@@ -42,6 +42,9 @@ def parse_args():
     parser.add_argument("--model_dir",  type=str, required=True,
                         help="Directory containing the saved model checkpoint")
     parser.add_argument("--ckpt", type=str, default="best")
+    parser.add_argument("--final_head_type", choices=("old_ideal", "analog", "digital"),
+                        default=os.environ.get("FINAL_HEAD_TYPE") or None,
+                        help="Inherit checkpoint head; analog/digital are placeholders.")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
     parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
@@ -277,6 +280,8 @@ def parse_args():
     from tc_cli import add_tc_arguments, validate_tc
     add_tc_arguments(parser)
     args = parser.parse_args()
+    if args.final_head_type in ("analog", "digital"):
+        raise NotImplementedError(args.final_head_type + " final head is not implemented yet")
     validate_tc(args, inference=True)
     return args
 

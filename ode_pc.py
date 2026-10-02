@@ -4650,7 +4650,8 @@ class ToggleQATWrapper1State(QATWrapper1State):
         self.beta = self.q * self.s_fb
         self.beta_c = self.beta * self.k / self.R
         self.inp_scale = self.q if self.is_first else 1
-        self.out_scale = self.q if self.is_last else 1
+        self.out_scale = (self.q if self.is_last and
+                          not getattr(self, "physical_head_output", False) else 1)
 
         self.time_scaler = self.R * self.C / self.alpha
         self._ship_toggle_params(module)
@@ -4914,6 +4915,11 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         ode_wrapper_ins.to(pc_net.device)
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
         wrappers.append(ode_wrapper_ins)
+    if (wrappers and issubclass(ode_wrapper, toggle_wrappers) and
+            pc_net.configure_physical_head(wrappers[-1].q)):
+        # Also honored by the per-forward QAT callback. No state_dict changes.
+        wrappers[-1].physical_head_output = True
+        wrappers[-1].out_scale = 1.0
     return pc_net, wrappers
 
 

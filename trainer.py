@@ -20,7 +20,7 @@ import subprocess
 import json
 from pathlib import Path
 
-from pc_model import PCNet
+from pc_model import PCNet, logits_for_loss
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions
@@ -533,6 +533,8 @@ class TrainerCiFar(object):
         finally:
             handle.remove()
         student_feat = features.get("feat")
+        if student_feat is not None and getattr(self.model, "states_are_physical", False):
+            student_feat = self.model.features_for_distillation(student_feat)
         if student_feat is None and self._crd_enabled:
             raise RuntimeError("Failed to capture student features for CRD.")
         return outputs, student_feat
@@ -785,7 +787,8 @@ class TrainerCiFar(object):
                 teacher_logits, teacher_feat = self.teacher_forward_for_distillation(
                     teacher_inputs if teacher_inputs is not None else inputs
                 )
-            ce_loss = self.loss_fn(outputs, labels)
+            loss_logits = logits_for_loss(outputs, self.model)
+            ce_loss = self.loss_fn(loss_logits, labels)
             kd_loss = None
             crd_loss = None
 
@@ -793,7 +796,7 @@ class TrainerCiFar(object):
                 if teacher_logits is None:
                     raise RuntimeError("Teacher logits not available for KD.")
                 kd_loss = F.kl_div(
-                    F.log_softmax(outputs / self.distill_temperature, dim=1),
+                    F.log_softmax(loss_logits / self.distill_temperature, dim=1),
                     F.softmax(teacher_logits / self.distill_temperature, dim=1),
                     reduction='batchmean',
                 ) * (self.distill_temperature ** 2)
@@ -961,7 +964,7 @@ class TrainerCiFar(object):
                 # calculate outputs by running inputs through the network
                 outputs = self.model(self._prepare_student_inputs(inputs))
 
-                loss = self.loss_fn(outputs, labels)
+                loss = self.loss_fn(logits_for_loss(outputs, self.model), labels)
                 running_loss += loss.item()
 
                 # the class with the highest energy is what we choose as prediction

@@ -25,7 +25,7 @@ from timm.optim import create_optimizer_v2
 from timm.scheduler import CosineLRScheduler, MultiStepLRScheduler
 from timm.data.random_erasing import RandomErasing as TimmRandomErasing
 
-from pc_model import PCNet
+from pc_model import PCNet, logits_for_loss
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, PackedRGGBToRGB
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions, MGDLoss
@@ -1030,7 +1030,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                     teacher_inputs if teacher_inputs is not None else inputs
                 )
 
-            ce_loss = self.train_loss_fn(outputs, labels_for_ce)
+            loss_logits = logits_for_loss(outputs, self.model)
+            ce_loss = self.train_loss_fn(loss_logits, labels_for_ce)
 
             kd_loss = None
             if self._kd_enabled:
@@ -1038,7 +1039,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
                     raise RuntimeError("Teacher logits not available for KD.")
 
                 kd_loss = F.kl_div(
-                    F.log_softmax(outputs / self.distill_temperature, dim=1),
+                    F.log_softmax(loss_logits / self.distill_temperature, dim=1),
                     F.softmax(teacher_logits / self.distill_temperature, dim=1),
                     reduction="batchmean",
                 ) * (self.distill_temperature ** 2)
@@ -1598,11 +1599,12 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
             outputs, student_features = self._student_forward_feature_kd(inputs)
 
-            ce_loss = self.train_loss_fn(outputs, labels_for_ce)
+            loss_logits = logits_for_loss(outputs, self.model)
+            ce_loss = self.train_loss_fn(loss_logits, labels_for_ce)
 
             kd_loss = None
             if self._kd_enabled:
-                kd_loss = self._kd_loss(outputs, teacher_logits)
+                kd_loss = self._kd_loss(loss_logits, teacher_logits)
                 base_loss = (
                     (1.0 - self.distill_alpha) * ce_loss
                     + self.distill_alpha * kd_loss
@@ -1900,6 +1902,9 @@ class TrainerCiFarTimmStyleReviewKD(TrainerCiFarTimmStyleFeatureKD):
         handles = []
 
         def spatial_hook(_module, _inputs, output):
+            if (getattr(self.model, "states_are_physical", False) and
+                    _module is self.model.PcConvs[-1]):
+                output = self.model.features_for_distillation(output)
             spatial_features.append(
                 self._require_feature_tensor(output, "ReviewKD student stage hook")
             )
@@ -1939,6 +1944,10 @@ class TrainerCiFarTimmStyleReviewKD(TrainerCiFarTimmStyleFeatureKD):
 
         if not final_spatial_features or not pooled_features:
             raise RuntimeError("ReviewKD failed to capture final PCNet features.")
+
+        if getattr(self.model, "states_are_physical", False):
+            final_spatial_features[-1] = self.model.features_for_distillation(final_spatial_features[-1])
+            pooled_features[-1] = self.model.features_for_distillation(pooled_features[-1])
 
         spatial_features.append(final_spatial_features[-1])
         spatial_count = self.reviewkd_num_stages - 1

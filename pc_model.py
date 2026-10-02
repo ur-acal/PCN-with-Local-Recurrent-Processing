@@ -25,11 +25,36 @@ import logging
 log = logging.getLogger(__name__)
 
 
+def logits_for_loss(outputs, model):
+    """Restore model units only for a loss, never for prediction."""
+    if isinstance(model, nn.DataParallel):
+        model = model.module
+    return outputs / model.state_q if getattr(model, "states_are_physical", False) else outputs
+
+
+class PhysicalBiasLinear(nn.Linear):
+    """Keep checkpoint parameters unchanged; encode bias in input-state units."""
+    physical_bias_scale = 1.0
+
+    def forward(self, inputs):
+        bias = self.bias
+        if bias is not None and self.physical_bias_scale != 1.0:
+            bias = self.physical_bias_scale * bias
+        return F.linear(inputs, self.weight, bias)
+
+
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
                  first_bn=True, dropout=0.0, separable=None, avg_pooling=False, stride=1, kernel_size=3,
-                 linear_bias=True, **kwargs):
+                 linear_bias=True, final_head_type="old_ideal", **kwargs):
         super().__init__()
+        if final_head_type not in ("old_ideal", "analog", "digital"):
+            raise ValueError("Unknown final_head_type: " + str(final_head_type))
+        if final_head_type != "old_ideal":
+            raise NotImplementedError(final_head_type + " final head is not implemented yet")
+        self.final_head_type = final_head_type
+        self.states_are_physical = False
+        self.state_q = 1.0
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.ics = inp_channels # input channels
@@ -43,7 +68,8 @@ class PCNet(nn.Module):
 
         self.init_args = self._get_init_args(
             inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling,
-            self.stride, self.kernel_size, linear_bias=linear_bias, **kwargs)
+            self.stride, self.kernel_size, linear_bias=linear_bias,
+            final_head_type=final_head_type, **kwargs)
 
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
@@ -55,7 +81,7 @@ class PCNet(nn.Module):
             logging.warning("Drop the first BN layer")
             self.BNs[0] = nn.Identity()
         # Linear layer
-        self.linear = nn.Linear(self.ocs[-1], num_classes, bias=linear_bias)
+        self.linear = PhysicalBiasLinear(self.ocs[-1], num_classes, bias=linear_bias)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2) if not avg_pooling else nn.AvgPool2d(kernel_size=2, stride=2)
         self.global_avg_pool2d = GlobalAvgPool2d()
         self.relu = nn.ReLU(inplace=True)
@@ -64,6 +90,21 @@ class PCNet(nn.Module):
         self.clean_params = {}
         self.noise_level = kwargs.get("noise_level", 0.0)
         self.noise_level = 0.0 if self.noise_level is None else self.noise_level
+
+    def features_for_distillation(self, feat):
+        return feat / self.state_q if self.states_are_physical else feat
+
+    def configure_physical_head(self, q):
+        # Other PCNet variants can contain terminal BN/biased convolutions;
+        # they need their own coordinate mapping, not this no-BN identity.
+        if type(self).forward is not PCNetNoBatchNorm.forward:
+            return False
+        if q <= 0:
+            raise ValueError("Physical head q must be positive")
+        self.states_are_physical = True
+        self.state_q = float(q)
+        self.linear.physical_bias_scale = self.state_q
+        return True
 
     def forward(self, x, clamp=False, is_feat=False):
         for i in range(self.num_layers):
@@ -185,7 +226,8 @@ class PCNet(nn.Module):
 
     @staticmethod
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=False,
-                       stride=None, kernel_size=None, linear_bias=True, **kwargs):
+                       stride=None, kernel_size=None, linear_bias=True,
+                       final_head_type="old_ideal", **kwargs):
         init_args = {
             "model_args": {
                 "inp_channels": inp_channels,
@@ -198,6 +240,7 @@ class PCNet(nn.Module):
                 "stride": stride,
                 "kernel_size": kernel_size,
                 "linear_bias": linear_bias,
+                "final_head_type": final_head_type,
             },
             "kwargs": kwargs
         }
@@ -241,7 +284,7 @@ class PCNetNoBatchNorm(PCNet):
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         if is_feat:
-            return [feat], out
+            return [self.features_for_distillation(feat)], out
         return out
 
 

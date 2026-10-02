@@ -102,8 +102,9 @@ class LinearStudy:
                 linear_input=inputs[0].detach().cpu().numpy().copy(),
                 linear_output=self.current_logits.copy(),
                 weight=module.weight.detach().cpu().numpy().copy(),
-                bias=(module.bias.detach().cpu().numpy().copy()
+                bias=(module.bias.detach().cpu().numpy().copy() * getattr(module, "physical_bias_scale", 1.0)
                       if module.bias is not None else np.zeros(output.shape[-1], dtype=self.current_logits.dtype)),
+                bias_scale=np.asarray(getattr(module, "physical_bias_scale", 1.0)),
             )
 
     def record(self, batch_idx, targets, output_tensor):

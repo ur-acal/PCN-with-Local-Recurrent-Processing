@@ -216,6 +216,9 @@ def get_args():
     p.add_argument("--linear_bias", type=str2bool,
                    default=str2bool(os.environ.get("LINEAR_BIAS", "true")),
                    help="Enable the final linear classifier bias.")
+    p.add_argument("--final_head_type", choices=("old_ideal", "analog", "digital"),
+                   default=os.environ.get("FINAL_HEAD_TYPE") or None,
+                   help="Inherit checkpoint head when omitted; analog/digital are placeholders.")
     # ODE hyper-params
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()),
                         default="ODEBlockPC")
@@ -948,6 +951,7 @@ def main():
         "max_pool": args.max_pool,
         "num_classes": args.num_classes,
         "linear_bias": getattr(args, "linear_bias", True),
+        "final_head_type": getattr(args, "final_head_type", None) or "old_ideal",
         "kernel_size": args.kernel_size if not (isinstance(args.kernel_size, List) and len(args.kernel_size) == 1) else args.kernel_size[0],
         "stride": args.stride if not (isinstance(args.stride, List) and len(args.stride) == 1) else args.stride[0],
         "padding": args.padding if args.patch_dim is None else "same",
@@ -1002,6 +1006,10 @@ def main():
                                        fuse_bn=False, conv_only=False, ode_params=None,
                                        **noisy_params)
         model.dropout = args.dropout
+
+    requested_head = getattr(args, "final_head_type", None)
+    if requested_head is not None and requested_head != model.final_head_type:
+        raise NotImplementedError("Changing final_head_type to " + requested_head + " is not implemented")
 
     print(model)
     total_params = sum(p.numel() for p in model.parameters())

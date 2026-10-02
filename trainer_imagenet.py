@@ -14,6 +14,7 @@ from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.loss import SoftTargetCrossEntropy, LabelSmoothingCrossEntropy
 
 from trainer import TrainerCiFar, WrappedNoisyModel
+from pc_model import logits_for_loss
 from distillation import CRDOptions
 
 from trainer_timm import (
@@ -626,7 +627,7 @@ class TrainerImageNetTimmStyle(TrainerCiFarTimmStyle):
 
             with self._amp_autocast():
                 outputs, _ = self._student_forward(inputs)
-                loss = self.train_loss_fn(outputs, labels_for_ce)
+                loss = self.train_loss_fn(logits_for_loss(outputs, self.model), labels_for_ce)
 
             is_update_step = (
                     ((_i + 1) % self.grad_accum_steps == 0)

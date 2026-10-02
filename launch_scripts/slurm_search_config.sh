@@ -742,6 +742,9 @@ submit_chunk() {
   [[ -z "${VALIDATION_MANIFEST:-}" ]] || sbatch_exports+=",VALIDATION_MANIFEST=${VALIDATION_MANIFEST}"
   sbatch_exports+=",INPUT_QUANT_BITS=${INPUT_QUANT_BITS},CENTER_STUDENT_INPUT=${CENTER_STUDENT_INPUT}"
   sbatch_exports+=",LINEAR_BIAS=${LINEAR_BIAS}"
+  if [[ -n "${FINAL_HEAD_TYPE:-}" ]]; then
+    sbatch_exports+=",FINAL_HEAD_TYPE=${FINAL_HEAD_TYPE}"
+  fi
   sbatch_exports+=",FT_LEARNING_RATE=${FT_LEARNING_RATE}"
   sbatch_exports+=",FT_NUM_EPOCHS=${FT_NUM_EPOCHS}"
   sbatch_exports+=",FT_TIMM_AUG_LEVEL=${FT_TIMM_AUG_LEVEL}"
