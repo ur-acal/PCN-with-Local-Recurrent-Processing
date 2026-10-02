@@ -26,6 +26,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import timm
+import torch
+import torch.nn as nn
 from copy import deepcopy
 from baseline.adapt_model_cifar import adapt_timm_model_to_cifar, is_supported_cifar_adapt_model
 
@@ -461,6 +463,37 @@ def get_baseline_config(
     cfg["model_name"] = model_name
     return cfg
 
+def _set_classifier_bias(model: nn.Module, linear_bias: bool) -> None:
+    classifier = model.get_classifier()
+    if not isinstance(classifier, nn.Linear):
+        raise TypeError(
+            "linear_bias requires a model with one final nn.Linear classifier")
+    if (classifier.bias is not None) == linear_bias:
+        return
+
+    replacement = nn.Linear(
+        classifier.in_features, classifier.out_features,
+        bias=linear_bias, device=classifier.weight.device,
+        dtype=classifier.weight.dtype)
+    with torch.no_grad():
+        replacement.weight.copy_(classifier.weight)
+        if linear_bias:
+            if classifier.bias is None:
+                replacement.bias.zero_()
+            else:
+                replacement.bias.copy_(classifier.bias)
+
+    module_name = next(
+        name for name, module in model.named_modules()
+        if module is classifier)
+    parent_name, _, child_name = module_name.rpartition(".")
+    parent = model.get_submodule(parent_name) if parent_name else model
+    if child_name.isdigit():
+        parent[int(child_name)] = replacement
+    else:
+        setattr(parent, child_name, replacement)
+
+
 def build_model(model_name: str, cfg: dict, num_classes: int):
     case = cfg["case"]
 
@@ -479,11 +512,17 @@ def build_model(model_name: str, cfg: dict, num_classes: int):
            if cfg.get("wrn_depth") is not None else {}),
         **({"first_stage_channels": cfg["wrn_first_stage_channels"]}
            if cfg.get("wrn_first_stage_channels") is not None else {}),
+        **({"linear_bias": cfg["linear_bias"]}
+           if model_name in CUSTOM_CIFAR_MODELS and
+           "linear_bias" in cfg else {}),
     )
 
     if case.startswith("adapt_noresize"):
         if not is_supported_cifar_adapt_model(model_name):
             raise ValueError(f"{model_name} is not supported by adapt_model_cifar.py")
         model = adapt_timm_model_to_cifar(model, model_name)
+
+    if "linear_bias" in cfg:
+        _set_classifier_bias(model, bool(cfg["linear_bias"]))
 
     return model

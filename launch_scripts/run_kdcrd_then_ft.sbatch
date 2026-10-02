@@ -86,6 +86,7 @@ Z_OVER_Y_TIME="${Z_OVER_Y_TIME:-3}"
 SCALE_TRAIN_RECIPE="${SCALE_TRAIN_RECIPE:-false}"
 INPUT_QUANT_BITS="${INPUT_QUANT_BITS:-none}"
 CENTER_STUDENT_INPUT="${CENTER_STUDENT_INPUT:-false}"
+LINEAR_BIAS="${LINEAR_BIAS:-true}"
 TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
 V_DD="${V_DD:-0.1}"
 if [[ "${TOGGLE_MODE}" == "none" ]]; then
@@ -478,6 +479,7 @@ run_one_combo () {
     --dataset       "${TASK}" \
     "${VALIDATION_ARGS[@]}" \
     --num_classes   "${N_CLASSES}" \
+    --linear_bias   "${LINEAR_BIAS}" \
     --num_epochs    300 \
     --eval_every    5 \
     --final_eval_only "${FINAL_EVAL_ONLY}" \
@@ -788,6 +790,7 @@ finetune_one_combo_model() {
     --timm_aug_level "${FT_TIMM_AUG_LEVEL}" \
     "${TIMM_RE_ARGS[@]}" \
     --num_classes   "${N_CLASSES}" \
+    --linear_bias   "${LINEAR_BIAS}" \
     --ckpt          "${ckpt}" \
     --optim         "SGD" \
     --learning_rate "${FT_LEARNING_RATE}" \

@@ -71,6 +71,7 @@ fi
 cmd=(
   python baseline/train_baseline_cifar.py
   --model_name "${MODEL_NAME}"
+  --linear_bias "${LINEAR_BIAS:-true}"
   --dataset "${TASK}"
   --data_dir "${DATA_DIR}"
   "${VALIDATION_ARGS[@]}"

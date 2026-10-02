@@ -122,6 +122,7 @@ class CIFARResNet(nn.Module):
         final_dropout_rate: float = 0.0,
         use_batchnorm: bool = True,
         conv_bias: bool | None = None,
+        linear_bias: bool = True,
         avgpool_after_add: bool = False,
         intermediate_activation: str = "relu",
         **kwargs,
@@ -139,6 +140,7 @@ class CIFARResNet(nn.Module):
         self.use_batchnorm = bool(use_batchnorm)
         self.conv_bias = (
             not self.use_batchnorm if conv_bias is None else bool(conv_bias))
+        self.linear_bias = bool(linear_bias)
         self.avgpool_after_add = bool(avgpool_after_add)
         self.intermediate_activation = str(intermediate_activation)
         self.in_planes = base_width
@@ -155,7 +157,8 @@ class CIFARResNet(nn.Module):
         self.layer3 = self._make_layer(base_width * 4, n, stride=2)
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(base_width * 4, num_classes)
+        self.fc = nn.Linear(
+            base_width * 4, num_classes, bias=self.linear_bias)
 
         _init_cifar_model(self)
         if zero_init_last_bn and self.use_batchnorm:
@@ -208,7 +211,9 @@ class CIFARResNet(nn.Module):
 
     def reset_classifier(self, num_classes: int, global_pool: str = "avg"):
         self.num_classes = num_classes
-        self.fc = nn.Linear(self.base_width * 4, num_classes) if num_classes > 0 else nn.Identity()
+        self.fc = (
+            nn.Linear(self.base_width * 4, num_classes, bias=self.linear_bias)
+            if num_classes > 0 else nn.Identity())
 
 
 # -----------------------------------------------------------------------------
@@ -255,6 +260,7 @@ class PreActCIFARResNet(nn.Module):
         in_chans: int = 3,
         base_width: int = 16,
         zero_init_last_bn: bool = False,
+        linear_bias: bool = True,
         **kwargs,
     ):
         super().__init__()
@@ -265,6 +271,7 @@ class PreActCIFARResNet(nn.Module):
         self.in_chans = in_chans
         self.depth = depth
         self.base_width = base_width
+        self.linear_bias = bool(linear_bias)
         self.in_planes = base_width
 
         self.conv1 = nn.Conv2d(in_chans, base_width, kernel_size=3, stride=1, padding=1, bias=False)
@@ -276,7 +283,9 @@ class PreActCIFARResNet(nn.Module):
         self.bn = nn.BatchNorm2d(base_width * 4 * PreActBottleneck.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(base_width * 4 * PreActBottleneck.expansion, num_classes)
+        self.fc = nn.Linear(
+            base_width * 4 * PreActBottleneck.expansion, num_classes,
+            bias=self.linear_bias)
 
         _init_cifar_model(self)
         if zero_init_last_bn:
@@ -318,7 +327,11 @@ class PreActCIFARResNet(nn.Module):
 
     def reset_classifier(self, num_classes: int, global_pool: str = "avg"):
         self.num_classes = num_classes
-        self.fc = nn.Linear(self.base_width * 4 * PreActBottleneck.expansion, num_classes) if num_classes > 0 else nn.Identity()
+        self.fc = (
+            nn.Linear(
+                self.base_width * 4 * PreActBottleneck.expansion,
+                num_classes, bias=self.linear_bias)
+            if num_classes > 0 else nn.Identity())
 
 
 # -----------------------------------------------------------------------------
@@ -442,6 +455,7 @@ class WideResNetCIFAR(nn.Module):
         base_width: int = 16,
         use_batchnorm: bool = True,
         conv_bias: bool | None = None,
+        linear_bias: bool = True,
         avgpool_downsample_shortcut: bool = False,
         avgpool_main_downsample: bool = False,
         intermediate_activation: str = "relu",
@@ -461,6 +475,7 @@ class WideResNetCIFAR(nn.Module):
         self.use_batchnorm = bool(use_batchnorm)
         self.conv_bias = (
             not self.use_batchnorm if conv_bias is None else bool(conv_bias))
+        self.linear_bias = bool(linear_bias)
         self.avgpool_downsample_shortcut = bool(avgpool_downsample_shortcut)
         self.avgpool_main_downsample = bool(avgpool_main_downsample)
         self.intermediate_activation = str(intermediate_activation)
@@ -478,7 +493,8 @@ class WideResNetCIFAR(nn.Module):
         # The final pre-GAP activation intentionally remains ideal ReLU.
         self.relu = nn.ReLU(inplace=True)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(widths[3], num_classes)
+        self.fc = nn.Linear(
+            widths[3], num_classes, bias=self.linear_bias)
 
         _init_cifar_model(self)
 
@@ -526,7 +542,9 @@ class WideResNetCIFAR(nn.Module):
 
     def reset_classifier(self, num_classes: int, global_pool: str = "avg"):
         self.num_classes = num_classes
-        self.fc = nn.Linear(self.out_dim, num_classes) if num_classes > 0 else nn.Identity()
+        self.fc = (
+            nn.Linear(self.out_dim, num_classes, bias=self.linear_bias)
+            if num_classes > 0 else nn.Identity())
 
 
 class StageWidthWideResNetCIFAR(WideResNetCIFAR):
@@ -550,6 +568,7 @@ class StageWidthWideResNetCIFAR(WideResNetCIFAR):
         stem_width: int = 16,
         use_batchnorm: bool = True,
         conv_bias: bool | None = None,
+        linear_bias: bool = True,
         avgpool_downsample_shortcut: bool = False,
         avgpool_main_downsample: bool = False,
         intermediate_activation: str = "relu",
@@ -582,6 +601,7 @@ class StageWidthWideResNetCIFAR(WideResNetCIFAR):
         self.use_batchnorm = bool(use_batchnorm)
         self.conv_bias = (
             not self.use_batchnorm if conv_bias is None else bool(conv_bias))
+        self.linear_bias = bool(linear_bias)
         self.avgpool_downsample_shortcut = bool(avgpool_downsample_shortcut)
         self.avgpool_main_downsample = bool(avgpool_main_downsample)
         self.intermediate_activation = str(intermediate_activation)
@@ -598,7 +618,8 @@ class StageWidthWideResNetCIFAR(WideResNetCIFAR):
             nn.BatchNorm2d(widths[2]) if self.use_batchnorm else nn.Identity())
         self.relu = nn.ReLU(inplace=True)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(widths[2], num_classes)
+        self.fc = nn.Linear(
+            widths[2], num_classes, bias=self.linear_bias)
 
         _init_cifar_model(self)
 
@@ -1024,12 +1045,13 @@ class MNISTResidualCNN(CIFARResNet):
     """Small MNIST assemblies; block/head computation is inherited unchanged."""
 
     def __init__(self, extra_block=False, num_classes=10, in_chans=1,
-                 final_dropout_rate=0.25, **kwargs):
+                 final_dropout_rate=0.25, linear_bias=True, **kwargs):
         nn.Module.__init__(self)
         if in_chans != 1 or num_classes != 10:
             raise ValueError("The MNIST models require one input channel and ten classes.")
         self.num_classes, self.in_chans = num_classes, in_chans
         self.final_dropout_rate = float(final_dropout_rate)
+        self.linear_bias = bool(linear_bias)
         self.use_batchnorm, self.conv_bias = False, False
         self.shortcut_option, self.avgpool_after_add = "A", True
         self.intermediate_activation = "relu6"
@@ -1041,7 +1063,7 @@ class MNISTResidualCNN(CIFARResNet):
         self.layer2 = self._make_layer(64, 1, 2)
         self.layer3 = nn.Sequential()
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(64, 10)
+        self.fc = nn.Linear(64, 10, bias=self.linear_bias)
         _init_cifar_model(self)
 
 

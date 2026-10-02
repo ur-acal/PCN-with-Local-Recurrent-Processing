@@ -52,6 +52,7 @@ DISTILL_ALPHA="${DISTILL_ALPHA:-0.3}"
 DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
 SRRL_WEIGHT="${SRRL_WEIGHT:-1.0}"
 RUN_EVAL="${RUN_EVAL:-true}"
+LINEAR_BIAS="${LINEAR_BIAS:-true}"
 
 MULT_NOISE_LEVEL_LIST="${MULT_NOISE_LEVEL_LIST:-0,0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4}"
 ADD_NOISE_LEVEL_LIST="${ADD_NOISE_LEVEL_LIST:-0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.1}"
@@ -94,6 +95,7 @@ run_train_one() {
   CMD=(
     python "${TRAIN_SCRIPT}"
     --model_name "${model_name}"
+    --linear_bias "${LINEAR_BIAS}"
     --dataset "${dataset_name}"
     --data_dir "${DATA_DIR}"
     --output_dir "${MODEL_OUTPUT_DIR}"
@@ -164,6 +166,7 @@ run_eval_one() {
 
   python "${EVAL_SCRIPT}" \
     --model_list "${model_name}" \
+    --linear_bias "${LINEAR_BIAS}" \
     --dataset "${dataset_name}" \
     --data_dir "${DATA_DIR}" \
     --checkpoint_map "${model_name}=${ckpt_path}" \

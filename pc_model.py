@@ -27,7 +27,8 @@ log = logging.getLogger(__name__)
 
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
-                 first_bn=True, dropout=0.0, separable=None, avg_pooling=False, stride=1, kernel_size=3, **kwargs):
+                 first_bn=True, dropout=0.0, separable=None, avg_pooling=False, stride=1, kernel_size=3,
+                 linear_bias=True, **kwargs):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -42,7 +43,7 @@ class PCNet(nn.Module):
 
         self.init_args = self._get_init_args(
             inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling,
-            self.stride, self.kernel_size, **kwargs)
+            self.stride, self.kernel_size, linear_bias=linear_bias, **kwargs)
 
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
@@ -54,7 +55,7 @@ class PCNet(nn.Module):
             logging.warning("Drop the first BN layer")
             self.BNs[0] = nn.Identity()
         # Linear layer
-        self.linear = nn.Linear(self.ocs[-1], num_classes)
+        self.linear = nn.Linear(self.ocs[-1], num_classes, bias=linear_bias)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2) if not avg_pooling else nn.AvgPool2d(kernel_size=2, stride=2)
         self.global_avg_pool2d = GlobalAvgPool2d()
         self.relu = nn.ReLU(inplace=True)
@@ -184,7 +185,7 @@ class PCNet(nn.Module):
 
     @staticmethod
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=False,
-                       stride=None, kernel_size=None, **kwargs):
+                       stride=None, kernel_size=None, linear_bias=True, **kwargs):
         init_args = {
             "model_args": {
                 "inp_channels": inp_channels,
@@ -196,6 +197,7 @@ class PCNet(nn.Module):
                 "avg_pooling": avg_pooling,
                 "stride": stride,
                 "kernel_size": kernel_size,
+                "linear_bias": linear_bias,
             },
             "kwargs": kwargs
         }

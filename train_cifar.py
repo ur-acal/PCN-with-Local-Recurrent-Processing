@@ -45,6 +45,9 @@ def get_args():
     p.add_argument("--max_pool",      type=int, nargs="+",
                    default=[False, False, True, False, True, False, False, False])
     p.add_argument("--num_classes",   type=int, default=10)
+    p.add_argument("--linear_bias", type=str2bool,
+                   default=str2bool(os.environ.get("LINEAR_BIAS", "true")),
+                   help="Enable the final linear classifier bias.")
     # PCConv hyper-params
     p.add_argument("--kernel_size",   type=int, default=3)
     p.add_argument("--stride",        type=int, default=1)
@@ -155,6 +158,7 @@ def main():
         "out_channels": args.out_channels,
         "max_pool": args.max_pool,
         "num_classes": args.num_classes,
+        "linear_bias": args.linear_bias,
         "kernel_size": args.kernel_size,
         "stride": args.stride,
         "padding": args.padding,

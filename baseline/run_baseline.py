@@ -298,6 +298,9 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--num_classes", type=int, default=None)
     parser.add_argument("--in_chans", type=int, default=3)
+    parser.add_argument(
+        "--linear_bias", type=str2bool,
+        default=str2bool(os.environ.get("LINEAR_BIAS", "true")))
     parser.add_argument("--noise_level_list", type=str, default="0.0,0.01,0.02,0.05")
     parser.add_argument("--noisy_trials", type=int, default=5)
     parser.add_argument("--noise_type", type=str, choices=["multiplicative", "additive"], default="multiplicative")
@@ -568,6 +571,7 @@ def main():
             prefer_resize=args.prefer_resize,
             extra_overrides=None,
         )
+        cfg["linear_bias"] = args.linear_bias
 
         model = build_model(model_arch, cfg, num_classes=num_classes).to(device)
         ckpt_path = resolve_checkpoint_path(model_arch, checkpoint_map, args.checkpoint_dir)

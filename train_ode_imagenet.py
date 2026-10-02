@@ -103,6 +103,9 @@ def get_args():
     p.add_argument("--separable", type=str, nargs="+", default=None)
     p.add_argument("--patch_dim", type=int, default=None)
     p.add_argument("--num_classes", type=int, default=1000)
+    p.add_argument("--linear_bias", type=str2bool,
+                   default=str2bool(os.environ.get("LINEAR_BIAS", "true")),
+                   help="Enable the final linear classifier bias.")
 
     # ------------------------------------------------------------------
     # ODE hyper-params
@@ -248,6 +251,7 @@ def main():
         "out_channels": args.out_channels,
         "max_pool": args.max_pool,
         "num_classes": args.num_classes,
+        "linear_bias": args.linear_bias,
         "kernel_size": args.kernel_size if not (
             isinstance(args.kernel_size, List) and len(args.kernel_size) == 1
         ) else args.kernel_size[0],

@@ -11,6 +11,7 @@ MODEL_CKPT="${MODEL_CKPT:?MODEL_CKPT is required}"
 cmd=(
   python baseline/evaluate_physical_feedforward_cifar.py
   --model_name "${MODEL_NAME}"
+  --linear_bias "${LINEAR_BIAS:-true}"
   --checkpoint "${MODEL_CKPT}"
   --dataset "${TASK:-cifar100}"
   --img_type "${IMG_TYPE:-CiFAIR}"

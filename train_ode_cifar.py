@@ -213,6 +213,9 @@ def get_args():
     p.add_argument("--separable", type=str, nargs="+", default=None)
     p.add_argument("--patch_dim", type=int, default=None)
     p.add_argument("--num_classes",   type=int, default=10)
+    p.add_argument("--linear_bias", type=str2bool,
+                   default=str2bool(os.environ.get("LINEAR_BIAS", "true")),
+                   help="Enable the final linear classifier bias.")
     # ODE hyper-params
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()),
                         default="ODEBlockPC")
@@ -944,6 +947,7 @@ def main():
         "out_channels": args.out_channels,
         "max_pool": args.max_pool,
         "num_classes": args.num_classes,
+        "linear_bias": getattr(args, "linear_bias", True),
         "kernel_size": args.kernel_size if not (isinstance(args.kernel_size, List) and len(args.kernel_size) == 1) else args.kernel_size[0],
         "stride": args.stride if not (isinstance(args.stride, List) and len(args.stride) == 1) else args.stride[0],
         "padding": args.padding if args.patch_dim is None else "same",

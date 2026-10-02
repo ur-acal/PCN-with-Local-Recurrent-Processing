@@ -189,6 +189,9 @@ def parse_args():
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--wrn_depth", type=int, default=None)
     parser.add_argument("--wrn_first_stage_channels", type=int, default=None)
+    parser.add_argument(
+        "--linear_bias", type=str2bool,
+        default=str2bool(os.environ.get("LINEAR_BIAS", "true")))
     parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument(
@@ -557,6 +560,7 @@ def main():
     )
     cfg["wrn_depth"] = args.wrn_depth
     cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
+    cfg["linear_bias"] = args.linear_bias
     if args.tc_feedforward:
         cfg["intermediate_activation"] = args.tc_intermediate_activation
 
@@ -842,6 +846,7 @@ def main():
                 "physical_feedforward": (
                     None if not args.physical_feedforward else {
                         "physical_level": args.physical_level,
+                        "linear_bias": args.linear_bias,
                         "physical_pretraining": args.physical_pretraining,
                         "R": args.R,
                         "C": args.C,

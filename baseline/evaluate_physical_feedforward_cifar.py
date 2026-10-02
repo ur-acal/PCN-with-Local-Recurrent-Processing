@@ -65,6 +65,9 @@ def parse_args():
     p.add_argument("--model_name", required=True)
     p.add_argument("--wrn_depth", type=int, default=None)
     p.add_argument("--wrn_first_stage_channels", type=int, default=None)
+    p.add_argument(
+        "--linear_bias", type=str2bool,
+        default=str2bool(os.environ.get("LINEAR_BIAS", "true")))
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar100")
     p.add_argument("--img_type", default="CiFAIR")
@@ -176,6 +179,7 @@ def evaluate_once(args):
         args.model_name, case="custom_noresize")
     cfg["wrn_depth"] = args.wrn_depth
     cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
+    cfg["linear_bias"] = args.linear_bias
     if args.tc_feedforward:
         cfg["intermediate_activation"] = args.tc_intermediate_activation
     if args.img_type.lower() != "rgb":
