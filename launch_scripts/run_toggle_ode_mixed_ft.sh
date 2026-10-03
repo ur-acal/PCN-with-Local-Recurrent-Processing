@@ -222,7 +222,8 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
       for n_bits in "${NBITS[@]}"; do
         for R_max in "${R_MAX_LIST[@]}"; do
           echo "log dir: ${LOGDIR}/train_${EXP}_No_2_ReLU6_2State_${n_bits}_${nl}_${nt}_${R_max}.log"
-          python train_ode_cifar.py \
+          source ./launch_scripts/final_head_args.sh
+          python train_ode_cifar.py "${FINAL_HEAD_ARGS[@]}" \
             --dataset       "${_task}" \
             --num_classes   "${N_CLASSES}" \
             --save_path     "${MODEL_DIR}" \

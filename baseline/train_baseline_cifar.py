@@ -185,6 +185,10 @@ def parse_kv_overrides(s: str) -> dict:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train CIFAR baseline using TrainerCiFarTimmStyle.")
+    from final_linear import add_final_head_args
+    add_final_head_args(parser)
+    parser.add_argument('--measured_activation_scope', choices=('all', 'pc_only'),
+                        default=os.environ.get('MEASURED_ACTIVATION_SCOPE') or None)
 
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--wrn_depth", type=int, default=None)
@@ -633,6 +637,13 @@ def main():
     checkpoint_weight_format = (
         checkpoint.get("checkpoint_weight_format")
         if isinstance(checkpoint, dict) else None)
+    from final_linear import select_model_head, config_from_args
+    inherited_head = (checkpoint or {}).get('final_head', {})
+    select_model_head(model, args.final_head_type or inherited_head.get('type'),
+                      config_from_args(args, inherited_head.get('config')))
+    args.measured_activation_scope = args.measured_activation_scope or (
+        'all' if checkpoint is None else checkpoint.get('measured_activation_scope', 'pc_only'))
+    model.measured_activation_scope = args.measured_activation_scope
 
     if args.physical_feedforward:
         from physical_feedforward import (
@@ -770,7 +781,7 @@ def main():
                 compile_evaluator=args.compile_measured_activation,
                 fuse_measured_activation=args.fuse_measured_activation)
             configure_feedforward_measured_activation(
-                model, activation_factory)
+                model, activation_factory, scope=args.measured_activation_scope)
             if args.physical_pretraining:
                 pullback_q = (
                     args.unitless_pullback_q
@@ -810,6 +821,19 @@ def main():
                 corner_range=args.nonlinear_R_corner_range)
     elif state_dict is not None:
         model.load_state_dict(state_dict, strict=True)
+    from final_linear import configure_feedforward_head
+    if args.physical_feedforward:
+        configure_feedforward_head(model, args, physical=not args.physical_pretraining)
+        from final_linear import AnalogLinear
+        if (args.physical_pretraining and args.scale_train_recipe and state_dict is None
+                and isinstance(model.fc, AnalogLinear)):
+            with torch.no_grad():
+                gain = model.fc.recipe_gain * args.scale_train_recipe
+                model.fc.weight.div_(gain)
+                if model.fc.bias is not None:
+                    model.fc.bias.div_(gain)
+    elif model.final_head_type != 'old_ideal':
+        raise ValueError('Nonideal feedforward heads require physical_feedforward')
     teacher_model = None
     if distill_enabled and not args.print_only:
         teacher_model = build_teacher_model(

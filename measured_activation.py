@@ -928,8 +928,8 @@ def feedforward_measured_activation_factory(
     return factory
 
 
-def configure_feedforward_measured_activation(model, factory):
-    """Replace residual-block activations while keeping the final ReLU ideal."""
+def configure_feedforward_measured_activation(model, factory, scope='pc_only'):
+    """Replace block activations, and the final ReLU when scope is all."""
     from physical_feedforward import iter_physical_blocks
 
     blocks = list(iter_physical_blocks(model))
@@ -945,8 +945,18 @@ def configure_feedforward_measured_activation(model, factory):
         block.act1 = factory(block.layer_idx, "conv1")
         # In post-activation ResNet, act2 follows the residual addition. Keep
         # only the last such activation ideal, matching the pre-GAP PCN rule.
-        if not post_activation or block is not residual_blocks[-1]:
+        if scope == 'all' or not post_activation or block is not residual_blocks[-1]:
             block.act2 = factory(block.layer_idx, "conv2")
+    if scope == 'all':
+        final = factory(max(block.layer_idx for block in blocks) + 1, 'conv1')
+        if post_activation:
+            if blocks[-1].physical and not getattr(model, 'states_are_physical', False):
+                final.set_coordinate_pullback_scale(blocks[-1].q)
+            model.final_activation = final
+        else:
+            from physical_feedforward import StateScale
+            tail = [m for m in model.relu.modules() if isinstance(m, StateScale)]
+            model.relu = nn.Sequential(final, *tail) if tail else final
     return model
 
 

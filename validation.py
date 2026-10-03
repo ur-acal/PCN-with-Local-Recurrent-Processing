@@ -1158,6 +1158,9 @@ class Validator(nn.Module):
         # The model needs to be converted to ode blocks and wrapped with wrapper before.
         self.model = model
         self.model.eval()
+        from final_linear import AnalogLinear
+        if isinstance(getattr(model, 'linear', None), AnalogLinear):
+            model.linear.begin_evaluation_trial()
         self.device = device
         self.dataloader = test_dataloader
         self._unroll_sample_inputs = next(iter(self.dataloader))[0][:2].to(

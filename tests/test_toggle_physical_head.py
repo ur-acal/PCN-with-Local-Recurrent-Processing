@@ -315,9 +315,10 @@ def test_pc_only_keeps_ideal_terminal_activation_in_pretraining():
 
 
 @pytest.mark.parametrize("head", ["analog", "digital"])
-def test_placeholder_fails_explicitly(head):
-    with pytest.raises(NotImplementedError):
-        PCNetNoBatchNorm(inp_channels=[3], out_channels=[4], max_pool=[False], final_head_type=head)
+def test_nonideal_head_is_constructed(head):
+    from final_linear import AnalogLinear, DigitalLinear
+    model = PCNetNoBatchNorm(inp_channels=[3], out_channels=[4], max_pool=[False], final_head_type=head)
+    assert isinstance(model.linear, AnalogLinear if head == 'analog' else DigitalLinear)
 
 
 def test_physical_recovery_preserves_bias_optimizer_and_rng(tmp_path):

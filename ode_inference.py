@@ -42,9 +42,8 @@ def parse_args():
     parser.add_argument("--model_dir",  type=str, required=True,
                         help="Directory containing the saved model checkpoint")
     parser.add_argument("--ckpt", type=str, default="best")
-    parser.add_argument("--final_head_type", choices=("old_ideal", "analog", "digital"),
-                        default=os.environ.get("FINAL_HEAD_TYPE") or None,
-                        help="Inherit checkpoint head; analog/digital are placeholders.")
+    from final_linear import add_final_head_args
+    add_final_head_args(parser)
     parser.add_argument(
         "--measured_activation_scope", choices=("all", "pc_only"),
         default=os.environ.get("MEASURED_ACTIVATION_SCOPE") or None,
@@ -285,8 +284,6 @@ def parse_args():
     from tc_cli import add_tc_arguments, validate_tc
     add_tc_arguments(parser)
     args = parser.parse_args()
-    if args.final_head_type in ("analog", "digital"):
-        raise NotImplementedError(args.final_head_type + " final head is not implemented yet")
     validate_tc(args, inference=True)
     return args
 
@@ -434,6 +431,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     t_end = get_t_end(args)
     unrolled_noise_level = 0.0
     noisy_params = {"noise_level": 0.0, "weight": None}
+    from final_linear import head_load_overrides
+    noisy_params.update(head_load_overrides(args))
     if getattr(args, "measured_activation_scope", None) is not None:
         noisy_params["measured_activation_scope"] = (
             args.measured_activation_scope)
@@ -581,6 +580,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
     noisy_params = {"noise_level": 0.15 if noise_level is None else noise_level, "weight": None}
+    from final_linear import head_load_overrides
+    noisy_params.update(head_load_overrides(args))
     if getattr(args, "measured_activation_scope", None) is not None:
         noisy_params["measured_activation_scope"] = (
             args.measured_activation_scope)
@@ -925,6 +926,8 @@ def run_ode_inference(linear_study=None):
                 for t in range(trials):
                     trial_seed = None
                     noisy_params = {"noise_level": noise_level, "weight": None}
+                    from final_linear import head_load_overrides
+                    noisy_params.update(head_load_overrides(args))
                     if getattr(args, "measured_activation_scope", None) is not None:
                         noisy_params["measured_activation_scope"] = (
                             args.measured_activation_scope)

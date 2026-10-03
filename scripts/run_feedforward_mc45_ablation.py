@@ -39,6 +39,8 @@ def optional_bool(value):
 
 def parse_args():
     p = argparse.ArgumentParser()
+    from final_linear import add_final_head_args
+    add_final_head_args(p)
     p.add_argument("--model_name", required=True)
     p.add_argument("--wrn_depth", type=int, default=None)
     p.add_argument("--wrn_first_stage_channels", type=int, default=None)
@@ -201,6 +203,11 @@ def run_corner(args, corner, relu_indices):
             "none" if args.bn_calibration_samples is None
             else str(args.bn_calibration_samples)),
     ]
+    from final_linear import HEAD_DEFAULTS
+    for key in ('final_head_type', *HEAD_DEFAULTS):
+        value = getattr(args, key, None)
+        if value is not None:
+            command.extend(['--' + key, str(value)])
     if args.wrn_depth is not None:
         command.extend(["--wrn_depth", str(args.wrn_depth)])
     if args.wrn_first_stage_channels is not None:

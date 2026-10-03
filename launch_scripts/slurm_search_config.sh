@@ -742,9 +742,6 @@ submit_chunk() {
   [[ -z "${VALIDATION_MANIFEST:-}" ]] || sbatch_exports+=",VALIDATION_MANIFEST=${VALIDATION_MANIFEST}"
   sbatch_exports+=",INPUT_QUANT_BITS=${INPUT_QUANT_BITS},CENTER_STUDENT_INPUT=${CENTER_STUDENT_INPUT}"
   sbatch_exports+=",LINEAR_BIAS=${LINEAR_BIAS}"
-  if [[ -n "${FINAL_HEAD_TYPE:-}" ]]; then
-    sbatch_exports+=",FINAL_HEAD_TYPE=${FINAL_HEAD_TYPE}"
-  fi
   sbatch_exports+=",FT_LEARNING_RATE=${FT_LEARNING_RATE}"
   sbatch_exports+=",FT_NUM_EPOCHS=${FT_NUM_EPOCHS}"
   sbatch_exports+=",FT_TIMM_AUG_LEVEL=${FT_TIMM_AUG_LEVEL}"
@@ -758,6 +755,12 @@ submit_chunk() {
   sbatch_exports+=",Z_OVER_Y_TIME=${Z_OVER_Y_TIME},SCALE_TRAIN_RECIPE=${SCALE_TRAIN_RECIPE}"
   sbatch_exports+=",R_VAL=${R_VAL},R_MAX=${R_MAX},C_VAL=${C_VAL},V_DD=${V_DD},MISMATCH_LEVEL=${MISMATCH_LEVEL}"
   sbatch_exports+=",ENABLE_MEASURED_ACTIVATION=${ENABLE_MEASURED_ACTIVATION}"
+  local head_key
+  for head_key in FINAL_HEAD_TYPE FINAL_REPR_BITS FINAL_WEIGHT_BITS FINAL_BIAS_BITS FINAL_ACCUMULATOR_BITS FINAL_ADC_NOISE_LSB FINAL_HEAD_QUANTIZE FINAL_HEAD_CLAMP; do
+    if [[ -n "${!head_key:-}" ]]; then
+      sbatch_exports+=",${head_key}=${!head_key}"
+    fi
+  done
   if [[ -n "${MEASURED_ACTIVATION_SCOPE:-}" ]]; then
     sbatch_exports+=",MEASURED_ACTIVATION_SCOPE=${MEASURED_ACTIVATION_SCOPE}"
   fi

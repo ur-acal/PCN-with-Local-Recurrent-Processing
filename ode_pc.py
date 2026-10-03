@@ -4929,6 +4929,17 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         # Also honored by the per-forward QAT callback. No state_dict changes.
         wrappers[-1].physical_head_output = True
         wrappers[-1].out_scale = 1.0
+    if wrappers:
+        from final_linear import configure_model_head, NonidealLinear
+        if isinstance(pc_net.linear, NonidealLinear) and not pc_net.states_are_physical:
+            raise NotImplementedError('Nonideal heads require a physical-head-compatible PCNet forward')
+        configure_model_head(
+            pc_net, physical=pc_net.states_are_physical, q=float(wrappers[-1].q),
+            v_dd=v_dd, template=pc_net.PcConvs[-1],
+            family='tc' if not issubclass(ode_wrapper, toggle_wrappers) else 'toggle',
+            timing=getattr(pc_net.PcConvs[-1], 'toggle_timing_mode', 'derived'),
+            base_time=getattr(pc_net.PcConvs[-1], 'toggle_y_time', 5e-9),
+            R=R, C=C, **{key: val for key, val in kwargs.items() if key not in ('R', 'C', 'v_dd')})
     if (wrappers and kwargs.get("enable_measured_activation", False) and
             getattr(pc_net, "measured_activation_scope", "pc_only") == "all"):
         if not hasattr(wrappers[-1], "_new_measured_activation"):

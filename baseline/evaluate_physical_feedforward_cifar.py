@@ -62,6 +62,10 @@ def index_list(value):
 
 def parse_args():
     p = argparse.ArgumentParser()
+    from final_linear import add_final_head_args
+    add_final_head_args(p)
+    p.add_argument('--measured_activation_scope', choices=('all', 'pc_only'),
+                   default=os.environ.get('MEASURED_ACTIVATION_SCOPE') or None)
     p.add_argument("--model_name", required=True)
     p.add_argument("--wrn_depth", type=int, default=None)
     p.add_argument("--wrn_first_stage_channels", type=int, default=None)
@@ -189,6 +193,11 @@ def evaluate_once(args):
     checkpoint = torch.load(
         args.checkpoint, map_location="cpu", weights_only=False)
     state_dict = checkpoint.get("net", checkpoint)
+    from final_linear import select_model_head, config_from_args
+    inherited_head = checkpoint.get('final_head', {})
+    select_model_head(model, args.final_head_type or inherited_head.get('type'),
+                      config_from_args(args, inherited_head.get('config')))
+    args.measured_activation_scope = args.measured_activation_scope or checkpoint.get('measured_activation_scope', 'pc_only')
     checkpoint_is_full_param = any(
         ".parametrizations.weight.original" in key for key in state_dict)
     from tc_feedforward_cli import conversion_options
@@ -252,7 +261,7 @@ def evaluate_once(args):
             fit_constraint=args.activation_fit_constraint,
             compile_evaluator=args.compile_measured_activation,
             fuse_measured_activation=args.fuse_measured_activation)
-        configure_feedforward_measured_activation(model, activation_factory)
+        configure_feedforward_measured_activation(model, activation_factory, scope=args.measured_activation_scope)
     nonlinear_R_package = None
     if args.enable_nonlinear_R and args.nonlinear_R_train_mode != "none":
         if args.physical_level != 2:
@@ -318,6 +327,8 @@ def evaluate_once(args):
 
     model.to(device).eval()
 
+    from final_linear import configure_feedforward_head
+    configure_feedforward_head(model, args, physical=True)
     loader = get_test_data(
         test_bs=args.batch_size, img_type=args.img_type,
         task=args.dataset, shuffle=False,

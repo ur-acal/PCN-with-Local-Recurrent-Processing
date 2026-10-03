@@ -97,6 +97,8 @@ for pair in \
 done
 
 cmd+=("${TC_FEEDFORWARD_ARGS[@]}")
+source ./launch_scripts/final_head_args.sh
+cmd+=("${FINAL_HEAD_ARGS[@]}")
 printf 'Running:'
 printf ' %q' "${cmd[@]}"
 printf '\n'

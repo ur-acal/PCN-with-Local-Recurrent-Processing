@@ -29,6 +29,10 @@ def logits_for_loss(outputs, model):
     """Restore model units only for a loss, never for prediction."""
     if isinstance(model, nn.DataParallel):
         model = model.module
+    from final_linear import NonidealLinear
+    head = getattr(model, 'linear', getattr(model, 'fc', None))
+    if isinstance(head, NonidealLinear):
+        return head.logits_for_loss(outputs)
     return outputs / model.state_q if getattr(model, "states_are_physical", False) else outputs
 
 
@@ -47,17 +51,16 @@ class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
                  first_bn=True, dropout=0.0, separable=None, avg_pooling=False, stride=1, kernel_size=3,
                  linear_bias=True, final_head_type="old_ideal",
-                 measured_activation_scope="all", **kwargs):
+                 measured_activation_scope="all", final_head_config=None, **kwargs):
         super().__init__()
         if final_head_type not in ("old_ideal", "analog", "digital"):
             raise ValueError("Unknown final_head_type: " + str(final_head_type))
-        if final_head_type != "old_ideal":
-            raise NotImplementedError(final_head_type + " final head is not implemented yet")
         measured_activation_scope = str(measured_activation_scope).lower()
         if measured_activation_scope not in ("all", "pc_only"):
             raise ValueError(
                 "measured_activation_scope must be 'all' or 'pc_only'.")
         self.final_head_type = final_head_type
+        self.final_head_config = final_head_config
         self.measured_activation_scope = measured_activation_scope
         self.states_are_physical = False
         self.state_q = 1.0
@@ -76,6 +79,7 @@ class PCNet(nn.Module):
             inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling,
             self.stride, self.kernel_size, linear_bias=linear_bias,
             final_head_type=final_head_type,
+            final_head_config=final_head_config,
             measured_activation_scope=measured_activation_scope, **kwargs)
 
         # PC recurrent layers
@@ -89,6 +93,9 @@ class PCNet(nn.Module):
             self.BNs[0] = nn.Identity()
         # Linear layer
         self.linear = PhysicalBiasLinear(self.ocs[-1], num_classes, bias=linear_bias)
+        if final_head_type != 'old_ideal':
+            from final_linear import select_model_head
+            select_model_head(self, final_head_type, final_head_config)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2) if not avg_pooling else nn.AvgPool2d(kernel_size=2, stride=2)
         self.global_avg_pool2d = GlobalAvgPool2d()
         self.final_activation = nn.ReLU(inplace=False)
@@ -208,6 +215,10 @@ class PCNet(nn.Module):
         # Todo: Add noise for BN and linear
         with torch.no_grad():
             for _name, _p in self.named_parameters():
+                if _name.startswith('linear.') and self.final_head_type != 'old_ideal':
+                    # Nonideal heads apply their own encoded-domain noise;
+                    # never perturb the stored model-coordinate parameters.
+                    continue
                 if "conv" in _name.lower() and "pc" not in _name.lower():
                     log.info("Adding noise to conv layer: {}".format(_name))
                     self.clean_params[_name] = _p.clone()
@@ -251,7 +262,7 @@ class PCNet(nn.Module):
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=False,
                        stride=None, kernel_size=None, linear_bias=True,
                        final_head_type="old_ideal",
-                       measured_activation_scope="all", **kwargs):
+                       measured_activation_scope="all", final_head_config=None, **kwargs):
         init_args = {
             "model_args": {
                 "inp_channels": inp_channels,
@@ -265,6 +276,7 @@ class PCNet(nn.Module):
                 "kernel_size": kernel_size,
                 "linear_bias": linear_bias,
                 "final_head_type": final_head_type,
+                "final_head_config": final_head_config,
                 "measured_activation_scope": measured_activation_scope,
             },
             "kwargs": kwargs

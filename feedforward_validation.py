@@ -68,6 +68,9 @@ class FeedForwardCNNValidator(Validator):
                 "PCN recurrent trajectory recording.")
         self.model = model
         self.model.eval()
+        from final_linear import AnalogLinear
+        if isinstance(getattr(model, 'fc', None), AnalogLinear):
+            model.fc.begin_evaluation_trial()
         self.device = device
         self.dataloader = test_dataloader
         self._physical_blocks = list(iter_physical_blocks(model))

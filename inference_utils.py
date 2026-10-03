@@ -321,6 +321,9 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
     init_kwargs = {**model_args, **mod_args}
     init_kwargs.update(kwargs) # overwritten the loaded args with passed in kwargs (if overlapping keys exist)
     init_kwargs.update(model_overrides)
+    if 'final_head_config' in model_overrides:
+        init_kwargs['final_head_config'] = dict(model_args.get('final_head_config') or {},
+                                               **model_overrides['final_head_config'])
     if ("measured_activation_scope" in model_arg_names and
             legacy_measured_activation_scope and
             "measured_activation_scope" not in model_overrides):
@@ -381,6 +384,8 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         if isinstance(noise_level, dict) or noise_level > 0.0:
             mean_abs = []
             for _name, _p in net_.named_parameters():
+                if _name.startswith('linear.') and getattr(net_, 'final_head_type', 'old_ideal') != 'old_ideal':
+                    continue
                 if noise_to_bn and "bn" in _name.lower() and "pc" not in _name.lower():
                     assert torch.allclose(_p, torch.zeros_like(_p)) or not torch.allclose(_p, clean_params[_name])
                 elif noise_to_linear and "linear" in _name.lower() and "pc" not in _name.lower():

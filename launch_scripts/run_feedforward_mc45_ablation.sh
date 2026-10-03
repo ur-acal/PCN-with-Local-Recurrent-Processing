@@ -97,6 +97,8 @@ if [[ -n "${FIXED_COUPLER_MC_INDEX:-}" ]]; then
   cmd+=(--fixed_coupler_mc_index "${FIXED_COUPLER_MC_INDEX}")
 fi
 
+source ./launch_scripts/final_head_args.sh
+cmd+=("${FINAL_HEAD_ARGS[@]}")
 printf 'Running:'
 printf ' %q' "${cmd[@]}"
 printf '\n'

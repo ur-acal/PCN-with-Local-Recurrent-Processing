@@ -284,7 +284,11 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             if not parameter.requires_grad:
                 continue
 
-            if self.scale_train_recipe and ".FFconv." in name:
+            if (self.scale_train_recipe and getattr(self.model, 'final_head_type', 'old_ideal') == 'analog'
+                    and name in ('linear.weight', 'linear.bias', 'fc.weight', 'fc.bias')):
+                from final_linear import analog_recipe_scale
+                stage, stage_scale = 'linear', analog_recipe_scale(self.model)
+            elif self.scale_train_recipe and ".FFconv." in name:
                 stage, stage_scale = "ff", self.ff_train_scale
             elif self.scale_train_recipe and ".FBconv." in name:
                 stage, stage_scale = "fb", self.fb_train_scale
@@ -326,7 +330,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             grouped.setdefault(key, []).append(parameter)
 
         parameter_groups = []
-        stage_order = {"other": 0, "ff": 1, "fb": 2}
+        stage_order = {"other": 0, "ff": 1, "fb": 2, "linear": 3}
         ordered_groups = sorted(
             grouped.items(),
             key=lambda item: (
@@ -1115,6 +1119,9 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         if hasattr(self.model, "init_args"):
             state["init_args"] = self.model.init_args
+        state['final_head'] = dict(type=getattr(self.model, 'final_head_type', 'old_ideal'),
+                                   config=getattr(self.model, 'final_head_config', None))
+        state['measured_activation_scope'] = getattr(self.model, 'measured_activation_scope', 'pc_only')
 
         has_weight_parametrizations = any(
             P.is_parametrized(module, "weight")

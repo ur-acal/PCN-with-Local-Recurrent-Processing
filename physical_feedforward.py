@@ -897,7 +897,10 @@ def convert_wide_resnet_to_physical(
         scale_batchnorm_to_physical_domain(model, q)
         blocks[0].input_scale = q
         model._physical_state_scale = q
-        if getattr(model, "physical_model_style", None) == "post_activation":
+        if getattr(model, 'final_head_type', 'old_ideal') != 'old_ideal':
+            model.states_are_physical = True
+            model.state_q = q
+        elif getattr(model, "physical_model_style", None) == "post_activation":
             blocks[-1].output_scale = q
         else:
             model.relu = nn.Sequential(model.relu, StateScale(1.0 / q))

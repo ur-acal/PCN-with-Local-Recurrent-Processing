@@ -128,7 +128,8 @@ if [[ "${RGGB_TO_RGB}" == "true" ]]; then
   INP[0]=3
 fi
 
-python train_ode_cifar.py \
+source ./launch_scripts/final_head_args.sh
+python train_ode_cifar.py "${FINAL_HEAD_ARGS[@]}" \
   --save_path     "${OUTPUT_SAVE_PATH}" \
   --output_save_path "${OUTPUT_SAVE_PATH}" \
   --optim         "SGD" \

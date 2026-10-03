@@ -277,6 +277,8 @@ def configure_feedforward_measured_pooling(
     if not isinstance(getattr(model, "global_pool", None), nn.AdaptiveAvgPool2d):
         raise TypeError("Expected model.global_pool to be AdaptiveAvgPool2d.")
     final_scale = float(getattr(model, "_physical_state_scale", 1.0))
+    if getattr(model, 'states_are_physical', False):
+        final_scale = 1.
     model.global_pool = MeasuredAvgPool2d(
         input_scale=final_scale, seed=seed, **common)
     pool_index = 1

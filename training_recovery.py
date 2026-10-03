@@ -23,12 +23,16 @@ def _runtime(model):
     # caches and transient per-forward tensors need not be serialized.
     names = {'_generator', '_gaussian_curve_samples', '_spin_factor_y',
              '_spin_factor_z', '_nonlinear_R_training_curve_indices'}
+    modules = list(model.named_modules())
+    from final_linear import AnalogLinear
+    modules += [(name + '._circuit', module._circuit) for name, module in modules
+                if isinstance(module, AnalogLinear) and module._circuit is not None]
     return {name: {**{key: value for key, value in vars(module).items()
                      if key in names or key.endswith('_generators')
                      or isinstance(value, torch.Generator)},
                    **{key: module._buffers[key]
                       for key in module._non_persistent_buffers_set}}
-            for name, module in model.named_modules()}
+            for name, module in modules}
 
 
 def save_latest(trainer, epoch, history):
@@ -51,6 +55,9 @@ def save_latest(trainer, epoch, history):
             state[name] = getattr(trainer, name)
     state['validation_split'] = getattr(
         trainer, 'validation_split_metadata', None)
+    state['final_head'] = dict(type=getattr(trainer.model, 'final_head_type', 'old_ideal'),
+                               config=getattr(trainer.model, 'final_head_config', None))
+    state['measured_activation_scope'] = getattr(trainer.model, 'measured_activation_scope', 'pc_only')
     if hasattr(trainer.model, 'init_args'):
         state['init_args'] = trainer.model.init_args
     if any('parametrizations.weight.original' in key for key in state['net']):
@@ -104,6 +111,9 @@ def restore_latest(trainer):
                 'center_student_input', 'timm_aug_level', 'final_eval_only',
                 'health_check_epochs', 'health_check_batches',
                 'health_check_seed', 'validation_mode',
+                'final_head_type', 'final_repr_bits', 'final_weight_bits',
+                'final_bias_bits', 'final_accumulator_bits', 'final_adc_noise_lsb',
+                'final_head_quantize', 'final_head_clamp',
                 'validation_manifest_checksum'):
         if key in current and key in recovery['config'] and current[key] != recovery['config'][key]:
             raise ValueError(f'Full recovery requires unchanged {key}; use an ordinary checkpoint for a new stage')
@@ -127,7 +137,11 @@ def restore_latest(trainer):
             raise ValueError(f'Resume requires {name}')
         component.load_state_dict(state)
     for name, attributes in recovery['runtime'].items():
-        module = trainer.model.get_submodule(name)
+        if name.endswith('._circuit'):
+            head = trainer.model.get_submodule(name[:-len('._circuit')])
+            module = head._circuit or head._build_circuit(head.weight)
+        else:
+            module = trainer.model.get_submodule(name)
         def to_device(value):
             if isinstance(value, torch.Tensor):
                 return value.to(trainer.device)

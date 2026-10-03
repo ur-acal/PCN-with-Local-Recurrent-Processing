@@ -74,6 +74,7 @@ def bool_arg(value):
 
 
 def parse_args():
+    from final_linear import add_final_head_args
     parser = argparse.ArgumentParser()
     parser.add_argument("--n_trials", type=int, default=5)
     parser.add_argument(
@@ -241,6 +242,7 @@ def parse_args():
         "--activation_curve_override", default=None,
         help="Use this activation curve for every corner instead of the "
              "corner-specific ReLU Monte-Carlo file.")
+    add_final_head_args(parser)
     parser.add_argument("--activation_corner", default="TT")
     parser.add_argument(
         "--measured_activation_scope", choices=("all", "pc_only"),
@@ -390,6 +392,11 @@ def build_command(args, case_name):
     if args.measured_activation_scope is not None:
         command.extend([
             "--measured_activation_scope", args.measured_activation_scope])
+    from final_linear import HEAD_DEFAULTS
+    for key in ('final_head_type', *HEAD_DEFAULTS):
+        value = getattr(args, key, None)
+        if value is not None:
+            command.extend(['--' + key, str(value)])
     if args.input_quant_bits is not None:
         command.extend(["--input_quant_bits", str(args.input_quant_bits)])
     if args.center_student_input is not None:

@@ -231,9 +231,8 @@ def get_args():
     p.add_argument("--linear_bias", type=str2bool,
                    default=str2bool(os.environ.get("LINEAR_BIAS", "true")),
                    help="Enable the final linear classifier bias.")
-    p.add_argument("--final_head_type", choices=("old_ideal", "analog", "digital"),
-                   default=os.environ.get("FINAL_HEAD_TYPE") or None,
-                   help="Inherit checkpoint head when omitted; analog/digital are placeholders.")
+    from final_linear import add_final_head_args
+    add_final_head_args(p)
     p.add_argument(
         "--measured_activation_scope", choices=("all", "pc_only"),
         default=os.environ.get("MEASURED_ACTIVATION_SCOPE") or None,
@@ -1037,9 +1036,14 @@ def main():
 
     args.measured_activation_scope = model.measured_activation_scope
 
-    requested_head = getattr(args, "final_head_type", None)
-    if requested_head is not None and requested_head != model.final_head_type:
-        raise NotImplementedError("Changing final_head_type to " + requested_head + " is not implemented")
+    from final_linear import select_model_head, config_from_args, configure_model_head
+    select_model_head(model, getattr(args, 'final_head_type', None),
+                      config_from_args(args, model.final_head_config))
+    configure_model_head(model, physical=False, q=args.v_dd / args.one_over_q,
+                         v_dd=args.v_dd, timing=args.toggle_timing_mode,
+                         base_time=args.toggle_y_time, R=args.R, C=args.C)
+    from final_linear import analog_recipe_scale
+    model.linear_train_scale = analog_recipe_scale(model) * (args.scale_train_recipe or 1.)
 
     print(model)
     total_params = sum(p.numel() for p in model.parameters())
@@ -1101,6 +1105,13 @@ def main():
             args.scale_train_recipe, ff_train_scale, fb_train_scale)
         if args.model_name is None:
             scale_toggle_initial_weights(model, ff_train_scale, fb_train_scale)
+            from final_linear import AnalogLinear
+            if isinstance(model.linear, AnalogLinear):
+                with torch.no_grad():
+                    gain = model.linear.recipe_gain * args.scale_train_recipe
+                    model.linear.weight.div_(gain)
+                    if model.linear.bias is not None:
+                        model.linear.bias.div_(gain)
             logging.warning(
                 "Scaled initial FF/FB weights by %g/%g.",
                 1.0 / ff_train_scale, 1.0 / fb_train_scale)

@@ -1050,11 +1050,14 @@ class TrainerCiFar(object):
             skip = set(self.model.no_weight_decay())
         grouped = {
             (stage, no_decay): []
-            for stage in ("other", "ff", "fb")
+            for stage in ("other", "ff", "fb", "linear")
             for no_decay in (False, True)
         }
         for name, parameter in self.model.named_parameters():
-            if ".FFconv." in name:
+            if (getattr(self.model, 'final_head_type', 'old_ideal') == 'analog'
+                    and name in ('linear.weight', 'linear.bias', 'fc.weight', 'fc.bias')):
+                stage = 'linear'
+            elif ".FFconv." in name:
                 stage = "ff"
             elif ".FBconv." in name:
                 stage = "fb"
@@ -1072,7 +1075,8 @@ class TrainerCiFar(object):
             grouped[(stage, no_decay)].append(parameter)
 
         parameter_groups = []
-        for stage, scale in (("other", 1.0),
+        from final_linear import analog_recipe_scale
+        for stage, scale in (("other", 1.0), ('linear', analog_recipe_scale(self.model)),
                              ("ff", self.ff_train_scale),
                              ("fb", self.fb_train_scale)):
             for no_decay in (False, True):

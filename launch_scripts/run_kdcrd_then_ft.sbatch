@@ -157,6 +157,8 @@ if [[ -n "${MEASURED_ACTIVATION_SCOPE:-}" ]]; then
     --measured_activation_scope "${MEASURED_ACTIVATION_SCOPE}"
   )
 fi
+source ./launch_scripts/final_head_args.sh
+MEASURED_ACTIVATION_CONFIG_ARGS+=("${FINAL_HEAD_ARGS[@]}")
 MEASURED_ACTIVATION_ARGS=(
   --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}"
   "${MEASURED_ACTIVATION_CONFIG_ARGS[@]}"
@@ -601,6 +603,7 @@ eval_one_combo_model() {
     echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V2_T1 all-on, 10 trials, per-spin ReLU, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
     OMP_NUM_THREADS=${THREADS_PER_PROC} \
     python -u scripts/run_toggle_nonideality_ablation.py \
+      "${FINAL_HEAD_ARGS[@]}" \
       --full_45_corner_test true \
       --mc_45_corner_dir hardware_data/mc_45_corners \
       --mc_spin_variation_source PVT_Monte_Carlo_Results_SPIN.csv \

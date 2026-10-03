@@ -190,7 +190,7 @@ class CIFARResNet(nn.Module):
                 x, p=self.final_dropout_rate, training=self.training)
         # Keep the classifier tail aligned with PCN/WRN: final dropout,
         # ideal ReLU, then global average pooling.
-        x = F.relu(x)
+        x = getattr(self, 'final_activation', F.relu)(x)
         return x
 
     def forward_head(self, x, pre_logits: bool = False):
