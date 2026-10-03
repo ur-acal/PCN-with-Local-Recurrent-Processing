@@ -300,8 +300,14 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
     model_struct = PCN_CLASSES[sd_model_struct] if sd_model_struct else model_struct
     log.warning("----- Using :{} model -----".format(model_struct.__name__))
 
+    legacy_measured_activation_scope = (
+        "measured_activation_scope" not in model_args)
     # filter out unused init arguments
     filter_args(model_struct, model_args)
+    model_arg_names = collect_init_args(model_struct)
+    model_overrides = {
+        name: value for name, value in kwargs.items()
+        if name in model_arg_names}
     if pc_conv_layer is not None:
         filter_args(pc_conv_layer, mod_args)
         filter_args(pc_conv_layer, kwargs)
@@ -314,6 +320,11 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
 
     init_kwargs = {**model_args, **mod_args}
     init_kwargs.update(kwargs) # overwritten the loaded args with passed in kwargs (if overlapping keys exist)
+    init_kwargs.update(model_overrides)
+    if ("measured_activation_scope" in model_arg_names and
+            legacy_measured_activation_scope and
+            "measured_activation_scope" not in model_overrides):
+        init_kwargs["measured_activation_scope"] = "pc_only"
 
     net_ = model_struct(**init_kwargs)
     net_ = net_.to(device)
@@ -396,6 +407,10 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
             for _name, _p in net_.named_parameters():
                 logging.warning("name: {}, clean params mean: {}, median: {}, min: {}, max: {}".format(
                     _name, _p.mean(), _p.median(), _p.min(), _p.max()))
+    if hasattr(net_, "measured_activation_scope"):
+        logging.warning(
+            "Measured activation scope: %s",
+            net_.measured_activation_scope)
     logging.warning("----- Model loaded -----")
     return net_
 

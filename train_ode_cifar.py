@@ -96,6 +96,7 @@ def configure_unitless_measured_activation(model, curve_path, corner,
                                            normalize_positive_endpoint,
                                            fit_constraint="auto",
                                            physical_v_dd=None,
+                                           pullback_scale=None,
                                            interpolation="piecewise_linear",
                                            fuse_measured_activation=True):
     """Configure the measured curve once for ordinary or pullback pretraining."""
@@ -103,7 +104,7 @@ def configure_unitless_measured_activation(model, curve_path, corner,
     if interpolation not in {"cubic_bspline", "piecewise_linear"}:
         raise ValueError(
             "activation interpolation must be cubic_bspline or piecewise_linear.")
-    for block in model.PcConvs:
+    def new_activation():
         activation_kwargs = dict(
             curve_path=curve_path,
             corner=corner,
@@ -123,8 +124,22 @@ def configure_unitless_measured_activation(model, curve_path, corner,
                 if physical_v_dd is None else PiecewiseLinearActivation)
         if physical_v_dd is not None:
             activation_kwargs["v_dd"] = physical_v_dd
-        activation = activation_cls(**activation_kwargs)
+        return activation_cls(**activation_kwargs)
+
+    for block in model.PcConvs:
+        activation = new_activation()
         block.act_fn = activation.to(device=block.FFconv.weight.device)
+    if getattr(model, "measured_activation_scope", "pc_only") == "all":
+        device = next(model.parameters()).device
+        for name in model.non_pc_activation_site_names():
+            activation = new_activation()
+            if physical_v_dd is not None:
+                if pullback_scale is None:
+                    raise ValueError(
+                        "Physical measured activation in unitless pretraining "
+                        "requires pullback_scale.")
+                activation.set_coordinate_pullback_scale(pullback_scale)
+            model.set_non_pc_activation(name, activation.to(device=device))
 
 
 def get_args():
@@ -219,6 +234,11 @@ def get_args():
     p.add_argument("--final_head_type", choices=("old_ideal", "analog", "digital"),
                    default=os.environ.get("FINAL_HEAD_TYPE") or None,
                    help="Inherit checkpoint head when omitted; analog/digital are placeholders.")
+    p.add_argument(
+        "--measured_activation_scope", choices=("all", "pc_only"),
+        default=os.environ.get("MEASURED_ACTIVATION_SCOPE") or None,
+        help="Measured-ReLU coverage. Fresh models default to all; checkpoints "
+             "inherit saved metadata, and old checkpoints default to pc_only.")
     # ODE hyper-params
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()),
                         default="ODEBlockPC")
@@ -884,6 +904,8 @@ def main():
     # this option existed instead of going through the current parser.
     if not hasattr(args, "fuse_measured_activation"):
         args.fuse_measured_activation = True
+    if not hasattr(args, "measured_activation_scope"):
+        args.measured_activation_scope = None
     seed_training(args.seed)
     inference_path = args.save_path if args.model_name is not None else ""
     args.input_quant_bits, args.center_student_input = resolve_preprocessing(
@@ -952,6 +974,8 @@ def main():
         "num_classes": args.num_classes,
         "linear_bias": getattr(args, "linear_bias", True),
         "final_head_type": getattr(args, "final_head_type", None) or "old_ideal",
+        "measured_activation_scope": (
+            getattr(args, "measured_activation_scope", None) or "all"),
         "kernel_size": args.kernel_size if not (isinstance(args.kernel_size, List) and len(args.kernel_size) == 1) else args.kernel_size[0],
         "stride": args.stride if not (isinstance(args.stride, List) and len(args.stride) == 1) else args.stride[0],
         "padding": args.padding if args.patch_dim is None else "same",
@@ -999,13 +1023,19 @@ def main():
     else:
         ckpt_path = os.path.join(args.save_path, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
         noisy_params = {"noise_level": 0.0, "weight": None}
+        model_load_overrides = {}
+        if args.measured_activation_scope is not None:
+            model_load_overrides["measured_activation_scope"] = (
+                args.measured_activation_scope)
         model = load_and_prepare_model(model_path=ckpt_path, device="cuda" if torch.cuda.is_available() else "cpu",
                                        model_struct=pcn_model,
                                        pc_conv_layer=pc_conv_mod, data_parallel=False,
                                        noise_to_bn=False, noise_to_linear=False,
                                        fuse_bn=False, conv_only=False, ode_params=None,
-                                       **noisy_params)
+                                       **noisy_params, **model_load_overrides)
         model.dropout = args.dropout
+
+    args.measured_activation_scope = model.measured_activation_scope
 
     requested_head = getattr(args, "final_head_type", None)
     if requested_head is not None and requested_head != model.final_head_type:
@@ -1019,6 +1049,8 @@ def main():
     logging.warning("max pooling: {}".format(model.max_pool))
     logging.warning("pooling layer: {}".format(model.max_pool2d))
     logging.warning("dropout rate: {}".format(model.dropout))
+    logging.warning(
+        "Measured activation scope: %s", model.measured_activation_scope)
     logging.warning("Total number of parameters: {}".format(total_params / 1e6))
     logging.warning("Model name: {}".format(model_name))
     logging.info("----- Printing out model parameter names: -----")
@@ -1111,6 +1143,7 @@ def main():
             normalize_positive_endpoint=args.activation_normalize_positive_endpoint,
             fit_constraint=args.activation_fit_constraint,
             physical_v_dd=args.v_dd,
+            pullback_scale=unitless_pullback_q,
             interpolation=args.activation_interpolation,
             fuse_measured_activation=args.fuse_measured_activation)
         logging.warning(

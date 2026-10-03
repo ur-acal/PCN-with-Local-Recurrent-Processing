@@ -110,15 +110,14 @@ class TCDisabledAuditTests(unittest.TestCase):
                         f'{case}:{field}: {old_value} != {new_value}')
         self.assertEqual(old['solvers'],new['solvers'])
 
-    def test_existing_cli_defaults_and_known_failure_unchanged(self):
+    def test_existing_cli_defaults_and_pullback_regressions(self):
         old,new = self.results
         for stage in ('train_defaults','eval_defaults'):
             for key,value in old[stage].items():
                 self.assertEqual(value,new[stage][key],stage+':'+key)
             self.assertFalse(new[stage]['tc_nonidealities'])
         self.assertEqual(old['pullback'],new['pullback'])
-        expected='test_forward_uses_exact_pullback_once_and_refreshes_after_weight_update'
-        self.assertEqual([k for k,v in new['pullback'].items() if v!='pass'],[expected])
+        self.assertEqual([k for k,v in new['pullback'].items() if v!='pass'],[])
 
     def test_toggle_class_bodies_only_have_reviewed_fixes(self):
         previous = subprocess.check_output(['git','show',BASELINE+':ode_pc.py'],cwd=ROOT,text=True)
@@ -140,6 +139,15 @@ class TCDisabledAuditTests(unittest.TestCase):
              "        if getattr(self, \"_pulse_unrolling\", False) and isinstance(self.FFconv, nn.Conv2d):\n"
              "            self.FFconv(h_hold)\n"
              "        num_slices = self._num_slices(\"y\")"),
+            ("        self.beta_c = self.beta * self.k / self.R\n"
+             "        self.inp_scale = self.q if self.is_first else 1\n"
+             "        self.out_scale = self.q if self.is_last else 1\n\n"
+             "        self.time_scaler = self.R * self.C / self.alpha",
+             "        self.beta_c = self.beta * self.k / self.R\n"
+             "        self.inp_scale = self.q if self.is_first else 1\n"
+             "        self.out_scale = (self.q if self.is_last and\n"
+             "                          not getattr(self, \"physical_head_output\", False) else 1)\n\n"
+             "        self.time_scaler = self.R * self.C / self.alpha"),
         ]
         for old, new in fixes:
             self.assertEqual(previous.count(old), 1, "Pinned baseline changed: " + old)

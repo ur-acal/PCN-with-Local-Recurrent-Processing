@@ -45,6 +45,11 @@ def parse_args():
     parser.add_argument("--final_head_type", choices=("old_ideal", "analog", "digital"),
                         default=os.environ.get("FINAL_HEAD_TYPE") or None,
                         help="Inherit checkpoint head; analog/digital are placeholders.")
+    parser.add_argument(
+        "--measured_activation_scope", choices=("all", "pc_only"),
+        default=os.environ.get("MEASURED_ACTIVATION_SCOPE") or None,
+        help="Inherit measured-ReLU coverage from the checkpoint when omitted; "
+             "old checkpoints default to pc_only.")
     parser.add_argument("--model_name", type=str, required=True,
                         help="Identifier or filename of the model to load")
     parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
@@ -429,6 +434,9 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
     t_end = get_t_end(args)
     unrolled_noise_level = 0.0
     noisy_params = {"noise_level": 0.0, "weight": None}
+    if getattr(args, "measured_activation_scope", None) is not None:
+        noisy_params["measured_activation_scope"] = (
+            args.measured_activation_scope)
     num_layers = int(args.model_name.split("Layers")[0].split("_")[-1])
     return_init = list(map(lambda x: bool(int(x)), args.return_init.split(",")))
     return_init = return_init + [False] * (num_layers - len(return_init))
@@ -573,6 +581,9 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
     logging.info("----- Running one forward pass for model: {} -----".format(args.model_name))
     t_end = get_t_end(args)
     noisy_params = {"noise_level": 0.15 if noise_level is None else noise_level, "weight": None}
+    if getattr(args, "measured_activation_scope", None) is not None:
+        noisy_params["measured_activation_scope"] = (
+            args.measured_activation_scope)
     num_layers = int(args.model_name.split("Layers")[0].split("_")[-1])
     return_init = list(map(lambda x: bool(int(x)), args.return_init.split(",")))
     return_init = return_init + [False] * (num_layers - len(return_init))
@@ -914,6 +925,9 @@ def run_ode_inference(linear_study=None):
                 for t in range(trials):
                     trial_seed = None
                     noisy_params = {"noise_level": noise_level, "weight": None}
+                    if getattr(args, "measured_activation_scope", None) is not None:
+                        noisy_params["measured_activation_scope"] = (
+                            args.measured_activation_scope)
                     if args.test_expanded:
                         # Add non-ideality to expanded weights
                         noisy_params["noise_level"] = 0.0

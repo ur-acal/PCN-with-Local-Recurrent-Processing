@@ -152,6 +152,11 @@ MEASURED_ACTIVATION_CONFIG_ARGS=(
   --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT}"
   --activation_normalize_positive_endpoint "${SCALE_MEASURED_ACTIVATION}"
 )
+if [[ -n "${MEASURED_ACTIVATION_SCOPE:-}" ]]; then
+  MEASURED_ACTIVATION_CONFIG_ARGS+=(
+    --measured_activation_scope "${MEASURED_ACTIVATION_SCOPE}"
+  )
+fi
 MEASURED_ACTIVATION_ARGS=(
   --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION}"
   "${MEASURED_ACTIVATION_CONFIG_ARGS[@]}"
@@ -176,7 +181,7 @@ UNITLESS_MEASURED_PULLBACK_ARGS=(
   --unitless_pullback_k "${UNITLESS_PULLBACK_K}"
   --unitless_pullback_R "${UNITLESS_PULLBACK_R}"
 )
-echo "Measured activation: pretrain=${ENABLE_PRETRAIN_MEASURED_ACTIVATION}, ft/inference=${ENABLE_MEASURED_ACTIVATION}, interpolation=${ACTIVATION_INTERPOLATION}, endpoint_scaled=${SCALE_MEASURED_ACTIVATION}"
+echo "Measured activation: pretrain=${ENABLE_PRETRAIN_MEASURED_ACTIVATION}, ft/inference=${ENABLE_MEASURED_ACTIVATION}, scope=${MEASURED_ACTIVATION_SCOPE:-checkpoint_or_fresh_default}, interpolation=${ACTIVATION_INTERPOLATION}, endpoint_scaled=${SCALE_MEASURED_ACTIVATION}"
 
 ##########################################################################
 # Measured pooling used during fine-tuning

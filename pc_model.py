@@ -46,13 +46,19 @@ class PhysicalBiasLinear(nn.Linear):
 class PCNet(nn.Module):
     def __init__(self, inp_channels, out_channels, max_pool, num_classes=10, pc_conv_layer=PCConv,
                  first_bn=True, dropout=0.0, separable=None, avg_pooling=False, stride=1, kernel_size=3,
-                 linear_bias=True, final_head_type="old_ideal", **kwargs):
+                 linear_bias=True, final_head_type="old_ideal",
+                 measured_activation_scope="all", **kwargs):
         super().__init__()
         if final_head_type not in ("old_ideal", "analog", "digital"):
             raise ValueError("Unknown final_head_type: " + str(final_head_type))
         if final_head_type != "old_ideal":
             raise NotImplementedError(final_head_type + " final head is not implemented yet")
+        measured_activation_scope = str(measured_activation_scope).lower()
+        if measured_activation_scope not in ("all", "pc_only"):
+            raise ValueError(
+                "measured_activation_scope must be 'all' or 'pc_only'.")
         self.final_head_type = final_head_type
+        self.measured_activation_scope = measured_activation_scope
         self.states_are_physical = False
         self.state_q = 1.0
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -69,7 +75,8 @@ class PCNet(nn.Module):
         self.init_args = self._get_init_args(
             inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling,
             self.stride, self.kernel_size, linear_bias=linear_bias,
-            final_head_type=final_head_type, **kwargs)
+            final_head_type=final_head_type,
+            measured_activation_scope=measured_activation_scope, **kwargs)
 
         # PC recurrent layers
         self.PcConvs = nn.ModuleList(
@@ -84,7 +91,9 @@ class PCNet(nn.Module):
         self.linear = PhysicalBiasLinear(self.ocs[-1], num_classes, bias=linear_bias)
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2) if not avg_pooling else nn.AvgPool2d(kernel_size=2, stride=2)
         self.global_avg_pool2d = GlobalAvgPool2d()
-        self.relu = nn.ReLU(inplace=True)
+        self.final_activation = nn.ReLU(inplace=False)
+        # Compatibility alias for code that previously inspected ``model.relu``.
+        self.relu = self.final_activation
         self.BNend = nn.BatchNorm2d(self.ocs[-1])
 
         self.clean_params = {}
@@ -93,6 +102,20 @@ class PCNet(nn.Module):
 
     def features_for_distillation(self, feat):
         return feat / self.state_q if self.states_are_physical else feat
+
+    def non_pc_activation_site_names(self):
+        """Active ReLU sites outside the recurrent PC blocks."""
+        names = ["final_activation"]
+        if hasattr(self, "input_activation"):
+            names.insert(0, "input_activation")
+        return tuple(names)
+
+    def set_non_pc_activation(self, name, activation):
+        if name not in self.non_pc_activation_site_names():
+            raise ValueError("Unknown non-PC activation site: " + str(name))
+        setattr(self, name, activation)
+        if name == "final_activation":
+            self.relu = activation
 
     def configure_physical_head(self, q):
         # Other PCNet variants can contain terminal BN/biased convolutions;
@@ -119,7 +142,7 @@ class PCNet(nn.Module):
         if self.dropout > 0.0:
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        feat = self.relu(self.BNend(x))
+        feat = self.final_activation(self.BNend(x))
         out = self.global_avg_pool2d(feat)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -227,7 +250,8 @@ class PCNet(nn.Module):
     @staticmethod
     def _get_init_args(inp_channels, out_channels, max_pool, num_classes, pc_conv_layer, first_bn, avg_pooling=False,
                        stride=None, kernel_size=None, linear_bias=True,
-                       final_head_type="old_ideal", **kwargs):
+                       final_head_type="old_ideal",
+                       measured_activation_scope="all", **kwargs):
         init_args = {
             "model_args": {
                 "inp_channels": inp_channels,
@@ -241,6 +265,7 @@ class PCNet(nn.Module):
                 "kernel_size": kernel_size,
                 "linear_bias": linear_bias,
                 "final_head_type": final_head_type,
+                "measured_activation_scope": measured_activation_scope,
             },
             "kwargs": kwargs
         }
@@ -279,7 +304,7 @@ class PCNetNoBatchNorm(PCNet):
         if self.dropout > 0.0:
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        feat = F.relu(x)
+        feat = self.final_activation(x)
         out = self.global_avg_pool2d(feat) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -308,7 +333,7 @@ class PCNetBoundaryBN(PCNet):
         x = self.BNend(x)
         if self.dropout > 0.0:
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        feat = F.relu(x)
+        feat = self.final_activation(x)
         out = self.global_avg_pool2d(feat)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -343,7 +368,7 @@ class PCNetWithMiddleConv(PCNet):
         if self.dropout > 0.0:
             log.info("Calling dropout with p = {} when training = {}".format(self.dropout, self.training))
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        feat = self.relu(self.BNend(self.mid_convs[-1](x)))
+        feat = self.final_activation(self.BNend(self.mid_convs[-1](x)))
         out = self.global_avg_pool2d(feat)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -364,10 +389,11 @@ class PCNetSeparable(PCNetNoBatchNorm):
         super().__init__(**kwargs)
         if patch_dim is not None:
             self.first_conv = nn.Conv2d(self.inp_chan, self.chan, kernel_size=patch_dim, stride=patch_dim)
+        self.input_activation = nn.ReLU(inplace=False)
         self.init_args = self._get_init_args(**kwargs)
 
     def forward(self, x, clamp=False, is_feat=False):
-        x = F.relu(self.first_conv(x))
+        x = self.input_activation(self.first_conv(x))
         out = super().forward(x, clamp, is_feat=is_feat)
         return out
 
@@ -401,7 +427,7 @@ class PCNetSepBN(PCNetSeparable):
         self.BNs = nn.ModuleList([nn.BatchNorm2d(self.ocs[i]) for i in range(self.num_layers)])
 
     def forward(self, x, clamp=False, is_feat=False):
-        x = F.relu(self.first_conv(x))
+        x = self.input_activation(self.first_conv(x))
         for i in range(self.num_layers):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
@@ -413,7 +439,7 @@ class PCNetSepBN(PCNetSeparable):
         # classifier
         if self.dropout > 0.0:
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        feat = F.relu(x)
+        feat = self.final_activation(x)
         out = self.global_avg_pool2d(feat) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -427,7 +453,7 @@ class PCNetSepBNRes(PCNetSepBN):
         super().__init__(**kwargs)
 
     def forward(self, x, clamp=False, is_feat=False):
-        x = F.relu(self.first_conv(x))
+        x = self.input_activation(self.first_conv(x))
         for i in range(self.num_layers):
             inp = x.clone()
             x = self.PcConvs[i](x, i)  # ReLU + Conv
@@ -440,7 +466,7 @@ class PCNetSepBNRes(PCNetSepBN):
         # classifier
         if self.dropout > 0.0:
             x = F.dropout(input=x, p=self.dropout, training=self.training)
-        feat = F.relu(x)
+        feat = self.final_activation(x)
         out = self.global_avg_pool2d(feat) # Here inplace ReLU can't be used. Will throw error.
         out = out.view(out.size(0), -1)
         out = self.linear(out)

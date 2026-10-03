@@ -4,6 +4,7 @@
 import argparse
 import csv
 import math
+import os
 import random
 import statistics
 from concurrent.futures import ThreadPoolExecutor
@@ -242,6 +243,9 @@ def parse_args():
              "corner-specific ReLU Monte-Carlo file.")
     parser.add_argument("--activation_corner", default="TT")
     parser.add_argument(
+        "--measured_activation_scope", choices=("all", "pc_only"),
+        default=os.environ.get("MEASURED_ACTIVATION_SCOPE") or None)
+    parser.add_argument(
         "--activation_curve_sharing",
         choices=("per_model", "per_layer", "per_spin"),
         default="per_model")
@@ -383,6 +387,9 @@ def build_command(args, case_name):
         "--hardware_seed", str(args.base_seed),
         "--data_seed", str(args.base_seed),
     ]
+    if args.measured_activation_scope is not None:
+        command.extend([
+            "--measured_activation_scope", args.measured_activation_scope])
     if args.input_quant_bits is not None:
         command.extend(["--input_quant_bits", str(args.input_quant_bits)])
     if args.center_student_input is not None:

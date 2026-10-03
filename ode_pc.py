@@ -3621,6 +3621,36 @@ class WrapQuantizeW(ODEWrapperRC):
             torch.autograd.graph.register_multi_grad_hook(
                 grad_weights, release_after_accumulated_gradients)
 
+    def _new_measured_activation(self, layer_idx=None):
+        activation_cls = (
+            CubicBSplineActivation
+            if self.activation_interpolation == "cubic_bspline"
+            else PiecewiseLinearActivation)
+        curve_path = self.activation_curve_path
+        if curve_path is None:
+            curve_path = os.path.join(
+                os.path.dirname(__file__), "hardware_data", "relu_current_0p2uA_finer.csv")
+        if layer_idx is None:
+            layer_idx = self.ode_block.layer_idx
+        activation_kwargs = dict(
+            curve_path=curve_path, v_dd=self.v_dd, corner=self.activation_corner,
+            normalize_positive_endpoint=self.activation_normalize_positive_endpoint,
+            adapt_relu_offset=self.adapt_relu_offset,
+            curve_sharing=self.activation_curve_sharing,
+            curve_seed=(
+                None if self.activation_curve_seed is None else
+                int(self.activation_curve_seed) +
+                1009 * int(layer_idx)))
+        if activation_cls is CubicBSplineActivation:
+            activation_kwargs.update(
+                num_parameters=self.activation_spline_parameters,
+                compile_evaluator=self.compile_measured_activation,
+                fit_constraint=self.activation_fit_constraint)
+        else:
+            activation_kwargs.update(
+                fuse_measured_activation=self.fuse_measured_activation)
+        return activation_cls(**activation_kwargs)
+
     def _configure_measured_activation(self):
         if not self.enable_measured_activation:
             return
@@ -3633,28 +3663,7 @@ class WrapQuantizeW(ODEWrapperRC):
                 self.ode_block.act_fn.fuse_measured_activation = bool(
                     self.fuse_measured_activation)
             return
-        curve_path = self.activation_curve_path
-        if curve_path is None:
-            curve_path = os.path.join(
-                os.path.dirname(__file__), "hardware_data", "relu_current_0p2uA_finer.csv")
-        activation_kwargs = dict(
-            curve_path=curve_path, v_dd=self.v_dd, corner=self.activation_corner,
-            normalize_positive_endpoint=self.activation_normalize_positive_endpoint,
-            adapt_relu_offset=self.adapt_relu_offset,
-            curve_sharing=self.activation_curve_sharing,
-            curve_seed=(
-                None if self.activation_curve_seed is None else
-                int(self.activation_curve_seed) +
-                1009 * int(self.ode_block.layer_idx)))
-        if activation_cls is CubicBSplineActivation:
-            activation_kwargs.update(
-                num_parameters=self.activation_spline_parameters,
-                compile_evaluator=self.compile_measured_activation,
-                fit_constraint=self.activation_fit_constraint)
-        else:
-            activation_kwargs.update(
-                fuse_measured_activation=self.fuse_measured_activation)
-        activation = activation_cls(**activation_kwargs)
+        activation = self._new_measured_activation()
         device = self.ode_block.FFconv.weight.device
         self.ode_block.act_fn = activation.to(device=device)
 
@@ -4291,9 +4300,9 @@ class QATWrapper2State(ODEWrapper2State):
         self.time_scaler = self.get_time_scaler()
         self._scale_time_dynamically(module)
 
-        # Todo: During training, we have to scaling back the last activation, but during test,
-        #  this seems to be removable.
-        self.out_scale = self.beta if self.is_last else 1
+        # Keep physical head coordinates through each QAT parameter refresh.
+        self.out_scale = (self.beta if self.is_last and
+                          not getattr(self, "physical_head_output", False) else 1)
 
         return None
 
@@ -4453,9 +4462,8 @@ class QATWrapper1State(ODEWrapper1State):
         self._scale_time_dynamically(module)
         self._scale_act_fn_dynamically()
 
-        # Todo: During training, we have to scale back the last activation, but during test,
-        #  this seems to be removable.
-        self.out_scale = self.q if self.is_last else 1
+        self.out_scale = (self.q if self.is_last and
+                          not getattr(self, "physical_head_output", False) else 1)
 
         return None
 
@@ -4817,9 +4825,8 @@ class QATWrapper1StateWithX(ODEWrapper1StateWithX):
         self._scale_time_dynamically(module)
         self._scale_act_fn_dynamically()
 
-        # Todo: During training, we have to scale back the last activation, but during test,
-        #  this seems to be removable.
-        self.out_scale = self.q if self.is_last else 1
+        self.out_scale = (self.q if self.is_last and
+                          not getattr(self, "physical_head_output", False) else 1)
 
         return None
 
@@ -4915,11 +4922,28 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
         ode_wrapper_ins.to(pc_net.device)
         pc_net.PcConvs[i] = ode_wrapper_ins.get_ode_block()
         wrappers.append(ode_wrapper_ins)
-    if (wrappers and issubclass(ode_wrapper, toggle_wrappers) and
+    if (wrappers and issubclass(ode_wrapper, ODEWrapper2State) and
             pc_net.configure_physical_head(wrappers[-1].q)):
+        # TC (one/two-state) and toggle all expose y in q-scaled coordinates.
+        # One-state beta describes the internal feedback signal, NOT this head.
         # Also honored by the per-forward QAT callback. No state_dict changes.
         wrappers[-1].physical_head_output = True
         wrappers[-1].out_scale = 1.0
+    if (wrappers and kwargs.get("enable_measured_activation", False) and
+            getattr(pc_net, "measured_activation_scope", "pc_only") == "all"):
+        if not hasattr(wrappers[-1], "_new_measured_activation"):
+            raise NotImplementedError(
+                "The selected ODE wrapper cannot construct measured "
+                "non-PC activation sites.")
+        device = pc_net.PcConvs[-1].FFconv.weight.device
+        for offset, name in enumerate(pc_net.non_pc_activation_site_names()):
+            activation = wrappers[-1]._new_measured_activation(
+                layer_idx=pc_net.num_layers + offset).to(device=device)
+            if not getattr(pc_net, "states_are_physical", False):
+                # Unsupported physical-head variants still
+                # expose unitless state coordinates at the model boundary.
+                activation.set_coordinate_pullback_scale(wrappers[-1].q)
+            pc_net.set_non_pc_activation(name, activation)
     return pc_net, wrappers
 
 

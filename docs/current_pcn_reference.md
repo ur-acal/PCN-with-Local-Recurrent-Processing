@@ -223,7 +223,7 @@ hardware model by design.
 
 | Non-ideality | Fine-tuning | Final expanded TC evaluation | Evaluation during FT |
 |---|---|---|---|
-| PC FF/FB weight quantization | Symmetric 5-bit live QAT (`q_hi=15`) on every FF/FB tensor. Codes 1--15 map to nominal `R/|W|` from 10 to 150 kOhm; code 0 is open. No scale-factor quantization. | Loads the baked 5-bit weights. Every FF/FB convolution is spatially unrolled; code 0 remains open. | Same live-QAT path as FT. |
+| PC FF/FB weight quantization | Symmetric 5-bit live QAT (`q_hi=15`) on every FF/FB tensor. Codes 1--15 map to nominal `R/abs(W)` from 10 to 150 kOhm; code 0 is open. No scale-factor quantization. | Loads the baked 5-bit weights. Every FF/FB convolution is spatially unrolled; code 0 remains open. | Same live-QAT path as FT. |
 | Fast summing-current noise | ASD `0.6e-12 A/sqrt(Hz)`, scaled by `sqrt(50 kOhm/R)`. FF and two-state FB use `J/C*sqrt(dt)` diffusion after an accepted update. One-state FB is band-integrated and added in amperes before the measured ReLU; one sample is held throughout an accepted interval and redrawn after acceptance. | Same equations and lifetimes. Trial seeds make the stochastic sequence reproducible; dynamic samples still advance during the dataset traversal. | Same as FT. |
 | Fast coupler-current noise | Same branch placement and lifetime as summing noise, with ASD multiplied by `sqrt(sum(abs(W_code)))`. The sum uses nominal quantized conductance levels; zero/open and padding entries contribute no noise, and nonlinear R(V) does not modulate its amplitude. | Same equations, using the active unrolled physical couplers. | Same as FT. |
 | Nonlinear coupler R(V) and static curve variation | Code-specific mean curves from `res_vs_vin_10k_150k.csv` plus the shared absolute covariance from `CU_4500_r_vs_vin.csv`. Method 2a histogram-selects one code, samples one positive-floored Gaussian curve independently for each FF/FB tensor/layer/forward, and shares it across that tensor. The draw is held for the ODE solve and backward replay. | Every FF/FB convolution is unrolled. Each nonzero physical coupler gets an independent positive-floored Gaussian curve from its code-specific mean and the common covariance; zero/padding entries are open and consume no draw. Curves stay fixed for the whole trial. | Dense method 2a. Fresh FF/FB assignments are made at the start of the validation pass and then fixed for that pass. |
@@ -449,6 +449,7 @@ initialization requires `uv` as well as scanbase Python.
 ```bash
 # Reference architecture:
 #   C36->72, stage depths 8:10, pooling before expansion.
+#   Final linear layer has no bias (LINEAR_BIAS=false).
 #   Measured 0906 MC18 ReLU is used during pretraining and fixed-ReLU FT.
 #
 # Architecture alternatives:
@@ -472,7 +473,7 @@ mkdir -p logs/scheduler_slurm
   export TOGGLE_MODE=odexinit \
          TASK=cifar100 \
          IMG_TYPE=CiFAIR \
-         EXP_PREFIX=coupler_full_range_CiFAIR100_twoStage_C36_72_poolPreExp_pullbackDirect_qf1_noENOB \
+         EXP_PREFIX=coupler_full_range_CiFAIR100_twoStage_C36_72_poolPreExp_pullbackDirect_qf1_noENOB_noLinearBias \
          TEACHER_CKPT=./checkpoint/efficientnet_v2_l_cifar100_CiFAIR_OldNoTimm_MatchDistill.pth \
          ADAPT_PIL_TEACHER=false \
          DISTILL_METHOD=srrl \
@@ -497,10 +498,11 @@ mkdir -p logs/scheduler_slurm
          PCN_CHAN_0_LIST=36 \
          PCN_NUM_LAYERS_LIST="8:10" \
          TWO_STAGE_POOL_POSITION=before_expansion \
+         LINEAR_BIAS=false \
          NUM_COMB_PER_NUM_LAYER=1
 
   source ./launch_scripts/slurm_search_config.sh
-) > logs/scheduler_slurm/cifair100_twoStage_C36_72_n8_10_poolPreExp_pullbackDirect.log 2>&1 < /dev/null &
+) > logs/scheduler_slurm/cifair100_twoStage_C36_72_n8_10_poolPreExp_pullbackDirect_noLinearBias.log 2>&1 < /dev/null &
 
 echo "C36->72 8:10 scheduler PID: $!"
 ```

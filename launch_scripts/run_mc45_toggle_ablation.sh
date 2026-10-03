@@ -68,6 +68,7 @@ ENABLE_SPIN_VARIATION="${ENABLE_SPIN_VARIATION:-true}"
 # measured act function
 MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
 ENABLE_MEASURED_ACTIVATION="${ENABLE_MEASURED_ACTIVATION:-true}"
+MEASURED_ACTIVATION_SCOPE="${MEASURED_ACTIVATION_SCOPE:-}"
 ACTIVATION_CURVE_SHARING="${ACTIVATION_CURVE_SHARING:-per_model}"
 ACTIVATION_INTERPOLATION="${ACTIVATION_INTERPOLATION:-piecewise_linear}"
 ACTIVATION_FIT_CONSTRAINT="${ACTIVATION_FIT_CONSTRAINT:-auto}"
@@ -95,6 +96,7 @@ DTC_FALLING_EDGE_JITTER_STD="${DTC_FALLING_EDGE_JITTER_STD:-0.005}"
 CORNER_ARGS=()
 FIXED_RELU_ARGS=()
 FIXED_COUPLER_ARGS=()
+MEASURED_ACTIVATION_SCOPE_ARGS=()
 if [[ -n "${CORNER_IDS}" ]]; then
   read -r -a CORNER_ID_ARRAY <<< "${CORNER_IDS}"
   CORNER_ARGS=(--corner_ids "${CORNER_ID_ARRAY[@]}")
@@ -104,6 +106,10 @@ if [[ -n "${FIXED_RELU_MC_INDEX}" ]]; then
 fi
 if [[ -n "${FIXED_COUPLER_MC_INDEX}" ]]; then
   FIXED_COUPLER_ARGS=(--fixed_coupler_mc_index "${FIXED_COUPLER_MC_INDEX}")
+fi
+if [[ -n "${MEASURED_ACTIVATION_SCOPE}" ]]; then
+  MEASURED_ACTIVATION_SCOPE_ARGS=(
+    --measured_activation_scope "${MEASURED_ACTIVATION_SCOPE}")
 fi
 
 RELU_CURVE_SELECTION="${FIXED_RELU_MC_INDEX:-random_without_replacement}"
@@ -147,6 +153,7 @@ mkdir -p "${OUTPUT_DIR}"
   echo "enable_spin_variation=${ENABLE_SPIN_VARIATION}"
   echo "relu_source=${MC_RELU_MONTE_CARLO_SOURCE}"
   echo "enable_measured_activation=${ENABLE_MEASURED_ACTIVATION}"
+  echo "measured_activation_scope=${MEASURED_ACTIVATION_SCOPE:-checkpoint_default}"
   echo "activation_curve_sharing=${ACTIVATION_CURVE_SHARING}"
   echo "activation_interpolation=${ACTIVATION_INTERPOLATION}"
   echo "activation_fit_constraint=${ACTIVATION_FIT_CONSTRAINT}"
@@ -232,4 +239,5 @@ python scripts/run_toggle_nonideality_ablation.py \
   "${INPUT_PREPROCESS_ARGS[@]}" \
   "${CORNER_ARGS[@]}" \
   "${FIXED_RELU_ARGS[@]}" \
-  "${FIXED_COUPLER_ARGS[@]}"
+  "${FIXED_COUPLER_ARGS[@]}" \
+  "${MEASURED_ACTIVATION_SCOPE_ARGS[@]}"
