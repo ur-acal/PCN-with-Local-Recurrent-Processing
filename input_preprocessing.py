@@ -12,6 +12,23 @@ _IQ_TOKEN = re.compile(r"(?:^|_)iq(\d+)(?:_|$)", re.IGNORECASE)
 _CTR_TOKEN = re.compile(r"(?:^|_)ctr(?:_|$)", re.IGNORECASE)
 
 
+def student_preprocessing_metadata(trainer):
+    return dict(normalize_student_input=getattr(trainer, 'normalize_student_input', True),
+                dataset=getattr(trainer, 'dataset_name', None),
+                img_type=getattr(trainer, 'img_type', None))
+
+
+def resolve_student_normalization(checkpoint_path=None, requested=None, exact=False):
+    """Inherit saved preprocessing for FT/evaluation; old checkpoints use defaults."""
+    saved = True
+    if checkpoint_path is not None:
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        saved = checkpoint.get('student_preprocessing', {}).get('normalize_student_input', True)
+    if exact and requested is not None and requested != saved:
+        raise ValueError('Exact recovery requires unchanged normalize_student_input')
+    return saved if requested is None else bool(requested)
+
+
 def quantize_unit_interval(inputs, bits=None):
     """Uniformly quantize [0, 1] using all 2**bits endpoint-inclusive codes."""
     if bits is None:
@@ -58,7 +75,7 @@ def resolve_preprocessing(path, bits=None, center=None):
     )
 
 
-def write_run_config(output_dir, bits=None, center=False):
+def write_run_config(output_dir, bits=None, center=False, normalize_student_input=True):
     """Write human-readable metadata. Runtime code never reads this file."""
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "run_config.json"), "w") as handle:
@@ -66,6 +83,7 @@ def write_run_config(output_dir, bits=None, center=False):
             {
                 "input_quant_bits": bits,
                 "center_student_input": bool(center),
+                "normalize_student_input": bool(normalize_student_input),
                 "student_input_flow": (
                     "Q_b(clamp(x, 0, 1)); then 2*x-1"
                     if center else "Q_b(clamp(x, 0, 1))"

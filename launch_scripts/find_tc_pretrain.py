@@ -6,6 +6,7 @@ Only load trusted, locally supplied checkpoints (their pickle contains classes).
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -15,7 +16,7 @@ import torch
 
 def find_pretrain(root, *, inp, out, pool, task, img_type, block,
                   pcn='PCNetNoBatchNorm', bits=None, center=False,
-                  stride=(1,), kernel=(3,), selection='last'):
+                  stride=(1,), kernel=(3,), selection='last', normalize_student_input=None):
     root = Path(root).resolve(strict=True)
     config = json.loads((root / 'run_config.json').read_text())
     if (config.get('input_quant_bits'), config.get('center_student_input')) != (bits, center):
@@ -43,6 +44,10 @@ def find_pretrain(root, *, inp, out, pool, task, img_type, block,
             if recorded_image != image or ('_C100_' in name) != (classes == 100):
                 raise ValueError('dataset/image name mismatch')
             d = torch.load(path, map_location='cpu', weights_only=False)
+            if (image == 'rgb' and normalize_student_input is not None and
+                    d.get('student_preprocessing', {}).get('normalize_student_input', True)
+                    != normalize_student_input):
+                raise ValueError('RGB input normalization mismatch')
             m = d['init_args']['model_args']
             expected = dict(inp_channels=inp, out_channels=list(out), max_pool=list(pool),
                             num_classes=classes, stride=expand(stride), kernel_size=expand(kernel),
@@ -87,6 +92,9 @@ def main():
     p.add_argument('--bits', default='none')
     p.add_argument('--center', choices=('true', 'false'), default='false')
     p.add_argument('--selection', choices=('last', 'best'), default='last')
+    from rgb_teacher_preprocessing import normalization_bool
+    p.add_argument('--normalize_student_input', type=normalization_bool,
+                   default=os.environ.get('NORMALIZE_STUDENT_INPUT') or None)
     a = vars(p.parse_args())
     for key in ('inp', 'out', 'pool', 'stride', 'kernel'):
         a[key] = [int(v) for v in a[key].split()]

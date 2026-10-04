@@ -19,6 +19,11 @@ name (or by passing `--model_name` and `--model_dir` directly).
 # Exact per-layer, per-toggle-step deterministic/total current statistics.
 ./diagnostic_scripts/run_print_toggle_current_stats.sh
 
+# Full-train-set summing-current histograms for one or more Level-3 corners.
+# Produces deterministic/total and FF/FB-separated/combined plot collections.
+./diagnostic_scripts/run_plot_toggle_current_distributions.sh \
+  --corners FS_V2_T1
+
 # Exact pulse-slice z/y trajectories for every layer in one forward pass,
 # with paired equivalence validation.
 ./diagnostic_scripts/run_plot_spin_trajectories.sh
@@ -50,3 +55,8 @@ launcher additionally accepts optional `LAYER`, plus `TOGGLE_STEP` and
 `N_SPINS`. If `LAYER` is omitted, every ODE layer is recorded. Their
 instrumentation is installed only inside the diagnostic process and does not change `ode_pc.py` or production
 launch scripts.
+
+The current-distribution launcher also accepts `--corners` with a comma-separated
+list or `all`. It evaluates the training split with evaluation preprocessing in
+two bounded-memory passes, reports train accuracy, and writes fitted-Gaussian
+95% intervals and histogram data alongside the plots.

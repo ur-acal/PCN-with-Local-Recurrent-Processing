@@ -64,6 +64,10 @@ LEGACY_VALIDATION_ARGS=(
   --validation_data_root "../data"
   --eval_every "${EVAL_EVERY:-1}"
 )
+TEACHER_NORMALIZATION_ARGS=()
+if [[ -n "${NORMALIZE_TEACHER_INPUT:-}" ]]; then
+  TEACHER_NORMALIZATION_ARGS+=(--normalize_input "$NORMALIZE_TEACHER_INPUT")
+fi
 if [[ "${VALIDATION_MODE}" == "true" ]]; then
   LEGACY_VALIDATION_ARGS+=(--validation_mode)
 fi
@@ -93,6 +97,7 @@ if [[ "${USE_TIMM,,}" == "true" ]]; then
   mkdir -p "${TEACHER_LOG_DIR}"
   set -o pipefail
   python -u train_teacher_timm.py \
+    "${TEACHER_NORMALIZATION_ARGS[@]}" \
     --dataset "${DATASET_NAME}" \
     --img_type "${IMG_TYPE}" \
     --data_root "${SCANGEN_DATA_ROOT}" \
@@ -125,6 +130,7 @@ else
   fi
 
   python -u train_teacher.py \
+    "${TEACHER_NORMALIZATION_ARGS[@]}" \
     --dataset "${DATASET_NAME}" \
     --img_type "${IMG_TYPE}" \
     --arch efficientnet_v2_l \

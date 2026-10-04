@@ -131,7 +131,8 @@ def parse_args():
                         default=False)
     return parser.parse_args()
 
-def get_calib_loader(bs=128, n_samples=None, img_type="rgb", dataset_name="cifar10"):
+def get_calib_loader(bs=128, n_samples=None, img_type="rgb", dataset_name="cifar10",
+                     normalize_student_input=True):
     dataset_name = _normalize_dataset_name(dataset_name)
     if img_type in {"rgb", "rggb"}:
         mean, std = _CIFAR_STATS[dataset_name]
@@ -142,7 +143,7 @@ def get_calib_loader(bs=128, n_samples=None, img_type="rgb", dataset_name="cifar
                 transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
-                transforms.Normalize(mean, std), ])
+                *([transforms.Normalize(mean, std)] if normalize_student_input else []), ])
         else:
             transform_train = transforms.Compose([
                 transforms.ToTensor(),
@@ -186,11 +187,12 @@ def get_leaf_mods(model: nn.Module) -> List[nn.Module]:
 def calibrate_input(model: nn.Module, device, model_name,
                     calib_bs=128, calib_samples=None,
                     percentile=0.99999, symmetric=False, save_to=None, img_type="rgb",
-                    dataset_name="cifar10"):
+                    dataset_name="cifar10", normalize_student_input=True):
     # if saved, just loading the result directly
     if save_to is not None:
-        save_to = os.path.join(save_to, "{}_{}_{}.pkl".format(
-            model_name, calib_samples, str(percentile).replace(".", "p")))
+        normalization_suffix = "_raw_rgb" if img_type == "rgb" and not normalize_student_input else ""
+        save_to = os.path.join(save_to, "{}_{}_{}{}.pkl".format(
+            model_name, calib_samples, str(percentile).replace(".", "p"), normalization_suffix))
         if os.path.exists(save_to):
             logging.warning("Calibration result already exists. Return existing result.")
             with open(save_to, "rb") as fp:
@@ -229,7 +231,8 @@ def calibrate_input(model: nn.Module, device, model_name,
         hooks.append(_mod.register_forward_pre_hook(_make_hook(_mod)))
 
     calib_loader = get_calib_loader(bs=calib_bs, n_samples=calib_samples,
-                                    img_type=img_type, dataset_name=dataset_name)
+                                    img_type=img_type, dataset_name=dataset_name,
+                                    normalize_student_input=normalize_student_input)
     for _batch in calib_loader:
         _inp, _ = _batch
         _inp = _inp.to(device)

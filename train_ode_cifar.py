@@ -153,6 +153,9 @@ def get_args():
              "from --save_path.")
     p.add_argument("--skip_eval_epochs", type=int, default=0)
     p.add_argument("--img_type", type=str, default="rgb")
+    p.add_argument("--normalize_student_input", type=str2bool,
+                   default=os.environ.get('NORMALIZE_STUDENT_INPUT') or None,
+                   help="RGB mean/std normalization; inherit checkpoint setting, otherwise true.")
     p.add_argument(
         "--seed", type=int, default=4096,
         help="Training RNG seed shared by RGB, scanGFI, and CiFAIR runs.")
@@ -846,12 +849,20 @@ def build_teacher_model(args, student_in_channels=None, orig_t_inp=False):
     missing, unexpected = teacher_model.load_state_dict(state_dict, strict=False)
     if missing or unexpected:
         logging.warning("Teacher state dict load: missing=%s unexpected=%s", missing, unexpected)
-    if preprocessing and preprocessing.get('kind') == 'rgb_cifar_normalize_then_resize':
+    if preprocessing and preprocessing.get('kind') in {
+            'rgb_cifar_normalize_then_resize', 'rgb_cifar_resize'}:
         if args.img_type.lower() != 'rgb' or preprocessing['dataset'] != args.dataset:
             raise ValueError('RGB teacher preprocessing does not match the student dataset/input type.')
         teacher_model.rgb_teacher_input_size = int(preprocessing['size'])
+        teacher_model.rgb_teacher_preprocessing = preprocessing
+    elif preprocessing and args.img_type.lower() == 'rgb':
+        raise ValueError('Unsupported RGB teacher preprocessing metadata')
+    logging.warning('Teacher input normalization: %s (source=%s)',
+                    preprocessing.get('normalize', True) if preprocessing else True,
+                    'checkpoint' if preprocessing else 'legacy defaults')
     teacher_model.to(device)
     teacher_model.eval()
+    args._teacher_preprocessing = preprocessing
     return teacher_model
 
 def _get_feature_kd_trainer(args):
@@ -906,6 +917,14 @@ def main():
     if not hasattr(args, "measured_activation_scope"):
         args.measured_activation_scope = None
     seed_training(args.seed)
+    from input_preprocessing import resolve_student_normalization
+    normalization_checkpoint = (os.path.join(
+        args.save_path, args.model_name, args.model_name + '_{}_ckpt.pth'.format(args.ckpt))
+        if args.model_name is not None else None)
+    args.normalize_student_input = resolve_student_normalization(
+        normalization_checkpoint, getattr(args, 'normalize_student_input', None),
+        exact=getattr(args, '_exact_training_recovery', False))
+    logging.warning('Student RGB input normalization: %s', args.normalize_student_input)
     inference_path = args.save_path if args.model_name is not None else ""
     args.input_quant_bits, args.center_student_input = resolve_preprocessing(
         inference_path, args.input_quant_bits, args.center_student_input)
@@ -914,7 +933,8 @@ def main():
         output_root, args.input_quant_bits, args.center_student_input)
     args.output_save_path = output_root
     write_run_config(
-        output_root, args.input_quant_bits, args.center_student_input)
+        output_root, args.input_quant_bits, args.center_student_input,
+        normalize_student_input=args.normalize_student_input)
     logging.warning(
         "Input preprocessing: quant_bits=%s, center_student=%s; run_config=%s",
         args.input_quant_bits, args.center_student_input,
@@ -1349,6 +1369,7 @@ def main():
             adapt_PIL_teacher=args.adapt_PIL_teacher,
             input_quant_bits=args.input_quant_bits,
             center_student_input=args.center_student_input,
+            normalize_student_input=args.normalize_student_input,
 
             # TrainerCiFarTimmStyle-specific args.
             timm_opt=cfg["timm_opt"],
@@ -1464,6 +1485,7 @@ def main():
             adapt_PIL_teacher = args.adapt_PIL_teacher,
             input_quant_bits = args.input_quant_bits,
             center_student_input = args.center_student_input,
+            normalize_student_input = args.normalize_student_input,
             validation_mode=args.validation_mode,
             validation_manifest=args.validation_manifest,
             validation_split_seed=args.validation_split_seed,

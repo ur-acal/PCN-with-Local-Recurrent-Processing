@@ -80,6 +80,9 @@ else
     --pc_conv PCConvReLU6Noisy --conv_only true --test_bs "${TEST_BS:-128}" --tol "${TOL:-1e-6}")
 fi
 cmd+=("${TC_ARGS[@]}")
+if [[ -n "${NORMALIZE_STUDENT_INPUT:-}" ]]; then
+  cmd+=(--normalize_student_input "$NORMALIZE_STUDENT_INPUT")
+fi
 source ./launch_scripts/final_head_args.sh
 cmd+=("${FINAL_HEAD_ARGS[@]}")
 if [[ "${TC_DRY_RUN:-false}" == true ]]; then

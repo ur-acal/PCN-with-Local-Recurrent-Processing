@@ -41,9 +41,9 @@ T_END = 1.75
 N_CYCLES = 5
 W_BITS = 5
 WEIGHT_QUANT_FACTOR_BITS = 1
-V_DD = 0.1
-COUPLER_SOURCE = MC45_ROOT / "coupler_monte_v2"
-RELU_SOURCE = MC45_ROOT / "relu_monteCarlo"
+V_DD = 0.5
+COUPLER_SOURCE = MC45_ROOT / "coupler_full_range"
+RELU_SOURCE = MC45_ROOT / "0906_RELU_Voltage"
 
 
 def normalize_task(task):
@@ -131,4 +131,3 @@ def layer_indices(state_dict):
         if key.startswith("PcConvs.") and key.endswith(".FFconv.weight")
     }
     return sorted(indices)
-

@@ -30,7 +30,7 @@ import torchvision.models as models
 
 from scangen.data import MyNoiseCIFARDataset
 from utils import progress_bar
-from rgb_teacher_preprocessing import rgb_teacher_metadata, rgb_teacher_transforms
+from rgb_teacher_preprocessing import rgb_teacher_metadata, rgb_teacher_transforms, normalization_bool
 
 
 RAW_MEAN = (0.5, 0.5, 0.5, 0.5)
@@ -245,6 +245,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--alpha', default=0.1, type=float, help='mixup interpolation coefficient')
     parser.add_argument('--dataset', default='cifar10', choices=('cifar10', 'cifar100'),
                         help='dataset name (cifar10 or cifar100)')
+    parser.add_argument('--normalize_input', type=normalization_bool, default=None,
+                        help='Normalize RGB input with CIFAR mean/std (non-RGB unchanged).')
     parser.add_argument('--img_type', default='scanGFI',
                         help='input data type (scanGFI or CiFAIR, case insensitive)')
     parser.add_argument('--train_size', default=160, type=int,
@@ -513,7 +515,8 @@ def build_transforms(args: argparse.Namespace) -> tuple[transforms.Compose, tran
     if args.img_type.lower() == 'rgb':
         if args.input_quant_bits is not None:
             raise ValueError('RGB teacher training does not use sensor input quantization.')
-        return rgb_teacher_transforms(args.dataset, args.train_size, args.test_size)
+        return rgb_teacher_transforms(args.dataset, args.train_size, args.test_size,
+                                      normalize=getattr(args, 'normalize_input', True) is not False)
     input_quant = []
     if args.input_quant_bits is not None:
         if args.input_quant_bits != 8:
@@ -888,7 +891,8 @@ def save_teacher_checkpoint(
         **({'test_top5': test_top5} if test_top5 is not None else {}),
         **({'top5': top5} if top5 is not None else {}),
         **({'teacher_preprocessing': rgb_teacher_metadata(
-            args.dataset, args.test_size), 'training_args': vars(args)}
+            args.dataset, args.test_size, normalize=getattr(args, 'normalize_input', True) is not False),
+            'training_args': vars(args)}
            if args.img_type.lower() == 'rgb' else {}),
         'mismatch_levels': list(mismatch_levels),
         'mismatch_type': args.mismatch_type,
@@ -903,6 +907,11 @@ def save_teacher_checkpoint(
 def main() -> None:
     args = parse_args()
     args.dataset = _normalize_dataset_name(args.dataset)
+    from rgb_teacher_preprocessing import resolve_teacher_training_normalization
+    args.normalize_input = resolve_teacher_training_normalization(args)
+    if args.img_type.lower() != 'rgb' and not args.normalize_input:
+        raise ValueError('--normalize_input false is supported for RGB teachers only')
+    print('Teacher RGB input normalization:', args.normalize_input)
 
     torch.manual_seed(0)
     np.random.seed(0)

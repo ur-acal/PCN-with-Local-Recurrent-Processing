@@ -53,6 +53,10 @@ def parse_args():
                         help="Identifier or filename of the model to load")
     parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     parser.add_argument("--img_type", type=str, default="rgb")
+    from rgb_teacher_preprocessing import normalization_bool
+    parser.add_argument("--normalize_student_input", type=normalization_bool,
+                        default=os.environ.get('NORMALIZE_STUDENT_INPUT') or None,
+                        help="Inherit RGB normalization from the checkpoint when omitted.")
     parser.add_argument(
         "--input_quant_bits",
         type=lambda s: None if s.lower() in {"none", ""} else int(s),
@@ -696,7 +700,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                                    calib_bs=256,
                                    calib_samples=256, percentile=0.995,
                                    symmetric=False, save_to=None, img_type=args.img_type,
-                                   dataset_name=args.task)
+                                   dataset_name=args.task,
+                                   normalize_student_input=args.normalize_student_input)
     for _t, _range in input_ranges.items():
         print("Type: {}".format(_t))
         print(_range)
@@ -712,6 +717,12 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
 
 def run_ode_inference(linear_study=None):
     args = parse_args()
+    from input_preprocessing import resolve_student_normalization
+    ckpt_path = os.path.join(args.model_dir, args.model_name,
+                            args.model_name + "_{}_ckpt.pth".format(args.ckpt))
+    args.normalize_student_input = resolve_student_normalization(
+        ckpt_path, args.normalize_student_input)
+    logging.warning('Student RGB input normalization: %s', args.normalize_student_input)
     args.input_quant_bits, args.center_student_input = resolve_preprocessing(
         args.model_dir, args.input_quant_bits, args.center_student_input)
     logging.warning(
@@ -777,7 +788,8 @@ def run_ode_inference(linear_study=None):
     test_dataloader = get_test_data(
         test_bs=args.test_bs, img_type=args.img_type, task=args.task,
         input_quant_bits=args.input_quant_bits,
-        center_student_input=args.center_student_input)
+        center_student_input=args.center_student_input,
+        normalize_student_input=args.normalize_student_input)
     ckpt_path = os.path.join(args.model_dir, args.model_name, args.model_name + "_{}_ckpt.pth".format(args.ckpt))
 
     with torch.no_grad():
@@ -790,7 +802,8 @@ def run_ode_inference(linear_study=None):
                                         test_bs=args.test_bs, img_type=args.img_type,
                                         task=args.task, shuffle=args.shuffle_test,
                                         input_quant_bits=args.input_quant_bits,
-                                        center_student_input=args.center_student_input),
+                                        center_student_input=args.center_student_input,
+                                        normalize_student_input=args.normalize_student_input),
                                     ckpt_path, pc_conv, device)
             exit(0)
         elif args.analyze_mode is not None:

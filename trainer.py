@@ -341,6 +341,7 @@ class TrainerCiFar(object):
                  teacher_input_size=224, teacher_center_crop=True,
                  adapt_PIL_teacher=False,
                  input_quant_bits=None, center_student_input=False,
+                 normalize_student_input=True,
                  scale_train_recipe=False, ff_train_scale=1.0,
                  fb_train_scale=1.0,
                  pulse_mismatch_training_mode="post_quant_amplitude",
@@ -423,6 +424,7 @@ class TrainerCiFar(object):
         self.adapt_PIL_teacher = bool(adapt_PIL_teacher)
         self.input_quant_bits = input_quant_bits
         self.center_student_input = bool(center_student_input)
+        self.normalize_student_input = bool(normalize_student_input)
         if self.adapt_PIL_teacher:
             logging.warning(
                 "Adapting distillation teacher inputs through the legacy PIL preprocessing path."
@@ -615,11 +617,11 @@ class TrainerCiFar(object):
         return (inputs - mean) / std
 
     def _prepare_rgb_teacher_inputs(self, inputs):
-        # Only new RGB teacher checkpoints opt in; legacy teachers are unchanged.
-        size = getattr(self.teacher_model, 'rgb_teacher_input_size', None)
-        if self.img_type.lower() == 'rgb' and size is not None:
-            from rgb_teacher_preprocessing import resize_rgb_teacher_input
-            return resize_rgb_teacher_input(inputs, size)
+        if self.img_type.lower() == 'rgb':
+            from rgb_teacher_preprocessing import prepare_rgb_teacher_input
+            return prepare_rgb_teacher_input(
+                inputs, self.teacher_model, getattr(self, 'dataset_name', 'cifar10'),
+                getattr(self, 'normalize_student_input', True))
         return inputs
 
     def _ensure_crd_initialized(self, student_feat, teacher_feat):
@@ -1018,6 +1020,7 @@ class TrainerCiFar(object):
         return decoupled_model
 
     def _save_model_ckpt(self, acc, epoch, suffix=""):
+        from input_preprocessing import student_preprocessing_metadata
         save_to = os.path.join(self.save_path, self.model_name)
         os.makedirs(save_to, exist_ok=True)
         save_pth_path = os.path.join(str(save_to), self.model_name + suffix)
@@ -1032,6 +1035,7 @@ class TrainerCiFar(object):
         if parametrize_flag:
             logging.warning("Model Includes parametrized module, saving the non-parametrized model with param baked in.")
             flat_state = {
+                'student_preprocessing': student_preprocessing_metadata(self),
                 'net': flat_model.state_dict(),
                 'init_args': self.model.init_args,
                 'net_type': self.model.__class__.__name__,
@@ -1047,6 +1051,7 @@ class TrainerCiFar(object):
             save_pth_path = os.path.join(str(save_to), self.model_name + "_full_param" + suffix)
 
         state = {
+            'student_preprocessing': student_preprocessing_metadata(self),
             'net': self.model.state_dict(),
             'init_args': self.model.init_args,
             'net_type': self.model.__class__.__name__,
@@ -1132,6 +1137,8 @@ class TrainerCiFar(object):
         official_test_set = None
         if img_type in {"rgb", "rggb"}:
             mean, std = _CIFAR_STATS[dataset_name]
+            rgb_normalization = ([transforms.Normalize(mean, std)]
+                                 if getattr(self, 'normalize_student_input', True) else [])
             dataset_cls = torchvision.datasets.CIFAR100 if dataset_name == "cifar100" else torchvision.datasets.CIFAR10
             if self.aug:
                 if img_type == "rgb":
@@ -1141,7 +1148,7 @@ class TrainerCiFar(object):
                         transforms.RandAugment(num_ops=1, magnitude=8),
                         transforms.ColorJitter(0.1, 0.1, 0.1),
                         transforms.ToTensor(),
-                        transforms.Normalize(mean, std),
+                        *rgb_normalization,
                         transforms.RandomErasing(p=0.25),
                     ])
                 else:
@@ -1158,7 +1165,7 @@ class TrainerCiFar(object):
                         transforms.RandomCrop(32, padding=4),
                         transforms.RandomHorizontalFlip(),
                         transforms.ToTensor(),
-                        transforms.Normalize(mean, std), ])
+                        *rgb_normalization, ])
                 else:
                     # Todo: Normalize rggb data?
                     transform_train = transforms.Compose([
@@ -1170,7 +1177,7 @@ class TrainerCiFar(object):
             if img_type == "rgb":
                 transform_test = transforms.Compose([
                     transforms.ToTensor(),
-                    transforms.Normalize(mean, std), ])
+                    *rgb_normalization, ])
             else:
                 transform_test = transforms.Compose([
                     transforms.ToTensor(),

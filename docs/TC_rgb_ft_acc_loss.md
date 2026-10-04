@@ -130,6 +130,63 @@ The augmentation studies used `--mem_frac 1.0` after the first all-on attempt
 hit the 90% process-memory cap. This changes only the permitted GPU-memory
 fraction, not the training recipe.
 
+## Pending experiment: matched 16L/96C RGB architecture control
+
+The state-1 RGB CIFAR-100 pretraining job changes only the student architecture
+from 22Layers6l7l6, 64 final channels to 16Layers4l5l4, 96 final channels. It
+retains the same RGB teacher and pretraining recipe.
+
+| Stage | Status | Slurm job | Configuration |
+|---|---|---:|---|
+| Pretraining | Submitted | `2051275` | `N16_C24_n04_n15_n24` (16Layers4l5l4, 24/48/96 channels) |
+| Mapping-only TIMM-augmentation FT | Waiting for pretraining | — | State 1; mapping/QAT and physical clamps retained; additional TC nonidealities disabled |
+
+After job `2051275` completes successfully, launch the mapping-only FT with:
+
+```bash
+module swap slurm slurm/24.05.0.b1
+
+cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
+mkdir -p ./logs/scheduler_slurm ./logs/slurm_jobs
+
+run_name="tc_rgb_cifar100_state1_pcn_16L4l5l4_ft_mapping_only_timm_aug"
+pretrain_root="./saved_ckpt_runs/tc_rgb_cifar100_state1_pcn_16L4l5l4_pretrain"
+ft_root="./saved_ckpt_runs/${run_name}"
+
+(
+  export mode=ft_only \
+         TC_NONIDEALITIES=true \
+         TC_STATE=1 \
+         TASK=cifar100 \
+         IMG_TYPE=rgb \
+         EXP_PREFIX="${run_name}" \
+         PRETRAIN_SAVE_PATH="${pretrain_root}" \
+         FT_OUTPUT_SAVE_PATH="${ft_root}" \
+         FT_TIMM_AUG_LEVEL=none \
+         PCN_CHAN_0_LIST=24 \
+         PCN_NUM_LAYERS_LIST=16 \
+         COMB_SEL_SET=2 \
+         ENABLE_NONLINEAR_R=false \
+         ENABLE_MEASURED_ACTIVATION=false \
+         ENABLE_MEASURED_POOLING=false \
+         ENABLE_SPIN_VARIATION=false \
+         ENABLE_SUMMING_CURRENT_NOISE=false \
+         ENABLE_COUPLER_NOISE=false \
+         REUSE_ACCEPTED_STEP_TRAINING=true \
+         CHECKPOINT_ODE_RHS_TRAINING=true \
+         CHECKPOINT_ODE_RHS_PORTION=auto
+
+  source ./launch_scripts/slurm_search_config.sh
+) > "./logs/scheduler_slurm/${run_name}.log" 2>&1 < /dev/null &
+
+echo "${run_name}: scheduler PID $!"
+```
+
+`FT_TIMM_AUG_LEVEL=none` selects the default TIMM augmentation recipe. Random
+erasing remains disabled by the pipeline default, and TC weight mismatch is
+zero. The resolved teacher is
+`./checkpoint/efficientnet_v2_l_cifar100_rgb_OldNoTimm_MatchDistill.pth`.
+
 ### Priority 6: five-step Euler, state 1 — completed
 
 Recorded 2026-09-25 from the user-provided final training log. RGB CIFAR-100,

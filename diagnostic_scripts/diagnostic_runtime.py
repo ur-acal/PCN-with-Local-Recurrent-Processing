@@ -12,6 +12,7 @@ import torch
 from diagnostic_config import (
     C_FARAD,
     COUPLER_SOURCE,
+    RELU_SOURCE,
     REPO_ROOT,
     R_OHM,
     V_DD,
@@ -20,7 +21,8 @@ from diagnostic_config import (
 )
 
 from data_utils import MC45CornerData
-from inference_utils import get_test_data, load_and_prepare_model
+from inference_utils import get_eval_data, load_and_prepare_model
+from input_preprocessing import resolve_preprocessing
 from measured_pooling import configure_measured_pooling
 from ode_pc import ODEBLOCK_CLASSES, ODEWrapper_CLASSES
 from pc_model import PCNet, PC_CONV_CLASS
@@ -66,10 +68,15 @@ def _parse_ablation_args(model_name, model_root, batch_size, trial_index, seed,
         "--C", str(C_FARAD),
         "--full_45_corner_C", str(C_FARAD),
         "--v_dd", str(V_DD),
+        "--one_over_q", "5",
+        "--toggle_timing_mode", "fixed",
+        "--toggle_y_time", "10e-9",
+        "--z_over_y_time", "1",
         "--mc_coupler_nonlinear_variation_source",
         COUPLER_SOURCE.name,
         "--mc_coupler_nonlinear_variation_quantity", "conductance",
         "--mc_coupler_nominal_R", str(R_OHM),
+        "--mc_relu_monte_carlo_source", str(RELU_SOURCE),
         "--nonlinear_R_curve_sharing", "per_coupler",
         "--nonlinear_R_curve_sampling", "empirical_with_replacement",
         "--full_45_corner_enable_spin_variation", enable_nonidealities,
@@ -250,7 +257,7 @@ class RuntimeTrial:
 def build_runtime_trial(model_name=None, model_root=None,
                         corner=DEFAULT_CORNER, batch_size=128, trial_index=0,
                         seed=DEFAULT_SEED, device="auto",
-                        nonideality_profile="all_on"):
+                        nonideality_profile="all_on", dataset_split="test"):
     """Build one expanded Level-3 clean or all-on runtime trial."""
     args, _, command = reference_corner_command(
         model_name=model_name, model_root=model_root,
@@ -260,11 +267,18 @@ def build_runtime_trial(model_name=None, model_root=None,
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
+    if dataset_split not in {"train", "test"}:
+        raise ValueError("dataset_split must be train or test")
+    args.input_quant_bits, args.center_student_input = resolve_preprocessing(
+        args.model_dir, args.input_quant_bits, args.center_student_input)
     trial_seed = args.hardware_seed + trial_index
     _set_all_seeds(trial_seed)
 
-    dataloader = get_test_data(
-        test_bs=args.test_bs, img_type=args.img_type, task=args.task)
+    dataloader = get_eval_data(
+        test_bs=args.test_bs, img_type=args.img_type, task=args.task,
+        input_quant_bits=args.input_quant_bits,
+        center_student_input=args.center_student_input,
+        train=dataset_split == "train")
     checkpoint = os.path.join(
         args.model_dir, args.model_name,
         args.model_name + "_{}_ckpt.pth".format(args.ckpt))

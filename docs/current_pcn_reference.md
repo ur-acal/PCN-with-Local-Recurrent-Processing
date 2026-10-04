@@ -43,6 +43,32 @@ The live-QAT weight cache and fused measured ReLU are already on automatically.
 The three explicit settings below enable accepted-step reuse, RHS checkpointing,
 and automatic selection of the checkpointed layer portion.
 
+### RGB input-normalization controls
+
+The default RGB recipe is unchanged: student and RGB teacher both use the
+dataset's CIFAR mean/std. CiFAIR/scanGFI preprocessing is unchanged.
+
+| Experiment | Teacher training | Student pretrain + FT |
+|---|---|---|
+| Existing recipe | Existing teacher | Existing defaults |
+| Raw RGB student, existing teacher | Keep existing checkpoint | `NORMALIZE_STUDENT_INPUT=false` |
+| Raw RGB student and teacher | `NORMALIZE_TEACHER_INPUT=false` | `NORMALIZE_STUDENT_INPUT=false`, select the new `TEACHER_CKPT` |
+
+Teacher training uses `--normalize_input`; student training uses
+`--normalize_student_input`. There is no teacher-normalization argument during
+student training: the teacher checkpoint supplies it. Old RGB teachers retain
+CIFAR normalization; the legacy CiFAIR teacher retains 0.5/0.5 normalization.
+The RGB teacher worker appends `_NoNorm` to unnormalized teacher filenames/logs.
+Use distinct student `EXP_PREFIX`/output directories for these experiments.
+
+Student normalization is saved in ordinary, full-param, and recovery
+checkpoints. FT and `ode_inference.py` inherit it when no override is supplied;
+exact recovery rejects a changed setting. All settings are logged. Apply the
+same student setting during pretraining and FT, not just when loading an old
+normalized-input pretrained model. Keep the existing augmentation recipe and
+`TIMM_RE_PROB=0.0`: only normalization changes, including preserving RandAugment
+fill colors and shared teacher/student Mixup/CutMix samples.
+
 ### Supported stage matrix
 
 | Environment | Pipeline | Pretrain only | FT only | Eval only | FT then eval |

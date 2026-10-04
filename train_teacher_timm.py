@@ -215,7 +215,9 @@ class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
                 "net_type": self.model.__class__.__name__,
                 "acc": acc,
                 "epoch": epoch,
-                **({'teacher_preprocessing': rgb_teacher_metadata(self.dataset_name, self.timm_input_size[-1])}
+                **({'teacher_preprocessing': rgb_teacher_metadata(
+                    self.dataset_name, self.timm_input_size[-1],
+                    normalize=getattr(self, 'normalize_teacher_training_input', True))}
                    if self.img_type == 'rgb' else {}),
                 "dataset_name": self.dataset_name,
                 "img_type": self.img_type,
@@ -246,8 +248,9 @@ class RGGBResizeFineTuneTrainer(TrainerCiFarTimmStyle):
 
 class RGBResizeFineTuneTrainer(RGGBResizeFineTuneTrainer):
     """Reuse the timm training loop with the RGB legacy augmentation recipe."""
-    def __init__(self, *args, rgb_data_root, **kwargs):
+    def __init__(self, *args, rgb_data_root, normalize_input=True, **kwargs):
         self.rgb_data_root = rgb_data_root
+        self.normalize_teacher_training_input = normalize_input
         super().__init__(*args, **kwargs)
 
     def _prepare_cifar(self, img_type, dataset_name):
@@ -255,7 +258,8 @@ class RGBResizeFineTuneTrainer(RGGBResizeFineTuneTrainer):
         from torch.utils.data import DataLoader
         dataset = CIFAR100 if dataset_name == 'cifar100' else CIFAR10
         train_transform, test_transform = rgb_teacher_transforms(
-            dataset_name, self.timm_input_size[-1], self.timm_input_size[-1])
+            dataset_name, self.timm_input_size[-1], self.timm_input_size[-1],
+            normalize=getattr(self, 'normalize_teacher_training_input', True))
         self.train_set = dataset(self.rgb_data_root, train=True, download=False, transform=train_transform)
         if getattr(self, "validation_mode", False):
             validation_source = dataset(
@@ -298,6 +302,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--data_root", default=None)
     parser.add_argument("--pretrained", type=str2bool, default=True)
+    parser.add_argument("--normalize_input", type=str2bool, default=True,
+                        help="Normalize RGB teacher input; non-RGB behavior is unchanged.")
     parser.add_argument(
         "--arch_source",
         choices=("hankyul2", "torchvision"),
@@ -498,7 +504,11 @@ def main() -> None:
     print(f"  checkpoint: {args.checkpoint}")
 
     trainer_cls = RGBResizeFineTuneTrainer if args.img_type == 'rgb' else RGGBResizeFineTuneTrainer
-    rgb_kwargs = dict(rgb_data_root=args.data_root or os.environ.get('RGB_DATA_ROOT', '../data')) if args.img_type == 'rgb' else {}
+    if args.img_type != 'rgb' and not args.normalize_input:
+        raise ValueError('--normalize_input false is supported for RGB teachers only')
+    print('Teacher RGB input normalization:', args.normalize_input)
+    rgb_kwargs = dict(rgb_data_root=args.data_root or os.environ.get('RGB_DATA_ROOT', '../data'),
+                      normalize_input=args.normalize_input) if args.img_type == 'rgb' else {}
     normalization = rgb_teacher_metadata(args.dataset) if args.img_type == 'rgb' else dict(mean=(.5,)*4, std=(.5,)*4)
     trainer = trainer_cls(
         **rgb_kwargs,

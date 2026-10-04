@@ -26,6 +26,7 @@ from timm.scheduler import CosineLRScheduler, MultiStepLRScheduler
 from timm.data.random_erasing import RandomErasing as TimmRandomErasing
 
 from pc_model import PCNet, logits_for_loss
+from input_preprocessing import student_preprocessing_metadata
 from data_utils import ToPackedRGGB, RawImgDataset, load_and_register_buffer, get_parametrized_weight_mods, PackedRGGBToRGB
 from scangen.data import NoiseCIFARDataset, MyNoiseCIFARDataset
 from distillation import CRDLoss, CRDOptions, MGDLoss
@@ -578,6 +579,12 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             # Deterministic resize and crop for test/validation
             transform_test = create_transform(**test_kwargs)
 
+        if not getattr(self, 'normalize_student_input', True):
+            # Keep mean/std passed to timm: RandAugment also uses mean for
+            # its image fill color. Remove only the tensor normalization.
+            for transform in (transform_train, transform_test):
+                transform.transforms = [step for step in transform.transforms
+                                        if not isinstance(step, transforms.Normalize)]
         return transform_train, transform_test
 
     def _build_scanGFI_to_rgb_timm_transforms(self, dataset_name):
@@ -1101,6 +1108,7 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         save_pth_path = os.path.join(str(save_to), self.model_name + suffix)
 
         state = {
+            "student_preprocessing": student_preprocessing_metadata(self),
             "net": self.model.state_dict(),
             "net_type": self.model.__class__.__name__,
             "acc": acc,

@@ -36,6 +36,12 @@ case "${RGB_TEACHER_RECIPE:-legacy}" in
     ;;
   *) echo 'Unknown RGB_TEACHER_RECIPE' >&2; exit 2 ;;
 esac
+export NORMALIZE_TEACHER_INPUT="${NORMALIZE_TEACHER_INPUT:-true}"
+case "${NORMALIZE_TEACHER_INPUT,,}" in
+  true|1|yes) ;;
+  false|0|no) recipe_label+=_NoNorm ;;
+  *) echo 'NORMALIZE_TEACHER_INPUT must be true or false' >&2; exit 2 ;;
+esac
 export TEACHER_LOG_DIR="${TEACHER_LOG_DIR:-./logs/teacher_rgb}"
 output="${TEACHER_OUTPUT_DIR:-./checkpoint}"
 validation_suffix=""

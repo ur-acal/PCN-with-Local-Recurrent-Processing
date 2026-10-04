@@ -52,20 +52,22 @@ def _get_scangfi_location(task, img_type="scanGFI"):
     )
 
 
-def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
-                  input_quant_bits=None, center_student_input=False):
+def get_eval_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
+                  input_quant_bits=None, center_student_input=False,
+                  train=False, normalize_student_input=True):
+    """Build an augmentation-free evaluation loader for either CIFAR split."""
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             mean, std = _CIFAR_STATS[task]
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize(mean, std), ])
+                *([transforms.Normalize(mean, std)] if normalize_student_input else []), ])
         else:
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
                 ToPackedRGGB(return_orig=False), ])
         dataset_cls = torchvision.datasets.CIFAR100 if task == "cifar100" else torchvision.datasets.CIFAR10
-        test_set = dataset_cls(root='../data', train=False, download=True, transform=transform_test)
+        test_set = dataset_cls(root='../data', train=train, download=True, transform=transform_test)
     elif img_type.lower() in {"scangfi", "cifair"}:
         data_root, input_name = _get_scangfi_location(task, img_type)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -76,7 +78,7 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
             test_set = MyNoiseCIFARDataset(
                 root=data_root,
                 input_name=input_name,
-                train=False,
+                train=train,
                 noise_config=scangen_config["noise"],
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
             )
@@ -84,7 +86,7 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
         transform_test = transforms.Compose([
             transforms.ToTensor(),
         ])
-        test_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=False, transform=transform_test)
+        test_set = RawImgDataset(root=os.path.join("../cifar-10-data", img_type), train=train, transform=transform_test)
     if input_quant_bits is not None or center_student_input:
         test_set = InputPreprocessedDataset(
             test_set, input_quant_bits, center_student_input)
@@ -96,6 +98,16 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
         num_workers=int(os.environ.get("DATALOADER_NUM_WORKERS", "2")),
     )
     return test_loader
+
+
+def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
+                  input_quant_bits=None, center_student_input=False,
+                  normalize_student_input=True):
+    return get_eval_data(
+        test_bs=test_bs, img_type=img_type, task=task, shuffle=shuffle,
+        input_quant_bits=input_quant_bits,
+        center_student_input=center_student_input, train=False,
+        normalize_student_input=normalize_student_input)
 
 
 def get_bn_calibration_data(bs=128, n_samples=None, img_type="rgb",

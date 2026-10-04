@@ -55,6 +55,8 @@ def save_latest(trainer, epoch, history):
             state[name] = getattr(trainer, name)
     state['validation_split'] = getattr(
         trainer, 'validation_split_metadata', None)
+    from input_preprocessing import student_preprocessing_metadata
+    state['student_preprocessing'] = student_preprocessing_metadata(trainer)
     state['final_head'] = dict(type=getattr(trainer.model, 'final_head_type', 'old_ideal'),
                                config=getattr(trainer.model, 'final_head_config', None))
     state['measured_activation_scope'] = getattr(trainer.model, 'measured_activation_scope', 'pc_only')
@@ -108,7 +110,8 @@ def restore_latest(trainer):
                 'toggle_timing_mode', 'toggle_y_time', 'z_over_y_time',
                 'scale_train_recipe', 'one_over_q', 'v_dd', 'num_epochs',
                 'override', 'distill_method', 'input_quant_bits',
-                'center_student_input', 'timm_aug_level', 'final_eval_only',
+                'center_student_input', 'normalize_student_input', '_teacher_preprocessing',
+                'timm_aug_level', 'final_eval_only',
                 'health_check_epochs', 'health_check_batches',
                 'health_check_seed', 'validation_mode',
                 'final_head_type', 'final_repr_bits', 'final_weight_bits',
