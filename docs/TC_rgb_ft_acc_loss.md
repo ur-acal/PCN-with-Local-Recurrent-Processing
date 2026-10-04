@@ -4,6 +4,14 @@ PT = pretrained accuracy; pre-FT = PT checkpoint evaluated after hardware
 mapping, before optimization; FT = accuracy after fine-tuning. Differences
 below are percentage points (pp), not relative percentages.
 
+## CIFAR-10 FT versus expanded TC evaluation
+
+| FT measured-ReLU configuration | FT accuracy | Standard expanded per-spin TC evaluation |
+|---|---:|---:|
+| Fixed MC18, shared globally | 94.40% | 90.88%, 91.09% (2/10 trials completed; mean 90.99%) |
+| Random per forward, per layer | 94.24% | 92.30 ± 0.20% (10 trials) |
+| Random per forward, per spin | 93.73% | 93.65 ± 0.18% (10 trials) |
+
 ## Reference observations
 
 | Experiment | PT | After FT | Observation |

@@ -876,6 +876,9 @@ class TrainerCiFar(object):
             reset = getattr(module, "reset_measured_pooling", None)
             if callable(reset):
                 reset()
+            reset = getattr(module, "reset_dtc_variation", None)
+            if callable(reset):
+                reset()
 
     def _evaluate_training_health(self):
         """Evaluate a reproducible augmented training subset without moving RNG."""
@@ -888,12 +891,21 @@ class TrainerCiFar(object):
         generator = getattr(self.train_dataloader, "generator", None)
         generator_state = generator.get_state() if generator is not None else None
         hardware_generator_states = []
-        for module in self.model.modules():
+        from final_linear import AnalogLinear
+        modules = list(self.model.modules())
+        private_heads = [(m, m._circuit) for m in modules if isinstance(m, AnalogLinear)]
+        for _, circuit in private_heads:
+            if circuit is not None:
+                modules.extend(circuit.modules())
+        generator_dicts = []
+        for module in modules:
             for name, value in vars(module).items():
                 if isinstance(value, torch.Generator):
                     hardware_generator_states.append(
                         (module, name, None, value.get_state()))
                 elif isinstance(value, dict):
+                    if name.endswith('_generators'):
+                        generator_dicts.append((value, dict(value)))
                     for key, item in value.items():
                         if isinstance(item, torch.Generator):
                             hardware_generator_states.append(
@@ -918,12 +930,19 @@ class TrainerCiFar(object):
                 torch.cuda.set_rng_state_all(cuda_state)
             if generator is not None:
                 generator.set_state(generator_state)
+            for mapping, original in generator_dicts:
+                mapping.clear()
+                mapping.update(original)
             for module, name, key, state in hardware_generator_states:
                 value = getattr(module, name)
                 if key is None:
                     value.set_state(state)
                 else:
                     value[key].set_state(state)
+            for head, circuit in private_heads:
+                if circuit is None:
+                    object.__setattr__(head, '_circuit', None)
+                    object.__setattr__(head, '_expanded_module', None)
 
     def evaluate(self, dataloader, max_batches=None):
         correct = 0
@@ -1397,6 +1416,12 @@ class WrappedNoisyModel(nn.Module):
             raise ValueError("noise_levels must be non-negative.")
         # Preserve ordering while removing duplicates
         self.noise_levels = list(dict.fromkeys(levels))
+        if (getattr(model, 'final_head_type', 'old_ideal') == 'analog'
+                and any(self.noise_levels)):
+            raise NotImplementedError(
+                'Nonzero mismatch-aware training with an analog classifier is not '
+                'implemented: the private head circuit is outside the trainer\'s '
+                'pre/post-quantization mismatch lifecycle. Use zero mismatch.')
         noise_type_lower = (noise_type or "mul").lower()
         if noise_type_lower not in {"mul", "add"}:
             raise ValueError(f"Unsupported noise_type={noise_type}. Expected 'mul' or 'add'.")

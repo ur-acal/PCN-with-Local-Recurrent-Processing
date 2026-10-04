@@ -115,6 +115,11 @@ def configure_model_head(model, *, physical, q, v_dd, template=None,
     head = getattr(model, 'linear', getattr(model, 'fc', None))
     if not isinstance(head, NonidealLinear):
         return
+    if isinstance(head, AnalogLinear) and head.head_config['final_head_quantize']:
+        from ode_pc import SymQuantizeWeight, PulseSymQuantizeWeight
+        if hardware.get('qat_cls', SymQuantizeWeight) not in (SymQuantizeWeight, PulseSymQuantizeWeight):
+            raise NotImplementedError('Analog classifiers support symmetric weight QAT only; '
+                                      'the requested qat_cls is not implemented for the head.')
     head.configure(physical=physical, q=q, v_dd=v_dd, template=template,
                    family=family, timing=timing, base_time=base_time, R=R, C=C)
     if isinstance(head, AnalogLinear):
@@ -260,6 +265,28 @@ class AnalogLinear(NonidealLinear):
         object.__setattr__(self, '_circuit', None)
         object.__setattr__(self, '_expanded_module', None)
 
+    def reset_spin_variation(self):
+        # The runtime circuit is intentionally outside registered modules.
+        if self._circuit is not None:
+            self._circuit.reset_spin_variation()
+
+    def reset_nonlinear_R_variation(self):
+        if self._circuit is not None:
+            self._circuit.reset_nonlinear_R_variation()
+
+    def reset_dtc_variation(self):
+        if self._circuit is not None:
+            reset = getattr(self._circuit, 'reset_dtc_variation', None)
+            if callable(reset):
+                reset()
+
+    def reset_after_probe(self):
+        if self._circuit is not None and self._runtime['family'] == 'tc':
+            self._circuit.reset_spin_variation()
+            # Keep sampled coupler curves, matching the TC backbone policy.
+            self._circuit._tc_generators.clear()
+            self._circuit._spin_variation_generators.clear()
+
     def configure(self, *, template=None, family="toggle", physical=False,
                   q=1., v_dd=.5, timing="derived", base_time=5e-9,
                   R=50e3, C=500e-15, **kwargs):
@@ -296,7 +323,7 @@ class AnalogLinear(NonidealLinear):
         runtime = self._runtime
         options.update(R=runtime['R'], C=runtime['C'], v_dd=self.v_dd,
                        one_over_q=self.v_dd/self.q, physical=True,
-                       layer_idx=int(getattr(template, "layer_idx", 0)) + 104729,
+                       layer_idx=int(getattr(template, "layer_idx", 0)) + 104729, # arbitrary offset for seeding
                        toggle_timing_mode=runtime['timing'], toggle_y_time=runtime['base_time'],
                        z_over_y_time=1.)
         family = runtime['family']
@@ -307,6 +334,10 @@ class AnalogLinear(NonidealLinear):
             PulsePhysicalBasicBlock if self._pulse_mode() else AveragedPhysicalBasicBlock)
         if mapped_tc:
             options.update(tc_covariance_table=getattr(template, 'tc_covariance_table', None),
+                           tc_conv_method=getattr(template, 'tc_conv_method',
+                                                  getattr(template, '_tc_conv_method', 'shared')),
+                           tc_noise_stages=getattr(template, 'tc_noise_stages',
+                                                   tc_config.get('tc_noise_stages', 'both')),
                            tc_curve_sampling=getattr(template, 'tc_curve_sampling',
                                                      getattr(template, '_tc_curve_sampling', 'histogram')),
                            tc_noise_reference_R=getattr(template, 'tc_noise_reference_R',
@@ -315,6 +346,7 @@ class AnalogLinear(NonidealLinear):
         with torch.random.fork_rng(devices=[]):
             conv = nn.Conv2d(self.in_features + int(self.bias is not None), self.out_features, 1, bias=False)
         block = cls(conv, **options).to(inputs)
+        block.toggle_fast_path = getattr(template, 'toggle_fast_path', True)
         block.weight_scale = getattr(template, 'weight_scale', 1.)
         # The matrix is supplied differentiably from this head on every forward.
         del conv._parameters['weight']
@@ -327,7 +359,12 @@ class AnalogLinear(NonidealLinear):
                           getattr(template, '_tc_resistance_package', None))
         if package is not None:
             block._tc_resistance_package = package
-            block._tc_curve_seed = getattr(template, 'nonlinear_R_curve_seed', 4096) or 4096
+            seed = getattr(template, '_tc_curve_seed', None)
+            if seed is None:
+                seed = getattr(template, 'nonlinear_R_curve_seed', None)
+            if seed is None:
+                seed = getattr(template, '_nonlinear_R_pkg', {}).get('nonlinear_R_curve_seed')
+            block._tc_curve_seed = 4096 if seed is None else seed
         object.__setattr__(self, '_circuit', block)
         self._built_pulse_mode = self._pulse_mode()
         return block
@@ -375,6 +412,7 @@ class AnalogLinear(NonidealLinear):
             if getattr(self, '_expanded_version', None) != version:
                 cached = None
             if cached is None:
+                # Here we are not performing unrolling. We are just reusing the methods in MVMConv.
                 mat = weights.detach().to_sparse_csr()
                 mvm = MVMConv(mat, dict(padding=0, stride=1, ker_h=1, ker_w=1,
                                        inp_chan=weights.shape[1], out_chan=self.out_features))

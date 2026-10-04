@@ -239,6 +239,10 @@ class TCCouplerEnergyStudy:
 
 def enable_tc_coupler_energy(model, supply_voltage=1.3):
     """Attach a passive meter to expanded one-state TC ODE blocks."""
+    if getattr(model, 'final_head_type', 'old_ideal') == 'analog':
+        raise NotImplementedError(
+            'TC coupler-energy measurement does not yet include the analog classifier; '
+            'refusing to report a partial total.')
     study = TCCouplerEnergyStudy(supply_voltage)
     if model.training:
         raise ValueError("Coupler-energy measurement requires model.eval().")

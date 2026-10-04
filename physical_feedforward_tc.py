@@ -17,6 +17,7 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
     def __init__(self, *args, one_shot_conv=False, tc_method='dopri5',
                  tc_tol=1e-6, tc_step_size=None, tc_noise_reference_R=50e3,
                  tc_covariance_table=None, tc_curve_sampling='histogram',
+                 tc_conv_method='shared', tc_noise_stages='both',
                  reuse_accepted_step_training=False,
                  checkpoint_ode_rhs_training=False, **kwargs):
         for key, value in dict(R=1e4, C=49e-15, v_dd=.1,
@@ -50,6 +51,12 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         self.tc_noise_reference_R = tc_noise_reference_R
         self.tc_covariance_table = tc_covariance_table
         self.tc_curve_sampling = tc_curve_sampling
+        if tc_conv_method not in ('shared', 'loop', 'grouped'):
+            raise ValueError('tc_conv_method must be shared, loop or grouped.')
+        if tc_noise_stages not in ('both', 'ff', 'fb'):
+            raise ValueError('tc_noise_stages must be both, ff or fb.')
+        self.tc_conv_method = self._tc_conv_method = tc_conv_method
+        self.tc_noise_stages = tc_noise_stages
         self.reuse_accepted_step_training = reuse_accepted_step_training
         self.checkpoint_ode_rhs_training = checkpoint_ode_rhs_training
         self._tc_generators = {}
@@ -89,16 +96,30 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                 key = self._module_key(module)
                 if self.training or key not in self._tc_samples:
                     seed = getattr(self, '_tc_curve_seed', 4096)
-                    self._tc_samples[key] = package.sample_shared(
-                        self._values_to_level_idx(module.weight.detach()),
-                        sampling=self.tc_curve_sampling,
-                        generator=self._tc_generator(source, 'curve:'+key, seed))
+                    generator = self._tc_generator(source, 'curve:'+key, seed)
+                    self._tc_samples[key] = (
+                        package.sample_shared(
+                            self._values_to_level_idx(module.weight.detach()),
+                            sampling=self.tc_curve_sampling, generator=generator)
+                        if self.tc_conv_method == 'shared' else
+                        package.sample_levels(generator=generator))
                 curve = self._tc_samples[key]
                 if curve is not None:
-                    source = shared_correction(source, curve, package.v_grid,
-                                               self.v_dd, package.floor_ohms)
-            current = F.conv2d(source, module.weight, None, module.stride,
-                               module.padding, module.dilation, module.groups)
+                    if self.tc_conv_method != 'shared':
+                        # Reuse the PCN's per-code arithmetic and QAT gradients.
+                        self._tc_curve_package = package
+                        current = ODEBlockPC._tc_dense_conv(self, module, source, curve)
+                    else:
+                        source = shared_correction(source, curve, package.v_grid,
+                                                   self.v_dd, package.floor_ohms)
+                        current = F.conv2d(source, module.weight, None, module.stride,
+                                           module.padding, module.dilation, module.groups)
+                else:
+                    current = F.conv2d(source, module.weight, None, module.stride,
+                                       module.padding, module.dilation, module.groups)
+            else:
+                current = F.conv2d(source, module.weight, None, module.stride,
+                                   module.padding, module.dilation, module.groups)
         # The bias circuit is ideal, but its fixed current enters the same spin
         # loop.  Its integrated physical-domain contribution is q*b.
         bias = self._module_bias(module)
@@ -112,8 +133,10 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         cap = self._stage_capacitance(stage)
         ratio = math.sqrt(self.tc_noise_reference_R / self.R)
         summed = self._tc_nominal_sum(module, source)
-        a = self.summing_current_p if self.enable_summing_current_noise else 0.
-        b = self.coupler_noise_p if self.enable_coupler_noise else 0.
+        # Every feedforward MVM (including the classifier) is an FF stage.
+        enabled = self.tc_noise_stages in ('both', 'ff')
+        a = self.summing_current_p if enabled and self.enable_summing_current_noise else 0.
+        b = self.coupler_noise_p if enabled and self.enable_coupler_noise else 0.
         coefficients = (torch.full_like(summed, a*ratio/cap), summed.sqrt()*b*ratio/cap)
         generators = {}
         for name, seed in (('sum', self.summing_noise_seed), ('coupler', self.coupler_noise_seed)):

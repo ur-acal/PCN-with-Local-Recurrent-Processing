@@ -93,6 +93,9 @@ def reset_after_probe(model):
             block.reset_tc_spin()
             block._tc_generators.clear()
     for module in model.modules():
+        reset = getattr(module, 'reset_after_probe', None)
+        if callable(reset):
+            reset()
         if hasattr(module,'reset_measured_pooling'):
             module.reset_measured_pooling()
             generator=getattr(module,'_generator',None)
