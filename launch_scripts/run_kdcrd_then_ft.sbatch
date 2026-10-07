@@ -601,8 +601,10 @@ eval_one_combo_model() {
 
   if [[ "${TOGGLE_MODE}" != "none" ]]; then
     echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V2_T1 all-on, 10 trials, per-spin ReLU, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
+    source ./launch_scripts/rhs_current_args.sh
     OMP_NUM_THREADS=${THREADS_PER_PROC} \
     python -u scripts/run_toggle_nonideality_ablation.py \
+      "${RHS_CURRENT_ARGS[@]}" \
       "${FINAL_HEAD_ARGS[@]}" \
       --full_45_corner_test true \
       --mc_45_corner_dir hardware_data/mc_45_corners \

@@ -148,6 +148,22 @@ class TCDisabledAuditTests(unittest.TestCase):
              "        self.out_scale = (self.q if self.is_last and\n"
              "                          not getattr(self, \"physical_head_output\", False) else 1)\n\n"
              "        self.time_scaler = self.R * self.C / self.alpha"),
+            ("        if self.toggle_fast_path and constant_rhs is not None:\n",
+             "        current_limit = getattr(self, '_rhs_current_limits', {}).get(stage)\n"
+             "        if hasattr(self, '_rhs_current_limits') and current_limit is None:\n"
+             "            raise RuntimeError('Missing current limit for executed stage: ' + stage)\n"
+             "        if current_limit is not None:\n"
+             "            if self.training or not self.toggle_fast_path or constant_rhs is None:\n"
+             "                raise ValueError('Current clamp requires evaluation with constant pulse-slice RHS.')\n"
+             "            summing_delta = (self._brownian_increment(state, duration, stage)\n"
+             "                             if self.enable_summing_current_noise else None)\n"
+             "            coupler_delta = (self._coupler_brownian_increment(\n"
+             "                state, duration, stage, active_coupler_count)\n"
+             "                if self.enable_coupler_noise else None)\n"
+             "            updated = current_limit.apply(\n"
+             "                self, state, duration, constant_rhs, summing_delta, coupler_delta)\n"
+             "            return self.project_state(updated)\n"
+             "        if self.toggle_fast_path and constant_rhs is not None:\n"),
         ]
         for old, new in fixes:
             self.assertEqual(previous.count(old), 1, "Pinned baseline changed: " + old)

@@ -43,6 +43,7 @@ from cifar_validation import require_matching_validation_split
 # Make sure baseline/__init__.py exists.
 import baseline.cifar_resnet  # registers custom CIFAR models into timm
 from baseline.baseline_cifar_configs import (
+    RGB_MID_AUG,
     RGGB_DEFAULTS,
     RGGB_MID_AUG,
     RGGB_MILD_AUG,
@@ -228,7 +229,7 @@ def parse_args():
                         help="Input data type: rgb, scanGFI, raw, _raw, or CiFAIR.")
     parser.add_argument("--rggb_to_rgb", type=str2bool, default=False)
     parser.add_argument("--timm_aug_level", default="none",
-                        choices=("none", "no_aug", "mild", "mid"))
+                        choices=("none", "no_aug", "mild", "mid", "rgb_mid"))
     parser.add_argument("--timm_re_prob", type=float, default=None)
 
     parser.add_argument("--teacher_ckpt", default=None)
@@ -582,6 +583,8 @@ def main():
         cfg.update(RGGB_MILD_AUG)
     elif args.timm_aug_level == "mid":
         cfg.update(RGGB_MID_AUG)
+    elif args.timm_aug_level == "rgb_mid":
+        cfg.update(RGB_MID_AUG)
 
     if args.img_type != "rgb":
         # Match the current PCN pretraining default.

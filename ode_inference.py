@@ -39,6 +39,8 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Run PCConvNoisy tests with custom noise parameters"
     )
+    from rhs_current_clamp import add_rhs_current_args
+    add_rhs_current_args(parser)
     parser.add_argument("--model_dir",  type=str, required=True,
                         help="Directory containing the saved model checkpoint")
     parser.add_argument("--ckpt", type=str, default="best")
@@ -717,6 +719,12 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
 
 def run_ode_inference(linear_study=None):
     args = parse_args()
+    if args.rhs_current_summary:
+        from rhs_current_clamp import read_summary
+        read_summary(args.rhs_current_summary, args.rhs_current_bound_percentile)
+        if (args.tc_nonidealities or not args.test_expanded or args.test_only or
+                not args.toggle_fast_path or not args.ode_block.startswith('TogglePulse')):
+            raise ValueError('RHS current clamp requires expanded Level-3 toggle evaluation with fast path.')
     from input_preprocessing import resolve_student_normalization
     ckpt_path = os.path.join(args.model_dir, args.model_name,
                             args.model_name + "_{}_ckpt.pth".format(args.ckpt))
@@ -1077,6 +1085,9 @@ def run_ode_inference(linear_study=None):
                     max_real_t, min_real_t, avg_real_t = f"{max_real_t.item():.4g}", f"{min_real_t.item():.4g}", f"{avg_real_t.item():.4g}"
                     real_t_end = avg_real_t
                     net_.eval()
+                    from rhs_current_clamp import (install_rhs_current_clamp,
+                                                   report_rhs_current_clamp)
+                    current_limits = install_rhs_current_clamp(net_, args)
                     energy_study = None
                     if args.measure_coupler_energy:
                         from tc_energy import enable_tc_coupler_energy
@@ -1122,6 +1133,7 @@ def run_ode_inference(linear_study=None):
 
                     # Calculate the accuracy
                     accuracy = 100 * correct / total
+                    report_rhs_current_clamp(current_limits, args, t, accuracy)
                     if linear_study is not None:
                         linear_study.finish(accuracy)
                     if energy_study is not None:

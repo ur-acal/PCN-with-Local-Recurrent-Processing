@@ -1926,6 +1926,20 @@ class TogglePulseFFFB(ToggleAveragedPhysicalFFFB):
 
     def integrate_pulse_slice(self, state, duration, rhs_fn, stage, slice_idx, constant_rhs=None,
                               active_coupler_count=None):
+        current_limit = getattr(self, '_rhs_current_limits', {}).get(stage)
+        if hasattr(self, '_rhs_current_limits') and current_limit is None:
+            raise RuntimeError('Missing current limit for executed stage: ' + stage)
+        if current_limit is not None:
+            if self.training or not self.toggle_fast_path or constant_rhs is None:
+                raise ValueError('Current clamp requires evaluation with constant pulse-slice RHS.')
+            summing_delta = (self._brownian_increment(state, duration, stage)
+                             if self.enable_summing_current_noise else None)
+            coupler_delta = (self._coupler_brownian_increment(
+                state, duration, stage, active_coupler_count)
+                if self.enable_coupler_noise else None)
+            updated = current_limit.apply(
+                self, state, duration, constant_rhs, summing_delta, coupler_delta)
+            return self.project_state(updated)
         if self.toggle_fast_path and constant_rhs is not None:
             updated = state + duration * constant_rhs
             if self.enable_summing_current_noise:

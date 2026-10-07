@@ -345,6 +345,15 @@ RGGB_MID_AUG.update(
     }
 )
 
+RGB_MID_AUG = {
+    "mixup_alpha": 0.1,
+    "cutmix_alpha": 0.5,
+    "label_smoothing": 0.05,
+    "auto_augment": "rand-m5-mstd0.5-inc1",
+    "color_jitter": 0.05,
+    "re_prob": 0.0,
+}
+
 # -----------------------------------------------------------------------------
 # Optional model-specific overrides
 # -----------------------------------------------------------------------------

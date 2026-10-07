@@ -18,7 +18,8 @@ fi
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
 
-python scripts/run_toggle_nonideality_ablation.py \
+source ./launch_scripts/rhs_current_args.sh
+python scripts/run_toggle_nonideality_ablation.py "${RHS_CURRENT_ARGS[@]}" \
   --full_45_corner_test true \
   --mc_45_corner_dir "${MC_45_CORNER_DIR:-hardware_data/mc_45_corners}" \
   --mc_spin_variation_source "${MC_SPIN_VARIATION_SOURCE:-PVT_Monte_Carlo_Results_SPIN.csv}" \

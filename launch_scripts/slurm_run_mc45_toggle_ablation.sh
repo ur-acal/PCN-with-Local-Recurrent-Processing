@@ -8,6 +8,16 @@ SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_mc45_toggle_ablation.sh"
 # module swap slurm slurm/24.05.0.b1
 # ( source ./launch_scripts/slurm_run_mc45_toggle_ablation.sh ) \
 #  > ./logs/scheduler_slurm/slurm_mc45_toggle_ablation.log 2>&1 < /dev/null &
+# Optional total-current clamp (export before sourcing this scheduler):
+# export RHS_CURRENT_SUMMARY=hardware_data/summing_current_limit/current_limits_stage_pooled_p99.md
+# Use a path accessible on the compute nodes. Explicit custom tables already
+# contain the bounds; no percentile override is needed. Pooled rows limit FF
+# and FB independently with the same bounds; the classifier keeps its own row.
+# For original percentile summaries, RHS_CURRENT_BOUND_PERCENTILE selects the
+# column (default 99). Empty/unset RHS_CURRENT_SUMMARY disables clamping.
+# RHS_CURRENT_AUDIT_PATH is optional reporting only. Use a distinct OUTPUT_ROOT.
+# Pinned model/settings: docs/current_pcn_reference.md (checkpoint restores head,
+# classifier bias and measured-ReLU scope unless explicitly overridden).
 
 #(
 #  export N_TRIALS=5 \
@@ -30,6 +40,9 @@ N_TRIALS="${N_TRIALS:-2}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-results/mc45_alternative_gaussian_2trials_59p50}"
 CORNER_IDS="${CORNER_IDS:-}"
 export FIXED_COUPLER_MC_INDEX="${FIXED_COUPLER_MC_INDEX:-}"
+export RHS_CURRENT_SUMMARY="${RHS_CURRENT_SUMMARY:-}"
+export RHS_CURRENT_BOUND_PERCENTILE="${RHS_CURRENT_BOUND_PERCENTILE:-99}"
+export RHS_CURRENT_AUDIT_PATH="${RHS_CURRENT_AUDIT_PATH:-}"
 export MODEL_NAME="${MODEL_NAME:-TIMMQAT5b8aNT0p25mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP}"
 export MODEL_DIR="${MODEL_DIR:-saved_ckpt_runs/direct_fixed}"
 export WEIGHT_QUANT_FACTOR_BITS="${WEIGHT_QUANT_FACTOR_BITS:-none}"

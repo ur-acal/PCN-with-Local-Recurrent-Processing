@@ -147,7 +147,8 @@ run_model(){
   # only fuse_bn when noise is added to bn
   ########################################
   set -o pipefail
-  python -u ode_inference.py \
+  source ./launch_scripts/rhs_current_args.sh
+  python -u ode_inference.py "${RHS_CURRENT_ARGS[@]}" \
     --model_name      "$name" \
     --ckpt            "${CKPT}" \
     --task            "${_task}" \

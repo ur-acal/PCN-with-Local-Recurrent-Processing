@@ -22,7 +22,10 @@ from diagnostic_config import (
 
 from data_utils import MC45CornerData
 from inference_utils import get_eval_data, load_and_prepare_model
-from input_preprocessing import resolve_preprocessing
+from input_preprocessing import (
+    resolve_preprocessing,
+    resolve_student_normalization,
+)
 from measured_pooling import configure_measured_pooling
 from ode_pc import ODEBLOCK_CLASSES, ODEWrapper_CLASSES
 from pc_model import PCNet, PC_CONV_CLASS
@@ -163,6 +166,11 @@ def _model_parameters(args, trial_index):
         "toggle_time_split": args.toggle_time_split,
         "toggle_fast_path": args.toggle_fast_path,
         "odexinit_scaling_mode": args.odexinit_scaling_mode,
+        "toggle_timing_mode": args.toggle_timing_mode,
+        "toggle_y_time": args.toggle_y_time,
+        "z_over_y_time": args.z_over_y_time,
+        "toggle_timing_R": args.R,
+        "toggle_timing_C": args.C,
         "enable_spin_variation": args.enable_spin_variation,
         "sigma_spin": args.sigma_spin,
         "spin_variation_mean": args.spin_variation_mean,
@@ -173,6 +181,10 @@ def _model_parameters(args, trial_index):
         "enable_coupler_noise": args.enable_coupler_noise,
         "coupler_noise_p": args.coupler_noise_p,
         "coupler_noise_seed": args.coupler_noise_seed + trial_index,
+        "enable_slow_summing_current": args.enable_slow_summing_current,
+        "slow_summing_current": args.slow_summing_current,
+        "enable_slow_coupler_noise": args.enable_slow_coupler_noise,
+        "slow_coupler_noise": args.slow_coupler_noise,
         "enable_dtc_nonideality": args.enable_dtc_nonideality,
         "dtc_leading_edge_variation_std": (
             args.dtc_leading_edge_variation_std),
@@ -225,6 +237,7 @@ def _model_parameters(args, trial_index):
         "activation_fit_constraint": args.activation_fit_constraint,
         "activation_normalize_positive_endpoint": (
             args.activation_normalize_positive_endpoint),
+        "adapt_relu_offset": args.adapt_relu_offset,
         "compile_measured_activation": args.compile_measured_activation,
         "w_quant_mode": args.w_quant_mode,
         "thermal_noise": args.thermal_noise,
@@ -251,7 +264,7 @@ class RuntimeTrial:
         return inputs.to(self.device), targets.to(self.device)
 
     def reset_data_rng(self):
-        _set_all_seeds(self.args.data_seed)
+        _set_all_seeds(self.args.data_seed + self.trial_index)
 
 
 def build_runtime_trial(model_name=None, model_root=None,
@@ -274,18 +287,26 @@ def build_runtime_trial(model_name=None, model_root=None,
     trial_seed = args.hardware_seed + trial_index
     _set_all_seeds(trial_seed)
 
+    checkpoint = os.path.join(
+        args.model_dir, args.model_name,
+        args.model_name + "_{}_ckpt.pth".format(args.ckpt))
+    args.normalize_student_input = resolve_student_normalization(
+        checkpoint, args.normalize_student_input)
     dataloader = get_eval_data(
         test_bs=args.test_bs, img_type=args.img_type, task=args.task,
         input_quant_bits=args.input_quant_bits,
         center_student_input=args.center_student_input,
-        train=dataset_split == "train")
-    checkpoint = os.path.join(
-        args.model_dir, args.model_name,
-        args.model_name + "_{}_ckpt.pth".format(args.ckpt))
+        train=dataset_split == "train",
+        normalize_student_input=args.normalize_student_input)
     ode_params, wrapper_params, curve_indices = _model_parameters(
         args, trial_index)
     wrappers = {}
     with torch.no_grad():
+        from final_linear import head_load_overrides
+        load_overrides = head_load_overrides(args)
+        if args.measured_activation_scope is not None:
+            load_overrides["measured_activation_scope"] = (
+                args.measured_activation_scope)
         model = load_and_prepare_model(
             model_path=checkpoint,
             device=device,
@@ -300,7 +321,8 @@ def build_runtime_trial(model_name=None, model_root=None,
             ode_wrapper_params=wrapper_params,
             wrappers=wrappers,
             noise_level=0.0,
-            weight=None)
+            weight=None,
+            **load_overrides)
         configure_measured_pooling(
             model, wrappers["wrappers"],
             enable_nonideality=args.enable_measured_pooling,

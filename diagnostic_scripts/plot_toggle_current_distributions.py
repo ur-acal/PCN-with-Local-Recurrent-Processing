@@ -9,6 +9,7 @@ import json
 import math
 from pathlib import Path
 import subprocess
+from statistics import NormalDist
 import types
 
 import matplotlib
@@ -44,7 +45,33 @@ def parse_args():
     parser.add_argument("--max_batches", type=int, default=None,
                         help="Diagnostic-only bound; omit for the full split.")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--granularity", choices=("layer", "stage"), default="layer",
+                        help="Pool after layer N ends its stage at layer N; classifier stays separate.")
+    parser.add_argument("--plot_bound_percentile", type=float, default=99.0,
+                        help="Central fitted-Gaussian interval drawn on plots.")
+    parser.add_argument("--summary_bound_percentiles", default="95,99",
+                        help="Comma-separated fitted-Gaussian intervals in summaries.")
+    parser.add_argument("--plot_lower_sigma", type=float, default=4.0,
+                        help="Plot lower limit as mean minus this many fitted standard deviations.")
+    parser.add_argument("--plot_upper_sigma", type=float, default=4.0,
+                        help="Plot upper limit as mean plus this many fitted standard deviations.")
+    parser.add_argument("--replot_existing", default=None,
+                        help="Regenerate plots/tables from an existing result directory without inference.")
     return parser.parse_args()
+
+
+def parse_bound_percentiles(value):
+    values = [float(item.strip()) for item in str(value).split(",")
+              if item.strip()]
+    if not values or any(not math.isfinite(item) or item <= 0.0 or item >= 100.0
+                         for item in values):
+        raise ValueError("Bound percentiles must be between 0 and 100.")
+    return list(dict.fromkeys(values))
+
+
+def gaussian_bounds(mean, std, percentile):
+    z_score = NormalDist().inv_cdf(0.5 + float(percentile) / 200.0)
+    return mean - z_score * std, mean + z_score * std
 
 
 def resolve_model_arguments(args):
@@ -182,11 +209,12 @@ class HistogramSink:
 class CurrentRecorder:
     """Observe existing Level-3 updates without changing production dynamics."""
 
-    def __init__(self, model, sink):
+    def __init__(self, model, sink, layer_groups=None):
         self.model = model
         self.sink = sink
         self.original = []
         self.pending = {}
+        self.layer_groups = layer_groups or {}
 
     def _blocks(self):
         blocks = [
@@ -204,6 +232,7 @@ class CurrentRecorder:
 
     def attach(self):
         for block, layer, forced_branch in self._blocks():
+            layer = self.layer_groups.get(layer, layer)
             identity = id(block)
             self.pending[identity] = {"summing": None, "coupler": None}
             methods = {
@@ -336,7 +365,15 @@ def run_pass(args, corners, sink, pass_number):
                 trial_index=trial_index, seed=args.seed, device=args.device,
                 dataset_split=args.dataset_split)
             runtime.reset_data_rng()
-            recorder = CurrentRecorder(runtime.model, sink)
+            from current_stages import stage_members
+            members = stage_members(len(runtime.model.PcConvs), [
+                i + 1 for i, pooled_layer in enumerate(runtime.model.max_pool) if pooled_layer])
+            if hasattr(args, 'stage_members') and args.stage_members != members:
+                raise RuntimeError('Stage layout changed between trials/passes.')
+            args.stage_members = members
+            groups = ({layer: group for group, layers in members.items() for layer in layers}
+                      if getattr(args, 'granularity', 'layer') == 'stage' else {})
+            recorder = CurrentRecorder(runtime.model, sink, groups)
             recorder.attach()
             accuracy = Accuracy()
             try:
@@ -431,9 +468,11 @@ def key_name(key):
 
 
 def write_outputs(output_dir, args, corners, first, specifications, counts,
-                  accuracy_rows, pooled_accuracy):
+                  accuracy_rows, pooled_accuracy, preserve_run_files=False):
     output_dir.mkdir(parents=True, exist_ok=True)
     scale, unit = select_unit(first)
+    summary_percentiles = parse_bound_percentiles(
+        args.summary_bound_percentiles)
     csv_rows = []
     npz = {}
     colors = {"deterministic": "#4C78A8", "total": "#4C78A8"}
@@ -454,11 +493,10 @@ def write_outputs(output_dir, args, corners, first, specifications, counts,
             density = histogram / (stats["count"] * widths)
             mean = stats["mean_A"] * scale
             std = stats["std_A"] * scale
-            low, high = mean - 1.96 * std, mean + 1.96 * std
-            observed_low = stats["min_A"] * scale
-            observed_high = stats["max_A"] * scale
-            x_low = min(observed_low, mean - 4.0 * std)
-            x_high = max(observed_high, mean + 4.0 * std)
+            low, high = gaussian_bounds(
+                mean, std, args.plot_bound_percentile)
+            x_low = mean - args.plot_lower_sigma * std
+            x_high = mean + args.plot_upper_sigma * std
             if x_high == x_low:
                 x_low, x_high = x_low - 1.0, x_high + 1.0
             x = np.linspace(x_low, x_high, 600)
@@ -474,9 +512,19 @@ def write_outputs(output_dir, args, corners, first, specifications, counts,
                       label="Gaussian fit: μ={:.4g}, σ={:.4g} {}".format(
                           mean, std, unit))
             axis.axvline(low, color="#444444", linestyle="--", linewidth=1.3,
-                         label="Fitted 95% interval")
+                         label="Fitted {:g}% interval".format(
+                             args.plot_bound_percentile))
             axis.axvline(high, color="#444444", linestyle="--", linewidth=1.3)
             axis.set_xlim(x_low, x_high)
+            label = "{:.4g} {}"
+            axis.annotate(label.format(low, unit), xy=(low, 0),
+                          xycoords=axis.get_xaxis_transform(), xytext=(-4, 5),
+                          textcoords="offset points", ha="right", va="bottom",
+                          fontsize=8.5, color="#444444")
+            axis.annotate(label.format(high, unit), xy=(high, 0),
+                          xycoords=axis.get_xaxis_transform(), xytext=(4, 5),
+                          textcoords="offset points", ha="left", va="bottom",
+                          fontsize=8.5, color="#444444")
             axis.set_title("{} {} summing-current distribution".format(
                 layer.replace("_", " ").title(), branch))
             axis.set_xlabel("Summing current ({})".format(unit))
@@ -498,12 +546,16 @@ def write_outputs(output_dir, args, corners, first, specifications, counts,
                 "samples": stats["count"],
                 "mean_A": stats["mean_A"],
                 "std_A": stats["std_A"],
-                "fitted_95_low_A": stats["mean_A"] - 1.96 * stats["std_A"],
-                "fitted_95_high_A": stats["mean_A"] + 1.96 * stats["std_A"],
                 "minimum_A": stats["min_A"],
                 "maximum_A": stats["max_A"],
                 "bins": spec["bins"],
             }
+            for percentile in summary_percentiles:
+                label = "{:g}".format(percentile)
+                bound_low, bound_high = gaussian_bounds(
+                    stats["mean_A"], stats["std_A"], percentile)
+                row["fitted_{}_low_A".format(label)] = bound_low
+                row["fitted_{}_high_A".format(label)] = bound_high
             csv_rows.append(row)
             prefix = "{}__{}".format(kind, key_name(key))
             npz[prefix + "__edges_A"] = edges_A
@@ -526,17 +578,41 @@ def write_outputs(output_dir, args, corners, first, specifications, counts,
             with (leaf / "summary.md").open("w") as handle:
                 handle.write("# {} {} summing-current distributions\n\n".format(
                     kind.title(), mode))
-                handle.write("All currents are signed. The interval is μ ± 1.96σ "
+                handle.write("All currents are signed. Bounds are central intervals "
                              "from the fitted Gaussian.\n\n")
-                handle.write("| Layer | Branch | Samples | Mean ({0}) | Lower 95% ({0}) | Upper 95% ({0}) |\n".format(unit))
-                handle.write("|---|---:|---:|---:|---:|---:|\n")
+                columns = ["Layer", "Branch", "Samples", "Mean ({})".format(unit)]
+                for percentile in summary_percentiles:
+                    columns.extend(("Lower {:g}% ({})".format(percentile, unit),
+                                    "Upper {:g}% ({})".format(percentile, unit)))
+                columns.extend(("Observed min ({})".format(unit),
+                                "Observed max ({})".format(unit)))
+                handle.write("| " + " | ".join(columns) + " |\n")
+                handle.write("|---|---:|---:" + "|---:" * (len(columns) - 3) + "|\n")
                 for row in rows:
-                    handle.write(
-                        "| {} | {} | {:,} | {:.6g} | {:.6g} | {:.6g} |\n".format(
-                            row["layer"], row["branch"], row["samples"],
-                            row["mean_A"] * scale,
-                            row["fitted_95_low_A"] * scale,
-                            row["fitted_95_high_A"] * scale))
+                    values = [row["layer"], row["branch"], "{:,}".format(row["samples"]),
+                              "{:.6g}".format(row["mean_A"] * scale)]
+                    for percentile in summary_percentiles:
+                        label = "{:g}".format(percentile)
+                        values.extend((
+                            "{:.6g}".format(row["fitted_{}_low_A".format(label)] * scale),
+                            "{:.6g}".format(row["fitted_{}_high_A".format(label)] * scale)))
+                    values.extend(("{:.6g}".format(row["minimum_A"] * scale),
+                                   "{:.6g}".format(row["maximum_A"] * scale)))
+                    handle.write("| " + " | ".join(values) + " |\n")
+
+    if preserve_run_files:
+        config_path = output_dir / "run_config.json"
+        if config_path.exists():
+            with config_path.open() as handle:
+                metadata = json.load(handle)
+            metadata["plot_bound_percentile"] = args.plot_bound_percentile
+            metadata["summary_bound_percentiles"] = summary_percentiles
+            metadata["plot_lower_sigma"] = args.plot_lower_sigma
+            metadata["plot_upper_sigma"] = args.plot_upper_sigma
+            with config_path.open("w") as handle:
+                json.dump(metadata, handle, indent=2)
+                handle.write("\n")
+        return
 
     accuracy_filename = "{}_accuracy.md".format(args.dataset_split)
     with (output_dir / accuracy_filename).open("w") as handle:
@@ -557,6 +633,8 @@ def write_outputs(output_dir, args, corners, first, specifications, counts,
         text=True, capture_output=True, check=True).stdout.strip()
     metadata = {
         "model_name": args.model_name,
+        "granularity": getattr(args, 'granularity', 'layer'),
+        "stage_members": getattr(args, 'stage_members', None),
         "model_dir": str(Path(args.model_dir).resolve()),
         "dataset": dataset_description(args),
         "dataset_split": args.dataset_split,
@@ -569,6 +647,10 @@ def write_outputs(output_dir, args, corners, first, specifications, counts,
         "accuracy": pooled_accuracy,
         "bin_rule": "Scott, clipped to [{}, {}]".format(
             args.min_bins, args.max_bins),
+        "plot_bound_percentile": args.plot_bound_percentile,
+        "summary_bound_percentiles": summary_percentiles,
+        "plot_lower_sigma": args.plot_lower_sigma,
+        "plot_upper_sigma": args.plot_upper_sigma,
     }
     with (output_dir / "run_config.json").open("w") as handle:
         json.dump(metadata, handle, indent=2)
@@ -579,8 +661,49 @@ def write_outputs(output_dir, args, corners, first, specifications, counts,
             args.dataset_split.title(), accuracy_filename, accuracy_filename))
         handle.write("- Exact histogram arrays: `histogram_data.npz`\n")
         handle.write("- Complete statistics: `statistics.csv`\n")
-        handle.write("- Deterministic plots: `deterministic/`\n")
-        handle.write("- Total-current plots: `total/`\n")
+        handle.write("- Deterministic plots: `deterministic/` "
+                     "([combined table](deterministic/combined/summary.md), "
+                     "[separate FF/FB table](deterministic/separate/summary.md))\n")
+        handle.write("- Total-current plots: `total/` "
+                     "([combined table](total/combined/summary.md), "
+                     "[separate FF/FB table](total/separate/summary.md))\n")
+
+
+def replot_existing(output_dir, args):
+    """Regenerate plots and tables from saved histograms without inference."""
+    output_dir = Path(output_dir).resolve()
+    statistics_path = output_dir / "statistics.csv"
+    histogram_path = output_dir / "histogram_data.npz"
+    if not statistics_path.is_file() or not histogram_path.is_file():
+        raise FileNotFoundError(
+            "Existing results require statistics.csv and histogram_data.npz")
+
+    first = {"deterministic": {}, "total": {}}
+    specifications = {"deterministic": {}, "total": {}}
+    counts = {"deterministic": {}, "total": {}}
+    with statistics_path.open(newline="") as handle, np.load(histogram_path) as data:
+        for row in csv.DictReader(handle):
+            kind = row["kind"]
+            key = (row["mode"], row["layer"], row["branch"])
+            prefix = "{}__{}".format(kind, key_name(key))
+            edges = data[prefix + "__edges_A"]
+            histogram = data[prefix + "__counts"].astype(np.int64)
+            first[kind][key] = {
+                "count": int(row["samples"]),
+                "mean_A": float(row["mean_A"]),
+                "std_A": float(row["std_A"]),
+                "min_A": float(row["minimum_A"]),
+                "max_A": float(row["maximum_A"]),
+            }
+            specifications[kind][key] = {
+                "bins": len(histogram),
+                "edge_min_A": float(edges[0]),
+                "edge_max_A": float(edges[-1]),
+            }
+            counts[kind][key] = histogram
+    write_outputs(
+        output_dir, args, [], first, specifications, counts, [], {},
+        preserve_run_files=True)
 
 
 def default_output(args, corners):
@@ -592,12 +715,29 @@ def default_output(args, corners):
         digest = hashlib.sha256(",".join(corners).encode()).hexdigest()[:8]
         corner_tag = "{}corners_{}".format(len(corners), digest)
     experiment = Path(args.model_dir).name
+    split_tag = "" if args.dataset_split == "train" else "_{}".format(
+        args.dataset_split)
+    if getattr(args, 'granularity', 'layer') == 'stage':
+        split_tag += '_stage'
     return (REPO_ROOT / "results" / "toggle_summing_current_distribution" /
-            "{}_{}_{}trials".format(experiment, corner_tag, args.n_trials))
+            "{}{}_{}_{}trials".format(
+                experiment, split_tag, corner_tag, args.n_trials))
 
 
 def main():
-    args = resolve_model_arguments(parse_args())
+    args = parse_args()
+    parse_bound_percentiles(args.summary_bound_percentiles)
+    if not 0.0 < args.plot_bound_percentile < 100.0:
+        raise ValueError("plot_bound_percentile must be between 0 and 100.")
+    if (not math.isfinite(args.plot_lower_sigma) or args.plot_lower_sigma <= 0.0 or
+            not math.isfinite(args.plot_upper_sigma) or args.plot_upper_sigma <= 0.0):
+        raise ValueError("plot_lower_sigma and plot_upper_sigma must be finite and positive.")
+    if args.replot_existing:
+        replot_existing(args.replot_existing, args)
+        print("Plots and summaries regenerated: {}".format(
+            Path(args.replot_existing).resolve()), flush=True)
+        return
+    args = resolve_model_arguments(args)
     if args.n_trials <= 0 or args.batch_size <= 0:
         raise ValueError("n_trials and batch_size must be positive.")
     if args.min_bins <= 0 or args.max_bins < args.min_bins:

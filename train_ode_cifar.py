@@ -13,7 +13,7 @@ import numpy as np
 from ode_pc import ODEBLOCK_CLASSES, make_ode_block, ODEWrapper_CLASSES, wrap_ode_block, QUANTIZER_CLASSES
 from switch import SWITCH_CLASSES
 from trainer_timm import TrainerCiFarTimmStyle, TrainerCiFarTimmStyleSRRL, TrainerCiFarTimmStyleMGD, TrainerCiFarTimmStyleReviewKD
-from baseline.baseline_cifar_configs import CASE_DEFAULTS, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS, RGGB_NO_AUG, RGGB_MILD_AUG, RGGB_MID_AUG
+from baseline.baseline_cifar_configs import CASE_DEFAULTS, RGB_MID_AUG, RGGB_TO_RGB_EXTRAS, RGGB_DEFAULTS, RGGB_NO_AUG, RGGB_MILD_AUG, RGGB_MID_AUG
 
 ODEBLOCK_CLASSES.update(SWITCH_CLASSES)
 
@@ -183,7 +183,7 @@ def get_args():
     p.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100"])
     p.add_argument("--timm_trainer", type=str2bool, default=False)
     p.add_argument("--timm_aug_level", type=str,
-                   default="none", choices=["no_aug", "mild", "mid", "none", ""],
+                   default="none", choices=["no_aug", "mild", "mid", "rgb_mid", "none", ""],
                    help="Passing none and empty string means using default timm aug.")
     p.add_argument(
         "--timm_re_prob", type=float, default=0.0,
@@ -1324,6 +1324,8 @@ def main():
             cfg.update(RGGB_MILD_AUG)
         elif args.timm_aug_level == "mid":
             cfg.update(RGGB_MID_AUG)
+        elif args.timm_aug_level == "rgb_mid":
+            cfg.update(RGB_MID_AUG)
 
         if args.timm_re_prob is not None:
             if not 0.0 <= args.timm_re_prob <= 1.0:

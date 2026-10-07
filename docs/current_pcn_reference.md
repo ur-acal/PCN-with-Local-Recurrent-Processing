@@ -429,6 +429,7 @@ column. A *forward* is one full-model batch forward; a *validation pass* or
 | CiFAIR sensor noise | `MyNoiseCIFARDataset` generates noise when each image is read; a new realization is obtained on later reads. | Same. The data RNG is explicitly reseeded with `data_seed + trial`, producing reproducibility| Same as FT. |
 | Student-input quantization | Endpoint-inclusive 12-bit quantization after sensor noise: clamp each input element to `[0,1]`, round to one of 4096 codes. | Same. | Same. |
 | PC FF/FB weight quantization and scale quantization | Symmetric 5-bit QAT for every PC layer's FF and FB tensor (`q_hi=15`). One scale is computed per tensor and quantized with `WEIGHT_QUANT_FACTOR_BITS=1`; recomputed before each forward as weights change. | Load the baked 5-bit FF/FB weights and their saved per-tensor scales. Level 3 realizes every integer weight as up to 15 pulse slices. | Same as FT. |
+| Analog final classifier | One-shot physical FF MVM with the same 5-bit symmetric QAT, scale-factor quantization, nonlinear-coupler, spin-variation, current-noise, and fixed-timing controls as the physical FF path. The pinned classifier has no bias. | One pulse-expanded FF MVM using per-coupler corner curves and the trial's spin/noise/DTC realization; it is not spatially unrolled because it is already a dense MVM. | Dense Level-2 classifier with validation-pass hardware sampling lifetime. |
 | Measured ReLU | Fixed 0906 `tt_25_1.csv`, MC18 curve for every measured-activation module and every spin, for the entire FT job. Piecewise-linear interpolation. The V1 output offset is 0.600 V before coordinate scaling, and input/output are rail-clamped. Also support random_per_forward in training, with per_spin and per_layer granularity. | Uses the selected PVT corner's 0906 CSV. `per_spin` granularity. V0/V1/V2 subtract 0.588/0.600/0.612 V, respectively. | Same as FT. |
 | Nonlinear coupler R(V) | Exact empirical_with_replacement `coupler_full_range` conductance curves from the configured all-corner training bank for different layers, but sample w/o replacement within a layer. Per-tensor granularity. The pair is redrawn every training forward. | Exact empirical_with_replacement from the selected PVT corner. Per-coupler granularity. Both FF and FB are unrolled. | Per-tensor granularity sample from all-corner bank, fixed for the whole pass. |
 | Measured average pooling | Sample from `coupler_full_range` all-corner training bank. One empirical curve per output channel and pooling window, shared by all inputs in that window and all batch items; redrawn each training forward. This applies to the intermediate average pool and GAP. | Same per-window granularity, but curves come only from the selected PVT corner and stay fixed for the whole trial. Intermediate pooling and GAP have separate assignments. | Fresh assignments are drawn at the start of the validation pass and fixed for the whole pass. |
@@ -446,7 +447,7 @@ operating/model settings rather than extra rows of sampled non-ideality.
 
 Supported but inactive in this reference—and therefore deliberately excluded
 from the table—are slow summing/coupler offsets, generic/differential weight
-mismatch, final-linear-layer non-ideality, output ENOB, and the legacy thermal
+mismatch, output ENOB, and the legacy thermal
 noise path. Gaussian curve synthesis is also inactive: the pinned evaluation
 requests empirical sampling with replacement.
 
@@ -475,8 +476,9 @@ initialization requires `uv` as well as scanbase Python.
 ```bash
 # Reference architecture:
 #   C36->72, stage depths 8:10, pooling before expansion.
-#   Final linear layer has no bias (LINEAR_BIAS=false).
+#   Final linear layer has no bias and is analog (LINEAR_BIAS=false).
 #   Measured 0906 MC18 ReLU is used during pretraining and fixed-ReLU FT.
+#   All ReLUs, including the final ReLU, use the measured 0906 curve.
 #
 # Architecture alternatives:
 #
@@ -492,6 +494,9 @@ initialization requires `uv` as well as scanbase Python.
 #   PCN_NUM_LAYERS_LIST=18
 #   ONE_STAGE_POOL_MODE=search # Or no_pool
 #   NUM_COMB_PER_NUM_LAYER=2
+#
+# Use FINAL_HEAD_TYPE="digital" or "analog"
+# FINAL_ADC_NOISE_LSB=0.5 for digital head noise
 
 mkdir -p logs/scheduler_slurm
 
@@ -499,7 +504,7 @@ mkdir -p logs/scheduler_slurm
   export TOGGLE_MODE=odexinit \
          TASK=cifar100 \
          IMG_TYPE=CiFAIR \
-         EXP_PREFIX=coupler_full_range_CiFAIR100_twoStage_C36_72_poolPreExp_pullbackDirect_qf1_noENOB_noLinearBias \
+         EXP_PREFIX=C100_C36_72_8_10_allReLU_analog_biasfalse \
          TEACHER_CKPT=./checkpoint/efficientnet_v2_l_cifar100_CiFAIR_OldNoTimm_MatchDistill.pth \
          ADAPT_PIL_TEACHER=false \
          DISTILL_METHOD=srrl \
@@ -520,15 +525,17 @@ mkdir -p logs/scheduler_slurm
          WEIGHT_QUANT_FACTOR_BITS=1 \
          ENOB=none \
          UNITLESS_MEASURED_PULLBACK_MODE=direct \
+         MEASURED_ACTIVATION_SCOPE=all \
          SEARCH_ARCH=two_stage_fixed \
          PCN_CHAN_0_LIST=36 \
          PCN_NUM_LAYERS_LIST="8:10" \
          TWO_STAGE_POOL_POSITION=before_expansion \
+         FINAL_HEAD_TYPE="analog" \
          LINEAR_BIAS=false \
          NUM_COMB_PER_NUM_LAYER=1
 
   source ./launch_scripts/slurm_search_config.sh
-) > logs/scheduler_slurm/cifair100_twoStage_C36_72_n8_10_poolPreExp_pullbackDirect_noLinearBias.log 2>&1 < /dev/null &
+) > logs/scheduler_slurm/cifair100_C36_72_8_10_allReLU_analog_biasfalse.log 2>&1 < /dev/null &
 
 echo "C36->72 8:10 scheduler PID: $!"
 ```
@@ -543,6 +550,11 @@ The automatic post-FT evaluation is FS_V2_T1, 10 trials, matching the pinned
 45-corner protocol for that same corner.
 
 ## Main-model 45-corner SLURM evaluation
+
+The pinned evaluation checkpoint is the **rerun** C36→72, 8:10 model with an
+analog final classifier, no classifier bias, and all ReLUs measured, including
+the final ReLU. These settings are restored from checkpoint metadata when no
+overrides are exported; no extra head/activation arguments are needed.
 
 The physical evaluation configuration is unchanged. The evaluator reconstructs
 the architecture from `MODEL_NAME`; only `MODEL_NAME`, `MODEL_DIR`, output root,
@@ -560,9 +572,9 @@ mkdir -p logs/scheduler_slurm
   export SBATCH_TIMELIMIT=12:00:00 \
          N_TRIALS=10 \
          N_SERVERS=9 \
-         OUTPUT_ROOT=results/coupler_full_range_CiFAIR100_twoStage_C36_72_n8_10_pullbackDirect_default45 \
+         OUTPUT_ROOT=results/C100_C36_72_8_10_allReLU_analog_biasfalse_rerun_default45 \
          MODEL_NAME="${MODEL_NAME}" \
-         MODEL_DIR=saved_ckpt_runs/coupler_full_range_CiFAIR100_twoStage_C36_72_poolPreExp_pullbackDirect_qf1_noENOB_iq12_toggle_odexinit \
+         MODEL_DIR=saved_ckpt_runs/C100_C36_72_8_10_allReLU_analog_biasfalse_adc05_rerun_iq12_toggle_odexinit \
          WEIGHT_QUANT_FACTOR_BITS=1 \
          FULL_45_CORNER_C=500e-15 \
          MC_COUPLER_NONLINEAR_VARIATION_SOURCE=coupler_full_range \
@@ -581,10 +593,74 @@ mkdir -p logs/scheduler_slurm
          ENABLE_MEASURED_POOLING=true \
          ENOB=none
   source ./launch_scripts/slurm_run_mc45_toggle_ablation.sh
-) > logs/scheduler_slurm/slurm_mc45_CiFAIR100_twoStage_C36_72_n8_10_pullbackDirect.log 2>&1 < /dev/null &
+) > logs/scheduler_slurm/slurm_mc45_C100_C36_72_8_10_allReLU_analog_biasfalse_rerun.log 2>&1 < /dev/null &
 
 echo "C36->72 8:10 MC45 scheduler PID: $!"
 ```
+
+Optional total summing-current limits: add this export inside the subshell
+before sourcing the launcher (use a path accessible on the evaluation machine):
+
+```bash
+export RHS_CURRENT_SUMMARY=hardware_data/summing_current_limit/current_limits_stage_pooled_p99.md
+```
+
+That is the only additional setting required for clamping. This explicit table
+already contains the 99% bounds: no percentile setting is needed. Pooled rows
+apply the same lower/upper bounds independently to FF and FB; the classifier
+keeps its own row. With an original percentile summary instead, select its
+columns using `RHS_CURRENT_BOUND_PERCENTILE=95` or `99`. Unset/empty
+`RHS_CURRENT_SUMMARY` disables the clamp. `RHS_CURRENT_AUDIT_PATH` is optional
+and only saves mapping/clipping-count reports. Use distinct output/log paths
+for clamped runs. For the previous two-corner comparison, additionally set
+`CORNER_IDS="FS_V2_T1 SF_V1_T1"`, `N_TRIALS=1`, and `BASE_SEED=20260723`.
+The committed stage-p99 table records its source provenance: it was derived
+from the older non-rerun checkpoint's FS_V2_T1 training-current statistics.
+Using it with the pinned rerun checkpoint is therefore an intentional
+cross-checkpoint hardware-limit experiment, not a same-checkpoint limit fit.
+
+Below is a command that runs two corner evaluations locally using the last
+checkpoint. Omit `CKPT=last` to retain the launcher's default `best` checkpoint.
+
+```bash
+conda activate scanbase
+cd /home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN
+mkdir -p logs/local_runs
+
+(
+  export MODEL_NAME=TIMMQAT5bNoneaNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_20Layers8l10l0_1Pool9_srrlDistill_a0p3_t2p0_CiFAIR_1REP \
+         MODEL_DIR=saved_ckpt_runs/C100_C36_72_8_10_allReLU_analog_biasfalse_adc05_rerun_iq12_toggle_odexinit \
+         CKPT=last \
+         N_TRIALS=1 \
+         BASE_SEED=20260723 \
+         CORNER_IDS="FS_V2_T1 SF_V1_T1" \
+         OUTPUT_DIR=results/current_limits_60uA_last \
+         WEIGHT_QUANT_FACTOR_BITS=1 \
+         FULL_45_CORNER_C=500e-15 \
+         MC_COUPLER_NONLINEAR_VARIATION_SOURCE=coupler_full_range \
+         MC_COUPLER_NONLINEAR_VARIATION_QUANTITY=conductance \
+         MC_COUPLER_NOMINAL_R=50e3 \
+         NONLINEAR_R_CURVE_SAMPLING=empirical_with_replacement \
+         MC_RELU_MONTE_CARLO_SOURCE=0906_RELU_Voltage \
+         ACTIVATION_CURVE_SHARING=per_spin \
+         V_DD=0.5 \
+         ONE_OVER_Q=5 \
+         TOGGLE_TIMING_MODE=fixed \
+         TOGGLE_Y_TIME=10e-9 \
+         Z_OVER_Y_TIME=1 \
+         INPUT_QUANT_BITS=12 \
+         CENTER_STUDENT_INPUT=false \
+         ENABLE_MEASURED_POOLING=true \
+         ENOB=none \
+         IS_SLURM=0 \
+         RHS_CURRENT_SUMMARY=/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/summing_current_limit/current_limits_all_pm60uA.md
+
+  nohup bash ./launch_scripts/run_mc45_toggle_ablation.sh
+) > logs/local_runs/current_limits_60uA_last.log 2>&1 < /dev/null &
+
+echo "Evaluation PID: $!"
+```
+
 
 Former 96-channel reference, **before the FF expansion fix**: 2-trial
 "FS_V2_T1" run -> 58.73%

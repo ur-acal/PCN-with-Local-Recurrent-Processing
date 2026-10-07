@@ -7,6 +7,15 @@
 #SBATCH -t 90:10:00
 #SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
+# Optional total-current clamp; use with the pinned evaluation exports:
+# export RHS_CURRENT_SUMMARY=hardware_data/summing_current_limit/current_limits_stage_pooled_p99.md
+# Explicit bounds need no percentile arg; pooled rows apply independently to
+# FF and FB, with a separate classifier row. For percentile summaries select
+# RHS_CURRENT_BOUND_PERCENTILE (default 99). Unset/empty summary disables it.
+# RHS_CURRENT_AUDIT_PATH only saves an optional audit; use a distinct OUTPUT_DIR.
+# Head type, bias and measured-ReLU scope inherit checkpoint settings unless
+# overridden. See docs/current_pcn_reference.md for the full pinned command.
+
 IS_SLURM="${IS_SLURM:-0}"
 
 if [[ "${IS_SLURM}" == 1 ]]; then
@@ -25,6 +34,7 @@ cd "${REPO_ROOT}"
 
 MODEL_NAME="${MODEL_NAME:-TIMMQAT5b8aNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP}"
 MODEL_DIR="${MODEL_DIR:-saved_ckpt_runs/coupler_v2_cifar100_qf1}"
+CKPT="${CKPT:-best}"
 N_TRIALS="${N_TRIALS:-5}"
 BASE_SEED="${BASE_SEED:-20260723}"
 CORNER_IDS="${CORNER_IDS:-}"
@@ -95,6 +105,7 @@ DTC_FALLING_EDGE_JITTER_STD="${DTC_FALLING_EDGE_JITTER_STD:-0.005}"
 
 CORNER_ARGS=()
 source ./launch_scripts/final_head_args.sh
+source ./launch_scripts/rhs_current_args.sh
 FIXED_RELU_ARGS=()
 FIXED_COUPLER_ARGS=()
 MEASURED_ACTIVATION_SCOPE_ARGS=()
@@ -123,6 +134,10 @@ mkdir -p "${OUTPUT_DIR}"
   echo "MC45 resolved configuration"
   echo "model_name=${MODEL_NAME}"
   echo "model_dir=${MODEL_DIR}"
+  echo "ckpt=${CKPT}"
+  echo "rhs_current_summary=${RHS_CURRENT_SUMMARY:-disabled}"
+  echo "rhs_current_bound_percentile=${RHS_CURRENT_BOUND_PERCENTILE:-99}"
+  echo "rhs_current_audit_path=${RHS_CURRENT_AUDIT_PATH:-stdout}"
   echo "weight_quant_factor_bits=${WEIGHT_QUANT_FACTOR_BITS}"
   echo "enob=${ENOB}"
   echo "toggle_timing_mode=${TOGGLE_TIMING_MODE}"
@@ -202,7 +217,7 @@ python scripts/run_toggle_nonideality_ablation.py \
   --base_seed "${BASE_SEED}" \
   --model_name "${MODEL_NAME}" \
   --model_dir "${MODEL_DIR}" \
-  --ckpt best \
+  --ckpt "${CKPT}" \
   --output_dir "${OUTPUT_DIR}" \
   --test_bs 128 \
   --jobs 1 \
@@ -242,4 +257,5 @@ python scripts/run_toggle_nonideality_ablation.py \
   "${FIXED_RELU_ARGS[@]}" \
   "${FIXED_COUPLER_ARGS[@]}" \
   "${MEASURED_ACTIVATION_SCOPE_ARGS[@]}" \
-  "${FINAL_HEAD_ARGS[@]}"
+  "${FINAL_HEAD_ARGS[@]}" \
+  "${RHS_CURRENT_ARGS[@]}"

@@ -76,6 +76,8 @@ def bool_arg(value):
 def parse_args():
     from final_linear import add_final_head_args
     parser = argparse.ArgumentParser()
+    from rhs_current_clamp import add_rhs_current_args
+    add_rhs_current_args(parser)
     parser.add_argument("--n_trials", type=int, default=5)
     parser.add_argument(
         "--fixed_relu_mc_index", type=int, default=None,
@@ -404,6 +406,11 @@ def build_command(args, case_name):
             "--center_student_input",
             str(args.center_student_input).lower(),
         ])
+    if args.rhs_current_summary:
+        command.extend(['--rhs_current_summary', args.rhs_current_summary,
+                        '--rhs_current_bound_percentile', str(args.rhs_current_bound_percentile)])
+        if args.rhs_current_audit_path:
+            command.extend(['--rhs_current_audit_path', args.rhs_current_audit_path])
     return command
 
 
