@@ -60,6 +60,36 @@ def index_list(value):
     return [int(item) for item in str(value).split(",")]
 
 
+def classify_checkpoint_state_dict(state_dict):
+    """Distinguish unwrapped digital weights from the two physical formats."""
+    keys = tuple(state_dict)
+    wrapped = any(".ode_block." in key for key in keys)
+    parametrized = any(
+        ".parametrizations.weight.original" in key for key in keys)
+    if parametrized and not wrapped:
+        raise ValueError(
+            "Unsupported checkpoint: parametrized weights are not inside "
+            "feedforward physical wrappers.")
+    if wrapped:
+        return "physical_full_param" if parametrized else "physical_flat"
+    return "digital"
+
+
+@torch.no_grad()
+def prepare_flattened_checkpoint_for_evaluation(
+        model, *, physical_level, tc_feedforward):
+    """Restore runtime-only weight state for a flattened QAT checkpoint."""
+    if not tc_feedforward and int(physical_level) == 3:
+        prepare_flattened_qat_for_pulse_inference(model)
+        return
+    for wrapper in iter_physical_wrappers(model):
+        wrapper.block._uses_quantized_weight_scale = True
+        for name, module in (("conv1", wrapper.block.conv1),
+                             ("conv2", wrapper.block.conv2)):
+            if module is not None:
+                wrapper.block.clean_params[name].copy_(module.weight.detach())
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     from final_linear import add_final_head_args
@@ -193,19 +223,22 @@ def evaluate_once(args):
     checkpoint = torch.load(
         args.checkpoint, map_location="cpu", weights_only=False)
     state_dict = checkpoint.get("net", checkpoint)
+    checkpoint_format = classify_checkpoint_state_dict(state_dict)
     from final_linear import select_model_head, config_from_args
     inherited_head = checkpoint.get('final_head', {})
+    if checkpoint_format == "digital":
+        model.load_state_dict(state_dict, strict=True)
     select_model_head(model, args.final_head_type or inherited_head.get('type'),
                       config_from_args(args, inherited_head.get('config')))
     args.measured_activation_scope = args.measured_activation_scope or checkpoint.get('measured_activation_scope', 'pc_only')
-    checkpoint_is_full_param = any(
-        ".parametrizations.weight.original" in key for key in state_dict)
+    checkpoint_is_full_param = checkpoint_format == "physical_full_param"
     from tc_feedforward_cli import conversion_options
     model = convert_wide_resnet_to_physical(
         model, activation_factory=None,
         **conversion_options(args),
         physical_level=args.physical_level, physical=True,
         qat=checkpoint_is_full_param,
+        quantize_weights=checkpoint_format == "digital",
         R=args.R, C=args.C, v_dd=args.v_dd,
         one_over_q=args.one_over_q, w_bits=args.w_bits,
         weight_quant_factor_bits=args.weight_quant_factor_bits,
@@ -238,15 +271,12 @@ def evaluate_once(args):
         dtc_leading_edge_jitter_std=args.dtc_leading_edge_jitter_std,
         dtc_falling_edge_jitter_std=args.dtc_falling_edge_jitter_std,
         dtc_timing_seed=args.dtc_timing_seed)
-    model.load_state_dict(state_dict, strict=True)
-    if not checkpoint_is_full_param and not args.tc_feedforward:
-        prepare_flattened_qat_for_pulse_inference(model)
-    elif not checkpoint_is_full_param and args.tc_feedforward:
-        for wrapper in iter_physical_wrappers(model):
-            wrapper.block._uses_quantized_weight_scale = True
-            for name, module in (("conv1", wrapper.block.conv1), ("conv2", wrapper.block.conv2)):
-                if module is not None:
-                    wrapper.block.clean_params[name].copy_(module.weight.detach())
+    if checkpoint_format != "digital":
+        model.load_state_dict(state_dict, strict=True)
+    if checkpoint_format == "physical_flat":
+        prepare_flattened_checkpoint_for_evaluation(
+            model, physical_level=args.physical_level,
+            tc_feedforward=args.tc_feedforward)
     model.to(device).eval()
     if args.enable_measured_activation:
         activation_factory = feedforward_measured_activation_factory(

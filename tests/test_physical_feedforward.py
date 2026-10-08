@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from baseline.cifar_resnet import (
     AvgPoolChannelPad,
+    CIFARResNet,
     ChannelZeroPad,
     WideBasicBlock,
     WideResNetCIFAR,
@@ -17,6 +18,10 @@ from baseline.cifar_resnet import (
     wrn_28_2_cifar_nobn_avgpool_shortcut,
     wrn_28_2_cifar_nobn_no_bias_avgpool,
     wrn_28_2_cifar_nobn_no_bias_avgpool_shortcut,
+)
+from baseline.evaluate_physical_feedforward_cifar import (
+    classify_checkpoint_state_dict,
+    prepare_flattened_checkpoint_for_evaluation,
 )
 from feedforward_validation import FeedForwardCNNValidator
 from measured_activation import (
@@ -32,15 +37,160 @@ from measured_pooling import (
 )
 from physical_feedforward import (
     AveragedPhysicalBasicBlock,
+    AveragedPhysicalCIFARBasicBlock,
     AveragedFeedForwardPhysicalWrapper,
     PulseFeedForwardPhysicalWrapper,
     PulsePhysicalBasicBlock,
+    PulsePhysicalCIFARBasicBlock,
     convert_wide_resnet_to_physical,
+    iter_physical_wrappers,
     scale_batchnorm_to_physical_domain,
 )
 from trainer_timm import TrainerCiFarTimmStyle
 from trainer import TrainerCiFar
 from ode_pc import QuantizationImpl
+
+
+def test_feedforward_checkpoint_format_detection_keeps_physical_paths_distinct():
+    assert classify_checkpoint_state_dict(
+        {"conv1.weight": torch.empty(1)}) == "digital"
+    assert classify_checkpoint_state_dict(
+        {"conv1.ode_block.conv1.weight": torch.empty(1)}) == "physical_flat"
+    assert classify_checkpoint_state_dict({
+        "conv1.ode_block.conv1.parametrizations.weight.original":
+            torch.empty(1),
+    }) == "physical_full_param"
+
+
+def test_post_activation_digital_checkpoint_loads_before_physical_conversion():
+    torch.manual_seed(101)
+    source = CIFARResNet(
+        depth=8, base_width=2, num_classes=3, in_chans=4).eval()
+    checkpoint = copy.deepcopy(source.state_dict())
+
+    restored = CIFARResNet(
+        depth=8, base_width=2, num_classes=3, in_chans=4).eval()
+    restored.load_state_dict(checkpoint, strict=True)
+    converted = convert_wide_resnet_to_physical(
+        restored, physical=True, physical_level=2, quantize_weights=True,
+        R=50e3, C=500e-15, v_dd=10.0, one_over_q=10.0,
+        w_bits=8, weight_quant_factor_bits=None,
+        enable_spin_variation=False,
+        enable_summing_current_noise=False,
+        enable_coupler_noise=False,
+        enable_dtc_nonideality=False, enob=None).eval()
+
+    assert isinstance(
+        converted.layer1[0].block, AveragedPhysicalCIFARBasicBlock)
+    assert not any(key == "conv1.weight" for key in converted.state_dict())
+
+
+def test_post_activation_level2_level3_high_precision_sanity():
+    """An 8-bit ideal physical conversion retains the digital prediction."""
+    torch.manual_seed(103)
+    digital = CIFARResNet(
+        depth=8, base_width=2, num_classes=3, in_chans=4).eval()
+    x = torch.randn(2, 4, 8, 8) * 0.02
+    expected = digital(x)
+    expected_class = expected.argmax(1)
+    outputs = {}
+
+    for level, block_cls in (
+            (2, AveragedPhysicalCIFARBasicBlock),
+            (3, PulsePhysicalCIFARBasicBlock)):
+        physical = convert_wide_resnet_to_physical(
+            copy.deepcopy(digital), physical=True, physical_level=level,
+            quantize_weights=True,
+            R=50e3, C=500e-15, v_dd=10.0, one_over_q=10.0,
+            w_bits=8, weight_quant_factor_bits=None,
+            enable_spin_variation=False,
+            enable_summing_current_noise=False,
+            enable_coupler_noise=False,
+            enable_dtc_nonideality=False, enob=None).eval()
+        assert isinstance(physical.layer1[0].block, block_cls)
+        outputs[level] = physical(x)
+        torch.testing.assert_close(
+            outputs[level], expected, atol=2e-3, rtol=2e-2)
+        assert torch.equal(outputs[level].argmax(1), expected_class)
+
+    torch.testing.assert_close(outputs[2], outputs[3], atol=2e-6, rtol=2e-5)
+
+
+def test_existing_physical_checkpoint_formats_still_load_strictly():
+    def model():
+        return WideResNetCIFAR(
+            depth=10, widen_factor=1, base_width=2,
+            num_classes=3, in_chans=4)
+
+    options = dict(
+        physical=True, physical_level=2, R=50e3, C=500e-15,
+        v_dd=0.5, one_over_q=5.0, w_bits=5,
+        weight_quant_factor_bits=1, enob=None)
+    for qat, quantize_weights, expected_format in (
+            (False, True, "physical_flat"),
+            (True, False, "physical_full_param")):
+        source = convert_wide_resnet_to_physical(
+            model(), qat=qat, quantize_weights=quantize_weights,
+            **options)
+        state = copy.deepcopy(source.state_dict())
+        assert classify_checkpoint_state_dict(state) == expected_format
+
+        restored = convert_wide_resnet_to_physical(
+            model(), qat=qat, quantize_weights=False, **options)
+        restored.load_state_dict(state, strict=True)
+
+
+def test_flattened_level2_checkpoint_keeps_normalized_weights_and_outputs():
+    def model():
+        torch.manual_seed(107)
+        return WideResNetCIFAR(
+            depth=10, widen_factor=1, base_width=2,
+            num_classes=3, in_chans=4).eval()
+
+    options = dict(
+        physical=True, physical_level=2, R=50e3, C=500e-15,
+        v_dd=0.5, one_over_q=5.0, w_bits=5,
+        weight_quant_factor_bits=None, enob=None,
+        enable_spin_variation=False,
+        enable_summing_current_noise=False,
+        enable_coupler_noise=False,
+        enable_dtc_nonideality=False)
+    source = convert_wide_resnet_to_physical(
+        model(), qat=False, quantize_weights=True, **options).eval()
+    restored = convert_wide_resnet_to_physical(
+        model(), qat=False, quantize_weights=False, **options).eval()
+    restored.load_state_dict(copy.deepcopy(source.state_dict()), strict=True)
+
+    prepare_flattened_checkpoint_for_evaluation(
+        restored, physical_level=2, tc_feedforward=False)
+
+    for source_wrapper, restored_wrapper in zip(
+            iter_physical_wrappers(source),
+            iter_physical_wrappers(restored)):
+        assert restored_wrapper.block._uses_quantized_weight_scale
+        for name in ("conv1", "conv2"):
+            source_module = getattr(source_wrapper.block, name)
+            restored_module = getattr(restored_wrapper.block, name)
+            if source_module is None:
+                continue
+            assert torch.equal(restored_module.weight, source_module.weight)
+            assert restored_module.weight.abs().max() <= 1
+            assert torch.equal(
+                restored_wrapper.block.clean_params[name],
+                restored_module.weight)
+
+    x = torch.randn(2, 4, 8, 8) * 0.02
+    with torch.no_grad():
+        assert torch.equal(restored(x), source(x))
+
+
+def test_level3_clean_pulse_weights_follow_model_dtype_and_device():
+    block = PulsePhysicalBasicBlock(
+        torch.nn.Conv2d(2, 3, 1, bias=False),
+        R=50e3, C=500e-15, v_dd=10.0, w_bits=8)
+    block.to(dtype=torch.float64)
+    assert block.clean_params["conv1"].dtype == block.conv1.weight.dtype
+    assert block.clean_params["conv1"].device == block.conv1.weight.device
 
 
 def test_derived_stage_matches_quantized_convolution():

@@ -247,6 +247,15 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
             self.clean_params["conv2"] = nn.Parameter(
                 self.conv2.weight.detach().clone(), requires_grad=False)
 
+    def _apply(self, fn, recurse=True):
+        """Move non-persistent clean pulse weights with the physical block."""
+        result = super()._apply(fn, recurse=recurse)
+        self.clean_params = {
+            name: nn.Parameter(fn(value), requires_grad=False)
+            for name, value in self.clean_params.items()
+        }
+        return result
+
     def active_convolutions(self) -> Iterable[nn.Module]:
         yield self.conv1
         if self.conv2 is not None:
@@ -507,6 +516,44 @@ class PulsePhysicalBasicBlock(AveragedPhysicalBasicBlock, TogglePulseBlk):
         return self._run_pulse_stage(module, source, stage, duration)
 
 
+class AveragedPhysicalCIFARBasicBlock(AveragedPhysicalBasicBlock):
+    """Level-2 physical block with CIFAR ResNet-v1 activation ordering."""
+
+    def forward(self, x, layer_idx=None):
+        x = self._prepare_block_input(x)
+        residual = x
+        out = self._run_stage(self.conv1, x, "z")
+        out = self.act1(self.norm1(out))
+        out = self._run_stage(self.conv2, out, "y")
+        out = self.norm2(out)
+        if self.shortcut is not None:
+            out = out + self.shortcut(residual)
+            if self.physical and not self._capture_dense_modules:
+                out = self.project_state(out)
+        out = self.post_add_pool(out)
+        out = self.act2(out)
+        return self._finalize_block_output(out)
+
+
+class PulsePhysicalCIFARBasicBlock(PulsePhysicalBasicBlock):
+    """Level-3 physical block with CIFAR ResNet-v1 activation ordering."""
+
+    def forward(self, x, layer_idx=None):
+        x = self._prepare_block_input(x)
+        residual = x
+        out = self._run_stage(self.conv1, x, "z")
+        out = self.act1(self.norm1(out))
+        out = self._run_stage(self.conv2, out, "y")
+        out = self.norm2(out)
+        if self.shortcut is not None:
+            out = out + self.shortcut(residual)
+            if self.physical and not self._capture_dense_modules:
+                out = self.project_state(out)
+        out = self.post_add_pool(out)
+        out = self.act2(out)
+        return self._finalize_block_output(out)
+
+
 class FeedForwardPhysicalWrapper(WrapQuantizeW):
     """CNN wrapper reusing PCN table loading and quantization primitives.
 
@@ -598,6 +645,7 @@ class FeedForwardPhysicalWrapper(WrapQuantizeW):
                 continue
             scale = self._quantize_module(module)
             getattr(self.block, "scale1" if name == "conv1" else "scale2").copy_(scale)
+            self.block.clean_params[name].copy_(module.weight.detach())
         self.block._uses_quantized_weight_scale = True
         return self
 
@@ -805,7 +853,7 @@ def _converted_shortcut(block):
 
 def convert_wide_resnet_to_physical(
         model: nn.Module, activation_factory=None, **physical_kwargs):
-    """Convert a registered pre-activation WideResNet in place.
+    """Convert a registered two-convolution CIFAR ResNet/WRN in place.
 
     The floating-point checkpoint must be loaded before this function is
     called.  Learned projection shortcuts are intentionally replaced by the
@@ -817,14 +865,18 @@ def convert_wide_resnet_to_physical(
     tc_options = physical_kwargs.pop("tc_options", None)
     if tc_options is not None:
         from physical_feedforward_tc import TCPhysicalBasicBlock, TCFeedForwardPhysicalWrapper
+        from physical_feedforward_tc import TCPhysicalCIFARBasicBlock
         block_cls = TCPhysicalBasicBlock
+        post_activation_block_cls = TCPhysicalCIFARBasicBlock
         wrapper_cls = TCFeedForwardPhysicalWrapper
         physical_kwargs.update(tc_options)
     elif physical_level == 2:
         block_cls = AveragedPhysicalBasicBlock
+        post_activation_block_cls = AveragedPhysicalCIFARBasicBlock
         wrapper_cls = AveragedFeedForwardPhysicalWrapper
     elif physical_level == 3:
         block_cls = PulsePhysicalBasicBlock
+        post_activation_block_cls = PulsePhysicalCIFARBasicBlock
         wrapper_cls = PulseFeedForwardPhysicalWrapper
     else:
         raise ValueError("physical_level must be 2 or 3.")
@@ -854,19 +906,14 @@ def convert_wide_resnet_to_physical(
                         ("conv1", "conv2", "bn1", "bn2", "relu1", "relu2"))
             if not all(hasattr(block, name) for name in required):
                 raise TypeError(
-                    "Only pre-activation two-convolution basic blocks are "
-                    "currently supported; failed at {}[{}].".format(
+                    "Only recognized two-convolution basic blocks are "
+                    "supported; failed at {}[{}].".format(
                         group_name, block_idx))
             dropout_rate = float(getattr(block, "dropout_rate", 0.0))
             between = (
                 nn.Dropout(p=dropout_rate) if dropout_rate > 0 else nn.Identity())
             if post_activation:
-                if tc_options is None:
-                    raise TypeError(
-                        "Post-activation CIFAR ResNet blocks are supported only "
-                        "by the TC feedforward implementation.")
-                from physical_feedforward_tc import TCPhysicalCIFARBasicBlock
-                selected_block_cls = TCPhysicalCIFARBasicBlock
+                selected_block_cls = post_activation_block_cls
                 act1 = block.relu
                 act2 = block.relu
             else:

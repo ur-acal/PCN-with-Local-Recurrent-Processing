@@ -139,9 +139,10 @@ retains the same RGB teacher and pretraining recipe.
 | Stage | Status | Slurm job | Configuration |
 |---|---|---:|---|
 | Pretraining | Submitted | `2051275` | `N16_C24_n04_n15_n24` (16Layers4l5l4, 24/48/96 channels) |
-| Mapping-only TIMM-augmentation FT | Waiting for pretraining | — | State 1; mapping/QAT and physical clamps retained; additional TC nonidealities disabled |
+| All-on `rgb_mid` FT | Waiting for pretraining | — | State 1; **normalized student and teacher inputs**; all TC nonidealities; random-per-forward/per-spin measured ReLU |
 
-After job `2051275` completes successfully, launch the mapping-only FT with:
+After job `2051275` completes successfully, launch the normal all-on TC FT with
+`rgb_mid` augmentation and random-per-forward/per-spin measured ReLU:
 
 ```bash
 module swap slurm slurm/24.05.0.b1
@@ -149,7 +150,7 @@ module swap slurm slurm/24.05.0.b1
 cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
 mkdir -p ./logs/scheduler_slurm ./logs/slurm_jobs
 
-run_name="tc_rgb_cifar100_state1_pcn_16L4l5l4_ft_mapping_only_timm_aug"
+run_name="tc_rgb_cifar100_state1_pcn_16L4l5l4_ft_all_on_rgb_mid_random_relu_per_spin"
 pretrain_root="./saved_ckpt_runs/tc_rgb_cifar100_state1_pcn_16L4l5l4_pretrain"
 ft_root="./saved_ckpt_runs/${run_name}"
 
@@ -159,19 +160,18 @@ ft_root="./saved_ckpt_runs/${run_name}"
          TC_STATE=1 \
          TASK=cifar100 \
          IMG_TYPE=rgb \
+         NORMALIZE_STUDENT_INPUT=true \
          EXP_PREFIX="${run_name}" \
          PRETRAIN_SAVE_PATH="${pretrain_root}" \
          FT_OUTPUT_SAVE_PATH="${ft_root}" \
-         FT_TIMM_AUG_LEVEL=none \
+         TEACHER_CKPT=./checkpoint/efficientnet_v2_l_cifar100_rgb_OldNoTimm_MatchDistill.pth \
+         FT_TIMM_AUG_LEVEL=rgb_mid \
+         MC_RELU_MONTE_CARLO_SOURCE=0906_RELU_Voltage \
+         ACTIVATION_CORNER_MODE=random_per_forward \
+         ACTIVATION_RANDOM_CURVE_SHARING=per_spin \
          PCN_CHAN_0_LIST=24 \
          PCN_NUM_LAYERS_LIST=16 \
          COMB_SEL_SET=2 \
-         ENABLE_NONLINEAR_R=false \
-         ENABLE_MEASURED_ACTIVATION=false \
-         ENABLE_MEASURED_POOLING=false \
-         ENABLE_SPIN_VARIATION=false \
-         ENABLE_SUMMING_CURRENT_NOISE=false \
-         ENABLE_COUPLER_NOISE=false \
          REUSE_ACCEPTED_STEP_TRAINING=true \
          CHECKPOINT_ODE_RHS_TRAINING=true \
          CHECKPOINT_ODE_RHS_PORTION=auto
@@ -182,10 +182,12 @@ ft_root="./saved_ckpt_runs/${run_name}"
 echo "${run_name}: scheduler PID $!"
 ```
 
-`FT_TIMM_AUG_LEVEL=none` selects the default TIMM augmentation recipe. Random
-erasing remains disabled by the pipeline default, and TC weight mismatch is
-zero. The resolved teacher is
-`./checkpoint/efficientnet_v2_l_cifar100_rgb_OldNoTimm_MatchDistill.pth`.
+This is not a mapping-only ablation. It uses the pipeline's normal all-on TC
+fine-tuning configuration. `FT_TIMM_AUG_LEVEL=rgb_mid` selects the RGB-specific
+intermediate augmentation recipe; random erasing remains disabled. The student
+uses CIFAR mean/std normalization, and the normalized teacher checkpoint's
+metadata selects normalized teacher input. The measured ReLU is sampled from
+the full 0906 bank once per forward with independent per-spin assignments.
 
 ### Priority 6: five-step Euler, state 1 — completed
 

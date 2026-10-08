@@ -142,6 +142,11 @@ def configure_unitless_measured_activation(model, curve_path, corner,
             model.set_non_pc_activation(name, activation.to(device=device))
 
 
+def _measured_activation_resampling_enabled(args):
+    return (args.enable_measured_activation or
+            args.unitless_measured_pullback_mode != "none")
+
+
 def get_args():
     p = argparse.ArgumentParser(description="Train PCNet on CIFAR with neural ode")
     model_save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_ckpt")
@@ -315,8 +320,8 @@ def get_args():
                    help="Use legacy k-based or direct RC ODEXInit toggle timing.")
     p.add_argument("--unitless_measured_pullback_mode",
                    choices=("approx", "direct", "none"), default="none",
-                   help="Measured-activation pullback used in unitless "
-                        "ToggleODEXInitFFFB pretraining.")
+                   help="Measured-activation pullback used in supported "
+                        "unitless ODE pretraining blocks.")
     p.add_argument("--unitless_pullback_q",
                    type=lambda s: None if s.lower() in {"none", ""} else float(s), default=None,
                    help="Prospective QAT state scale q; defaults to v_dd / one_over_q.")
@@ -1140,10 +1145,20 @@ def main():
                 "Loaded checkpoint is assumed to already use the scaled "
                 "fixed-timing initialization; weights were not rescaled again.")
     if args.unitless_measured_pullback_mode != "none":
-        if ode_block is not ODEBLOCK_CLASSES["ToggleODEXInitFFFB"]:
+        supported_pullback_modes = {
+            ODEBLOCK_CLASSES["ToggleODEXInitFFFB"]: {"approx", "direct"},
+            ODEBLOCK_CLASSES["ODEXInitFFFB"]: {"approx"},
+            ODEBLOCK_CLASSES["S2NoisyIYAsXZAs0"]: {"direct"},
+        }
+        supported_modes = supported_pullback_modes.get(ode_block)
+        if supported_modes is None:
             raise ValueError(
-                "--unitless_measured_pullback_mode requires "
-                "--ode_block ToggleODEXInitFFFB.")
+                "--unitless_measured_pullback_mode does not support "
+                "--ode_block {}.".format(ode_block.__name__))
+        if args.unitless_measured_pullback_mode not in supported_modes:
+            raise ValueError(
+                "--ode_block {} requires unitless measured pullback mode {}."
+                .format(ode_block.__name__, " or ".join(sorted(supported_modes))))
         if args.unitless_pullback_q is None:
             if args.one_over_q <= 0:
                 raise ValueError("one_over_q must be positive when deriving unitless pullback q.")
@@ -1270,7 +1285,7 @@ def main():
             pooling_source, args.nonlinear_R_mc_quantity, pooling_R)
 
     if (args.activation_corner_mode == "random_per_forward" and
-            args.enable_measured_activation):
+            _measured_activation_resampling_enabled(args)):
         activation_count = configure_measured_activation_corner_mode(
             model, mode=args.activation_corner_mode,
             sharing=args.activation_random_curve_sharing)

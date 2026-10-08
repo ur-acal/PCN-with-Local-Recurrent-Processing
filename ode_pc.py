@@ -51,6 +51,91 @@ def _symmetric_qat_weight_scale(layer_weight, weight_quant_factor_bits=None):
         return 1 / quantized_abs_max
 
 
+class _UnitlessMeasuredPullback:
+    """Apply a physical measured curve in a unitless ODE coordinate system.
+
+    The scale is resolved once while the ODE RHS closure is built, then captured
+    by that closure. This keeps adaptive retries and checkpoint replay on the
+    same coordinate map.
+    """
+
+    def __init__(self, mode="none", q=None, k=1e3, R=10e3,
+                 required_mode=None):
+        self.mode = str(mode).lower()
+        if self.mode not in {"approx", "direct", "none"}:
+            raise ValueError(
+                "unitless_measured_pullback_mode must be "
+                "'approx', 'direct', or 'none'.")
+        if (self.mode != "none" and required_mode is not None and
+                self.mode != required_mode):
+            raise ValueError(
+                "unitless_measured_pullback_mode={!r} is required, got {!r}."
+                .format(required_mode, self.mode))
+        self.q = None if q is None else float(q)
+        self.k = float(k)
+        self.R = float(R)
+        if self.mode != "none" and (self.q is None or self.q <= 0):
+            raise ValueError(
+                "unitless_pullback_q must be positive when pullback is enabled.")
+        if self.mode == "approx" and (self.k <= 0 or self.R <= 0):
+            raise ValueError(
+                "unitless pullback k and R must be positive in approx mode.")
+
+    @property
+    def enabled(self):
+        return self.mode != "none"
+
+    def scale_for_solve(self, block):
+        if not self.enabled:
+            return None
+        if not isinstance(block.act_fn, MEASURED_ACTIVATION_TYPES):
+            raise TypeError(
+                "Unitless measured pullback requires a measured activation.")
+        if self.mode == "direct":
+            scale = block.FBconv.weight.new_tensor(self.q)
+        else:
+            s_fb = _symmetric_qat_weight_scale(block.FBconv.weight)
+            scale = s_fb * self.q * self.k / self.R
+        scale = scale.detach()
+        if (scale.numel() != 1 or not torch.isfinite(scale).all() or
+                scale.item() <= 0):
+            raise ValueError(
+                "Unitless measured pullback scale must be one finite "
+                "positive scalar.")
+        return scale
+
+    def apply(self, block, value, scale):
+        previous_scale = block.act_fn._coordinate_pullback_scale
+        previous_active = getattr(
+            block, "_active_unitless_pullback_beta_c", None)
+        block._active_unitless_pullback_beta_c = scale
+        # ``scale_for_solve`` validates once. Assign directly here so every
+        # adaptive RHS call (and checkpoint replay) does not synchronize a
+        # CUDA scalar through the public validation setter.
+        block.act_fn._coordinate_pullback_scale = scale
+        try:
+            return block.act_fn(value)
+        finally:
+            block.act_fn._coordinate_pullback_scale = previous_scale
+            block._active_unitless_pullback_beta_c = previous_active
+
+
+def _configure_unitless_measured_pullback(block, kwargs, required_mode):
+    mode = kwargs.get("unitless_measured_pullback_mode", None)
+    if mode is None:
+        mode = (
+            required_mode
+            if bool(kwargs.get("enable_unitless_measured_pullback", False))
+            else "none")
+    block._unitless_measured_pullback = _UnitlessMeasuredPullback(
+        mode=mode,
+        q=kwargs.get("unitless_pullback_q", None),
+        k=kwargs.get("unitless_pullback_k", 1e3),
+        R=kwargs.get("unitless_pullback_R", 10e3),
+        required_mode=required_mode)
+    block._active_unitless_pullback_beta_c = None
+
+
 def is_adaptive(method):
     adaptive_sols = ['dopri8', 'dopri5', 'bosh3', 'fehlberg2', 'adaptive_heun']
     fixed_grid_sols = ['euler', 'midpoint', 'heun2', 'heun3', 'rk4', 'explicit_adams',
@@ -806,6 +891,9 @@ class ODEFixNoise0Init(ODEFixNoiseOffset):
 class ODEXInitFFFB(ODEBlockXInit):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        if type(self) is ODEXInitFFFB:
+            _configure_unitless_measured_pullback(
+                self, kwargs, required_mode="approx")
 
     def _make_ode_fn(self, x, noisy_cu=None):
         if getattr(self, "_tc_current_mode", False):
@@ -831,6 +919,18 @@ class ODEXInitFFFB(ODEBlockXInit):
             return tc_func
         def ode_func(t, y):
             return self.FFconv(self.act_fn(self.FBconv(y)))
+        physical_coordinates = (
+            getattr(self, "physical", False) or
+            getattr(self, "_physical_coordinate_wrapper", False))
+        pullback = (
+            None if physical_coordinates else
+            getattr(self, "_unitless_measured_pullback", None))
+        pullback_scale = (
+            None if pullback is None else pullback.scale_for_solve(self))
+        if pullback_scale is not None:
+            def ode_func(t, y):
+                z = self.FBconv(y)
+                return self.FFconv(pullback.apply(self, z, pullback_scale))
         return ode_func
 
 
@@ -2875,6 +2975,8 @@ class S2NoisyIYAs0ZAsX(State2NoMinusZ):
 class S2NoisyIYAsXZAs0(State2NoMinusZ):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        _configure_unitless_measured_pullback(
+            self, kwargs, required_mode="direct")
         self.y_init_with = "x"
         self.z_init_with = "0"
 
@@ -2884,7 +2986,18 @@ class S2NoisyIYAsXZAs0(State2NoMinusZ):
 
     def _make_ode_fn(self, x):
         if not getattr(self, "_tc_current_mode", False):
-            return super()._make_ode_fn(x)
+            if (getattr(self, "physical", False) or
+                    getattr(self, "_physical_coordinate_wrapper", False)):
+                return super()._make_ode_fn(x)
+            pullback_scale = self._unitless_measured_pullback.scale_for_solve(self)
+            if pullback_scale is None:
+                return super()._make_ode_fn(x)
+            def ode_func(t, y):
+                y_, z_ = y
+                h = self._unitless_measured_pullback.apply(
+                    self, z_, pullback_scale)
+                return self.FFconv(h), self.FBconv(y_)
+            return _FuncWrapper(ode_func)
         curves = self._tc_curves_for_solve()
         context, sy, sz = self._tc_prepare_noise(x, two=True)
         def tc_func(t, yz):
@@ -3314,6 +3427,7 @@ class ODEWrapperRC(nn.Module):
     def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, patch=True, **kwargs):
         super().__init__()
         self.ode_block = ode_block
+        self.ode_block._physical_coordinate_wrapper = True
 
         self.R = R
         self.C = C
