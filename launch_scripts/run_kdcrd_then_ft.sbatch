@@ -122,6 +122,7 @@ SCALE_MEASURED_ACTIVATION="${SCALE_MEASURED_ACTIVATION:-false}"
 ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
 PRETRAIN_ACTIVATION_CORNER_MODE="${PRETRAIN_ACTIVATION_CORNER_MODE:-${ACTIVATION_CORNER_MODE}}"
 ACTIVATION_RANDOM_CURVE_SHARING="${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}"
+FT_CORNER_COUPLED_SAMPLING="${FT_CORNER_COUPLED_SAMPLING:-false}"
 MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
 if [[ "${MC_RELU_MONTE_CARLO_SOURCE%/}" == "0906_RELU_Voltage" ]]; then
   if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
@@ -194,7 +195,11 @@ ENABLE_MEASURED_POOLING="${ENABLE_MEASURED_POOLING:-false}"
 FT_MEASURED_POOLING_ARGS=(
   --enable_measured_pooling "${ENABLE_MEASURED_POOLING}"
 )
+FT_CORNER_COUPLED_SAMPLING_ARGS=(
+  --ft_corner_coupled_sampling "${FT_CORNER_COUPLED_SAMPLING}"
+)
 echo "Measured pooling: ft/inference=${ENABLE_MEASURED_POOLING}"
+echo "FT corner-coupled empirical sampling: ${FT_CORNER_COUPLED_SAMPLING}"
 
 ##########################################################################
 # Spin variation and current noise used during fine-tuning
@@ -602,7 +607,7 @@ eval_one_combo_model() {
   local test_bs=128
 
   if [[ "${TOGGLE_MODE}" != "none" ]]; then
-    echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V2_T1 all-on, 10 trials, per-spin ReLU, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
+    echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V0_T0 adverse + FS_V2_T1 average, 5 trials each, per-spin ReLU, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
     source ./launch_scripts/rhs_current_args.sh
     OMP_NUM_THREADS=${THREADS_PER_PROC} \
     python -u scripts/run_toggle_nonideality_ablation.py \
@@ -628,8 +633,8 @@ eval_one_combo_model() {
       --full_45_corner_enable_slow_coupler_noise "${ENABLE_SLOW_COUPLER_NOISE}" \
       --full_45_corner_slow_coupler_noise "${SLOW_COUPLER_NOISE}" \
       --full_45_corner_enable_dtc_nonideality true \
-      --corner_ids FS_V2_T1 \
-      --n_trials 10 \
+      --corner_ids FS_V0_T0 FS_V2_T1 \
+      --n_trials 5 \
       --base_seed 20260723 \
       --model_name "${name}" \
       --model_dir "${MODEL_DIR}" \
@@ -846,6 +851,7 @@ finetune_one_combo_model() {
     "${TOGGLE_ARGS[@]}" \
     "${MEASURED_ACTIVATION_ARGS[@]}" \
     "${FT_MEASURED_POOLING_ARGS[@]}" \
+    "${FT_CORNER_COUPLED_SAMPLING_ARGS[@]}" \
     "${FT_SPIN_VARIATION_ARGS[@]}" \
     "${FT_SUMMING_CURRENT_NOISE_ARGS[@]}" \
     "${FT_COUPLER_NOISE_ARGS[@]}" \

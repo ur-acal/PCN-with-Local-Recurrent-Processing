@@ -326,16 +326,28 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
             keys = ["conv1"]
             if self.conv2 is not None:
                 keys.append("conv2")
-            n_curves = int(package["v_grid"].shape[0])
+            allowed = None
+            sampler = package.get("ft_corner_coupled_sampler")
+            if sampler is not None:
+                allowed = sampler.allowed_indices(
+                    package["ft_corner_curve_indices"])
+            n_curves = (
+                int(package["v_grid"].shape[0])
+                if allowed is None else len(allowed))
             generator = self._nonlinear_R_training_generator(ref)
             if n_curves >= len(keys):
                 sampled = torch.randperm(
                     n_curves, device=ref.device,
-                    generator=generator)[:len(keys)].tolist()
+                    generator=generator)[:len(keys)]
             else:
                 sampled = torch.randint(
                     n_curves, (len(keys),), device=ref.device,
-                    generator=generator).tolist()
+                    generator=generator)
+            if allowed is not None:
+                allowed = torch.as_tensor(
+                    allowed, dtype=torch.long, device=ref.device)
+                sampled = allowed.index_select(0, sampled)
+            sampled = sampled.tolist()
             self._nonlinear_R_training_curve_indices.update(
                 zip(keys, map(int, sampled)))
         return self._nonlinear_R_training_curve_indices[module_key]

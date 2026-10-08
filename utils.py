@@ -3,6 +3,7 @@
     - msr_init: net parameter initialization.
     - progress_bar: progress bar mimic xlua.progress.
 '''
+import csv
 import glob
 import os
 import re
@@ -153,13 +154,22 @@ def _mc_corner_ids(corner_range):
     return tuple(tokens)
 
 
-def _mc_coupler_paths(source, corner_ids):
+def mc45_corner_ids():
+    """Return the canonical order shared by the characterized MC45 banks."""
+    return tuple(
+        "{}_V{}_T{}".format(process.upper(), voltage, temperature)
+        for process in _MC_PROCESS_ORDER
+        for voltage in range(3)
+        for temperature in range(3))
+
+
+def _mc_coupler_corner_paths(source, corner_ids):
     source = os.path.abspath(os.fspath(source))
     if os.path.isfile(source):
         if corner_ids is not None:
             raise ValueError(
                 "Corner filtering requires a coupler_monte directory.")
-        return (source,)
+        return ((None, source),)
     if not os.path.isdir(source):
         raise FileNotFoundError(
             "Nonlinear-R Monte Carlo source not found: {}".format(source))
@@ -198,13 +208,46 @@ def _mc_coupler_paths(source, corner_ids):
     if unknown:
         raise ValueError(
             "Unknown nonlinear-R training corners: {}.".format(unknown))
-    ordered = [
-        "{}_V{}_T{}".format(process.upper(), voltage, temperature)
-        for process in _MC_PROCESS_ORDER
-        for voltage in range(3)
-        for temperature in range(3)
-    ]
-    return tuple(by_corner[corner] for corner in ordered if corner in requested)
+    return tuple(
+        (corner, by_corner[corner])
+        for corner in mc45_corner_ids() if corner in requested)
+
+
+def _mc_coupler_paths(source, corner_ids):
+    return tuple(
+        path for _, path in _mc_coupler_corner_paths(source, corner_ids))
+
+
+@lru_cache(maxsize=32)
+def mc_training_curve_corner_indices(source, mode, corner_range="all"):
+    """Map each characterized corner to its rows in a concatenated curve bank.
+
+    Only CSV headers are inspected; curve tensors remain loaded by the existing
+    cached bank loader.  The returned indices therefore add no per-forward I/O.
+    """
+    mode = str(mode).lower()
+    if mode not in {"exact_curve", "mean"}:
+        raise ValueError(
+            "Corner-coupled sampling requires exact_curve or mean mode.")
+    corner_ids = _mc_corner_ids(corner_range)
+    entries = _mc_coupler_corner_paths(
+        os.path.abspath(os.fspath(source)), corner_ids)
+    mapping = {}
+    offset = 0
+    for corner, path in entries:
+        if corner is None:
+            raise ValueError(
+                "Corner-coupled sampling requires a characterized corner "
+                "directory, not a single CSV file.")
+        with open(path, newline="") as handle:
+            columns = next(csv.reader(handle), ())
+        if not columns or len(columns) % 2:
+            raise ValueError(
+                "MC nonlinear-R data must contain paired X/Y columns.")
+        count = 1 if mode == "mean" else len(columns) // 2
+        mapping[corner] = tuple(range(offset, offset + count))
+        offset += count
+    return mapping
 
 
 @lru_cache(maxsize=16)
@@ -622,4 +665,3 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
-

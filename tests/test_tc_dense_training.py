@@ -17,7 +17,13 @@ from ode_pc import (ODEXInitFFFB, S2NoisyIYAsXZAs0, QATWrapper1State,
 from pc_conv import PCConvReLU6
 from tc_nonidealities import TCResistanceCurves
 from measured_activation import PiecewiseLinearActivation
+from measured_activation import (_CurveSharingMixin,
+                                 configure_measured_activation_corner_mode)
 from measured_pooling import configure_measured_pooling, MeasuredAvgPool2d
+from ft_corner_sampling import configure_ft_corner_coupled_sampling
+from physical_feedforward import AveragedPhysicalBasicBlock
+from trainer import TrainerCiFar
+from utils import mc45_corner_ids, mc_training_curve_corner_indices
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,6 +57,204 @@ def synthetic_package(block):
 
 
 class TCDenseTests(unittest.TestCase):
+    def test_mc45_curve_index_metadata_matches_empirical_banks(self):
+        for source in ("coupler_full_range", "0906_RELU_Voltage"):
+            mapping = mc_training_curve_corner_indices(
+                ROOT / "hardware_data/mc_45_corners" / source,
+                "exact_curve")
+            self.assertEqual(tuple(mapping), mc45_corner_ids())
+            self.assertEqual({len(indices) for indices in mapping.values()},
+                             {100})
+            self.assertEqual(sum(map(len, mapping.values())), 4500)
+
+    def test_ft_corner_couples_nonlinear_R_pooling_and_clears_for_eval(self):
+        mapping = {
+            corner: tuple(range(100 * index, 100 * (index + 1)))
+            for index, corner in enumerate(mc45_corner_ids())}
+        block = ToggleODEXInitFFFB(
+            pc_conv=PCConvReLU6(
+                inp_chan=2, out_chan=2, kernel_size=1, padding=0,
+                cls=2, bypass=False, tie_weights=False, tie_bp=False,
+                layer_idx=0),
+            noise_level=0., method="euler", t_end=.3, tol=1e-4)
+        block._nonlinear_R_training_pkg = {
+            "v_grid": torch.zeros(4500, 2),
+            "nonlinear_R_table": "unused",
+            "nonlinear_R_train_mode": "exact_curve",
+            "nonlinear_R_corner_range": "all",
+            "nonlinear_R_curve_seed": 7,
+        }
+        pool = MeasuredAvgPool2d(kernel_size=2)
+        pool.enable_nonideality = True
+        pool.curve_gaussian = False
+        pool.training_curve_source = "unused"
+        pool.training_curve_mode = "exact_curve"
+        pool.training_corner_range = "all"
+        pool.v_grid = torch.zeros(4500, 2)
+
+        class Toy(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.block = block
+                self.pool = pool
+
+            def forward(self, x):
+                return x
+
+        model = Toy().train()
+        with patch("ft_corner_sampling.mc_training_curve_corner_indices",
+                   return_value=mapping):
+            participants = configure_ft_corner_coupled_sampling(model)
+        self.assertEqual(participants, ("nonlinear-R", "measured-pooling"))
+
+        with patch("ft_corner_sampling.torch.randint",
+                   return_value=torch.tensor([0])):
+            model(torch.zeros(1))
+        corner = model._last_ft_corner_coupled_corner
+        allowed = set(mapping[corner])
+        first = block._sample_nonlinear_R_training_curve(
+            torch.zeros(1), "FFconv")
+        second = block._sample_nonlinear_R_training_curve(
+            torch.zeros(1), "FBconv")
+        self.assertNotEqual(first, second)
+        self.assertIn(first, allowed)
+        self.assertIn(second, allowed)
+        # AnalogLinear builds this same one-convolution physical block and
+        # shallow-copies the backbone package into it.
+        analog_circuit = AveragedPhysicalBasicBlock(
+            nn.Conv2d(2, 2, 1, bias=False))
+        analog_circuit._nonlinear_R_training_pkg = dict(
+            block._nonlinear_R_training_pkg)
+        analog_index = analog_circuit._sample_nonlinear_R_training_curve(
+            torch.zeros(1), "conv1")
+        self.assertIn(analog_index, allowed)
+        assignment = pool._curve_assignment(
+            torch.zeros(1, 2, 4, 4), 0, (2, 2), 2, 2)
+        self.assertTrue(set(assignment.reshape(-1).tolist()).issubset(allowed))
+
+        trainer = TrainerCiFar.__new__(TrainerCiFar)
+        trainer.model = model.eval()
+        trainer.reset_spin_variation_for_inference()
+        self.assertIsNone(model._ft_corner_coupled_sampler.active_corner)
+        self.assertIsNone(model._last_ft_corner_coupled_corner)
+        self.assertIsNone(
+            model._ft_corner_coupled_sampler.allowed_indices(mapping))
+        self.assertFalse(pool._curve_assignments)
+        model.train()
+        with patch("ft_corner_sampling.torch.randint",
+                   return_value=torch.tensor([1])):
+            model(torch.zeros(1))
+        self.assertNotEqual(
+            corner, model._last_ft_corner_coupled_corner)
+
+    def test_ft_corner_constrains_random_activation_sharing_only(self):
+        names = []
+        for corner in mc45_corner_ids():
+            process, voltage, temperature = corner.split("_")
+            voltage = voltage[1:]
+            temperature = (-20, 25, 85)[int(temperature[1:])]
+            names.extend(
+                "{}_{}_{}_MC{}".format(
+                    process, temperature, voltage, sample)
+                for sample in range(1, 101))
+
+        class FakeActivation(_CurveSharingMixin, nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.corner_names = tuple(names)
+                self.default_corner = self.corner_names[0]
+                self.active_corner = self.default_corner
+                self._configure_curve_sharing("per_model", None)
+
+            def select_corner(self, corner):
+                self.active_corner = corner
+
+            def forward(self, x):
+                self._curve_indices_for(x)
+                return x
+
+        class Toy(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.first = FakeActivation()
+                self.second = FakeActivation()
+
+            def forward(self, x):
+                return self.second(self.first(x))
+
+        import measured_activation
+        for sharing in ("per_model", "per_layer", "per_spin"):
+            with self.subTest(sharing=sharing), patch.object(
+                    measured_activation, "MEASURED_ACTIVATION_TYPES",
+                    (FakeActivation,)):
+                model = Toy().train()
+                participants = configure_ft_corner_coupled_sampling(
+                    model, activation_corner_mode="random_per_forward",
+                    include_measured_activation=True)
+                self.assertEqual(participants, ("measured-activation",))
+                configure_measured_activation_corner_mode(
+                    model, "random_per_forward", sharing=sharing)
+                model(torch.zeros(2, 3, 2, 2))
+                corner = model._last_ft_corner_coupled_corner
+                allowed = set(
+                    model.first._ft_corner_curve_indices[corner])
+                if sharing == "per_spin":
+                    for activation in (model.first, model.second):
+                        self.assertTrue(set(
+                            activation._sampled_curve_indices.reshape(-1)
+                            .tolist()).issubset(allowed))
+                else:
+                    selected = [names.index(model.first.active_corner),
+                                names.index(model.second.active_corner)]
+                    self.assertTrue(set(selected).issubset(allowed))
+                    if sharing == "per_model":
+                        self.assertEqual(selected[0], selected[1])
+
+        with patch.object(measured_activation, "MEASURED_ACTIVATION_TYPES",
+                          (FakeActivation,)):
+            model = Toy().train()
+            mapping = {
+                corner: tuple(range(100 * index, 100 * (index + 1)))
+                for index, corner in enumerate(mc45_corner_ids())}
+            model._nonlinear_R_training_pkg = {
+                "v_grid": torch.zeros(4500, 2),
+                "nonlinear_R_table": "unused",
+                "nonlinear_R_train_mode": "exact_curve",
+                "nonlinear_R_corner_range": "all",
+                "nonlinear_R_curve_seed": None,
+            }
+            # A fixed activation is not registered or changed by coupling,
+            # even while the other empirical FT components are coupled.
+            with patch("ft_corner_sampling.mc_training_curve_corner_indices",
+                       return_value=mapping):
+                configure_ft_corner_coupled_sampling(
+                    model, activation_corner_mode="fixed",
+                    include_measured_activation=False)
+            configure_measured_activation_corner_mode(model, "fixed")
+            before = (model.first.active_corner, model.second.active_corner)
+            model(torch.zeros(2, 3, 2, 2))
+            self.assertEqual(
+                before, (model.first.active_corner, model.second.active_corner))
+            self.assertFalse(hasattr(
+                model.first, "_ft_corner_coupled_sampler"))
+
+    def test_ft_corner_rejects_incomplete_corner_banks(self):
+        model = nn.Module()
+        model._nonlinear_R_training_pkg = {
+            "v_grid": torch.zeros(4400, 2),
+            "nonlinear_R_table": "unused",
+            "nonlinear_R_train_mode": "exact_curve",
+            "nonlinear_R_corner_range": "all",
+            "nonlinear_R_curve_seed": None,
+        }
+        incomplete = {
+            corner: tuple(range(100 * index, 100 * (index + 1)))
+            for index, corner in enumerate(mc45_corner_ids()[:-1])}
+        with patch("ft_corner_sampling.mc_training_curve_corner_indices",
+                   return_value=incomplete):
+            with self.assertRaisesRegex(ValueError, "does not match MC45"):
+                configure_ft_corner_coupled_sampling(model)
+
     def test_recovery_fused_activation_override_precedence(self):
         from scripts.resume_local_ode_training import (
             apply_fused_measured_activation_override)

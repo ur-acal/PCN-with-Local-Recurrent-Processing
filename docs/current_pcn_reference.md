@@ -546,8 +546,43 @@ activation during pretraining; no separate `ENABLE_PRETRAIN_MEASURED_ACTIVATION`
 `0906_RELU_Voltage/tt_25_1.csv`, MC18, and training-time validation uses the
 same fixed curve.
 
-The automatic post-FT evaluation is FS_V2_T1, 10 trials, matching the pinned
-45-corner protocol for that same corner.
+The automatic post-FT evaluation pins two complementary references with 5 trials
+each: FS_V0_T0 as the adverse corner and FS_V2_T1 as the average corner. Reporting
+both avoids using the previously pinned FS_V2_T1 result alone as an overly
+optimistic representation of corner robustness.
+
+### Provisional severe corner-interaction diagnostic (2026-10-07)
+
+The pinned rerun C36→72, 8:10 checkpoint shows a severe interaction between
+the selected corner's measured ReLU and nonlinear-R/pooling curves. These are
+controlled **four-batch (512-image), one-seed diagnostics**, not completed
+10-trial corner accuracies:
+
+| FS_V2_T1 base with the following FS_V0_T0 substitutions | Correct / 512 | Accuracy | Drop from base |
+| --- | ---: | ---: | ---: |
+| None | 307 | 59.96% | — |
+| Nonlinear-R and measured pooling only | 298 | 58.20% | 1.76 points |
+| Measured ReLU only | 268 | 52.34% | 7.62 points |
+| Nonlinear-R, measured pooling, and measured ReLU | 193 | 37.70% | 22.27 points |
+| Complete FS_V0_T0 corner | 174 | 33.98% | 25.98 points |
+
+The two isolated drops would predict 50.59% if they combined additively, but
+the measured result is 37.70%, an additional **12.89-point negative
+interaction**. Therefore the small isolated nonlinear-R drop does not establish
+that nonlinear-R is harmless: its effect becomes large in combination with the
+FS_V0_T0 0906 measured-ReLU curve. The combined substitution explains most,
+but not all, of the observed four-batch FS_V2_T1-to-FS_V0_T0 gap.
+
+The nonlinear-R substitution was verified through the runtime path. All 100
+curves were loaded from `coupler_full_range/fs_-20_0.csv`; empirical curves were
+assigned with replacement to every stored physical edge in all 20 expanded FF
+and 20 expanded FB matrices (97,176,960 assignments, with no dense PC
+convolution remaining). The intermediate pool and GAP used the same FS_V0_T0
+bank, and the analog classifier inherited that nonlinear-R package. The ReLU
+substitution used `0906_RELU_Voltage/fs_-20_0.csv`. Spin variation, DTC, current
+noise, timing, checkpoint, data order, and seed remained at FS_V2_T1 settings in
+the controlled substitutions. A full multi-trial study is still required before
+assigning a population-level effect size.
 
 ## Main-model 45-corner SLURM evaluation
 

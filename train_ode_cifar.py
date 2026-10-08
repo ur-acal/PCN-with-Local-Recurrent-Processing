@@ -373,6 +373,11 @@ def get_args():
         choices=("per_model", "per_layer", "per_spin"), default="per_layer",
         help="Training-only granularity used by random_per_forward.")
     p.add_argument(
+        "--ft_corner_coupled_sampling", type=str2bool, default=False,
+        help="During fine-tuning, sample one MC45 corner per student training "
+             "forward and restrict all participating empirical curve draws "
+             "to that corner. Validation remains uncoupled.")
+    p.add_argument(
         "--activation_interpolation", type=str,
         choices=["cubic_bspline", "piecewise_linear"],
         default="piecewise_linear",
@@ -921,6 +926,8 @@ def main():
         args.fuse_measured_activation = True
     if not hasattr(args, "measured_activation_scope"):
         args.measured_activation_scope = None
+    if not hasattr(args, "ft_corner_coupled_sampling"):
+        args.ft_corner_coupled_sampling = False
     seed_training(args.seed)
     from input_preprocessing import resolve_student_normalization
     normalization_checkpoint = (os.path.join(
@@ -1283,6 +1290,18 @@ def main():
             "Measured average-pooling training enabled: table=%s, "
             "quantity=%s, nominal_R=%s",
             pooling_source, args.nonlinear_R_mc_quantity, pooling_R)
+
+    if args.ft_corner_coupled_sampling:
+        from ft_corner_sampling import configure_ft_corner_coupled_sampling
+        participants = configure_ft_corner_coupled_sampling(
+            model,
+            activation_corner_mode=args.activation_corner_mode,
+            include_measured_activation=(
+                args.activation_corner_mode == "random_per_forward" and
+                _measured_activation_resampling_enabled(args)))
+        logging.warning(
+            "FT corner-coupled sampling enabled across: %s",
+            ", ".join(participants))
 
     if (args.activation_corner_mode == "random_per_forward" and
             _measured_activation_resampling_enabled(args)):

@@ -863,6 +863,12 @@ class TrainerCiFar(object):
 
     def reset_spin_variation_for_inference(self):
         """Clear cached sample-once factors before full-dataset evaluation."""
+        corner_sampler = getattr(
+            self.model, "_ft_corner_coupled_sampler", None)
+        if corner_sampler is not None:
+            # Validation draws retain their original all-corner behavior and
+            # must not inherit the final training forward's selected corner.
+            corner_sampler.clear()
         for module in self.model.modules():
             if getattr(module, "_tc_current_mode", False):
                 # New validation realization; retain RNG progression rather

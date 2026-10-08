@@ -1154,14 +1154,26 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
     def _sample_nonlinear_R_training_curve(self, ref, module_key):
         package = self._nonlinear_R_training_pkg
         if not self._nonlinear_R_training_curve_indices:
-            n_curves = int(package["v_grid"].shape[0])
+            allowed = None
+            sampler = package.get("ft_corner_coupled_sampler")
+            if sampler is not None:
+                allowed = sampler.allowed_indices(
+                    package["ft_corner_curve_indices"])
+            n_curves = (
+                int(package["v_grid"].shape[0])
+                if allowed is None else len(allowed))
             if n_curves < 2:
                 raise ValueError(
                     "At least two nonlinear-R curves are required to sample "
                     "different FF and FB curves without replacement.")
             pair = torch.randperm(
                 n_curves, device=ref.device,
-                generator=self._nonlinear_R_training_generator(ref))[:2].tolist()
+                generator=self._nonlinear_R_training_generator(ref))[:2]
+            if allowed is not None:
+                allowed = torch.as_tensor(
+                    allowed, dtype=torch.long, device=ref.device)
+                pair = allowed.index_select(0, pair)
+            pair = pair.tolist()
             self._nonlinear_R_training_curve_indices.update(
                 FFconv=int(pair[0]), FBconv=int(pair[1]))
         return self._nonlinear_R_training_curve_indices[module_key]
@@ -4050,6 +4062,7 @@ class WrapQuantizeW(ODEWrapperRC):
                 **bank,
                 "R": self.R,
                 "proj_fn": getattr(self, "proj_fn", None),
+                "nonlinear_R_table": self.nonlinear_R_table,
                 "nonlinear_R_train_mode": self.nonlinear_R_train_mode,
                 "nonlinear_R_corner_range": self.nonlinear_R_corner_range,
                 "nonlinear_R_curve_seed": self.nonlinear_R_curve_seed,

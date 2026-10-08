@@ -30,6 +30,10 @@ class MeasuredAvgPool2d(nn.Module):
         self.input_scale = float(input_scale)
         self.nominal_R = float(nominal_R)
         self.curve_sharing = str(curve_sharing).lower()
+        self.training_curve_source = (
+            None if training_curve_mode is None else curve_path)
+        self.training_curve_mode = training_curve_mode
+        self.training_corner_range = corner_range
         if self.curve_sharing not in {"per_window", "per_input"}:
             raise ValueError(
                 "curve_sharing must be per_window or per_input.")
@@ -93,11 +97,21 @@ class MeasuredAvgPool2d(nn.Module):
                output_h, output_w)
         assignment = self._curve_assignments.get(key)
         if assignment is None or self.training:
+            allowed = None
+            sampler = getattr(self, "_ft_corner_coupled_sampler", None)
+            if sampler is not None:
+                allowed = sampler.allowed_indices(
+                    self._ft_corner_curve_indices)
+            upper = self.v_grid.shape[0] if allowed is None else len(allowed)
             assignment = torch.randint(
-                self.v_grid.shape[0],
+                upper,
                 (channels, output_h * output_w,
                  1 if self.curve_sharing == "per_window" else n_inputs),
-                generator=self._generator).to(x.device)
+                generator=self._generator)
+            if allowed is not None:
+                allowed = torch.as_tensor(allowed, dtype=torch.long)
+                assignment = allowed[assignment]
+            assignment = assignment.to(x.device)
             self._curve_assignments[key] = assignment
         elif assignment.device != x.device:
             assignment = assignment.to(x.device)

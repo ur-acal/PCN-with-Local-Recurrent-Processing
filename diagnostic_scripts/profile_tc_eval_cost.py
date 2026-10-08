@@ -31,6 +31,14 @@ p.add_argument('--optimization', choices=('reference','reuse','fused','both'), d
 p.add_argument('--timing-only', action='store_true', help='Disable nested profiling events for end-to-end timing.')
 p.add_argument('--dense', action='store_true')
 p.add_argument('--toggle-log', help='Replay the COMMAND line from a recorded corner log.')
+p.add_argument('--toggle-nonlinear-r-table',
+               help='Diagnostic override for only the replayed nonlinear-R curve bank.')
+p.add_argument('--toggle-activation-curve-path',
+               help='Diagnostic override for only the replayed measured-ReLU curve bank.')
+p.add_argument('--toggle-pooling-curve-path',
+               help='Hold measured pooling on this curve bank during a toggle replay.')
+p.add_argument('--omit-logits', action='store_true',
+               help='Keep bounded accuracy data without saving or printing full logits.')
 p.add_argument('--cpu-unroll', action='store_true', help='Use the existing MNIST CPU cache-construction helper; timing excludes initialization.')
 p.add_argument('--force-toggle-ff-capture', action='store_true', help='Diagnostic only: trigger the missing FF module hook during shape capture.')
 a = p.parse_args()
@@ -61,9 +69,48 @@ if a.toggle_log:
         i=argv.index('--patched_nonlinearity_data')
         assert argv[i+1]=='false', 'Cannot drop an enabled historical feature.'
         del argv[i:i+2]  # Historical disabled flag removed from current parser.
+    if a.toggle_nonlinear_r_table:
+        i = argv.index('--nonlinear_R_table')
+        argv[i+1] = str(Path(a.toggle_nonlinear_r_table).resolve())
+    if a.toggle_activation_curve_path:
+        i = argv.index('--activation_curve_path')
+        argv[i+1] = str(Path(a.toggle_activation_curve_path).resolve())
     argv += ['--test_bs', str(a.batch_size), '--noisy_trials', '1']
 report = dict(checkpoint=str(checkpoint), dense_control=a.dense, optimization=a.optimization,
-              timing_only=a.timing_only, argv=argv, batches=[])
+              timing_only=a.timing_only, argv=argv, batches=[],
+              toggle_nonlinear_r_table=a.toggle_nonlinear_r_table,
+              toggle_activation_curve_path=a.toggle_activation_curve_path,
+              toggle_pooling_curve_path=a.toggle_pooling_curve_path)
+
+if a.toggle_pooling_curve_path:
+    original_configure_measured_pooling = entry.configure_measured_pooling
+    def configure_measured_pooling(*args, **kwargs):
+        kwargs['curve_path'] = str(Path(a.toggle_pooling_curve_path).resolve())
+        kwargs['curve_gaussian'] = None
+        return original_configure_measured_pooling(*args, **kwargs)
+    entry.configure_measured_pooling = configure_measured_pooling
+current_targets = None
+total_correct = 0
+total_examples = 0
+
+# Keep the production data loader and ordering, but retain the current targets so
+# the bounded toggle replay can report an exact cumulative accuracy rather than
+# only timing and logits.
+original_get_test_data = entry.get_test_data
+def get_test_data(*args, **kwargs):
+    loader = original_get_test_data(*args, **kwargs)
+    class TrackingLoader:
+        def __len__(self):
+            return len(loader)
+        def __iter__(self):
+            global current_targets
+            for inputs, targets in loader:
+                current_targets = targets
+                yield inputs, targets
+        def __getattr__(self, name):
+            return getattr(loader, name)
+    return TrackingLoader()
+entry.get_test_data = get_test_data
 # Recovery checkpoints also contain CPU RNG state; CUDA map_location would
 # incorrectly move that state before Generator.__setstate__. We only need the
 # model payload; load this diagnostic source on CPU before normal model.to().
@@ -76,6 +123,7 @@ torch.load = load
 active = False
 events = collections.defaultdict(list)
 counts = collections.Counter()
+pulse_labels = {}
 
 def instrument(cls, name, label):
     if a.timing_only:
@@ -103,6 +151,9 @@ original_pulse = TogglePulseFFFB._apply_pulse_module
 def pulse(self, module, *args, **kwargs):
     if active:
         counts['pulse_'+('expanded' if isinstance(module,MVMConv) else 'dense')] += 1
+        label = pulse_labels.get(id(module))
+        if label is not None:
+            counts['pulse_'+label] += 1
     return original_pulse(self,module,*args,**kwargs)
 TogglePulseFFFB._apply_pulse_module = pulse
 if a.force_toggle_ff_capture:
@@ -133,6 +184,41 @@ def validator(*args, **kwargs):
         torch.cuda.synchronize()
         report['expansion_seconds'] = time.perf_counter()-begin
         model = result.model
+    remaining_dense = []
+    unroll_audit = []
+    for layer_idx, block in enumerate(model.PcConvs):
+        for module_name, module in block.named_modules():
+            if isinstance(module, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
+                remaining_dense.append(
+                    'PcConvs.{}.{}'.format(layer_idx, module_name))
+        for stage in ('FFconv', 'FBconv'):
+            module = getattr(block, stage)
+            label = 'layer_{:02d}_{}'.format(layer_idx, stage[:2])
+            pulse_labels[id(module)] = label
+            values = module.mat.values() if isinstance(module, MVMConv) else None
+            assignment = getattr(module, 'nonlinear_R_curve_assignment', None)
+            unroll_audit.append(dict(
+                layer=layer_idx, stage=stage, module_type=type(module).__name__,
+                matrix_layout=(str(module.mat.layout) if isinstance(module, MVMConv)
+                               else None),
+                matrix_shape=(list(module.mat.shape) if isinstance(module, MVMConv)
+                              else None),
+                stored_edges=(values.numel() if values is not None else None),
+                clean_values=(getattr(module, 'clean_mat_values', None).numel()
+                              if getattr(module, 'clean_mat_values', None) is not None
+                              else None),
+                curve_assignments=(assignment.numel()
+                                   if assignment is not None else None),
+                dtc_block_ids=(getattr(module, 'dtc_block_ids', None).numel()
+                               if getattr(module, 'dtc_block_ids', None) is not None
+                               else None),
+                dtc_output_ids=(getattr(module, 'dtc_output_ids', None).numel()
+                                if getattr(module, 'dtc_output_ids', None) is not None
+                                else None),
+                toggle_pulse_edges=bool(
+                    getattr(module, '_toggle_pulse_edges', False))))
+    report['pc_unroll_audit'] = unroll_audit
+    report['remaining_dense_pc_convs'] = remaining_dense
     report['modules'] = [dict(name=n, edges=m.mat.values().numel(),
         grid_points=(m.nonlinear_R_curve_gaussian_v_grid.numel()
                      if m.nonlinear_R_curve_gaussian_v_grid is not None else
@@ -151,13 +237,23 @@ def validator(*args, **kwargs):
         torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()
         begun = time.perf_counter(); active = True
     def after(module, inputs, output):
-        global active
+        global active, total_correct, total_examples
         torch.cuda.synchronize(); active = False
+        assert current_targets is not None
+        predicted = output.detach().argmax(dim=1).cpu()
+        batch_targets = current_targets.detach().cpu()
+        batch_correct = int((predicted == batch_targets).sum().item())
+        total_correct += batch_correct
+        total_examples += int(batch_targets.numel())
         row = dict(seconds=time.perf_counter()-begun, shape=list(inputs[0].shape),
             calls=dict(counts), inclusive_cuda_ms={k:sum(s.elapsed_time(e) for s,e in v)
                                                  for k,v in events.items()},
-            allocated=torch.cuda.memory_allocated(), peak=torch.cuda.max_memory_allocated())
-        row['logits'] = output.detach().cpu().tolist()
+            allocated=torch.cuda.memory_allocated(), peak=torch.cuda.max_memory_allocated(),
+            batch_correct=batch_correct, batch_examples=int(batch_targets.numel()),
+            cumulative_correct=total_correct, cumulative_examples=total_examples,
+            cumulative_accuracy=100.0*total_correct/total_examples)
+        if not a.omit_logits:
+            row['logits'] = output.detach().cpu().tolist()
         report['batches'].append(row)
         out.write_text(json.dumps(report, indent=2))
         print('COST_PROFILE '+json.dumps(row), flush=True)

@@ -266,6 +266,7 @@ for one_over_q in "${ONE_OVER_Q_LIST[@]}"; do
             --activation_corner "${ACTIVATION_CORNER:-TT}" \
             --activation_corner_mode "${ACTIVATION_CORNER_MODE}" \
             --activation_random_curve_sharing "${ACTIVATION_RANDOM_CURVE_SHARING}" \
+            --ft_corner_coupled_sampling "${FT_CORNER_COUPLED_SAMPLING:-false}" \
             --activation_interpolation "${ACTIVATION_INTERPOLATION:-piecewise_linear}" \
             --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS:-10}" \
             --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT:-auto}" \

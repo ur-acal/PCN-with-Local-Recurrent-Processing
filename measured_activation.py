@@ -147,9 +147,18 @@ class _CurveSharingMixin:
             torch.Size([]) if self.curve_sharing == "per_layer"
             else torch.Size((1,) + tuple(x.shape[1:])))
         if self._sampled_curve_indices is None:
+            allowed = None
+            sampler = getattr(self, "_ft_corner_coupled_sampler", None)
+            if sampler is not None:
+                allowed = sampler.allowed_indices(
+                    self._ft_corner_curve_indices)
+            upper = len(self.corner_names) if allowed is None else len(allowed)
             sampled = torch.randint(
-                len(self.corner_names), expected_shape,
+                upper, expected_shape,
                 generator=self._curve_generator, device="cpu")
+            if allowed is not None:
+                allowed = torch.as_tensor(allowed, dtype=torch.long)
+                sampled = allowed[sampled]
             self._sampled_curve_indices = sampled.to(device=x.device)
         elif self._sampled_curve_indices.shape != expected_shape:
             raise RuntimeError(
@@ -879,7 +888,16 @@ def configure_measured_activation_corner_mode(
             activation.curve_sharing = "per_model"
             activation._sampled_curve_indices = None
         sample_count = 1 if sharing == "per_model" else len(activations)
-        corner_indices = torch.randint(len(corner_names), (sample_count,))
+        sampler = getattr(activations[0], "_ft_corner_coupled_sampler", None)
+        allowed = None
+        if sampler is not None:
+            allowed = sampler.allowed_indices(
+                activations[0]._ft_corner_curve_indices)
+        upper = len(corner_names) if allowed is None else len(allowed)
+        corner_indices = torch.randint(upper, (sample_count,))
+        if allowed is not None:
+            allowed = torch.as_tensor(allowed, dtype=torch.long)
+            corner_indices = allowed[corner_indices]
         selected = tuple(
             corner_names[int(index)] for index in corner_indices)
         if sharing == "per_model":
