@@ -136,6 +136,68 @@ class TCInferenceTests(unittest.TestCase):
             self.assertFalse(torch.equal(samples[0],samples[1]))
             self.assertFalse(torch.equal(samples[2],samples[3]))
 
+    def test_validator_curve_cpu_offload_preserves_complete_block_output(self):
+        def build(directory, two, offload):
+            torch.manual_seed(37)
+            block = make_block(two=two)
+            if isinstance(block.FBconv, nn.ConvTranspose2d):
+                old = block.FBconv
+                block.FBconv = nn.Conv2d(2, 2, 1, bias=False)
+                block.FBconv.weight.data.copy_(old.weight.data.transpose(0, 1))
+            wrapper_cls = ODEWrapper2State if two else ODEWrapper1State
+            wrapper = wrapper_cls(
+                ode_block=block, tc_nonidealities=True, R=1e4,
+                R_max=150e3, C=49e-15, k=1e3, v_dd=.1,
+                state_bound=1., w_bits=5, thermal_noise=False,
+                is_first=True, is_last=True)
+            package = synthetic_package(block)
+            block._tc_curve_package = package
+            block._tc_curve_generator = None
+            block._nonlinear_R_pkg = dict(
+                v_grid=None, R_codes=None, R_left=None, R_slope=None,
+                proj_fn=wrapper.proj_fn, R=1e4,
+                tc_curve_package=package, nonlinear_R_curve_seed=211)
+
+            class Model(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.PcConvs = nn.ModuleList([block])
+
+                def forward(self, x):
+                    return self.PcConvs[0](x)
+
+            model = Model().eval()
+            inputs = torch.full((2, 2, 2, 2), .02)
+            loader = DataLoader(
+                TensorDataset(inputs, torch.zeros(2)), batch_size=2)
+            validator = Validator(
+                model, directory, 'cpu', loader, directory,
+                wrapper=[wrapper],
+                expanded_gaussian_curve_cpu_offload=offload)
+            return validator, inputs
+
+        for two in (False, True):
+            with self.subTest(two_state=two), \
+                    tempfile.TemporaryDirectory() as baseline_dir, \
+                    tempfile.TemporaryDirectory() as offload_dir:
+                baseline, inputs = build(baseline_dir, two, False)
+                expected = baseline.model(inputs)
+                offloaded, _ = build(offload_dir, two, True)
+                modules = [
+                    module for module in offloaded.model.modules()
+                    if isinstance(module, MVMConv)]
+                self.assertEqual(len(modules), 2)
+                for module in modules:
+                    self.assertIsNone(
+                        module.nonlinear_R_curve_gaussian_R_normalized)
+                    self.assertIsNotNone(module._gaussian_curve_cpu)
+                actual = offloaded.model(inputs)
+                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+                for module in modules:
+                    self.assertIsNone(
+                        module.nonlinear_R_curve_gaussian_R_normalized)
+                    self.assertIsNotNone(module._gaussian_curve_cpu)
+
 
 if __name__=='__main__':
     unittest.main()

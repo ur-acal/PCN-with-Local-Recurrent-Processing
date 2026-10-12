@@ -1063,7 +1063,9 @@ def run_ode_inference(linear_study=None):
                                                   device=device, test_dataloader=test_dataloader,
                                                   result_path=os.path.join(args.hw_val_path, args.model_name,
                                                                            "{}b".format(args.w_bits)),
-                                                  wrapper=saved_wrappers["wrappers"])
+                                                  wrapper=saved_wrappers["wrappers"],
+                                                  expanded_gaussian_curve_cpu_offload=(
+                                                      args.expanded_gaussian_curve_cpu_offload))
                             logging.warning("Unroll or load expanded weights finished")
                             clean_params = {_name: _p.clone() for _name, _p in net_.named_parameters()}
                             clean_buffs = {_name: _buf.clone() for _name, _buf in net_.named_buffers()}
@@ -1167,8 +1169,11 @@ def run_ode_inference(linear_study=None):
 
                     # Cross trial clean up code
                     if args.test_expanded:
+                        valid_ins.close_curve_stager()
                         for _m in net_.modules():
                             if isinstance(_m, MVMConv):
+                                if args.expanded_gaussian_curve_cpu_offload:
+                                    _m.clear_gaussian_curve_storage()
                                 _m.code_idx_mat = None
                                 _m.mismatch_mat = None
                                 _m.mat = None

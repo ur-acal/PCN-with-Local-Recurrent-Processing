@@ -80,6 +80,7 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
       --d_start 0 --d_end 1 --n_sweep_left 0 --n_sweep_right 1 --sweep_eps false
       --thermal_noise false --sde_noise_type add --diff_mismatch false --noise_level_list 0
       --test_only false --test_expanded true --nonlinear_R_train_mode none
+      --expanded_gaussian_curve_cpu_offload "${EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD:-${TC_CURVE_CPU_OFFLOAD:-false}}"
       --nonlinear_R_curve_sharing per_coupler --noisy_trials "${N_TRIALS:-10}"
       --activation_curve_sharing per_spin --activation_curve_seed "${ACTIVATION_CURVE_SEED:-4096}"
       --hardware_seed "${HARDWARE_SEED:-4096}" --data_seed "${DATA_SEED:-4096}")

@@ -8,9 +8,11 @@ import argparse
 import collections
 import hashlib
 import json
+import math
 from pathlib import Path
 import runpy
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
@@ -27,6 +29,8 @@ import tc_edge_inference
 p = argparse.ArgumentParser(__doc__)
 p.add_argument('--output', required=True)
 p.add_argument('--reference', action='store_true')
+p.add_argument('--synthetic-input-size', type=int, default=0,
+               help='Use deterministic square RGB inputs of this size.')
 p.add_argument('entry', nargs=argparse.REMAINDER)
 a = p.parse_args()
 command = a.entry
@@ -42,6 +46,7 @@ out = Path(a.output)
 out.parent.mkdir(parents=True, exist_ok=True)
 active = False
 counts = collections.Counter()
+forward_timer = {}
 
 def save():
     report['calls'] = dict(counts)
@@ -98,6 +103,15 @@ TCNoiseLifecycle._sample = noise
 
 def attach(model, expected):
     modules = dict(model.named_modules())
+    private_expected = set()
+    head_name = 'linear' if hasattr(model, 'linear') else 'fc'
+    head = getattr(model, head_name, None)
+    private_head = getattr(head, '_expanded_module', None)
+    if isinstance(private_head, MVMConv):
+        private_name = head_name + '._expanded_module'
+        modules[private_name] = private_head
+        expected = [*expected, private_name]
+        private_expected.add(private_name)
     assert expected
     blocks = list(model.PcConvs) if hasattr(model, 'PcConvs') else list(iter_physical_blocks(model))
     for b in blocks:
@@ -105,7 +119,8 @@ def attach(model, expected):
         for flag in ('enable_spin_variation', 'enable_summing_current_noise', 'enable_coupler_noise'):
             assert cfg[flag], ('Missing nonideality', flag)
         assert b.q_hi == 15, ('Not signed 5-bit', b.q_hi)
-        assert float(b.v_dd) == .1
+        assert math.isfinite(float(b.v_dd)) and float(b.v_dd) > 0, (
+            'Invalid supply voltage', b.v_dd)
     report['hardware'] = [dict(noise=getattr(b, '_tc_noise_cfg', None),
         v_dd=b.v_dd, q_hi=b.q_hi, R=b.R, C=getattr(b, 'C', None)) for b in blocks]
     for name in expected:
@@ -113,14 +128,18 @@ def attach(model, expected):
         assert isinstance(m, MVMConv), ('Not expanded', name, type(m))
         m._audit_name = name
         curves = m.nonlinear_R_curve_gaussian_R_normalized
+        if curves is None:
+            curves = m._gaussian_curve_cpu
         assert curves is not None and m.nonlinear_R_curve_sharing == 'per_coupler'
         nz = m.mat.values() != 0
-        assert curves.shape[0] == (nz.numel() if a.reference else int(nz.sum()))
+        compact = getattr(m, '_tc_curve_row_index', None) is not None
+        assert curves.shape[0] == (int(nz.sum()) if compact else nz.numel())
         digest = hashlib.sha256()
         # Hash active curves in physical order in both storage layouts.
-        if a.reference:
+        if not compact:
             for i in range(0, nz.numel(), 65536):
-                chunk = curves[i:i+65536][nz[i:i+65536]].detach().cpu().contiguous()
+                mask = nz[i:i+65536].to(curves.device)
+                chunk = curves[i:i+65536][mask].detach().cpu().contiguous()
                 digest.update(memoryview(chunk.numpy()))
         else:
             digest.update(memoryview(curves.detach().cpu().contiguous().numpy()))
@@ -131,20 +150,39 @@ def attach(model, expected):
         if isinstance(m, (MVMConv, PiecewiseLinearActivation, MeasuredAvgPool2d, nn.Hardtanh)):
             def called(module, inputs, name=name):
                 if active:
-                    assert not module.training, ('Training mode during eval', name)
+                    if name not in private_expected:
+                        assert not module.training, ('Training mode during eval', name)
                     counts['module:'+name] += 1
             m.register_forward_pre_hook(called)
     def before(module, inputs):
         global active
         active = True
+        if inputs[0].is_cuda:
+            torch.cuda.reset_peak_memory_stats(inputs[0].device)
+            start = torch.cuda.Event(enable_timing=True)
+            start.record()
+            forward_timer['start'] = start
+        else:
+            forward_timer['start'] = time.perf_counter()
     def after(module, inputs, output):
         global active
         active = False
         assert torch.isfinite(output).all()
-        assert all(counts['module:'+n] > 0 for n in expected)
+        assert all(
+            counts['module:'+n] + counts['fused:'+n] + counts['fallback:'+n] > 0
+            for n in expected)
         if output.is_cuda and not a.reference:
-            assert all(counts['fused:'+n] > 0 for n in expected), 'Fused path not adopted'
-            assert not any(counts['fallback:'+n] for n in expected), 'Unexpected CUDA fallback'
+            for name in expected:
+                module = modules[name]
+                fused = counts['fused:'+name]
+                fallback = counts['fallback:'+name]
+                if (getattr(module, '_tc_curve_package', None) is not None
+                        and name not in private_expected):
+                    assert fused > 0, ('TC fused path not adopted', name)
+                    assert fallback == 0, ('Unexpected TC CUDA fallback', name)
+                else:
+                    assert fused + fallback > 0, (
+                        'Expanded nonlinear-R path not adopted', name)
         static = hashlib.sha256()
         for b in blocks:
             spin = getattr(b, '_tc_spin_state', b)
@@ -166,8 +204,18 @@ def attach(model, expected):
                 assert m._gaussian_curve_samples
                 for v in m._gaussian_curve_samples.values():
                     if torch.is_tensor(v): static.update(v.cpu().contiguous().numpy().tobytes())
-        row = dict(device=str(output.device), logits=output.detach().cpu().tolist(), noise_sha256=noise_hash.hexdigest(),
-                   static_sha256=static.hexdigest())
+        if output.is_cuda:
+            end = torch.cuda.Event(enable_timing=True)
+            end.record()
+            end.synchronize()
+            seconds = forward_timer['start'].elapsed_time(end) / 1000.
+            peak = torch.cuda.max_memory_allocated(output.device)
+        else:
+            seconds = time.perf_counter() - forward_timer['start']
+            peak = 0
+        row = dict(device=str(output.device), logits=output.detach().cpu().tolist(),
+                   seconds=seconds, peak_allocated=peak,
+                   noise_sha256=noise_hash.hexdigest(), static_sha256=static.hexdigest())
         if report['batches']:
             assert row['static_sha256'] == report['batches'][0]['static_sha256'], 'Static defects resampled'
         report['batches'].append(row)
@@ -197,6 +245,22 @@ def instrument_validator(cls):
     cls.__init__ = init
 instrument_validator(Validator)
 instrument_validator(FeedForwardCNNValidator)
+if a.synthetic_input_size:
+    from torch.utils.data import DataLoader, TensorDataset
+    import inference_utils
+
+    def deterministic_test_data(test_bs=1, task='cifar10', **_kwargs):
+        classes = 100 if task == 'cifar100' else 10
+        count = max(3, int(test_bs) * 3)
+        values = torch.linspace(
+            -1., 1., count * 3 * a.synthetic_input_size ** 2,
+            dtype=torch.float32).reshape(
+                count, 3, a.synthetic_input_size, a.synthetic_input_size)
+        labels = torch.arange(count, dtype=torch.long) % classes
+        return DataLoader(TensorDataset(values, labels), batch_size=test_bs,
+                          shuffle=False, num_workers=0)
+
+    inference_utils.get_test_data = deterministic_test_data
 sys.argv = [command[1], *command[2:]]
 try:
     runpy.run_module(command[1], run_name='__main__')

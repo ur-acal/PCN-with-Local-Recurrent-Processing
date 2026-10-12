@@ -219,6 +219,10 @@ def parse_args():
         choices=("empirical_with_replacement", "multivariate_gaussian"),
         default="empirical_with_replacement")
     parser.add_argument(
+        "--expanded_gaussian_curve_cpu_offload",
+        type=lambda v: v.lower() in ("yes", "true", "t", "1"),
+        default=False)
+    parser.add_argument(
         "--nonlinear_R_curve_edge_chunk_size", type=int, default=65536)
     parser.add_argument("--R", type=float, default=10e3)
     parser.add_argument("--R_max", default="150e3")
@@ -349,6 +353,8 @@ def build_command(args, case_name):
         "--nonlinear_R_mc_quantity", "conductance",
         "--nonlinear_R_curve_sharing", args.nonlinear_R_curve_sharing,
         "--nonlinear_R_curve_sampling", args.nonlinear_R_curve_sampling,
+        "--expanded_gaussian_curve_cpu_offload",
+        bool_arg(args.expanded_gaussian_curve_cpu_offload),
         "--nonlinear_R_curve_seed", str(args.base_seed),
         "--nonlinear_R_curve_edge_chunk_size",
         str(args.nonlinear_R_curve_edge_chunk_size),

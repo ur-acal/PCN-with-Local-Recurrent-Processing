@@ -37,10 +37,18 @@ p.add_argument('--toggle-activation-curve-path',
                help='Diagnostic override for only the replayed measured-ReLU curve bank.')
 p.add_argument('--toggle-pooling-curve-path',
                help='Hold measured pooling on this curve bank during a toggle replay.')
+p.add_argument('--toggle-gaussian', action='store_true',
+               help='Replay toggle Level-3 with static Gaussian per-coupler curves.')
+p.add_argument('--force-analog-head', action='store_true',
+               help='Evaluate the selected checkpoint with an expanded analog classifier head.')
 p.add_argument('--omit-logits', action='store_true',
                help='Keep bounded accuracy data without saving or printing full logits.')
 p.add_argument('--cpu-unroll', action='store_true', help='Use the existing MNIST CPU cache-construction helper; timing excludes initialization.')
 p.add_argument('--force-toggle-ff-capture', action='store_true', help='Diagnostic only: trigger the missing FF module hook during shape capture.')
+p.add_argument('--curve-cpu-offload', action='store_true',
+               help='Stage expanded Gaussian per-coupler curves owner by owner.')
+p.add_argument('--tc-state', choices=('1', '2'),
+               help='Override TC state count; otherwise infer S2 from the model name.')
 a = p.parse_args()
 Dopri5.reuse_accepted_step_inference = a.optimization in ('reuse','both')
 MVMConv._tc_fused_edges = a.optimization in ('fused','both')
@@ -48,16 +56,20 @@ checkpoint = Path(a.checkpoint).resolve()
 assert checkpoint.is_file(), checkpoint
 name = checkpoint.parent.name
 suffix = checkpoint.name[len(name)+1:-len('_ckpt.pth')]
+tc_state = a.tc_state or ('2' if '_S2' in name else '1')
 out = Path(a.output).resolve()
 out.parent.mkdir(parents=True, exist_ok=True)
 env = dict(os.environ, MODEL_NAME=name, MODEL_DIR=str(checkpoint.parent.parent),
            CKPT=suffix, TC_DRY_RUN='true', TEST_BS=str(a.batch_size),
            TC_MAX_EVAL_BATCHES=str(a.batches), N_TRIALS='1', TASK='cifar100',
-           IMG_TYPE='rgb', TC_CONV_METHOD='shared' if a.dense else 'loop')
+           IMG_TYPE='rgb', TC_CONV_METHOD='shared' if a.dense else 'loop',
+           EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD=(
+               'true' if a.curve_cpu_offload else 'false'),
+           TC_STATE=tc_state)
 command = shlex.split(subprocess.check_output(
     ['bash', 'launch_scripts/run_tc_nonidealities.sh', 'eval'], env=env, text=True))
 argv = command[command.index('ode_inference.py')+1:]
-wrapper = 'QATTester1State' if suffix == 'last' else 'ODEWrapper1State'
+wrapper = ('QATTester' if suffix == 'last' else 'ODEWrapper') + tc_state + 'State'
 argv += ['--ode_wrapper', wrapper,
          '--tc_metadata_path', str(out.with_suffix('.trial.jsonl'))]
 if a.toggle_log:
@@ -72,15 +84,37 @@ if a.toggle_log:
     if a.toggle_nonlinear_r_table:
         i = argv.index('--nonlinear_R_table')
         argv[i+1] = str(Path(a.toggle_nonlinear_r_table).resolve())
+    for key, value in (
+            ('--model_name', name), ('--model_dir', str(checkpoint.parent.parent)),
+            ('--ckpt', suffix)):
+        i = argv.index(key)
+        argv[i+1] = value
+    if a.toggle_gaussian:
+        for key, value in (
+                ('--nonlinear_R_curve_sampling', 'multivariate_gaussian'),
+                ('--nonlinear_R_mc_quantity', 'resistance')):
+            i = argv.index(key)
+            argv[i+1] = value
+    if '--expanded_gaussian_curve_cpu_offload' in argv:
+        i = argv.index('--expanded_gaussian_curve_cpu_offload')
+        argv[i+1] = 'true' if a.curve_cpu_offload else 'false'
+    else:
+        argv += ['--expanded_gaussian_curve_cpu_offload',
+                 'true' if a.curve_cpu_offload else 'false']
     if a.toggle_activation_curve_path:
         i = argv.index('--activation_curve_path')
         argv[i+1] = str(Path(a.toggle_activation_curve_path).resolve())
     argv += ['--test_bs', str(a.batch_size), '--noisy_trials', '1']
+if a.force_analog_head:
+    argv += ['--final_head_type', 'analog']
 report = dict(checkpoint=str(checkpoint), dense_control=a.dense, optimization=a.optimization,
-              timing_only=a.timing_only, argv=argv, batches=[],
+              timing_only=a.timing_only,
+              curve_cpu_offload=a.curve_cpu_offload, argv=argv, batches=[],
               toggle_nonlinear_r_table=a.toggle_nonlinear_r_table,
               toggle_activation_curve_path=a.toggle_activation_curve_path,
-              toggle_pooling_curve_path=a.toggle_pooling_curve_path)
+              toggle_pooling_curve_path=a.toggle_pooling_curve_path,
+              toggle_gaussian=a.toggle_gaussian,
+              force_analog_head=a.force_analog_head)
 
 if a.toggle_pooling_curve_path:
     original_configure_measured_pooling = entry.configure_measured_pooling
@@ -175,14 +209,18 @@ def validator(*args, **kwargs):
             block.unroll_convolution = cpu_unroll_convolution
     if a.dense:
         model = kwargs['model']
-        class Holder: pass
+        class Holder:
+            def close_curve_stager(self):
+                pass
         result = Holder()
         result.model = model
     else:
+        torch.cuda.reset_peak_memory_stats()
         begin = time.perf_counter()
         result = original_validator(*args, **kwargs)
         torch.cuda.synchronize()
         report['expansion_seconds'] = time.perf_counter()-begin
+        report['expansion_peak_allocated'] = torch.cuda.max_memory_allocated()
         model = result.model
     remaining_dense = []
     unroll_audit = []
@@ -223,11 +261,32 @@ def validator(*args, **kwargs):
         grid_points=(m.nonlinear_R_curve_gaussian_v_grid.numel()
                      if m.nonlinear_R_curve_gaussian_v_grid is not None else
                      m.nonlinear_R_curve_bank_v_grid.shape[-1]),
-        curve_bytes=(m.nonlinear_R_curve_gaussian_R_normalized.numel()*4
-                     if m.nonlinear_R_curve_gaussian_R_normalized is not None else 0))
+        curve_device=(str(m.nonlinear_R_curve_gaussian_R_normalized.device)
+                      if m.nonlinear_R_curve_gaussian_R_normalized is not None
+                      else (str(m._gaussian_curve_cpu.device)
+                            if m._gaussian_curve_cpu is not None else None)),
+        curve_bytes=((m.nonlinear_R_curve_gaussian_R_normalized
+                      if m.nonlinear_R_curve_gaussian_R_normalized is not None
+                      else m._gaussian_curve_cpu).numel()*4
+                     if (m.nonlinear_R_curve_gaussian_R_normalized is not None
+                         or m._gaussian_curve_cpu is not None) else 0))
         for n,m in model.named_modules() if isinstance(m,MVMConv)]
     report['convolution_types'] = [dict(layer=i,FF=type(b.FFconv).__name__,FB=type(b.FBconv).__name__)
                                    for i,b in enumerate(model.PcConvs)]
+    head = getattr(model, 'linear', getattr(model, 'fc', None))
+    private_head = getattr(head, '_expanded_module', None)
+    report['analog_head'] = dict(
+        type=type(head).__name__ if head is not None else None,
+        expanded=bool(getattr(head, 'expanded', False)),
+        module_type=(type(private_head).__name__
+                     if private_head is not None else None),
+        curve_device=(
+            str(private_head.nonlinear_R_curve_gaussian_R_normalized.device)
+            if (private_head is not None and
+                private_head.nonlinear_R_curve_gaussian_R_normalized is not None)
+            else (str(private_head._gaussian_curve_cpu.device)
+                  if (private_head is not None and
+                      private_head._gaussian_curve_cpu is not None) else None)))
     out.write_text(json.dumps(report, indent=2))
     from measured_activation import PiecewiseLinearActivation
     instrument(PiecewiseLinearActivation, 'forward', 'measured_relu')

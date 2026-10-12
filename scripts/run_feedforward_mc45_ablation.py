@@ -81,6 +81,8 @@ def parse_args():
     p.add_argument("--enable_diff_mismatch", type=str2bool, default=False)
     p.add_argument("--nonlinear_R_curve_sharing", default="per_coupler")
     p.add_argument("--nonlinear_R_curve_sampling", default="empirical_with_replacement")
+    p.add_argument("--expanded_gaussian_curve_cpu_offload",
+                   type=str2bool, default=False)
     p.add_argument("--nonlinear_R_curve_edge_chunk_size", type=int, default=65536)
     p.add_argument("--enable_spin_variation", type=str2bool, default=True)
     p.add_argument("--enable_measured_activation", type=str2bool, default=True)
@@ -157,6 +159,8 @@ def run_corner(args, corner, relu_indices):
         "--nonlinear_R_mc_quantity", corner["coupler"]["quantity"],
         "--nonlinear_R_curve_sharing", args.nonlinear_R_curve_sharing,
         "--nonlinear_R_curve_sampling", args.nonlinear_R_curve_sampling,
+        "--expanded_gaussian_curve_cpu_offload",
+        bool_text(args.expanded_gaussian_curve_cpu_offload),
         "--nonlinear_R_curve_bank_indices", ",".join(
             str(index) for index in (
                 [args.fixed_coupler_mc_index]

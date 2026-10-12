@@ -65,6 +65,7 @@ cmd=(
   --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING:-per_coupler}"
   --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING:-empirical_with_replacement}"
   --nonlinear_R_curve_edge_chunk_size "${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE:-65536}"
+  --expanded_gaussian_curve_cpu_offload "${EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD:-${TC_CURVE_CPU_OFFLOAD:-false}}"
   --enable_measured_pooling "${ENABLE_MEASURED_POOLING:-true}"
   --bn_recalibrate "${ENABLE_BN_RECALIBRATION:-false}"
   --bn_calibration_batch_size "${BN_CALIBRATION_BATCH_SIZE:-128}"

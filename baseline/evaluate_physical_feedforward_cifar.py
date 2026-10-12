@@ -181,6 +181,10 @@ def parse_args():
     p.add_argument("--bn_calibration_batch_size", type=int, default=128)
     p.add_argument("--bn_calibration_samples", type=optional_int, default=None)
     p.add_argument("--use_expanded_weights", type=str2bool, default=True)
+    p.add_argument(
+        "--expanded_gaussian_curve_cpu_offload", type=str2bool,
+        default=False,
+        help="Offload static expanded Gaussian per-coupler curves to CPU.")
     p.add_argument("--nonlinear_R_train_mode", default="none",
                    choices=("none", "exact_curve", "mean"))
     p.add_argument("--nonlinear_R_corner_range", default="all")
@@ -205,6 +209,20 @@ def evaluate(model, loader, device, max_eval_batches=0):
 
 
 def evaluate_once(args):
+    if args.expanded_gaussian_curve_cpu_offload:
+        if not args.use_expanded_weights or not args.enable_nonlinear_R:
+            raise ValueError(
+                "Expanded Gaussian curve CPU offload requires expanded "
+                "nonlinear-R evaluation.")
+        if args.nonlinear_R_curve_sharing != "per_coupler":
+            raise ValueError(
+                "Expanded Gaussian curve CPU offload requires per-coupler curves.")
+        if (not args.tc_feedforward and
+                (args.physical_level != 3 or
+                 args.nonlinear_R_curve_sampling != "multivariate_gaussian")):
+            raise ValueError(
+                "Generic feedforward curve offload requires pulse Level-3 "
+                "evaluation with multivariate-Gaussian sampling.")
     if args.data_seed is not None:
         random.seed(args.data_seed)
         np.random.seed(args.data_seed)
@@ -368,10 +386,13 @@ def evaluate_once(args):
         input_quant_bits=args.input_quant_bits,
         center_student_input=args.center_student_input)
     os.makedirs(args.result_path, exist_ok=True)
+    validator = None
     if args.use_expanded_weights:
-        FeedForwardCNNValidator(
+        validator = FeedForwardCNNValidator(
             model, args.expanded_weight_dir, device, loader,
-            args.result_path)
+            args.result_path,
+            expanded_gaussian_curve_cpu_offload=(
+                args.expanded_gaussian_curve_cpu_offload))
         if args.tc_feedforward:
             # Expansion installs new modules; eval mode enables fused TC inference.
             model.eval()
@@ -394,20 +415,27 @@ def evaluate_once(args):
         torch.manual_seed(args.data_seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(args.data_seed)
-    accuracy = evaluate(model, loader, device, args.max_eval_batches)
-    if args.tc_feedforward:
-        import json
-        ref = next(model.parameters())
-        durations = [{stage: float(w.block._stage_duration(ref, stage))
-                      for stage in ('z', 'y') if stage == 'z' or w.block.conv2 is not None}
-                     for w in iter_physical_wrappers(model)]
-        metadata = dict(options=vars(args), accuracy_percent=accuracy,
-                        integration_seconds=durations,
-                        stage_labels={'z': 'conv1', 'y': 'conv2'},
-                        hardware_model='TC resistance-coded, constant-input capacitor integration')
-        (Path(args.result_path)/'tc_trial_metadata.json').write_text(
-            json.dumps(metadata, indent=2, default=str))
-    return accuracy
+    try:
+        accuracy = evaluate(model, loader, device, args.max_eval_batches)
+        if args.tc_feedforward:
+            import json
+            ref = next(model.parameters())
+            durations = [{stage: float(w.block._stage_duration(ref, stage))
+                          for stage in ('z', 'y')
+                          if stage == 'z' or w.block.conv2 is not None}
+                         for w in iter_physical_wrappers(model)]
+            metadata = dict(
+                options=vars(args), accuracy_percent=accuracy,
+                integration_seconds=durations,
+                stage_labels={'z': 'conv1', 'y': 'conv2'},
+                hardware_model=(
+                    'TC resistance-coded, constant-input capacitor integration'))
+            (Path(args.result_path)/'tc_trial_metadata.json').write_text(
+                json.dumps(metadata, indent=2, default=str))
+        return accuracy
+    finally:
+        if validator is not None:
+            validator.close_curve_stager()
 
 
 def trial_args(args, trial_index):

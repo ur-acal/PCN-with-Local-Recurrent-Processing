@@ -93,7 +93,7 @@ fill colors and shared teacher/student Mixup/CutMix samples.
 | Environment | Pipeline | Pretrain only | FT only | Eval only | FT then eval |
 |---|---|---|---|---|---|
 | Local | No exact TC pipeline launcher | No exact TC pretrain launcher | `run_tc_nonidealities.sh ft` | `run_tc_nonidealities.sh eval` | Run the two local stages sequentially after reading the FT model name |
-| Slurm | `mode=default` | `mode=pretrain_only` | `mode=ft_only` | Not implemented | `mode=ft_and_eval` |
+| Slurm | `mode=default` | `mode=pretrain_only` | `mode=ft_only` | `mode=eval_only` | `mode=ft_and_eval` |
 
 Do not substitute `run_ode_train.sh` for the missing local pipeline entry: its
 generic defaults do not reproduce the TC Slurm pretraining recipe. Likewise,
@@ -192,7 +192,7 @@ module swap slurm slurm/24.05.0.b1
 cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
 mkdir -p logs/scheduler_slurm logs/slurm_jobs
 
-pipeline_mode=default  # default | pretrain_only | ft_only | ft_and_eval
+pipeline_mode=default  # default | pretrain_only | ft_only | eval_only | ft_and_eval
 
 for tc_state in 1 2; do
   case "$pipeline_mode" in

@@ -66,6 +66,7 @@ overhead is higher.
 | Fused measured ReLU | Speed | `FUSE_MEASURED_ACTIVATION` / `fuse_measured_activation` | Yes | Yes | PyTorch fallback for CPU, non-FP32 CUDA, missing Triton, trainable/mismatched curves, cubic spline, or higher-order gradients |
 | Fused per-edge nonlinear-R convolution | Speed | Default ON; auto fallback for unsupported cases | No | Yes | Combines resistance interpolation, edge-current calculation, and output accumulation for CUDA float32 TC Gaussian per-coupler curves. Unsupported cases include empirical banks, energy metering, unsupported projections/devices/dtypes, and enabled gradients |
 | Nonzero-edge TC resistance-curve storage | Memory | Default ON; auto fallback for unsupported cases | No | Yes | Stores sampled curves only for nonzero expanded TC edges; empirical banks and toggle storage are unchanged |
+| Expanded Gaussian curve CPU offload | Memory | `EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD` / `expanded_gaussian_curve_cpu_offload`; default OFF | No | Yes | Static expanded Gaussian per-coupler curves only. Supports TC PCN state 1/2, TC CNN, Toggle pulse PCN, pulse CNN, and their expanded analog head; falls back to synchronous one-owner staging when asynchronous prefetch is unavailable or unsafe |
 
 Production branch: `colab_all`
 
@@ -493,8 +494,8 @@ quantization dispatch, copies, and custom-autograd work.
 
 ## TC inference optimizations
 
-No launcher changes are required. Production inference automatically uses two
-optimizations when their guards permit:
+Production inference automatically uses the first two optimizations when their
+guards permit:
 
 1. Adaptive Dopri5/ProjDopri5 reuses the accepted search result instead of
    replaying the accepted step. This solver optimization also applies to
@@ -502,6 +503,13 @@ optimizations when their guards permit:
 2. Expanded Gaussian per-coupler TC evaluation fuses curve interpolation,
    signed edge-current calculation, and convolution accumulation in one
    Triton kernel on CUDA float32.
+
+An additional opt-in memory mode,
+`EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD=true`, stores expanded Gaussian curves on
+CPU between complete layer/owner calls. It keeps at most two owners' curves on
+GPU and overlaps the next transfer with current-layer computation when pinned
+memory and GPU headroom permit. Curve generation, random seeds, ODE stages,
+and the fixed-per-trial curve lifetime are unchanged.
 
 Energy-metered solves use the original paths. Gaussian edge fusion also falls
 back for training or any enabled gradient, empirical curve banks, unsupported
@@ -559,6 +567,55 @@ restarted to use newly loaded code.
 For `E` physical edge slots, `A` active edges, and `K` float32 curve points,
 persistent curve storage changes from `4EK` bytes to `4AK + 8E` bytes. This is
 not the total GPU footprint or a guarantee against OOM.
+
+### Expanded Gaussian resistance-curve CPU offload
+
+This mode addresses models whose complete set of compact active-edge curves
+still exceeds GPU memory. During shape discovery, each complete owner is
+expanded and sampled on GPU and then copied to pinned CPU memory. At most two
+owners' curve sets are live on GPU during this initialization pipeline.
+
+The first evaluation forward uses safe synchronous one-owner staging. Its peak
+counter is reset at the start of that forward, so expansion or earlier process
+activity cannot falsely disable prefetch. The runtime enables two-owner
+prefetch only if the next largest owner still fits below 90% of total GPU memory. In
+steady state, the current owner computes while the following owner is copied
+to GPU; the completed owner is released, and the first owners are prefetched
+cyclically near the end of a forward for the next batch. Pageable memory, CPU
+execution, insufficient GPU headroom, a one-owner model, or a prefetch OOM
+falls back to synchronous one-owner staging.
+
+The option is model- and dataset-independent. It is applicable to TC PCN
+state 1/2, TC feedforward CNN, Toggle pulse PCN, pulse feedforward CNN, and an
+expanded analog classifier head. It intentionally excludes training,
+non-expanded/dense evaluation, shared curves, empirical curve banks, and any
+curve sampling other than static multivariate-Gaussian per-coupler sampling.
+The OFF path does not install the stager and is unchanged.
+
+RTX 4090 matched benchmark; CIFAR-100 state-1 22Layers7l6l6/64C, batch 4,
+three batches, all TC nonidealities, identical seeds:
+
+| Mode | Expansion peak | Forward peak | Batch time | Expansion time | Curve residence |
+|---|---:|---:|---:|---:|---|
+| OFF: all curves resident | 19.13 GiB | 20.52 GiB | 0.714 s median | 7.82 s | GPU, 14.60 GiB |
+| Earlier synchronous one-owner offload | 5.13 GiB | 6.67 GiB | 1.704 s | 12.31 s | CPU between owners |
+| Current asynchronous two-owner offload | 5.13 GiB | 7.44 GiB | 0.916 s steady-state median | 13.40 s | CPU; at most two GPU owners |
+
+The first offloaded batch is the synchronous safety pass and took 1.587 s;
+the next two batches took 0.923 s and 0.908 s. Compared with synchronous
+one-owner staging, prefetch reduced steady-state time by 46.3% while using
+0.77 GiB more peak GPU memory. All 12 predictions matched OFF. The maximum
+absolute logit difference was `8.58e-6`; the CPU/GPU curve round trip is exact,
+while repeated GPU sparse/fused reductions are not bitwise deterministic
+across separate processes.
+
+The previously failing CIFAR-100 state-2 28Layers9l8l8/64C model also completed
+three batches of 12. Its 18.663 GiB of curves remained on CPU; the largest
+owner occupied 0.783 GiB on GPU. Expansion took 15.53 s with a 6.45-GiB peak.
+The safe first batch took 2.595 s; the two prefetched batches took 1.534 s and
+1.548 s (1.541-s median), with a 9.23-GiB forward peak. The earlier synchronous
+one-owner run took 3.782 s per batch with an 8.45-GiB peak. OFF cannot
+initialize this model on the 23.61-GiB GPU, so no matched OFF timing exists.
 
 ### End-to-end inference benchmark
 

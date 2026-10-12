@@ -28,6 +28,13 @@ def add_tc_arguments(parser):
     for key,(kind,default) in options.items():
         if '--'+key not in parser._option_string_actions:
             parser.add_argument('--'+key,type=kind,default=default)
+    if '--expanded_gaussian_curve_cpu_offload' not in parser._option_string_actions:
+        parser.add_argument(
+            '--expanded_gaussian_curve_cpu_offload',
+            '--tc_curve_cpu_offload',
+            dest='expanded_gaussian_curve_cpu_offload',
+            type=boolean, default=False,
+            help='Offload static expanded Gaussian per-coupler curves to CPU.')
 
 def resolve_eval_batch_limit(args):
     """Resolve the legacy TC batch-limit name into the shared option."""
@@ -57,7 +64,32 @@ def wrapper_options(args, trial=None):
             result[key]=(base if seed is None else seed)+trial
     return result
 
+def validate_expanded_gaussian_curve_offload(args, inference=False):
+    if not getattr(args, 'expanded_gaussian_curve_cpu_offload', False):
+        return
+    if not inference:
+        raise ValueError('Expanded Gaussian curve CPU offload is inference-only.')
+    if not args.nonlinear_R or not args.test_expanded:
+        raise ValueError(
+            'Expanded Gaussian curve CPU offload requires expanded nonlinear-R evaluation.')
+    if args.nonlinear_R_curve_sharing != 'per_coupler':
+        raise ValueError(
+            'Expanded Gaussian curve CPU offload requires per-coupler curves.')
+    if getattr(args, 'tc_nonidealities', False):
+        if getattr(args, 'tc_empirical_curve_bank', None):
+            raise ValueError(
+                'Expanded Gaussian curve CPU offload does not support empirical banks.')
+    else:
+        if args.nonlinear_R_curve_sampling != 'multivariate_gaussian':
+            raise ValueError(
+                'Expanded Gaussian curve CPU offload requires multivariate-Gaussian sampling.')
+        if not str(args.ode_block).startswith('TogglePulse'):
+            raise ValueError(
+                'Generic PCN curve offload requires a TogglePulse ODE block.')
+
+
 def validate_tc(args, inference=False):
+    validate_expanded_gaussian_curve_offload(args, inference=inference)
     if not args.tc_nonidealities:return
     if getattr(args, 'tc_empirical_curve_bank', None) and (not inference or not args.nonlinear_R):
         raise ValueError('TC empirical banks require nonlinear-R unrolled inference, not dense FT.')

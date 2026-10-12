@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from validation import MVMConv, Validator
+from validation import ExpandedGaussianCurveStager, MVMConv, Validator
 from feedforward_validation import FeedForwardCNNValidator
 from physical_feedforward_tc import TCFeedForwardPhysicalWrapper
 from ode_pc import ODEWrapper1State, ODEWrapper2State
@@ -40,6 +40,74 @@ class CompactCurveTests(unittest.TestCase):
             if zero:
                 self.assertEqual(torch.count_nonzero(y), 0)
 
+    def test_cpu_offload_round_trip_is_exact(self):
+        m = expanded(TCInferenceTests().package())
+        m.enable_csv(None, None, None, None, None, 1e4,
+                     tc_curve_package=m._tc_curve_package,
+                     nonlinear_R_curve_seed=12)
+        expected = m.nonlinear_R_curve_gaussian_R_normalized.clone()
+        x = torch.full((2, 1, 3, 3), .01, dtype=torch.float64)
+        baseline = m(x)
+
+        self.assertFalse(m.offload_gaussian_curves_to_cpu())
+        self.assertIsNone(m.nonlinear_R_curve_gaussian_R_normalized)
+        self.assertEqual(m._gaussian_curve_cpu.device.type, 'cpu')
+        torch.testing.assert_close(
+            m._gaussian_curve_cpu, expected, rtol=0, atol=0)
+        self.assertFalse(m.stage_gaussian_curves())
+        torch.testing.assert_close(
+            m.nonlinear_R_curve_gaussian_R_normalized, expected,
+            rtol=0, atol=0)
+        torch.testing.assert_close(m(x), baseline, rtol=0, atol=0)
+        m.release_staged_gaussian_curves()
+        self.assertIsNone(m.nonlinear_R_curve_gaussian_R_normalized)
+        torch.testing.assert_close(
+            m._gaussian_curve_cpu, expected, rtol=0, atol=0)
+
+    def test_expanded_analog_head_is_staged_by_owner(self):
+        from final_linear import AnalogLinear
+        from physical_feedforward import (
+            PulseFeedForwardPhysicalWrapper, PulsePhysicalBasicBlock)
+
+        block = PulsePhysicalBasicBlock(
+            nn.Conv2d(4, 3, 1, bias=False), R=50e3, C=500e-15,
+            v_dd=.5, one_over_q=1., w_bits=5).eval()
+        wrapper = PulseFeedForwardPhysicalWrapper(block)
+        wrapper.configure_nonlinear_R_inference(
+            'hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv',
+            quantity='resistance', curve_sharing='per_coupler',
+            curve_sampling='multivariate_gaussian', curve_seed=23)
+        head = AnalogLinear(4, 3).eval()
+        head.configure(
+            physical=True, q=.5, v_dd=.5, template=block,
+            family='toggle', R=50e3, C=500e-15)
+        head.begin_evaluation_trial()
+
+        class HeadModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.head = head
+
+            def forward(self, x):
+                return self.head(x)
+
+        model = HeadModel().eval()
+        x = torch.randn(2, 4) * .01
+        stager = ExpandedGaussianCurveStager(model, [head], 'cpu')
+        try:
+            initialization_output = model(x)
+            stager.finish_initialization()
+            matrix = head._expanded_module
+            self.assertIsNotNone(matrix)
+            self.assertFalse(matrix.training)
+            self.assertIsNone(
+                matrix.nonlinear_R_curve_gaussian_R_normalized)
+            self.assertIsNotNone(matrix._gaussian_curve_cpu)
+            torch.testing.assert_close(
+                model(x), initialization_output, rtol=0, atol=0)
+        finally:
+            stager.close()
+
 
 @unittest.skipUnless(torch.cuda.is_available(), 'CUDA required')
 class CompactPipelineCudaTests(unittest.TestCase):
@@ -59,6 +127,66 @@ class CompactPipelineCudaTests(unittest.TestCase):
                                         m._tc_signed_mat, m.R)
         self.assertIsNotNone(out)
         self.assertEqual(torch.count_nonzero(out), 0)
+
+    def test_two_owner_prefetch_repeats_without_curve_growth(self):
+        def build(path, offload):
+            wrappers = []
+            packages = []
+            for index in range(3):
+                b = block(one_shot_conv=False).float()
+                w = TCFeedForwardPhysicalWrapper(b)
+                pkg = measured_package(package(b).levels)
+                w.install_nonlinear_R_inference_package(dict(
+                    tc_curve_package=pkg, v_grid=None, R_codes=None,
+                    R_left=None, R_slope=None, proj_fn=w.proj_fn, R=b.R,
+                    nonlinear_R_curve_seed=17 + index))
+                wrappers.append(w)
+                packages.append(pkg)
+            model = nn.Sequential(*wrappers).float().cuda().eval()
+            x = torch.full((2, 2, 3, 3), .01, device='cuda')
+            loader = DataLoader(
+                TensorDataset(x, torch.zeros(2)), batch_size=2)
+            validator = FeedForwardCNNValidator(
+                model, path, 'cuda', loader, path, wrapper=wrappers,
+                expanded_gaussian_curve_cpu_offload=offload)
+            model.eval()
+            return model, x, validator
+
+        with tempfile.TemporaryDirectory() as base_path, \
+                tempfile.TemporaryDirectory() as offload_path, \
+                torch.no_grad():
+            baseline, x, _ = build(base_path, False)
+            expected = baseline(x)
+            offloaded, _, validator = build(offload_path, True)
+            try:
+                stager = validator._gaussian_curve_stager
+                self.assertEqual(len(stager._active_owners), 3)
+                stale_peak = torch.cuda.get_device_properties('cuda').total_memory
+                with patch(
+                        'torch.cuda.max_memory_allocated',
+                        side_effect=[stale_peak, 0]):
+                    first = offloaded(x)
+                torch.cuda.synchronize()
+                self.assertEqual(
+                    stager._peak_before_first_forward, stale_peak)
+                self.assertEqual(stager._first_forward_peak, 0)
+                self.assertTrue(stager._double_buffer)
+                torch.testing.assert_close(first, expected, rtol=0, atol=0)
+                resident = sum(
+                    stager._owner_is_staged(owner)
+                    for owner in stager._active_owners)
+                self.assertEqual(resident, 2)
+                allocated = torch.cuda.memory_allocated()
+                for _ in range(4):
+                    torch.testing.assert_close(
+                        offloaded(x), expected, rtol=0, atol=0)
+                torch.cuda.synchronize()
+                self.assertEqual(torch.cuda.memory_allocated(), allocated)
+                self.assertEqual(sum(
+                    stager._owner_is_staged(owner)
+                    for owner in stager._active_owners), 2)
+            finally:
+                validator.close_curve_stager()
 
     def check_model(self, family):
         device = 'cuda'
@@ -105,8 +233,6 @@ class CompactPipelineCudaTests(unittest.TestCase):
         loader = DataLoader(TensorDataset(x, torch.zeros(2)), batch_size=2)
         with tempfile.TemporaryDirectory() as directory, torch.no_grad():
             validator(model, directory, device, loader, directory, wrapper=[w])
-            # Production evaluators must reapply eval after installing MVMs.
-            model.eval()
             modules = [m for m in model.modules() if isinstance(m, MVMConv)]
             self.assertEqual(len(modules), 1 if family == 'cnn' else 2)
             for m in modules:

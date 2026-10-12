@@ -13,7 +13,7 @@ from physical_feedforward import (
     iter_physical_blocks,
     iter_physical_wrappers,
 )
-from validation import Validator
+from validation import ExpandedGaussianCurveStager, Validator
 
 
 @torch.no_grad()
@@ -100,6 +100,15 @@ class FeedForwardCNNValidator(Validator):
         self.wrappers = wrapper
         self.record_full_traj = False
         self.t_end_sf = t_end_sf
+        legacy_offload = kwargs.pop("tc_curve_cpu_offload", None)
+        curve_offload = kwargs.pop(
+            "expanded_gaussian_curve_cpu_offload", False)
+        if legacy_offload is not None:
+            if curve_offload and not legacy_offload:
+                raise ValueError("Conflicting expanded Gaussian offload options.")
+            curve_offload = legacy_offload
+        self.expanded_gaussian_curve_cpu_offload = bool(curve_offload)
+        self._gaussian_curve_stager = None
         self.unroll_or_load()
         self.result_path = result_path
 
@@ -108,6 +117,15 @@ class FeedForwardCNNValidator(Validator):
         for layer_idx, block in enumerate(self._physical_blocks):
             block._capture_dense_modules = True
             self._register_hook_for_unroll(layer_idx, block)
+
+        if self.expanded_gaussian_curve_cpu_offload:
+            owners = list(self._physical_blocks)
+            from final_linear import AnalogLinear
+            head = getattr(self.model, "fc", None)
+            if isinstance(head, AnalogLinear) and head.expanded:
+                owners.append(head)
+            self._gaussian_curve_stager = ExpandedGaussianCurveStager(
+                self.model, owners, self.device)
 
         # A physical feedforward block's capture mode calls each Conv2d exactly
         # once.  This triggers the existing Validator hooks without executing
@@ -118,6 +136,11 @@ class FeedForwardCNNValidator(Validator):
             for block in self._physical_blocks:
                 block._capture_dense_modules = False
             self._unroll_sample_inputs = None
+        if self._gaussian_curve_stager is not None:
+            self._gaussian_curve_stager.finish_initialization()
+        # Shape discovery installs fresh MVMConv children after the model was
+        # placed in eval mode. Propagate eval to those new modules as well.
+        self.model.eval()
         # Apply persistent post-quantization mismatch to the expanded physical
         # couplers, matching the PCN validator/wrapper ordering.
         for wrapper in iter_physical_wrappers(self.model):

@@ -53,6 +53,7 @@ cmd=(
   --enable_diff_mismatch "${ENABLE_DIFF_MISMATCH:-false}"
   --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING:-per_coupler}"
   --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING:-empirical_with_replacement}"
+  --expanded_gaussian_curve_cpu_offload "${EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD:-false}"
   --nonlinear_R_curve_edge_chunk_size "${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE:-65536}"
   --enable_spin_variation "${ENABLE_SPIN_VARIATION:-true}"
   --enable_measured_activation "${ENABLE_MEASURED_ACTIVATION:-true}"

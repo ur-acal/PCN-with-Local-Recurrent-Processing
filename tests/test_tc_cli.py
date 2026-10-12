@@ -64,6 +64,31 @@ class TCCommandTests(unittest.TestCase):
         args = resolved('eval', TC_EMPIRICAL_CURVE_BANK='/tmp/tc_bank.npz')
         self.assertEqual(wrapper_options(args)['tc_empirical_curve_bank'], '/tmp/tc_bank.npz')
 
+    def test_curve_cpu_offload_forwarding(self):
+        self.assertFalse(
+            resolved('eval').expanded_gaussian_curve_cpu_offload)
+        enabled = resolved(
+            'eval', EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD='true')
+        self.assertTrue(enabled.expanded_gaussian_curve_cpu_offload)
+        self.assertNotIn(
+            'expanded_gaussian_curve_cpu_offload', wrapper_options(enabled))
+        with patch.object(sys, 'argv', [
+                'ode_inference.py', '--model_dir', './inspection_only',
+                '--model_name', 'inspection_only',
+                '--tc_curve_cpu_offload', 'true']):
+            with self.assertRaisesRegex(ValueError, 'expanded nonlinear-R'):
+                parse_args()
+        generic = [
+            'ode_inference.py', '--model_dir', './inspection_only',
+            '--model_name', 'inspection_only',
+            '--expanded_gaussian_curve_cpu_offload', 'true',
+            '--nonlinear_R', 'true', '--test_expanded', 'true',
+            '--nonlinear_R_curve_sharing', 'per_coupler',
+            '--nonlinear_R_curve_sampling', 'multivariate_gaussian',
+            '--ode_block', 'TogglePulseODEXInitFFFB']
+        with patch.object(sys, 'argv', generic):
+            self.assertTrue(parse_args().expanded_gaussian_curve_cpu_offload)
+
     def test_local_distillation_forwarding(self):
         for method in ('srrl', 'kd'):
             defaults = resolved('ft', DISTILL_METHOD=method,
@@ -289,6 +314,7 @@ class TCCommandTests(unittest.TestCase):
                    TC_EVAL_ACTIVATION_CURVE_PATH='./eval_bank',
                    TC_EVAL_ACTIVATION_CORNER='eval_corner',
                    TC_CONV_METHOD='shared',TC_CURVE_SAMPLING='uniform',
+                   TC_CURVE_CPU_OFFLOAD='true',
                    MEASURED_POOLING_CURVE_PATH='./pooling', TASK='cifar100')
         out = subprocess.check_output(['bash','launch_scripts/slurm_search_config.sh'],
                                      env=env,cwd=ROOT,text=True,timeout=30)
@@ -301,7 +327,8 @@ class TCCommandTests(unittest.TestCase):
                           'MEASURED_POOLING_CURVE_PATH=./pooling',
                           'TC_EVAL_ACTIVATION_CURVE_PATH=./eval_bank',
                           'TC_EVAL_ACTIVATION_CORNER=eval_corner',
-                          'TC_CONV_METHOD=shared','TC_CURVE_SAMPLING=uniform'):
+                          'TC_CONV_METHOD=shared','TC_CURVE_SAMPLING=uniform',
+                          'TC_CURVE_CPU_OFFLOAD=true'):
                 self.assertIn(field,exports)
 
     def test_actual_sbatch_stage_commands_without_execution(self):
@@ -357,6 +384,14 @@ finetune_one_combo_model inspect "$MODEL_NAME" "$ODE_BLOCK"
                     evaluation = parse_args()
                 self.assertEqual(evaluation.activation_curve_path, './eval_bank')
                 self.assertEqual(evaluation.activation_corner, 'eval_corner')
+
+    def test_slurm_pipeline_supports_eval_only_without_finetuning(self):
+        source = (ROOT/'launch_scripts/run_kdcrd_then_ft.sbatch').read_text()
+        self.assertIn(
+            'default|pretrain_only|ft_only|ft_and_eval|eval_only', source)
+        phase_three = source[source.index('# PHASE 3:'):
+                             source.index('# Collect finetuned model names')]
+        self.assertIn('if [[ "$mode" != eval_only ]]; then', phase_three)
 
 
 if __name__ == '__main__':

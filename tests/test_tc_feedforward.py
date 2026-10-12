@@ -369,6 +369,43 @@ class TCFeedForwardTests(unittest.TestCase):
                 curves=a.conv1.nonlinear_R_curve_gaussian_R_normalized.clone()
                 model(x);torch.testing.assert_close(curves,a.conv1.nonlinear_R_curve_gaussian_R_normalized)
 
+    def test_tc_feedforward_curve_offload_preserves_output(self):
+        def build(path, offload):
+            a = block(one_shot_conv=False)
+            a.conv1.weight.data.copy_(
+                torch.tensor([3/15, -6/15, 0., 12/15],
+                             dtype=a.conv1.weight.dtype).reshape_as(
+                                 a.conv1.weight))
+            w = TCFeedForwardPhysicalWrapper(a)
+            pkg = package(a, variation=False)
+            w.install_nonlinear_R_inference_package(dict(
+                tc_curve_package=pkg, v_grid=None, R_codes=None,
+                R_left=None, R_slope=None, proj_fn=w.proj_fn, R=a.R,
+                nonlinear_R_curve_seed=7))
+            model = nn.Sequential(w).eval()
+            x = torch.ones(2, 2, 2, 2, dtype=torch.float64) * .01
+            loader = DataLoader(
+                TensorDataset(x, torch.zeros(2)), batch_size=2)
+            validator = FeedForwardCNNValidator(
+                model, path, 'cpu', loader, path, wrapper=[w],
+                expanded_gaussian_curve_cpu_offload=offload)
+            return model, x, validator
+
+        with tempfile.TemporaryDirectory() as base_path, \
+                tempfile.TemporaryDirectory() as offload_path:
+            baseline, x, _ = build(base_path, False)
+            expected = baseline(x)
+            offloaded, _, validator = build(offload_path, True)
+            try:
+                matrix = offloaded[0].block.conv1
+                self.assertIsNone(
+                    matrix.nonlinear_R_curve_gaussian_R_normalized)
+                self.assertIsNotNone(matrix._gaussian_curve_cpu)
+                torch.testing.assert_close(
+                    offloaded(x), expected, rtol=0, atol=0)
+            finally:
+                validator.close_curve_stager()
+
     def test_no_toggle_class_or_integer_weight_conversion(self):
         from baseline.cifar_resnet import WideResNetCIFAR
         model=WideResNetCIFAR(depth=10,widen_factor=1,num_classes=10,

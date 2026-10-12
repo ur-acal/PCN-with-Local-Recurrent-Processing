@@ -430,6 +430,9 @@ class AnalogLinear(NonidealLinear):
                 object.__setattr__(self, '_expanded_module', mvm)
                 self._expanded_version = version
                 cached = mvm
+            # This runtime-only MVM is deliberately unregistered, so parent
+            # train()/eval() calls cannot propagate its mode automatically.
+            cached.train(self.training)
             block.conv1 = cached
         x = inputs if self.bias is None else torch.cat((inputs, inputs.new_full((inputs.shape[0], 1), self.q)), 1)
         try:

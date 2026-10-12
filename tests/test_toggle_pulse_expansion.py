@@ -11,7 +11,7 @@ from validation import MVMConv, Validator
 
 
 class ToyPulseModel(nn.Module):
-    def __init__(self, nonlinear=False):
+    def __init__(self, nonlinear=False, gaussian=False):
         super().__init__()
         torch.manual_seed(23)
         pc = PCConvReLU6(inp_chan=2, out_chan=2, bypass=False, layer_idx=0)
@@ -26,14 +26,19 @@ class ToyPulseModel(nn.Module):
             odexinit_scaling_mode='direct', toggle_timing_mode='fixed',
             toggle_y_time=1e-8, z_over_y_time=1,
             toggle_timing_R=5e4, toggle_timing_C=5e-13)
-        source = Path(__file__).resolve().parents[1] / 'hardware_data/mc_45_corners/coupler_full_range/fs_25_2.csv'
+        source = Path(__file__).resolve().parents[1] / (
+            'hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv'
+            if gaussian else
+            'hardware_data/mc_45_corners/coupler_full_range/fs_25_2.csv')
         self.wrappers = [ToggleWrapper1State(
             ode_block=block, R=5e4, R_max=None, C=5e-13, v_dd=.5, one_over_q=5,
             w_bits=5, enob=None, weight_quant_factor_bits=1,
             nonlinear_R=nonlinear, nonlinear_R_table=str(source),
-            nonlinear_R_mc_quantity='conductance',
+            nonlinear_R_mc_quantity=('resistance' if gaussian else 'conductance'),
             nonlinear_R_curve_sharing='per_coupler',
-            nonlinear_R_curve_sampling='empirical_with_replacement',
+            nonlinear_R_curve_sampling=(
+                'multivariate_gaussian' if gaussian else
+                'empirical_with_replacement'),
             nonlinear_R_curve_seed=4096)]
         self.PcConvs = nn.ModuleList([block])
 
@@ -41,11 +46,14 @@ class ToyPulseModel(nn.Module):
         return self.PcConvs[0](x)
 
 
-def expand(model, directory):
+def expand(model, directory, offload=False):
     x = torch.full((2, 2, 3, 3), .05)
-    Validator(model, str(directory), 'cpu', [(x, torch.zeros(2, dtype=torch.long))],
-              str(directory), wrapper=model.wrappers)
-    return x
+    validator = Validator(
+        model, str(directory), 'cpu',
+        [(x, torch.zeros(2, dtype=torch.long))], str(directory),
+        wrapper=model.wrappers,
+        expanded_gaussian_curve_cpu_offload=offload)
+    return x, validator
 
 
 def test_both_pulse_matrices_expand_and_preserve_ideal_output(tmp_path):
@@ -84,3 +92,22 @@ def test_both_sides_receive_per_coupler_curves(tmp_path):
         assert conv.nonlinear_R_curve_sharing == 'per_coupler'
         assert conv.nonlinear_R_curve_assignment.numel() == conv.mat.values().numel()
         assert conv.nonlinear_R_curve_assignment.unique().numel() > 1
+
+
+def test_gaussian_pulse_pcn_offload_preserves_output(tmp_path):
+    baseline = ToyPulseModel(nonlinear=True, gaussian=True).eval()
+    baseline_x, _ = expand(baseline, tmp_path / 'baseline')
+    expected = baseline(baseline_x)
+
+    offloaded = ToyPulseModel(nonlinear=True, gaussian=True).eval()
+    x, validator = expand(offloaded, tmp_path / 'offloaded', offload=True)
+    try:
+        for conv in (offloaded.PcConvs[0].FFconv,
+                     offloaded.PcConvs[0].FBconv):
+            assert not conv.training
+            assert conv.nonlinear_R_curve_gaussian_R_normalized is None
+            assert conv._gaussian_curve_cpu is not None
+        torch.testing.assert_close(
+            offloaded(x), expected, rtol=0, atol=0)
+    finally:
+        validator.close_curve_stager()

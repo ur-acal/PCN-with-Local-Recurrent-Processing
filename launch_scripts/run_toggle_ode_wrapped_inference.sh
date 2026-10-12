@@ -217,6 +217,9 @@ run_model(){
     --diff_mismatch   "${DIFF_MISMATCH:-true}" \
     --nonlinear_R     "${nonlinear_r}" \
     --nonlinear_R_table "${NONLINEAR_R_TABLE:-none}" \
+    --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING:-shared}" \
+    --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING:-empirical_with_replacement}" \
+    --expanded_gaussian_curve_cpu_offload "${EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD:-false}" \
     --mul_mismatch_mode "${MUL_MISMATCH_MODE:-scale_mismatch}" \
     --test_only_nl    "0.0" \
     --return_init     "${RETURN_INIT:-0}" \

@@ -3,7 +3,7 @@ import logging
 import pickle
 import types
 from functools import wraps
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 import numpy as np
 import torch
@@ -405,6 +405,72 @@ class MVMConv(nn.Module):
         self.nonlinear_R_curve_gaussian_value_scale = None
         self.nonlinear_R_curve_gaussian_quantity = None
         self.nonlinear_R_curve_gaussian_R_normalized = None
+        self._gaussian_curve_cpu = None
+
+    @torch.no_grad()
+    def offload_gaussian_curves_to_cpu(self, copy_stream=None):
+        """Move one static Gaussian curve tensor to CPU.
+
+        A CUDA source returned by this method must be retained until the caller's
+        copy-stream event completes.  Pinned allocation is best effort: systems
+        that cannot pin the complete curve set retain the safe synchronous path.
+        """
+        curves = self.nonlinear_R_curve_gaussian_R_normalized
+        if curves is None:
+            return None
+        if (self.nonlinear_R_curve_sampling != "multivariate_gaussian" or
+                self.nonlinear_R_curve_sharing != "per_coupler"):
+            return None
+        source = curves.detach()
+        asynchronous = False
+        if source.device.type == "cuda" and copy_stream is not None:
+            try:
+                cpu_curves = torch.empty_like(
+                    source, device="cpu", pin_memory=True)
+            except RuntimeError:
+                cpu_curves = None
+            if cpu_curves is not None:
+                copy_stream.wait_stream(torch.cuda.current_stream(source.device))
+                with torch.cuda.stream(copy_stream):
+                    cpu_curves.copy_(source, non_blocking=True)
+                    source.record_stream(copy_stream)
+                asynchronous = True
+        if not asynchronous:
+            cpu_curves = source.cpu()
+        self._gaussian_curve_cpu = cpu_curves
+        self.nonlinear_R_curve_gaussian_R_normalized = None
+        return source if asynchronous else False
+
+    @torch.no_grad()
+    def stage_gaussian_curves(self, copy_stream=None):
+        """Stage one expanded convolution's saved curves beside its CSR matrix."""
+        if self._gaussian_curve_cpu is None:
+            return False
+        if self.nonlinear_R_curve_gaussian_R_normalized is None:
+            asynchronous = (
+                self.mat.device.type == "cuda" and copy_stream is not None and
+                self._gaussian_curve_cpu.is_pinned())
+            stream = copy_stream if asynchronous else None
+            if stream is None:
+                staged = self._gaussian_curve_cpu.to(
+                    self.mat.device, dtype=self.mat.dtype)
+            else:
+                with torch.cuda.stream(stream):
+                    staged = self._gaussian_curve_cpu.to(
+                        self.mat.device, dtype=self.mat.dtype,
+                        non_blocking=True)
+                    staged.record_stream(stream)
+            self.nonlinear_R_curve_gaussian_R_normalized = staged
+            return asynchronous
+        return False
+
+    def release_staged_gaussian_curves(self):
+        if self._gaussian_curve_cpu is not None:
+            self.nonlinear_R_curve_gaussian_R_normalized = None
+
+    def clear_gaussian_curve_storage(self):
+        self.nonlinear_R_curve_gaussian_R_normalized = None
+        self._gaussian_curve_cpu = None
 
     def set_dtc_metadata(self, dtc_block_ids, dtc_output_ids):
         if dtc_block_ids.numel() != self.mat.values().numel():
@@ -425,6 +491,9 @@ class MVMConv(nn.Module):
                    nonlinear_R_curve_sampling="empirical_with_replacement",
                    curve_gaussian=None, tc_curve_package=None):
         self.csv_enabled = True
+        # Reconfiguration starts a new curve realization and must not retain an
+        # offloaded tensor from the preceding trial/configuration.
+        self.clear_gaussian_curve_storage()
 
         self.v_grid = v_grid
         self.R_codes = R_codes
@@ -547,6 +616,8 @@ class MVMConv(nn.Module):
 
     def sample_nonlinear_R_gaussian_curves(self):
         """Sample one independent, fixed full curve for every sharing group."""
+        # A new draw invalidates any CPU copy from a previous hardware trial.
+        self._gaussian_curve_cpu = None
         if getattr(self, "_tc_curve_package", None) is not None:
             package = self._tc_curve_package
             # Existing resistance-code lookup; zero codes become sampler code 0.
@@ -1145,9 +1216,343 @@ class MVMConv(nn.Module):
         # inp_summed = inp_summed.view(out_chan, output_h, output_w).sum(dim=1)
         return inp_summed.sqrt().view(1, out_chan, output_h, output_w)
 
+
+class ExpandedGaussianCurveStager:
+    """Own static expanded Gaussian curves outside GPU computation windows.
+
+    Initialization permits at most two complete owners' curve tensors on the
+    GPU.  Runtime first uses a safe one-owner pass, then enables cyclic
+    two-owner prefetch only when pinned memory and conservative GPU headroom
+    are both available.
+    """
+
+    _PREFETCH_MEMORY_FRACTION = 0.90
+
+    def __init__(self, model, owners, device):
+        self.model = model
+        self.owners = list(dict.fromkeys(owners))
+        self.device = torch.device(device)
+        self.initializing = True
+        self.closed = False
+        self._in_forward = False
+        self._forward_failed = False
+        self._completed_forwards = 0
+        self._init_order = []
+        self._init_seen = set()
+        self._init_pending = deque()
+        self._active_owners = []
+        self._active_index = {}
+        self._runtime_seen = []
+        self._ready_events = {}
+        self._double_buffer = False
+        self._peak_before_first_forward = None
+        self._first_forward_peak = None
+        self._async_capable = self.device.type == "cuda" and torch.cuda.is_available()
+        self.copy_stream = (
+            torch.cuda.Stream(device=self.device) if self._async_capable else None)
+        self.handles = [
+            self.model.register_forward_pre_hook(self._model_pre_hook),
+            self.model.register_forward_hook(
+                self._model_post_hook, always_call=True),
+        ]
+        for owner in self.owners:
+            self.handles.append(owner.register_forward_pre_hook(
+                self._owner_pre_hook))
+            self.handles.append(owner.register_forward_hook(
+                self._owner_post_hook, always_call=True))
+
+    @staticmethod
+    def _owner_modules(owner):
+        modules, seen = [], set()
+        for module in owner.modules():
+            if isinstance(module, MVMConv) and id(module) not in seen:
+                modules.append(module)
+                seen.add(id(module))
+        # AnalogLinear intentionally keeps its runtime MVM unregistered so it
+        # cannot duplicate trainable parameters or checkpoint keys.
+        private = getattr(owner, "_expanded_module", None)
+        if isinstance(private, MVMConv) and id(private) not in seen:
+            modules.append(private)
+        return modules
+
+    @staticmethod
+    def _eligible(module):
+        return (
+            module.nonlinear_R_curve_sampling == "multivariate_gaussian" and
+            module.nonlinear_R_curve_sharing == "per_coupler" and
+            (module.nonlinear_R_curve_gaussian_R_normalized is not None or
+             module._gaussian_curve_cpu is not None))
+
+    def _eligible_modules(self, owner):
+        return [module for module in self._owner_modules(owner)
+                if self._eligible(module)]
+
+    def _model_pre_hook(self, _model, _inputs):
+        if self.initializing or self.closed:
+            return
+        if self._in_forward:
+            raise RuntimeError(
+                "Expanded Gaussian curve offload does not support reentrant "
+                "or concurrent model forwards.")
+        self._in_forward = True
+        self._forward_failed = False
+        self._runtime_seen = []
+        if self._async_capable and self._completed_forwards == 0:
+            # The process-wide peak may include expansion or an unrelated prior
+            # workload. Measure only this synchronous safety forward when
+            # deciding whether a second curve owner fits.
+            self._peak_before_first_forward = torch.cuda.max_memory_allocated(
+                self.device)
+            torch.cuda.reset_peak_memory_stats(self.device)
+
+    def _model_post_hook(self, _model, _inputs, output):
+        if self.initializing or self.closed:
+            return
+        try:
+            if output is None:
+                self._forward_failed = True
+            if (not self._forward_failed and
+                    self._runtime_seen != self._active_owners):
+                self._release_all_runtime_curves()
+                raise RuntimeError(
+                    "Expanded Gaussian curve owners executed in an unexpected "
+                    "order; asynchronous staging was disabled.")
+            if self._forward_failed:
+                self._release_all_runtime_curves()
+                return
+            self._completed_forwards += 1
+            if self._completed_forwards == 1:
+                self._double_buffer = self._prefetch_is_safe()
+                if self._double_buffer:
+                    for owner in self._active_owners[:2]:
+                        if not self._stage_owner(owner, asynchronous=True):
+                            self._disable_prefetch()
+                            break
+        finally:
+            self._in_forward = False
+
+    def _owner_pre_hook(self, owner, _inputs):
+        if self.closed:
+            return
+        if self.initializing:
+            owner_id = id(owner)
+            if owner_id in self._init_seen:
+                raise RuntimeError(
+                    "Expanded Gaussian initialization requires each curve "
+                    "owner to execute once during shape discovery.")
+            self._init_seen.add(owner_id)
+            self._init_order.append(owner)
+            self._reap_initialization(wait=False)
+            while len(self._init_pending) >= 2:
+                self._reap_initialization(wait=True, count=1)
+            return
+        if owner not in self._active_index:
+            return
+        expected_index = len(self._runtime_seen)
+        if (expected_index >= len(self._active_owners) or
+                self._active_owners[expected_index] is not owner):
+            self._forward_failed = True
+            raise RuntimeError(
+                "Expanded Gaussian curve owners executed in an unexpected order.")
+        self._runtime_seen.append(owner)
+        if owner not in self._ready_events and not self._owner_is_staged(owner):
+            if not self._stage_owner(owner, asynchronous=False):
+                self._forward_failed = True
+                raise RuntimeError(
+                    "Expanded Gaussian curves could not be staged for an active owner.")
+        self._wait_until_ready(owner)
+
+    def _owner_post_hook(self, owner, _inputs, output):
+        if self.closed:
+            return
+        if self.initializing:
+            self._begin_initialization_offload(owner)
+            return
+        if owner not in self._active_index:
+            return
+        if output is None:
+            self._forward_failed = True
+        self._release_owner(owner)
+        if self._double_buffer and not self._forward_failed:
+            index = self._active_index[owner]
+            target = self._active_owners[(index + 2) % len(self._active_owners)]
+            if not self._owner_is_staged(target):
+                if not self._stage_owner(target, asynchronous=True):
+                    self._disable_prefetch()
+
+    def _begin_initialization_offload(self, owner):
+        sources = []
+        for module in self._eligible_modules(owner):
+            source = module.offload_gaussian_curves_to_cpu(self.copy_stream)
+            if torch.is_tensor(source):
+                sources.append(source)
+        if sources:
+            event = torch.cuda.Event()
+            event.record(self.copy_stream)
+            self._init_pending.append((event, sources))
+
+    def _reap_initialization(self, wait, count=None):
+        retired = 0
+        while self._init_pending and (count is None or retired < count):
+            event, sources = self._init_pending[0]
+            if wait:
+                event.synchronize()
+            elif not event.query():
+                break
+            self._init_pending.popleft()
+            sources.clear()
+            retired += 1
+
+    def finish_initialization(self):
+        if not self.initializing:
+            return
+        self._reap_initialization(wait=True)
+        self._active_owners = [
+            owner for owner in self._init_order
+            if any(module._gaussian_curve_cpu is not None
+                   for module in self._owner_modules(owner))]
+        if not self._active_owners:
+            raise ValueError(
+                "Expanded Gaussian curve CPU offload found no static "
+                "per-coupler Gaussian curve tensors.")
+        self._active_index = {
+            owner: index for index, owner in enumerate(self._active_owners)}
+        self.initializing = False
+        cpu_bytes = sum(self._owner_curve_bytes(owner)
+                        for owner in self._active_owners)
+        pinned_bytes = sum(
+            module._gaussian_curve_cpu.numel() *
+            module._gaussian_curve_cpu.element_size()
+            for owner in self._active_owners
+            for module in self._eligible_modules(owner)
+            if module._gaussian_curve_cpu.is_pinned())
+        self._async_capable = (
+            self._async_capable and pinned_bytes == cpu_bytes)
+        logging.warning(
+            "Expanded Gaussian curve CPU offload enabled: %.3f GiB on CPU "
+            "(%.3f GiB pinned); initialization retained at most two owners.",
+            cpu_bytes / (1024 ** 3), pinned_bytes / (1024 ** 3))
+
+    def _owner_curve_bytes(self, owner):
+        return sum(
+            module._gaussian_curve_cpu.numel() *
+            module._gaussian_curve_cpu.element_size()
+            for module in self._eligible_modules(owner)
+            if module._gaussian_curve_cpu is not None)
+
+    def _owner_is_staged(self, owner):
+        modules = self._eligible_modules(owner)
+        return bool(modules) and all(
+            module.nonlinear_R_curve_gaussian_R_normalized is not None
+            for module in modules)
+
+    def _stage_owner(self, owner, asynchronous):
+        modules = self._eligible_modules(owner)
+        if not modules:
+            return False
+        if self._owner_is_staged(owner):
+            return True
+        stream = self.copy_stream if asynchronous and self._async_capable else None
+        try:
+            copied_async = False
+            for module in modules:
+                copied_async = module.stage_gaussian_curves(stream) or copied_async
+            if copied_async:
+                event = torch.cuda.Event()
+                event.record(stream)
+                self._ready_events[owner] = event
+            else:
+                self._ready_events.pop(owner, None)
+            return self._owner_is_staged(owner)
+        except torch.cuda.OutOfMemoryError:
+            self._release_owner(owner)
+            logging.warning(
+                "Two-owner curve prefetch did not fit; using synchronous "
+                "one-owner staging.")
+            return False
+
+    def _wait_until_ready(self, owner):
+        event = self._ready_events.pop(owner, None)
+        current = None
+        if event is not None:
+            current = torch.cuda.current_stream(self.device)
+            current.wait_event(event)
+        if self.device.type == "cuda":
+            current = current or torch.cuda.current_stream(self.device)
+            for module in self._eligible_modules(owner):
+                curves = module.nonlinear_R_curve_gaussian_R_normalized
+                if curves is not None:
+                    curves.record_stream(current)
+
+    def _release_owner(self, owner):
+        self._ready_events.pop(owner, None)
+        if self.device.type == "cuda":
+            current = torch.cuda.current_stream(self.device)
+        else:
+            current = None
+        for module in self._eligible_modules(owner):
+            curves = module.nonlinear_R_curve_gaussian_R_normalized
+            if curves is not None and current is not None:
+                curves.record_stream(current)
+            module.release_staged_gaussian_curves()
+
+    def _release_all_runtime_curves(self):
+        for owner in self._active_owners:
+            self._release_owner(owner)
+
+    def _prefetch_is_safe(self):
+        if not self._async_capable or len(self._active_owners) < 2:
+            logging.warning(
+                "Expanded Gaussian asynchronous prefetch unavailable; "
+                "using synchronous one-owner staging.")
+            return False
+        properties = torch.cuda.get_device_properties(self.device)
+        peak = torch.cuda.max_memory_allocated(self.device)
+        self._first_forward_peak = peak
+        largest_next = max(self._owner_curve_bytes(owner)
+                           for owner in self._active_owners)
+        safe = peak + largest_next <= (
+            self._PREFETCH_MEMORY_FRACTION * properties.total_memory)
+        logging.warning(
+            "Expanded Gaussian prefetch check: observed peak %.3f GiB + "
+            "largest next owner %.3f GiB %s %.0f%% of %.3f GiB; %s.",
+            peak / (1024 ** 3), largest_next / (1024 ** 3),
+            "<=" if safe else ">",
+            100 * self._PREFETCH_MEMORY_FRACTION,
+            properties.total_memory / (1024 ** 3),
+            "enabling two-owner prefetch" if safe else
+            "using synchronous one-owner staging")
+        if self._peak_before_first_forward is not None:
+            logging.warning(
+                "Expanded Gaussian prefetch ignored the earlier process peak "
+                "of %.3f GiB.",
+                self._peak_before_first_forward / (1024 ** 3))
+        return safe
+
+    def _disable_prefetch(self):
+        self._double_buffer = False
+        self._release_all_runtime_curves()
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        self._reap_initialization(wait=True)
+        self._release_all_runtime_curves()
+        for owner in self._active_owners:
+            for module in self._owner_modules(owner):
+                module.clear_gaussian_curve_storage()
+        for handle in self.handles:
+            handle.remove()
+        self.handles.clear()
+
 class Validator(nn.Module):
     def __init__(self, model: PCNet, expanded_weight_dir, device, test_dataloader, result_path, wrapper=None,
-                 record_full_traj=False, t_end_sf=1.0, **kwargs):
+                 record_full_traj=False, t_end_sf=1.0,
+                 expanded_gaussian_curve_cpu_offload=False,
+                 tc_curve_cpu_offload=None, **kwargs):
         """
         Do weight unroll_or_load in the init method. The mismatch to weight is added later on
         after unroll_or_load is finished. Make sure the model passed in to init method has
@@ -1182,6 +1587,14 @@ class Validator(nn.Module):
         self.wrappers = wrapper
         self.record_full_traj = record_full_traj
         self.t_end_sf = t_end_sf
+        if tc_curve_cpu_offload is not None:
+            if (expanded_gaussian_curve_cpu_offload and
+                    not tc_curve_cpu_offload):
+                raise ValueError("Conflicting expanded Gaussian offload options.")
+            expanded_gaussian_curve_cpu_offload = tc_curve_cpu_offload
+        self.expanded_gaussian_curve_cpu_offload = bool(
+            expanded_gaussian_curve_cpu_offload)
+        self._gaussian_curve_stager = None
 
         self.unroll_or_load()
         self.result_path = result_path
@@ -1321,6 +1734,14 @@ class Validator(nn.Module):
                      if getattr(layer, "_tc_current_mode", False)]
         pulse_layers = [layer for layer in self.model.PcConvs
                         if isinstance(layer, TogglePulseFFFB)]
+        if self.expanded_gaussian_curve_cpu_offload:
+            owners = list(self.model.PcConvs)
+            from final_linear import AnalogLinear
+            head = getattr(self.model, "linear", None)
+            if isinstance(head, AnalogLinear) and head.expanded:
+                owners.append(head)
+            self._gaussian_curve_stager = ExpandedGaussianCurveStager(
+                self.model, owners, self.device)
         # The dense masked-convolution path uses F.conv2d, which intentionally
         # bypasses module hooks. This shape-only pass must trigger those hooks.
         for layer in tc_layers:
@@ -1341,6 +1762,11 @@ class Validator(nn.Module):
                         raise RuntimeError(
                             f"Level-3 pulse expansion incomplete: layer {idx} {name}")
                     getattr(layer, name)._toggle_pulse_edges = True
+        if self._gaussian_curve_stager is not None:
+            self._gaussian_curve_stager.finish_initialization()
+        # Expansion installs fresh MVMConv modules after the model entered eval
+        # mode. Reapply eval so inference-only fused kernels remain eligible.
+        self.model.eval()
         self._unroll_sample_inputs = None
 
         # If record full trajectory, use forward_full_steps of odeblocks.
@@ -1374,6 +1800,11 @@ class Validator(nn.Module):
 
                 _layer.forward = forward_use_full
                 _layer._orig_forward = orig_forward
+
+    def close_curve_stager(self):
+        if self._gaussian_curve_stager is not None:
+            self._gaussian_curve_stager.close()
+            self._gaussian_curve_stager = None
 
     @torch.no_grad()
     def test_unroll(self):

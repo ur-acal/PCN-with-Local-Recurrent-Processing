@@ -12,7 +12,7 @@ set -o pipefail
 source ./launch_scripts/tc_nonideality_args.sh ft || exit 2
 source ./launch_scripts/normalize_validation_mode.sh || exit 2
 mode="${mode:-default}"
-case "$mode" in default|pretrain_only|ft_only|ft_and_eval) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
+case "$mode" in default|pretrain_only|ft_only|ft_and_eval|eval_only) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
 if [[ "$mode" != default && "${TC_NONIDEALITIES:-false}" != true && "${TOGGLE_MODE:-none}" == none ]]; then
   echo 'Pipeline modes are supported only for TC nonidealities or toggle dynamics.' >&2
   exit 2
@@ -913,6 +913,10 @@ for comb in "${COMBS[@]}"; do
   IFS=$'\t' read -r comb_tag params inp_str out_str pool_str <<< "${comb}"
   COMB_TAGS+=( "${comb_tag}" )
   train_log="${LOGDIR}/${comb_tag}/train_${TRAIN_ODE_BLOCK}.log"
+  if [[ "$mode" == eval_only ]]; then
+    MODEL_NAMES_PRE+=( "" )
+    continue
+  fi
   if [[ "$mode" == ft_only || "$mode" == ft_and_eval ]]; then
     selection=best
     if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
@@ -942,8 +946,9 @@ done
 ###############################################################################
 # PHASE 3: FINETUNE all combos in parallel
 ###############################################################################
-echo "==== PHASE 3: FINETUNE (parallel over combos) ===="
 pids=()
+if [[ "$mode" != eval_only ]]; then
+echo "==== PHASE 3: FINETUNE (parallel over combos) ===="
 for i in "${!COMB_TAGS[@]}"; do
   comb_tag="${COMB_TAGS[$i]}"
   mn="${MODEL_NAMES_PRE[$i]}"
@@ -954,6 +959,9 @@ for i in "${!COMB_TAGS[@]}"; do
   finetune_one_combo_model "${comb_tag}" "${mn}" "${FT_ODE_BLOCK}" & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || ok=1; done
+else
+echo "==== PHASE 3: FINETUNE skipped (eval_only) ===="
+fi
 
 if (( ok )); then
   echo 'ERROR: fine-tuning failed; refusing to launch evaluation.' >&2

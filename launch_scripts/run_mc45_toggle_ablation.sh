@@ -253,6 +253,7 @@ python scripts/run_toggle_nonideality_ablation.py \
   --dtc_falling_edge_jitter_std "${DTC_FALLING_EDGE_JITTER_STD}" \
   --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING}" \
   --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING}" \
+  --expanded_gaussian_curve_cpu_offload "${EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD:-false}" \
   --nonlinear_R_curve_edge_chunk_size "${NONLINEAR_R_CURVE_EDGE_CHUNK_SIZE}" \
   --activation_interpolation "${ACTIVATION_INTERPOLATION}" \
   --fuse_measured_activation "${FUSE_MEASURED_ACTIVATION:-true}" \

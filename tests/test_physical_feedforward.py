@@ -582,6 +582,54 @@ def test_feedforward_validator_unroll_is_numerically_equivalent():
         expanded_output, dense_output, atol=2e-6, rtol=2e-5)
 
 
+def test_gaussian_pulse_feedforward_offload_preserves_output():
+    def build(cache_dir, offload):
+        torch.manual_seed(31)
+        model = _TinyWideResNet().eval()
+        convert_wide_resnet_to_physical(
+            model, physical_level=3, qat=True, R=50e3, C=500e-15,
+            v_dd=0.5, one_over_q=1.0, w_bits=5,
+            weight_quant_factor_bits=1)
+        package = None
+        for wrapper in iter_physical_wrappers(model):
+            if package is None:
+                package = wrapper.configure_nonlinear_R_inference(
+                    'hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv',
+                    quantity='resistance', curve_sharing='per_coupler',
+                    curve_sampling='multivariate_gaussian', curve_seed=19)
+            else:
+                wrapper.install_nonlinear_R_inference_package(package)
+        inputs = torch.randn(2, 4, 8, 8) * .01
+        loader = DataLoader(
+            TensorDataset(inputs, torch.zeros(2, dtype=torch.long)),
+            batch_size=2)
+        validator = FeedForwardCNNValidator(
+            model, cache_dir, 'cpu', loader, cache_dir,
+            expanded_gaussian_curve_cpu_offload=offload)
+        return model, inputs, validator
+
+    with tempfile.TemporaryDirectory() as baseline_dir, \
+            tempfile.TemporaryDirectory() as offload_dir:
+        baseline, inputs, _ = build(baseline_dir, False)
+        expected = baseline(inputs)
+        offloaded, _, validator = build(offload_dir, True)
+        try:
+            matrices = [
+                module for module in offloaded.modules()
+                if module.__class__.__name__ == 'MVMConv']
+            assert matrices
+            assert all(not module.training for module in matrices)
+            assert all(module._gaussian_curve_cpu is not None
+                       for module in matrices)
+            assert all(
+                module.nonlinear_R_curve_gaussian_R_normalized is None
+                for module in matrices)
+            torch.testing.assert_close(
+                offloaded(inputs), expected, rtol=0, atol=0)
+        finally:
+            validator.close_curve_stager()
+
+
 def test_model_boundary_q_scaling_preserves_bn_free_network_function():
     torch.manual_seed(11)
     inputs = torch.randn(2, 4, 8, 8) * 1e-3
