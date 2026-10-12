@@ -106,6 +106,7 @@ def parse_args():
     p.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar100")
     p.add_argument("--img_type", default="CiFAIR")
     p.add_argument("--batch_size", type=int, default=128)
+    p.add_argument("--max_eval_batches", type=int, default=0)
     p.add_argument("--expanded_weight_dir", default="./expanded_weights/feedforward")
     p.add_argument("--result_path", default="./results/feedforward_physical_eval")
     p.add_argument("--n_trials", type=int, default=1)
@@ -189,15 +190,17 @@ def parse_args():
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, max_eval_batches=0):
     total = correct = 0
     progress = tqdm(loader)
-    for inputs, targets in progress:
+    for batch_index, (inputs, targets) in enumerate(progress):
         inputs = inputs.to(device)
         targets = targets.to(device)
         correct += model(inputs).argmax(1).eq(targets).sum().item()
         total += targets.numel()
         progress.set_description("acc={:.4f}%".format(100 * correct / total))
+        if max_eval_batches > 0 and batch_index + 1 >= max_eval_batches:
+            break
     return 100 * correct / total
 
 
@@ -391,7 +394,7 @@ def evaluate_once(args):
         torch.manual_seed(args.data_seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(args.data_seed)
-    accuracy = evaluate(model, loader, device)
+    accuracy = evaluate(model, loader, device, args.max_eval_batches)
     if args.tc_feedforward:
         import json
         ref = next(model.parameters())

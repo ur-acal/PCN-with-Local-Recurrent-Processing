@@ -52,6 +52,7 @@ def parse_args():
     p.add_argument("--n_trials", type=int, default=5)
     p.add_argument("--jobs", type=int, default=1)
     p.add_argument("--test_bs", type=int, default=128)
+    p.add_argument("--max_eval_batches", type=int, default=0)
     p.add_argument("--base_seed", type=int, default=20260723)
     p.add_argument("--corner_ids", nargs="+", default=None)
     p.add_argument("--fixed_relu_mc_index", type=int, default=None)
@@ -132,6 +133,7 @@ def run_corner(args, corner, relu_indices):
         "--dataset", args.dataset,
         "--img_type", args.img_type,
         "--batch_size", str(args.test_bs),
+        "--max_eval_batches", str(args.max_eval_batches),
         "--expanded_weight_dir", args.expanded_weight_dir,
         "--result_path", str(result_dir),
         "--n_trials", str(args.n_trials),

@@ -29,6 +29,21 @@ def add_tc_arguments(parser):
         if '--'+key not in parser._option_string_actions:
             parser.add_argument('--'+key,type=kind,default=default)
 
+def resolve_eval_batch_limit(args):
+    """Resolve the legacy TC batch-limit name into the shared option."""
+    canonical = getattr(args, 'max_eval_batches', 0)
+    legacy = getattr(args, 'tc_max_eval_batches', 0)
+    if canonical < 0:
+        raise ValueError('max_eval_batches must be nonnegative (0 means full dataset).')
+    if legacy < 0:
+        raise ValueError('tc_max_eval_batches must be nonnegative (0 means full dataset).')
+    if canonical and legacy and canonical != legacy:
+        raise ValueError(
+            'Conflicting evaluation batch limits: max_eval_batches={} and '
+            'tc_max_eval_batches={}.'.format(canonical, legacy))
+    args.max_eval_batches = canonical or legacy
+    return args.max_eval_batches
+
 def wrapper_options(args, trial=None):
     result={key:getattr(args,key) for key in NOISE_KEYS}
     result.update(tc_nonidealities=True,tc_covariance_table=args.tc_covariance_table,

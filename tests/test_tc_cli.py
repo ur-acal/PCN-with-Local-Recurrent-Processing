@@ -36,6 +36,30 @@ def resolved(stage, state='1', **extra):
 
 
 class TCCommandTests(unittest.TestCase):
+    def test_eval_batch_limit_canonical_and_legacy_alias(self):
+        default = resolved(
+            'eval', MAX_EVAL_BATCHES='', TC_MAX_EVAL_BATCHES='')
+        self.assertEqual(default.max_eval_batches, 0)
+
+        canonical = resolved(
+            'eval', MAX_EVAL_BATCHES='3', TC_MAX_EVAL_BATCHES='')
+        self.assertEqual(canonical.max_eval_batches, 3)
+
+        legacy = resolved(
+            'eval', MAX_EVAL_BATCHES='', TC_MAX_EVAL_BATCHES='2')
+        self.assertEqual(legacy.max_eval_batches, 2)
+
+        base = ['ode_inference.py', '--model_dir', './inspection_only',
+                '--model_name', 'inspection_only']
+        with patch.object(
+                sys, 'argv', base + ['--tc_max_eval_batches', '4']):
+            self.assertEqual(parse_args().max_eval_batches, 4)
+        with patch.object(
+                sys, 'argv', base + ['--max_eval_batches', '2',
+                                     '--tc_max_eval_batches', '3']):
+            with self.assertRaisesRegex(ValueError, 'Conflicting evaluation'):
+                parse_args()
+
     def test_empirical_bank_forwarding(self):
         args = resolved('eval', TC_EMPIRICAL_CURVE_BANK='/tmp/tc_bank.npz')
         self.assertEqual(wrapper_options(args)['tc_empirical_curve_bank'], '/tmp/tc_bank.npz')

@@ -97,7 +97,7 @@ cmd=(
   --toggle_y_time "${TOGGLE_Y_TIME}"
   --z_over_y_time "${Z_OVER_Y_TIME:-1}"
   --enob "${ENOB:-8}"
-  --timm_aug_level "${TIMM_AUG_LEVEL:-no_aug}"
+  --timm_aug_level "${FT_TIMM_AUG_LEVEL:-${TIMM_AUG_LEVEL:-no_aug}}"
   --timm_re_prob "${TIMM_RE_PROB:-0.0}"
   --distill_method "${DISTILL_METHOD:-srrl}"
   --distill_alpha "${DISTILL_ALPHA:-0.3}"

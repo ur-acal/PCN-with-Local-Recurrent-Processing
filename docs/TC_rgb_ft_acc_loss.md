@@ -139,10 +139,11 @@ retains the same RGB teacher and pretraining recipe.
 | Stage | Status | Slurm job | Configuration |
 |---|---|---:|---|
 | Pretraining | Submitted | `2051275` | `N16_C24_n04_n15_n24` (16Layers4l5l4, 24/48/96 channels) |
-| All-on `rgb_mid` FT | Waiting for pretraining | — | State 1; **normalized student and teacher inputs**; all TC nonidealities; random-per-forward/per-spin measured ReLU |
+| All-on `rgb_mid` FT and expanded TC evaluation | Submitted | `2102423` | State 1; `N16_C24_n04_n15_n24`; **normalized student and teacher inputs**; all TC nonidealities; random-per-forward/per-spin measured ReLU |
 
-After job `2051275` completes successfully, launch the normal all-on TC FT with
-`rgb_mid` augmentation and random-per-forward/per-spin measured ReLU:
+With pretraining complete, launch the normal all-on TC FT and subsequent
+expanded TC evaluation with `rgb_mid` augmentation and
+random-per-forward/per-spin measured ReLU:
 
 ```bash
 module swap slurm slurm/24.05.0.b1
@@ -155,7 +156,7 @@ pretrain_root="./saved_ckpt_runs/tc_rgb_cifar100_state1_pcn_16L4l5l4_pretrain"
 ft_root="./saved_ckpt_runs/${run_name}"
 
 (
-  export mode=ft_only \
+  export mode=ft_and_eval \
          TC_NONIDEALITIES=true \
          TC_STATE=1 \
          TASK=cifar100 \

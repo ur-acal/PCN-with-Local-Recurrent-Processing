@@ -170,6 +170,7 @@ def parse_args():
     parser.add_argument("--output_dir", default="results/prompt2_toggle_ablation")
     parser.add_argument("--cases", nargs="+", choices=tuple(CASES), default=list(DEFAULT_CASES))
     parser.add_argument("--test_bs", type=int, default=128)
+    parser.add_argument("--max_eval_batches", type=int, default=0)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--toggle_level", type=int, choices=(2, 3), default=3)
     parser.add_argument("--toggle_n_cycles", type=int, default=5)
@@ -177,6 +178,8 @@ def parse_args():
     parser.add_argument("--toggle_fast_path", type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=True)
     parser.add_argument("--odexinit_scaling_mode",
                         choices=("approx", "direct"), default="approx")
+    parser.add_argument(
+        "--relu6_bound_mode", choices=("scaled", "rail"), default="scaled")
     parser.add_argument("--toggle_timing_mode",
                         choices=("derived", "fixed"), default="derived")
     parser.add_argument("--toggle_y_time", type=float, default=5e-9)
@@ -223,6 +226,7 @@ def parse_args():
     parser.add_argument("--k", type=float, default=1e3)
     parser.add_argument("--v_dd", type=float, default=0.1)
     parser.add_argument("--one_over_q", type=float, default=1.0)
+    parser.add_argument("--w_bits", type=int, default=5)
     parser.add_argument(
         "--input_quant_bits",
         type=lambda s: None if s.lower() in {"none", "", "auto"} else int(s),
@@ -281,8 +285,9 @@ def build_command(args, case_name):
         else "TogglePulseODEXInitFFFB"
     )
     ode_wrapper = (
-        "ToggleWrapper1State" if "full_param" in args.ckpt
-        else "ToggleQATTester1State"
+        "ToggleQATTester1State"
+        if "QAT" in args.model_name and "full_param" not in args.ckpt
+        else "ToggleWrapper1State"
     )
     command = [
         sys.executable, "-u", "ode_inference.py",
@@ -292,6 +297,7 @@ def build_command(args, case_name):
         "--task", task,
         "--img_type", img_type,
         "--test_bs", str(args.test_bs),
+        "--max_eval_batches", str(args.max_eval_batches),
         "--pc_conv", "PCConvReLU6Noisy",
         "--ode_block", ode_block,
         "--ode_wrapper", ode_wrapper,
@@ -315,7 +321,7 @@ def build_command(args, case_name):
         "--k", str(args.k),
         "--v_dd", str(args.v_dd),
         "--enob", "none" if args.enob is None else str(args.enob),
-        "--w_bits", "5",
+        "--w_bits", str(args.w_bits),
         "--weight_quant_factor_bits",
         "none" if args.weight_quant_factor_bits is None
         else str(args.weight_quant_factor_bits),
@@ -330,6 +336,7 @@ def build_command(args, case_name):
         "--toggle_time_split", str(args.toggle_time_split),
         "--toggle_fast_path", bool_arg(args.toggle_fast_path),
         "--odexinit_scaling_mode", args.odexinit_scaling_mode,
+        "--relu6_bound_mode", args.relu6_bound_mode,
         "--toggle_timing_mode", args.toggle_timing_mode,
         "--toggle_y_time", str(args.toggle_y_time),
         "--z_over_y_time", str(args.z_over_y_time),

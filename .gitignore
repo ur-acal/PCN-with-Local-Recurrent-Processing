@@ -33,6 +33,7 @@ htmlcov/
 # Generated evaluation and ablation outputs
 results/
 loss_plot/
+artifacts/
 expanded_weights/
 saved_ckpt/
 saved_ckpt_runs/

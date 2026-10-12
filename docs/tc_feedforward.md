@@ -144,8 +144,9 @@ PCN's Slurm worker uses `pipefail` and checks phase exit statuses before moving
 to FT/evaluation; missing checkpoint model names also fail visibly. With
 `TC_FEEDFORWARD=true`, CNN's local combined launcher and Slurm worker now run
 pretrain -> FT -> unrolled evaluation sequentially. They require the exact FT
-`full_param_best_ckpt.pth` (including inferred preprocessing suffixes), not a
-fallback/pretraining checkpoint. Evaluation uses the full 0906 bank and
+`full_param_{best|last}_ckpt.pth` selected by the pipeline (default final-only
+evaluation uses `full_param_last_ckpt.pth`), including inferred preprocessing
+suffixes, not a fallback/pretraining checkpoint. Evaluation uses the full 0906 bank and
 per-coupler sampling, with 10 trials by default (`N_TRIALS` overrides).
 Results default to `results/${EXP_PREFIX}_tc_eval`, with `evaluation.log` and
 per-trial accuracy/metadata. `RESULT_PATH` and `EVAL_LOG` allow explicit output
@@ -153,6 +154,68 @@ locations. Any failed stage or missing checkpoint fails the job and prevents
 dependent stages; evaluation failures propagate through `tee`. Non-TC combined
 jobs retain their existing pretrain -> FT behavior.
 No training jobs were submitted to validate these wiring changes.
+
+## Pinned RGB TC feedforward pipeline
+
+This command launches unitless pretraining, TC fine-tuning, and expanded TC
+evaluation for every listed CNN on CIFAR-10 and CIFAR-100. Pretraining retains
+its existing augmentation default; only FT uses `rgb_mid`. Accepted-step reuse
+is enabled for Dopri5 training, and the RHS-checkpoint portion is selected by
+the automatic memory guard.
+
+```bash
+module swap slurm slurm/24.05.0.b1
+
+cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
+mkdir -p ./logs/scheduler_slurm ./logs/slurm_jobs
+
+models=(
+  wrn_16_2_cifar
+  wrn_16_2_cifar_avgpool
+  wrn_16_2_cifar_nobn
+  wrn_16_2_cifar_nobn_avgpool
+  wrn_16_2_cifar_nobn_no_bias
+  wrn_16_2_cifar_nobn_no_bias_avgpool
+
+  resnet44_cifar
+  resnet44_cifar_avgpool
+  resnet44_cifar_nobn
+  resnet44_cifar_nobn_avgpool
+  resnet44_cifar_nobn_no_bias
+  resnet44_cifar_nobn_no_bias_avgpool
+
+  resnet56_cifar
+  resnet56_cifar_avgpool
+  resnet56_cifar_nobn
+  resnet56_cifar_nobn_avgpool
+  resnet56_cifar_nobn_no_bias
+  resnet56_cifar_nobn_no_bias_avgpool
+)
+
+for model in "${models[@]}"; do
+  for task in cifar10 cifar100; do
+    run_name="tc_rgb_${task}_${model}"
+
+    (
+      export mode=default \
+             TC_FEEDFORWARD=true \
+             ONE_SHOT_CONV=false \
+             MODEL_NAME="${model}" \
+             TASK="${task}" \
+             IMG_TYPE=rgb \
+             EXP_PREFIX="${run_name}" \
+             FT_TIMM_AUG_LEVEL=rgb_mid \
+             REUSE_ACCEPTED_STEP_TRAINING=true \
+             CHECKPOINT_ODE_RHS_TRAINING=true \
+             CHECKPOINT_ODE_RHS_PORTION=auto
+
+      source ./launch_scripts/slurm_search_feedforward_config.sh
+    ) > "./logs/scheduler_slurm/${run_name}.log" 2>&1 < /dev/null &
+
+    echo "${run_name}: scheduler PID $!"
+  done
+done
+```
 
 Regression coverage: `tests/test_tc_launch_alignment.py` captures actual CNN
 Slurm-to-stage commands and compares real parsed FT/evaluation defaults against

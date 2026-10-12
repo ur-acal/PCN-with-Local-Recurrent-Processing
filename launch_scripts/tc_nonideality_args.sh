@@ -65,7 +65,12 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
     TC_ARGS+=(--ode_wrapper "$tc_wrapper" --noise_level 0 --method dopri5
       --nonlinear_R_train_mode none --nonlinear_R_curve_sharing shared)
   elif [[ "$1" == eval ]]; then
-    TC_ARGS+=(--tc_max_eval_batches "${TC_MAX_EVAL_BATCHES:-0}")
+    if [[ -n "${MAX_EVAL_BATCHES:-}" && -n "${TC_MAX_EVAL_BATCHES:-}" &&
+          "${MAX_EVAL_BATCHES}" != "${TC_MAX_EVAL_BATCHES}" ]]; then
+      echo "Conflicting MAX_EVAL_BATCHES and legacy TC_MAX_EVAL_BATCHES." >&2
+      return 2
+    fi
+    TC_ARGS+=(--max_eval_batches "${MAX_EVAL_BATCHES:-${TC_MAX_EVAL_BATCHES:-0}}")
     TC_ARGS+=(--measure_coupler_energy "${MEASURE_COUPLER_ENERGY:-false}"
       --coupler_supply_voltage "${COUPLER_SUPPLY_VOLTAGE:-1.3}")
     if [[ -n "${TC_COUPLER_ENERGY_PATH:-}" ]]; then

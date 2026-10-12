@@ -1,10 +1,27 @@
 # Current PCN training and evaluation reference
 
-Pinned 2026-09-09. Read this file before constructing launch commands for the
+Pinned 2026-10-09. Read this file before constructing launch commands for the
 current physical PCN experiments. These are explicit experiment settings, NOT
 the generic launchers' defaults. Update this document when the agreed recipe
 changes. Historical `scan_test` summaries and `coupler_monte_v2` results are not
 the reference for this recipe.
+
+## Rule for deriving commands from this reference
+
+When generating a new launch command, first locate and use the exact pinned
+command in this file as the authoritative baseline; do not reconstruct it from
+memory. Trace every requested change through the launcher, forwarded arguments,
+defaults, checkpoint selection, and Python implementation, then list the
+required command-line changes before presenting the command.
+
+Copy the pinned command and modify only those listed lines, plus names and paths
+needed to prevent output collisions. Preserve every unspecified line exactly,
+including intentionally omitted arguments and default behavior: do not add
+explicit defaults, remove options, or reorganize the command. Compare the final
+command line-by-line with the pinned command and run a non-submitting dry run
+when supported. If the request is ambiguous or conflicts with the pinned
+configuration, identify the ambiguity instead of silently selecting a different
+configuration. This rule applies to every TC and toggle command in this file.
 
 ## TC RGB CIFAR-10 model launches
 
@@ -25,19 +42,19 @@ and measured pooling are enabled; slow-current and differential mismatch are
 disabled. R/Rmax/C/VDD are 10 kOhm/150 kOhm/49 fF/0.1 V; weights are 5-bit with
 no output ENOB; FT uses shared convolution with histogram curve sampling;
 expanded evaluation uses loop convolution with per-coupler nonlinear-R curves;
-and seeds default to 4096. FT uses fixed TT/25C/VDD1 MC18 measured ReLU, while
-evaluation uses the full measured bank with per-spin assignment.
+and seeds default to 4096. The pinned Slurm recipe samples the full 0906
+measured-ReLU bank once per FT forward with per-spin assignment; evaluation
+also uses the full measured bank with per-spin assignment.
 
-For local or Slurm FT, set `ACTIVATION_CORNER_MODE=random_per_forward` to sample
-a new measured ReLU curve on each forward; `per_layer` is already the sharing
-default. This mode selects the full `0906_RELU_Voltage` directory rather than
-the fixed `tt_25_1.csv` file. `run_tc_nonidealities.sh ft` forwards both
-activation-mode controls.
+For local or Slurm FT, `ACTIVATION_CORNER_MODE=random_per_forward` samples new
+measured ReLU curves on each forward. The pinned Slurm recipe also sets
+`ACTIVATION_RANDOM_CURVE_SHARING=per_spin`. This mode selects the full
+`0906_RELU_Voltage` directory rather than the fixed `tt_25_1.csv` file.
+`run_tc_nonidealities.sh ft` forwards both activation-mode controls.
 
 FT also defaults to batch 128, 140 epochs, LR 0.005, zero warmup, SRRL, the RGB
-EfficientNet-V2-L teacher, and final-only evaluation. `FT_TIMM_AUG_LEVEL=none`
-is retained below because `none` means normal timm augmentation; the launcher's
-default `no_aug` means no augmentation.
+EfficientNet-V2-L teacher, and final-only evaluation. The pinned Slurm recipe
+uses the custom `rgb_mid` augmentation level.
 
 The live-QAT weight cache and fused measured ReLU are already on automatically.
 The three explicit settings below enable accepted-step reuse, RHS checkpointing,
@@ -45,8 +62,10 @@ and automatic selection of the checkpointed layer portion.
 
 ### RGB input-normalization controls
 
-The default RGB recipe is unchanged: student and RGB teacher both use the
-dataset's CIFAR mean/std. CiFAIR/scanGFI preprocessing is unchanged.
+The generic RGB default is unchanged: student and RGB teacher both use the
+dataset's CIFAR mean/std. The pinned Slurm TC recipe below deliberately uses
+raw, uncentered RGB for both student and teacher. CiFAIR/scanGFI preprocessing
+is unchanged.
 
 | Experiment | Teacher training | Student pretrain + FT |
 |---|---|---|
@@ -173,17 +192,17 @@ module swap slurm slurm/24.05.0.b1
 cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
 mkdir -p logs/scheduler_slurm logs/slurm_jobs
 
-pipeline_mode=ft_only  # default | pretrain_only | ft_only | ft_and_eval
+pipeline_mode=default  # default | pretrain_only | ft_only | ft_and_eval
 
 for tc_state in 1 2; do
   case "$pipeline_mode" in
     default|pretrain_only)
-      run_name="tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_${pipeline_mode}_5opt_auto_none"
+      run_name="tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_${pipeline_mode}_nonorm_rgbmid_random_relu_per_spin"
       pretrain_root="./saved_ckpt_runs/${run_name}_pretrain"
       ;;
     ft_only|ft_and_eval)
-      run_name="tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_${pipeline_mode}_5opt_auto_none"
-      pretrain_root="./saved_ckpt_runs/tc_rgb_cifar10_state${tc_state}_pcn_resnet_depth_study"
+      run_name="tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_${pipeline_mode}_nonorm_rgbmid_random_relu_per_spin"
+      pretrain_root="./saved_ckpt_runs/tc_rgb_cifar10_state${tc_state}_pcn_22L6l7l6_pretrain_student_no_norm"
       ;;
     *)
       echo "Unsupported pipeline_mode: $pipeline_mode" >&2
@@ -198,10 +217,17 @@ for tc_state in 1 2; do
            TC_STATE="$tc_state" \
            TASK=cifar10 \
            IMG_TYPE=rgb \
+           NORMALIZE_STUDENT_INPUT=false \
+           CENTER_STUDENT_INPUT=false \
            EXP_PREFIX="$run_name" \
            PRETRAIN_SAVE_PATH="$pretrain_root" \
            FT_OUTPUT_SAVE_PATH="$ft_root" \
-           FT_TIMM_AUG_LEVEL=none \
+           TEACHER_CKPT=./checkpoint/efficientnet_v2_l_cifar10_rgb_OldNoTimm_MatchDistill_NoNorm.pth \
+           TEACHER_ARCH=efficientnet_v2_l \
+           TEACHER_ARCH_SOURCE=torchvision \
+           FT_TIMM_AUG_LEVEL=rgb_mid \
+           ACTIVATION_CORNER_MODE=random_per_forward \
+           ACTIVATION_RANDOM_CURVE_SHARING=per_spin \
            PCN_CHAN_0_LIST=16 \
            PCN_NUM_LAYERS_LIST=22 \
            COMB_SEL_SET=2 \
@@ -217,10 +243,18 @@ done
 ```
 
 `COMB_SEL_SET=2` selects exactly `N22_C16_n06_n17_n26`, i.e. the 6/7/6
-architecture. `NUM_COMB_PER_NUM_LAYER=3`, `MAX_TASKS_PER_GPU=1`, the teacher,
-all TC hardware settings, and fused measured ReLU are defaults and are therefore
-not repeated above. The scheduler log prints the submitted experiment and Slurm
-job ID.
+architecture. `NUM_COMB_PER_NUM_LAYER=3`, `MAX_TASKS_PER_GPU=1`, all TC hardware
+settings, and fused measured ReLU are defaults and are therefore not repeated
+above. For `ft_only` or `ft_and_eval`, the stated pretraining root
+must contain a completed matching unnormalized-input checkpoint. The scheduler
+log prints the submitted experiment and Slurm job ID.
+
+TC pretraining already receives five warmup epochs from the launcher. FT remains
+at zero warmup: current CIFAR-10 TC FT completed successfully with this setting.
+The historical division-by-zero failure came from the corrected noise-generation
+bug, while the separate batch-128 OOM still occurred with warmup. Consequently,
+warmup is neither required for current FT stability nor a remedy for its memory
+use.
 
 ### Active TC non-idealities: FT and expanded evaluation
 
@@ -466,21 +500,34 @@ Source trail checked for this audit:
   [measured pooling](../measured_pooling.py), and
   [input quantization](../input_preprocessing.py).
 
-## Main-model SLURM training: measured-ReLU pretrain then fixed-ReLU FT
+## Main-model SLURM training: measured-ReLU pretrain then corner-coupled FT
 
 Run from ScAN-PCN with a fresh shell, or clear stale experiment overrides first.
 In particular, inherited ACTIVATION_CURVE_PATH or ACTIVATION_CORNER can override
 the intended typical curve. Keep the normal environment/PATH; local dataset
 initialization requires `uv` as well as scanbase Python.
 
+For CiFAIR-10 launches derived from this toggle pipeline, use five warmup epochs
+in both stages by setting `WARMUP_PRETRAIN=5` and `WARMUP_FT=5`.
+
 ```bash
 # Reference architecture:
-#   C36->72, stage depths 8:10, pooling before expansion.
-#   Final linear layer has no bias and is analog (LINEAR_BIAS=false).
-#   Measured 0906 MC18 ReLU is used during pretraining and fixed-ReLU FT.
-#   All ReLUs, including the final ReLU, use the measured 0906 curve.
+#   C24->48->96, stage depths 4:5:4, pooling before each expansion.
+#   Final linear layer is digital with 0.5-LSB noise and no bias.
+#   Pretraining uses the fixed measured 0906 MC18 ReLU.
+#   FT samples one hardware corner per forward; nonlinear-R, measured pooling,
+#   and random-per-forward per-spin measured ReLUs all use that corner.
+#   All ReLUs, including the final ReLU, use measured 0906 curves.
 #
 # Architecture alternatives:
+#
+# C36->72 two-stage, stage depths 8:10, pooling before expansion:
+#   EXP_PREFIX=...C36_72_8_10...
+#   SEARCH_ARCH=two_stage_fixed
+#   PCN_CHAN_0_LIST=36
+#   PCN_NUM_LAYERS_LIST="8:10"
+#   TWO_STAGE_POOL_POSITION=before_expansion
+#   NUM_COMB_PER_NUM_LAYER=1
 #
 # C32->64 with more layers:
 #   EXP_PREFIX=...twoStage_C32_64_poolPreExp_pullbackDirect...
@@ -504,7 +551,7 @@ mkdir -p logs/scheduler_slurm
   export TOGGLE_MODE=odexinit \
          TASK=cifar100 \
          IMG_TYPE=CiFAIR \
-         EXP_PREFIX=C100_C36_72_8_10_allReLU_analog_biasfalse \
+         EXP_PREFIX=C100_C96L16_cc_randSpin_full \
          TEACHER_CKPT=./checkpoint/efficientnet_v2_l_cifar100_CiFAIR_OldNoTimm_MatchDistill.pth \
          ADAPT_PIL_TEACHER=false \
          DISTILL_METHOD=srrl \
@@ -526,25 +573,36 @@ mkdir -p logs/scheduler_slurm
          ENOB=none \
          UNITLESS_MEASURED_PULLBACK_MODE=direct \
          MEASURED_ACTIVATION_SCOPE=all \
-         SEARCH_ARCH=two_stage_fixed \
-         PCN_CHAN_0_LIST=36 \
-         PCN_NUM_LAYERS_LIST="8:10" \
-         TWO_STAGE_POOL_POSITION=before_expansion \
-         FINAL_HEAD_TYPE="analog" \
+         PRETRAIN_ACTIVATION_CORNER_MODE=fixed \
+         ACTIVATION_CORNER_MODE=random_per_forward \
+         ACTIVATION_RANDOM_CURVE_SHARING=per_spin \
+         FT_CORNER_COUPLED_SAMPLING=true \
+         SEARCH_ARCH=default \
+         PCN_CHAN_0_LIST=24 \
+         PCN_NUM_LAYERS_LIST=16 \
+         FINAL_HEAD_TYPE="digital" \
+         FINAL_ADC_NOISE_LSB=0.5 \
          LINEAR_BIAS=false \
-         NUM_COMB_PER_NUM_LAYER=1
+         NUM_COMB_PER_NUM_LAYER=2 \
+         COMB_SEL_SET=2
 
   source ./launch_scripts/slurm_search_config.sh
-) > logs/scheduler_slurm/cifair100_C36_72_8_10_allReLU_analog_biasfalse.log 2>&1 < /dev/null &
+) > logs/scheduler_slurm/cifair100_C96L16_cc_randSpin_full.log 2>&1 < /dev/null &
 
-echo "C36->72 8:10 scheduler PID: $!"
+echo "C96L16 corner-coupled randSpin scheduler PID: $!"
 ```
 
 `UNITLESS_MEASURED_PULLBACK_MODE=direct` automatically enables measured
 activation during pretraining; no separate `ENABLE_PRETRAIN_MEASURED_ACTIVATION` export is needed.
-`ACTIVATION_CORNER_MODE` defaults to fixed. Pretraining and FT select
-`0906_RELU_Voltage/tt_25_1.csv`, MC18, and training-time validation uses the
-same fixed curve.
+Pretraining selects fixed `0906_RELU_Voltage` MC18. During FT, every forward
+samples one corner shared by nonlinear-R, measured pooling, and measured ReLU;
+the ReLU then assigns curves from that corner per spin. Training-time validation
+uses the same random-per-forward corner-coupled mechanism.
+
+Classifier head type also affects pretraining: with this fixed timing, analog
+pretraining applies a head gain of `T_y/(RC)=0.4`, while digital pretraining does
+not. Reusing an analog-pretrained checkpoint for digital FT loads its weights
+correctly but introduces a `2.5x` classifier-logit scale change at the FT boundary.
 
 The automatic post-FT evaluation pins two complementary references with 5 trials
 each: FS_V0_T0 as the adverse corner and FS_V2_T1 as the average corner. Reporting
@@ -553,7 +611,7 @@ optimistic representation of corner robustness.
 
 ### Provisional severe corner-interaction diagnostic (2026-10-07)
 
-The pinned rerun C36→72, 8:10 checkpoint shows a severe interaction between
+The previous rerun C36→72, 8:10 checkpoint showed a severe interaction between
 the selected corner's measured ReLU and nonlinear-R/pooling curves. These are
 controlled **four-batch (512-image), one-seed diagnostics**, not completed
 10-trial corner accuracies:
@@ -586,10 +644,11 @@ assigning a population-level effect size.
 
 ## Main-model 45-corner SLURM evaluation
 
-The pinned evaluation checkpoint is the **rerun** C36→72, 8:10 model with an
-analog final classifier, no classifier bias, and all ReLUs measured, including
-the final ReLU. These settings are restored from checkpoint metadata when no
-overrides are exported; no extra head/activation arguments are needed.
+The pinned evaluation checkpoint is the **last** checkpoint of the
+C24→48→96, 4:5:4 `randSpin` model. It has a digital final classifier with
+0.5-LSB noise, no classifier bias, and all ReLUs measured, including the final
+ReLU. These settings are restored from checkpoint metadata when no overrides
+are exported; no extra head/activation arguments are needed.
 
 The physical evaluation configuration is unchanged. The evaluator reconstructs
 the architecture from `MODEL_NAME`; only `MODEL_NAME`, `MODEL_DIR`, output root,
@@ -599,17 +658,18 @@ do not imply identical checkpoints. `UNITLESS_MEASURED_PULLBACK_MODE` is a
 pretraining-only transformation and must not be added here.
 
 ```bash
-MODEL_NAME=TIMMQAT5bNoneaNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_20Layers8l10l0_1Pool9_srrlDistill_a0p3_t2p0_CiFAIR_1REP
+MODEL_NAME=TIMMQAT5bNoneaNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_CiFAIR_1REP
 
 mkdir -p logs/scheduler_slurm
 
 (
   export SBATCH_TIMELIMIT=12:00:00 \
          N_TRIALS=10 \
-         N_SERVERS=9 \
-         OUTPUT_ROOT=results/C100_C36_72_8_10_allReLU_analog_biasfalse_rerun_default45 \
+         N_SERVERS=4 \
+         OUTPUT_ROOT=results/C100_C96L16_cc_randSpin_last_default45 \
          MODEL_NAME="${MODEL_NAME}" \
-         MODEL_DIR=saved_ckpt_runs/C100_C36_72_8_10_allReLU_analog_biasfalse_adc05_rerun_iq12_toggle_odexinit \
+         MODEL_DIR=saved_ckpt_runs/C100_C96L16_cc_randSpin_iq12_toggle_odexinit \
+         CKPT=last \
          WEIGHT_QUANT_FACTOR_BITS=1 \
          FULL_45_CORNER_C=500e-15 \
          MC_COUPLER_NONLINEAR_VARIATION_SOURCE=coupler_full_range \
@@ -628,9 +688,9 @@ mkdir -p logs/scheduler_slurm
          ENABLE_MEASURED_POOLING=true \
          ENOB=none
   source ./launch_scripts/slurm_run_mc45_toggle_ablation.sh
-) > logs/scheduler_slurm/slurm_mc45_C100_C36_72_8_10_allReLU_analog_biasfalse_rerun.log 2>&1 < /dev/null &
+) > logs/scheduler_slurm/slurm_mc45_C100_C96L16_cc_randSpin_last.log 2>&1 < /dev/null &
 
-echo "C36->72 8:10 MC45 scheduler PID: $!"
+echo "randSpin last-checkpoint MC45 scheduler PID: $!"
 ```
 
 Optional total summing-current limits: add this export inside the subshell
@@ -651,11 +711,14 @@ for clamped runs. For the previous two-corner comparison, additionally set
 `CORNER_IDS="FS_V2_T1 SF_V1_T1"`, `N_TRIALS=1`, and `BASE_SEED=20260723`.
 The committed stage-p99 table records its source provenance: it was derived
 from the older non-rerun checkpoint's FS_V2_T1 training-current statistics.
-Using it with the pinned rerun checkpoint is therefore an intentional
+Using it with the previous C36→72 rerun checkpoint was therefore an intentional
 cross-checkpoint hardware-limit experiment, not a same-checkpoint limit fit.
 
-Below is a command that runs two corner evaluations locally using the last
-checkpoint. Omit `CKPT=last` to retain the launcher's default `best` checkpoint.
+Below is the local two-corner subset of the pinned MC45 run. It uses the same
+checkpoint, ten trials, base seed, evaluator, and physical settings. Because
+corner seeds use each corner's index in the complete 45-corner catalog, its
+`FS_V0_T0` and `FS_V2_T1` rows use the corresponding full-run logic. Omit
+`CKPT=last` to retain the launcher's default `best` checkpoint.
 
 ```bash
 conda activate scanbase
@@ -663,13 +726,13 @@ cd /home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN
 mkdir -p logs/local_runs
 
 (
-  export MODEL_NAME=TIMMQAT5bNoneaNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S72C_0.25Dropout_20Layers8l10l0_1Pool9_srrlDistill_a0p3_t2p0_CiFAIR_1REP \
-         MODEL_DIR=saved_ckpt_runs/C100_C36_72_8_10_allReLU_analog_biasfalse_adc05_rerun_iq12_toggle_odexinit \
+  export MODEL_NAME=TIMMQAT5bNoneaNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_CiFAIR_1REP \
+         MODEL_DIR=saved_ckpt_runs/C100_C96L16_cc_randSpin_iq12_toggle_odexinit \
          CKPT=last \
-         N_TRIALS=1 \
+         N_TRIALS=10 \
          BASE_SEED=20260723 \
-         CORNER_IDS="FS_V2_T1 SF_V1_T1" \
-         OUTPUT_DIR=results/current_limits_60uA_last \
+         CORNER_IDS="FS_V0_T0 FS_V2_T1" \
+         OUTPUT_DIR=results/C100_C96L16_cc_randSpin_last_FS_V0_T0_FS_V2_T1 \
          WEIGHT_QUANT_FACTOR_BITS=1 \
          FULL_45_CORNER_C=500e-15 \
          MC_COUPLER_NONLINEAR_VARIATION_SOURCE=coupler_full_range \
@@ -688,10 +751,10 @@ mkdir -p logs/local_runs
          ENABLE_MEASURED_POOLING=true \
          ENOB=none \
          IS_SLURM=0 \
-         RHS_CURRENT_SUMMARY=/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/summing_current_limit/current_limits_all_pm60uA.md
+         DATALOADER_NUM_WORKERS=2
 
   nohup bash ./launch_scripts/run_mc45_toggle_ablation.sh
-) > logs/local_runs/current_limits_60uA_last.log 2>&1 < /dev/null &
+) > logs/local_runs/C100_C96L16_cc_randSpin_last_FS_V0_T0_FS_V2_T1.log 2>&1 < /dev/null &
 
 echo "Evaluation PID: $!"
 ```
@@ -746,10 +809,11 @@ fusion was reverified against the original unoptimized FF-fixed path on 1,280
 inputs: all predictions matched, maximum logit difference 1.0014e-5, and 4.49x
 forward speedup. Details: `results/toggle_reuse_removal/summary.md`.
 
-ReLU and coupler assignments are sampled from the selected corner and held
-fixed for each dataset trial, then resampled for the next trial. Pooling uses
-the same selected coupler source. The checkpoint loaded is `_best_ckpt.pth`
-(baked quantized weights), not `_full_param_best_ckpt.pth`.
+In that historical matched replay, ReLU and coupler assignments were sampled
+from the selected corner and held fixed for each dataset trial, then resampled
+for the next trial. Pooling used the same selected coupler source. The checkpoint
+loaded was `_best_ckpt.pth` (baked quantized weights), not
+`_full_param_best_ckpt.pth`.
 
 For local evaluation, activate scanbase and use the SAME physical/model/source
 exports above, replacing OUTPUT_ROOT with OUTPUT_DIR and the source command

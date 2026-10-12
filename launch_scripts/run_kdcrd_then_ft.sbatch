@@ -5,7 +5,6 @@
 #SBATCH --cpus-per-task=16            # modest CPU request so the node can be shared
 #SBATCH --gres=gpu:1                  # exactly ONE GPU; allows packing on 4-GPU nodes
 #SBATCH -t 90:10:00
-#SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082
 #SBATCH -o /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/slurm_jobs/slurm_%j.out
 
 # Preserve explicit wait/status handling; propagate Python failures through tee.
@@ -599,10 +598,9 @@ eval_one_combo_model() {
   local dir="${EVAL_BASE}/${comb_tag}/${tag}/${name}_method_${METHOD}_tol_${TOL}"
   mkdir -p "$dir"
 
-  local ckpt="best"
-  if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
-    ckpt="last"
-  fi
+  # Evaluate the completed FT trajectory by default.  This is deliberately
+  # independent of FINAL_EVAL_ONLY, which controls validation during training.
+  local ckpt="${POST_FT_EVAL_CKPT:-last}"
 
   local test_bs=128
 

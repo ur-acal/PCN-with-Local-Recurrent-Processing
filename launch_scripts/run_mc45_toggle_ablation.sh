@@ -36,17 +36,20 @@ MODEL_NAME="${MODEL_NAME:-TIMMQAT5b8aNT0p0mulTIMMPCNetNoBatchNorm_PCConvReLU6_0.
 MODEL_DIR="${MODEL_DIR:-saved_ckpt_runs/coupler_v2_cifar100_qf1}"
 CKPT="${CKPT:-best}"
 N_TRIALS="${N_TRIALS:-5}"
+MAX_EVAL_BATCHES="${MAX_EVAL_BATCHES:-0}"
 BASE_SEED="${BASE_SEED:-20260723}"
 CORNER_IDS="${CORNER_IDS:-}"
 FIXED_RELU_MC_INDEX="${FIXED_RELU_MC_INDEX:-}"
 FIXED_COUPLER_MC_INDEX="${FIXED_COUPLER_MC_INDEX:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-results/coupler_monte_v2_cifar100_qf1}"
+W_BITS="${W_BITS:-5}"
 WEIGHT_QUANT_FACTOR_BITS="${WEIGHT_QUANT_FACTOR_BITS:-1}"
 ENOB="${ENOB:-8}"
 TOGGLE_TIMING_MODE="${TOGGLE_TIMING_MODE:-derived}"
 TOGGLE_N_CYCLES="${TOGGLE_N_CYCLES:-5}"
 TOGGLE_TIME_SPLIT="${TOGGLE_TIME_SPLIT:-0.5}"
 TOGGLE_FAST_PATH="${TOGGLE_FAST_PATH:-true}"
+RELU6_BOUND_MODE="${RELU6_BOUND_MODE:-scaled}"
 TOGGLE_Y_TIME="${TOGGLE_Y_TIME:-5e-9}"
 Z_OVER_Y_TIME="${Z_OVER_Y_TIME:-3}"
 V_DD="${V_DD:-0.1}"
@@ -144,9 +147,11 @@ mkdir -p "${OUTPUT_DIR}"
   echo "toggle_n_cycles=${TOGGLE_N_CYCLES}"
   echo "toggle_time_split=${TOGGLE_TIME_SPLIT}"
   echo "toggle_fast_path=${TOGGLE_FAST_PATH}"
+  echo "relu6_bound_mode=${RELU6_BOUND_MODE}"
   echo "toggle_y_time=${TOGGLE_Y_TIME}"
   echo "z_over_y_time=${Z_OVER_Y_TIME}"
   echo "n_trials=${N_TRIALS}"
+  echo "max_eval_batches=${MAX_EVAL_BATCHES}"
   echo "dataloader_num_workers=${DATALOADER_NUM_WORKERS}"
   echo "base_seed=${BASE_SEED}"
   echo "corner_ids=${CORNER_IDS:-all}"
@@ -154,6 +159,7 @@ mkdir -p "${OUTPUT_DIR}"
   echo "fixed_coupler_mc_index=${FIXED_COUPLER_MC_INDEX:-none}"
   echo "relu_curve_selection=${RELU_CURVE_SELECTION}"
   echo "output_dir=${OUTPUT_DIR}"
+  echo "w_bits=${W_BITS}"
   echo "mc_45_corner_dir=${MC_45_CORNER_DIR}"
   echo "room_temperature_c=${ROOM_TEMPERATURE_C}"
   echo "C=${FULL_45_CORNER_C}"
@@ -220,17 +226,20 @@ python scripts/run_toggle_nonideality_ablation.py \
   --ckpt "${CKPT}" \
   --output_dir "${OUTPUT_DIR}" \
   --test_bs 128 \
+  --max_eval_batches "${MAX_EVAL_BATCHES}" \
   --jobs 1 \
   --toggle_level 3 \
   --toggle_n_cycles "${TOGGLE_N_CYCLES}" \
   --toggle_time_split "${TOGGLE_TIME_SPLIT}" \
   --toggle_fast_path "${TOGGLE_FAST_PATH}" \
   --odexinit_scaling_mode direct \
+  --relu6_bound_mode "${RELU6_BOUND_MODE}" \
   --toggle_timing_mode "${TOGGLE_TIMING_MODE}" \
   --toggle_y_time "${TOGGLE_Y_TIME}" \
   --z_over_y_time "${Z_OVER_Y_TIME}" \
   --v_dd "${V_DD}" \
   --one_over_q "${ONE_OVER_Q}" \
+  --w_bits "${W_BITS}" \
   --weight_quant_factor_bits "${WEIGHT_QUANT_FACTOR_BITS}" \
   --enob "${ENOB}" \
   --R_max none \

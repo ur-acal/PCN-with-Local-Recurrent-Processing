@@ -3436,7 +3436,8 @@ class LSQWeight(SymQuantizeWeight):
 
 
 class ODEWrapperRC(nn.Module):
-    def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15, v_dd=1.0, patch=True, **kwargs):
+    def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15,
+                 v_dd=1.0, patch=True, relu6_bound_mode="scaled", **kwargs):
         super().__init__()
         self.ode_block = ode_block
         self.ode_block._physical_coordinate_wrapper = True
@@ -3444,6 +3445,10 @@ class ODEWrapperRC(nn.Module):
         self.R = R
         self.C = C
         self.v_dd = v_dd
+        self.relu6_bound_mode = str(relu6_bound_mode).lower()
+        if self.relu6_bound_mode not in {"scaled", "rail"}:
+            raise ValueError(
+                "relu6_bound_mode must be 'scaled' or 'rail'.")
 
         setattr(self.ode_block, "R", R)
         setattr(self.ode_block, "C", C)
@@ -4671,7 +4676,9 @@ class ToggleWrapper1State(ODEWrapper1State):
             self._configure_measured_activation()
             return
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+            if self.relu6_bound_mode == "rail":
+                upper = self.v_dd
+            elif isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
                 if self.ode_block.odexinit_scaling_mode == "direct":
                     upper = min(6 * self.q, self.v_dd)
                 else:
@@ -4688,7 +4695,9 @@ class ToggleWrapper1State(ODEWrapper1State):
             return
         act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
         if "relu6" in act_fn_cls or "relux" in act_fn_cls:
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+            if self.relu6_bound_mode == "rail":
+                upper = self.v_dd
+            elif isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
                 if self.ode_block.odexinit_scaling_mode == "direct":
                     upper = min(6 * self.q, self.v_dd)
                 else:
@@ -4754,7 +4763,9 @@ class ToggleQATWrapper1State(QATWrapper1State):
             self._configure_measured_activation()
             return
         if "relu6" in self.ode_block.act_fn.__class__.__name__.lower():
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+            if self.relu6_bound_mode == "rail":
+                upper = self.v_dd
+            elif isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
                 if self.ode_block.odexinit_scaling_mode == "direct":
                     upper = min(6 * self.q, self.v_dd)
                 else:
@@ -4771,7 +4782,9 @@ class ToggleQATWrapper1State(QATWrapper1State):
             return
         act_fn_cls = self.ode_block.act_fn.__class__.__name__.lower()
         if "relu6" in act_fn_cls or "relux" in act_fn_cls:
-            if isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
+            if self.relu6_bound_mode == "rail":
+                upper = self.v_dd
+            elif isinstance(self.ode_block, (ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):
                 if self.ode_block.odexinit_scaling_mode == "direct":
                     upper = min(6 * self.q, self.v_dd)
                 else:

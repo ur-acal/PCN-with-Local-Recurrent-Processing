@@ -42,7 +42,8 @@ def base_model(bias=True, measured_activation_scope="pc_only",
     return model.cpu()
 
 
-def physical(model, legacy=False, measured=False, pulse=False, qat=True):
+def physical(model, legacy=False, measured=False, pulse=False, qat=True,
+             one_over_q=5, relu6_bound_mode="scaled"):
     make_ode_block(model, ode_block=TogglePulseODEXInitFFFB if pulse else ToggleODEXInitFFFB,
                    method="euler", t_end=1.75, n_steps=5, tol=1e-4,
                    toggle_timing_mode="fixed", toggle_y_time=10e-9,
@@ -51,7 +52,8 @@ def physical(model, legacy=False, measured=False, pulse=False, qat=True):
     model, wrappers = wrap_ode_block(
         model, ode_wrapper=(TogglePulseQATWrapper1State if pulse else
                             ToggleQATWrapper1State if qat else ToggleWrapper1State),
-        R=50e3, C=500e-15, v_dd=.5, one_over_q=5, w_bits=5,
+        R=50e3, C=500e-15, v_dd=.5, one_over_q=one_over_q, w_bits=5,
+        relu6_bound_mode=relu6_bound_mode,
         weight_quant_factor_bits=1, thermal_noise=False,
         enable_measured_activation=measured,
         activation_curve_path=str(ROOT / "hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv"),
@@ -70,6 +72,20 @@ def physical(model, legacy=False, measured=False, pulse=False, qat=True):
         curve_path=str(ROOT / "hardware_data/mc_45_corners/coupler_full_range/tt_25_1.csv") if measured else None,
         nominal_R=50e3, seed=19, training_curve_mode="exact_curve")
     return model, wrappers
+
+
+def test_ideal_relu6_can_use_positive_voltage_rail():
+    scaled, _ = physical(
+        base_model(), qat=False, one_over_q=128,
+        relu6_bound_mode="scaled")
+    rail, _ = physical(
+        base_model(), qat=False, one_over_q=128,
+        relu6_bound_mode="rail")
+    value = torch.tensor(1.0)
+    torch.testing.assert_close(
+        scaled.PcConvs[0].act_fn(value), torch.tensor(6 * 0.5 / 128))
+    torch.testing.assert_close(
+        rail.PcConvs[0].act_fn(value), torch.tensor(0.5))
 
 
 @pytest.mark.parametrize("srrl", [False, True])

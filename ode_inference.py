@@ -158,6 +158,10 @@ def parse_args():
     parser.add_argument("--odexinit_scaling_mode", choices=("approx", "direct"),
                         default="approx",
                         help="Use legacy k-based or direct RC ODEXInit toggle timing.")
+    parser.add_argument(
+        "--relu6_bound_mode", choices=("scaled", "rail"), default="scaled",
+        help="Use the trained ReLU6 bound (6q) or clamp the ideal activation "
+             "at the positive voltage rail. Measured activation is unaffected.")
     parser.add_argument("--enable_spin_variation", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False)
     parser.add_argument("--sigma_spin", type=float, default=0.10)
@@ -285,11 +289,14 @@ def parse_args():
     parser.add_argument("--hw_val_inp", type=lambda s: None if s.lower() in {"none", ""} else s, default="")
     parser.add_argument("--valid_samples", type=int, default=20,
                         help="Number of samples used for validation")
+    parser.add_argument("--max_eval_batches", type=int, default=0,
+                        help="Stop accuracy evaluation after this many batches; 0 uses all batches")
     parser.add_argument("--valid_select_layer", type=int, default=6,
                         help="Layer used to rank validation samples by trajectory change")
-    from tc_cli import add_tc_arguments, validate_tc
+    from tc_cli import add_tc_arguments, resolve_eval_batch_limit, validate_tc
     add_tc_arguments(parser)
     args = parser.parse_args()
+    resolve_eval_batch_limit(args)
     validate_tc(args, inference=True)
     return args
 
@@ -493,6 +500,8 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                       "weight_quant_factor_bits": args.weight_quant_factor_bits,
                       "enob": args.enob, "w_quant_mode": args.w_quant_mode,
                       "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                      **({"relu6_bound_mode": args.relu6_bound_mode}
+                         if args.relu6_bound_mode != "scaled" else {}),
                       "thermal_noise": args.thermal_noise, # Todo: Add thermal noise in validation?
                       "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
                       "nonlinear_R_mc_curve_index": None,
@@ -635,6 +644,8 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                       "v_dd": args.v_dd, "w_bits": args.w_bits,
                       "weight_quant_factor_bits": args.weight_quant_factor_bits,
                       "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                      **({"relu6_bound_mode": args.relu6_bound_mode}
+                         if args.relu6_bound_mode != "scaled" else {}),
                       "w_quant_mode": args.w_quant_mode, "thermal_noise": args.thermal_noise,
                       "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
                       "nonlinear_R_mc_curve_index": None,
@@ -901,6 +912,8 @@ def run_ode_inference(linear_study=None):
                           "v_dd": args.v_dd, "w_bits": args.w_bits,
                           "weight_quant_factor_bits": args.weight_quant_factor_bits,
                           "enob": args.enob, "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
+                          **({"relu6_bound_mode": args.relu6_bound_mode}
+                             if args.relu6_bound_mode != "scaled" else {}),
                           "nonlinear_R": args.nonlinear_R, "nonlinear_R_table": args.nonlinear_R_table,
                           "nonlinear_R_mc_curve_index": None,
                           "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
@@ -1127,8 +1140,8 @@ def run_ode_inference(linear_study=None):
 
                         running_acc = 100.0 * correct / total
                         pbar.set_postfix(acc=f"{running_acc:.2f}%")
-                        if (args.tc_nonidealities and args.tc_max_eval_batches > 0
-                                and batch_idx + 1 >= args.tc_max_eval_batches):
+                        if (args.max_eval_batches > 0
+                                and batch_idx + 1 >= args.max_eval_batches):
                             break
 
                     # Calculate the accuracy
