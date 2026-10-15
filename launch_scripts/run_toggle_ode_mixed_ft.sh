@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 
 #######################################################
 # An example launch
@@ -85,6 +86,9 @@ ACTIVATION_RANDOM_CURVE_SHARING="${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}"
 MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
 ENABLE_MEASURED_POOLING="${ENABLE_MEASURED_POOLING:-false}"
 NONLINEAR_R_TABLE="${NONLINEAR_R_TABLE:-coupler_monte}"
+if [[ "${NONLINEAR_R_TABLE}" != */* ]]; then
+  NONLINEAR_R_TABLE="./hardware_data/mc_45_corners/${NONLINEAR_R_TABLE}"
+fi
 NONLINEAR_R_TRAIN_MODE="${NONLINEAR_R_TRAIN_MODE:-exact_curve}"
 ENABLE_NONLINEAR_R="${ENABLE_NONLINEAR_R:-true}"
 if [[ "${MC_RELU_MONTE_CARLO_SOURCE%/}" == "0906_RELU_Voltage" ]]; then
@@ -119,7 +123,7 @@ if [[ "${NONLINEAR_R_TRAIN_MODE:-none}" != "none" ]]; then
 fi
 NONLINEAR_R_TRAIN_ARGS=(
   --nonlinear_R "${ENABLE_NONLINEAR_R:-false}"
-  --nonlinear_R_table "./hardware_data/mc_45_corners/${NONLINEAR_R_TABLE}"
+  --nonlinear_R_table "${NONLINEAR_R_TABLE}"
   --nonlinear_R_mc_quantity "${NONLINEAR_R_MC_QUANTITY:-conductance}"
   --nonlinear_R_curve_sharing "${NONLINEAR_R_CURVE_SHARING:-shared}"
   --nonlinear_R_curve_seed "${NONLINEAR_R_CURVE_SEED:-none}"

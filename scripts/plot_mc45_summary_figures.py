@@ -227,15 +227,16 @@ def plot_violin(results, output_dir, prefix, limits, highlight_corner,
     save_figure(fig, output_dir, filename, output_format)
 
 
-def _create_pvt_axes(layout):
+def _create_pvt_axes(layout, height_scale=1.0):
     if layout == "horizontal":
-        fig, axes = plt.subplots(1, 5, figsize=(15.5, 4.8), sharey=True)
+        fig, axes = plt.subplots(
+            1, 5, figsize=(15.5, 4.8 * height_scale), sharey=True)
         return fig, list(axes)
 
     # Both compact layouts use a six-column GridSpec. Three panels occupy
     # two columns each; the shorter two-panel row occupies columns 1:3 and
     # 3:5, centering it without a visible empty subplot.
-    fig = plt.figure(figsize=(10.0, 7.0))
+    fig = plt.figure(figsize=(10.0, 7.0 * height_scale))
     grid = fig.add_gridspec(2, 6, hspace=0.38, wspace=0.50)
     three_panel_row = [fig.add_subplot(grid[0, 0:2]),
                        fig.add_subplot(grid[0, 2:4]),
@@ -257,7 +258,8 @@ def _create_pvt_axes(layout):
 
 
 def plot_pvt_errorbars(results, trials, output_dir, prefix, layout,
-                       output_format, red_reference, green_reference):
+                       output_format, red_reference, green_reference,
+                       fixed_y_limits=None, height_scale=1.0):
     missing_trials = sorted(set(results) - set(trials))
     if missing_trials:
         raise ValueError("Missing per-trial data for {}".format(
@@ -267,9 +269,13 @@ def plot_pvt_errorbars(results, trials, output_dir, prefix, layout,
     ])
     reference_values = np.array([red_reference, green_reference],
                                 dtype=float)
-    y_limits = (math.floor(min(trial_values.min(), reference_values.min())),
-                math.ceil(max(trial_values.max(), reference_values.max())))
-    fig, axes = _create_pvt_axes(layout)
+    if fixed_y_limits is None:
+        y_limits = (
+            math.floor(min(trial_values.min(), reference_values.min())),
+            math.ceil(max(trial_values.max(), reference_values.max())))
+    else:
+        y_limits = tuple(fixed_y_limits)
+    fig, axes = _create_pvt_axes(layout, height_scale)
     voltage_positions = np.arange(len(VOLTAGE_ORDER), dtype=float)
     temperature_offsets = (-0.18, 0.0, 0.18)
 
@@ -346,7 +352,7 @@ def plot_pvt_errorbars(results, trials, output_dir, prefix, layout,
 
 
 def plot_isolated_errorbar(results, trials, output_dir, prefix, corner,
-                           output_format, y_limits=None):
+                           output_format, y_limits=None, height_scale=1.0):
     """Render one corner's trials and mean/std error bar on a blank page."""
     if corner not in results or corner not in trials:
         raise ValueError("Unknown or missing corner data: {}".format(corner))
@@ -356,7 +362,8 @@ def plot_isolated_errorbar(results, trials, output_dir, prefix, corner,
 
     # Match the full horizontal plot's panel height and vertical margins so
     # identical accuracy differences have identical rendered distances.
-    fig, ax = plt.subplots(figsize=(2.9, 4.8), facecolor="white")
+    fig, ax = plt.subplots(
+        figsize=(2.9, 4.8 * height_scale), facecolor="white")
     ax.set_facecolor("white")
     x = np.zeros(len(values))
     color = TEMPERATURE_COLORS[TEMPERATURE_ORDER.index(corner[-2:])]
@@ -405,6 +412,11 @@ def parse_args():
                         help="Red dashed reference accuracy")
     parser.add_argument("--green_reference", type=float,
                         help="Green dashed reference accuracy")
+    parser.add_argument("--pvt_y_range", nargs=2, type=float,
+                        metavar=("MIN", "MAX"),
+                        help="Fixed shared y-range for the PVT plot")
+    parser.add_argument("--pvt_height_scale", type=float, default=1.0,
+                        help="Scale the PVT figure height without changing width")
     parser.add_argument("--isolated_corner",
                         help="Also render only this corner's trials/error bar")
     parser.add_argument("--isolated_y_range", nargs=2, type=float,
@@ -445,11 +457,13 @@ def main():
     if args.red_reference is not None:
         plot_pvt_errorbars(results, trials, args.output_dir, args.prefix,
                            layout, args.output_format, args.red_reference,
-                           args.green_reference)
+                           args.green_reference, args.pvt_y_range,
+                           args.pvt_height_scale)
     if args.isolated_corner:
         plot_isolated_errorbar(results, trials, args.output_dir, args.prefix,
                                args.isolated_corner, args.output_format,
-                               args.isolated_y_range)
+                               args.isolated_y_range,
+                               args.pvt_height_scale)
 
 
 if __name__ == "__main__":

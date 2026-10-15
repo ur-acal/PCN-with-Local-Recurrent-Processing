@@ -111,6 +111,15 @@ def parse_args():
     p.add_argument("--result_path", default="./results/feedforward_physical_eval")
     p.add_argument("--n_trials", type=int, default=1)
     p.add_argument("--physical_level", type=int, choices=(2, 3), default=3)
+    p.add_argument("--physical", type=str2bool, default=True)
+    p.add_argument(
+        "--checkpoint_kind",
+        choices=("auto", "digital", "unitless_physical", "physical_flat",
+                 "physical_full_param"),
+        default="auto",
+        help=("Override checkpoint semantics. Unitless feedforward pretraining "
+              "checkpoints are structurally wrapped but are not physical-QAT "
+              "checkpoints, so they require unitless_physical."))
     p.add_argument("--R", type=float, default=50e3)
     p.add_argument("--C", type=float, default=500e-15)
     p.add_argument("--v_dd", type=float, default=0.1)
@@ -245,6 +254,8 @@ def evaluate_once(args):
         args.checkpoint, map_location="cpu", weights_only=False)
     state_dict = checkpoint.get("net", checkpoint)
     checkpoint_format = classify_checkpoint_state_dict(state_dict)
+    if args.checkpoint_kind != "auto":
+        checkpoint_format = args.checkpoint_kind
     from final_linear import select_model_head, config_from_args
     inherited_head = checkpoint.get('final_head', {})
     if checkpoint_format == "digital":
@@ -257,7 +268,7 @@ def evaluate_once(args):
     model = convert_wide_resnet_to_physical(
         model, activation_factory=None,
         **conversion_options(args),
-        physical_level=args.physical_level, physical=True,
+        physical_level=args.physical_level, physical=args.physical,
         qat=checkpoint_is_full_param,
         quantize_weights=checkpoint_format == "digital",
         R=args.R, C=args.C, v_dd=args.v_dd,
@@ -294,6 +305,16 @@ def evaluate_once(args):
         dtc_timing_seed=args.dtc_timing_seed)
     if checkpoint_format != "digital":
         model.load_state_dict(state_dict, strict=True)
+    if checkpoint_format == "unitless_physical" and args.physical:
+        # A physical-pretraining checkpoint uses physical wrappers only as a
+        # unitless reparameterization.  Its BN state is therefore unitless and
+        # its weights have not yet been QAT-quantized.  Match the fine-tuning
+        # loader before evaluating it in physical coordinates.
+        from physical_feedforward import scale_batchnorm_to_physical_domain
+        scale_batchnorm_to_physical_domain(
+            model, args.v_dd / args.one_over_q, scale_eps=False)
+        for wrapper in iter_physical_wrappers(model):
+            wrapper.enable_qat_()
     if checkpoint_format == "physical_flat":
         prepare_flattened_checkpoint_for_evaluation(
             model, physical_level=args.physical_level,
@@ -379,7 +400,7 @@ def evaluate_once(args):
     model.to(device).eval()
 
     from final_linear import configure_feedforward_head
-    configure_feedforward_head(model, args, physical=True)
+    configure_feedforward_head(model, args, physical=args.physical)
     loader = get_test_data(
         test_bs=args.batch_size, img_type=args.img_type,
         task=args.dataset, shuffle=False,
