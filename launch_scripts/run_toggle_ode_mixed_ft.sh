@@ -30,7 +30,7 @@ R_MAX_LIST=("${R_MAX}")
 TOGGLE_ONE_OVER_Q="${TOGGLE_ONE_OVER_Q:-1}"
 ONE_OVER_Q_LIST=("${TOGGLE_ONE_OVER_Q}")
 EXP="${EXP_OVERRIDE:-NODE_0602_QAT_with_noise_inject_kd_crd_training_C100}"
-LOGDIR="./logs/${EXP}"
+LOGDIR="${LOGDIR:-./logs/${EXP}}"
 mkdir -p "${LOGDIR}"
 MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_6REP}"
 #MODEL_NAME="${MODEL_NAME_OVERRIDE:-TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_scanGFI_1REP}"

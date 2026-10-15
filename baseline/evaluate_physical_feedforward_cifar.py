@@ -98,6 +98,10 @@ def parse_args():
                    default=os.environ.get('MEASURED_ACTIVATION_SCOPE') or None)
     p.add_argument("--model_name", required=True)
     p.add_argument("--wrn_depth", type=int, default=None)
+    p.add_argument("--intermediate_activation", choices=("relu", "relu6"), default=None)
+    p.add_argument("--final_dropout_rate", type=float, default=None)
+    p.add_argument("--evaluation_split", choices=("test", "train"), default="test")
+    p.add_argument("--selection_samples", type=int, default=1280)
     p.add_argument("--wrn_first_stage_channels", type=int, default=None)
     p.add_argument(
         "--linear_bias", type=str2bool,
@@ -244,6 +248,10 @@ def evaluate_once(args):
     cfg["wrn_depth"] = args.wrn_depth
     cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
     cfg["linear_bias"] = args.linear_bias
+    if args.intermediate_activation is not None:
+        cfg["intermediate_activation"] = args.intermediate_activation
+    if args.final_dropout_rate is not None:
+        cfg["final_dropout_rate"] = args.final_dropout_rate
     if args.tc_feedforward:
         cfg["intermediate_activation"] = args.tc_intermediate_activation
     if args.img_type.lower() != "rgb":
@@ -401,11 +409,19 @@ def evaluate_once(args):
 
     from final_linear import configure_feedforward_head
     configure_feedforward_head(model, args, physical=args.physical)
-    loader = get_test_data(
-        test_bs=args.batch_size, img_type=args.img_type,
-        task=args.dataset, shuffle=False,
-        input_quant_bits=args.input_quant_bits,
-        center_student_input=args.center_student_input)
+    if args.evaluation_split == "train":
+        loader = get_bn_calibration_data(
+            bs=args.batch_size, n_samples=args.selection_samples,
+            img_type=args.img_type, task=args.dataset,
+            input_quant_bits=args.input_quant_bits,
+            center_student_input=args.center_student_input,
+            noisy_inp=True)
+    else:
+        loader = get_test_data(
+            test_bs=args.batch_size, img_type=args.img_type,
+            task=args.dataset, shuffle=False,
+            input_quant_bits=args.input_quant_bits,
+            center_student_input=args.center_student_input)
     os.makedirs(args.result_path, exist_ok=True)
     validator = None
     if args.use_expanded_weights:

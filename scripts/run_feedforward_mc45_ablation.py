@@ -43,6 +43,8 @@ def parse_args():
     add_final_head_args(p)
     p.add_argument("--model_name", required=True)
     p.add_argument("--wrn_depth", type=int, default=None)
+    p.add_argument("--intermediate_activation", choices=("relu", "relu6"), default=None)
+    p.add_argument("--final_dropout_rate", type=float, default=None)
     p.add_argument("--wrn_first_stage_channels", type=int, default=None)
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar100")
@@ -216,6 +218,9 @@ def run_corner(args, corner, relu_indices):
             command.extend(['--' + key, str(value)])
     if args.wrn_depth is not None:
         command.extend(["--wrn_depth", str(args.wrn_depth)])
+    for key in ("intermediate_activation", "final_dropout_rate"):
+        if getattr(args, key) is not None:
+            command.extend(["--" + key, str(getattr(args, key))])
     if args.wrn_first_stage_channels is not None:
         command.extend([
             "--wrn_first_stage_channels",

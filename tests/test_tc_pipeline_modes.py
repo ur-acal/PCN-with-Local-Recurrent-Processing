@@ -144,7 +144,8 @@ class CNNModeTests(unittest.TestCase):
             # Reuse fake Python/checkpoint fixtures, bypass only sbatch/conda.
             env=dict(os.environ, PATH=str(Path(td)/'bin')+':'+os.environ['PATH'],TC_FEEDFORWARD='true',
                 REPO_ROOT=str(ROOT),MODEL_NAME='wrn_28_2_cifar_nobn_no_bias_avgpool',TASK='cifar100',IMG_TYPE='rgb',
-                PRETRAIN_OUTPUT_DIR=td+'/pre',FT_OUTPUT_DIR=td+'/ft',RESULT_PATH=td+'/results',PIPELINE_TRACE=td+'/trace.jsonl')
+                PRETRAIN_OUTPUT_DIR=td+'/pre',FT_OUTPUT_DIR=td+'/ft',RESULT_PATH=td+'/results',PIPELINE_TRACE=td+'/trace.jsonl',
+                MODEL_CKPT=td+'/ambient_checkpoint_must_not_override_TC_discovery.pth')
             # Same submission defaults as the original captured run.
             shell='''conda() { :; }; export -f conda
 sbatch() { bash "${@: -1}"; }

@@ -85,6 +85,12 @@ cmd=(
 if [[ -n "${WRN_DEPTH:-}" ]]; then
   cmd+=(--wrn_depth "${WRN_DEPTH}")
 fi
+if [[ -n "${INTERMEDIATE_ACTIVATION:-}" ]]; then
+  cmd+=(--intermediate_activation "${INTERMEDIATE_ACTIVATION}")
+fi
+if [[ -n "${FINAL_DROPOUT_RATE:-}" ]]; then
+  cmd+=(--final_dropout_rate "${FINAL_DROPOUT_RATE}")
+fi
 if [[ -n "${WRN_FIRST_STAGE_CHANNELS:-}" ]]; then
   cmd+=(--wrn_first_stage_channels "${WRN_FIRST_STAGE_CHANNELS}")
 fi

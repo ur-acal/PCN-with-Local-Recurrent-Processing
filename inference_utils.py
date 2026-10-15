@@ -43,6 +43,11 @@ def _get_scangfi_location(task, img_type="scanGFI"):
         data_path = os.path.abspath(data_path)
         return os.path.dirname(data_path), os.path.splitext(
             os.path.basename(data_path))[0]
+    if os.environ.get("SCANGEN_DATA_ROOT"):
+        # Share training's resolver; retain explicit evaluation-file precedence.
+        from trainer import _resolve_cifar_data_root, _scan_cifar_input_name
+        return (str(_resolve_cifar_data_root(img_type, task)),
+                _scan_cifar_input_name(img_type, task))
     return (
         os.path.join(
             os.path.abspath(__file__).rpartition("/")[0].rpartition("/")[0],
@@ -112,8 +117,12 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
 
 def get_bn_calibration_data(bs=128, n_samples=None, img_type="rgb",
                             task="cifar10", input_quant_bits=None,
-                            center_student_input=False):
-    """Return clean, augmentation-free training data for BN recalibration."""
+                            center_student_input=False, noisy_inp=False):
+    """Return augmentation-free training samples, optionally with sensor noise.
+
+    BN recalibration retains its clean-input default. Operating-point selection
+    explicitly enables sensor noise to match the training input distribution.
+    """
     img_type_lower = img_type.lower()
     if img_type_lower in {"rgb", "rggb"}:
         if img_type_lower == "rgb":
@@ -145,7 +154,7 @@ def get_bn_calibration_data(bs=128, n_samples=None, img_type="rgb",
             root=data_root,
             input_name=input_name,
             train=True,
-            noisy_inp=False,
+            noisy_inp=noisy_inp,
             augment=False,
             noise_config=scangen_config["noise"],
             device=torch.device(

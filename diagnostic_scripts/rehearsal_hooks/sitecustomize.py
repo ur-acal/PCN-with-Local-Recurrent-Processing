@@ -3,7 +3,7 @@
 Only loaded through the launcher's explicit REHEARSAL_ONLY switch. Real
 parsers, dataset/model/teacher/optimizer initialization and checkpoint saving
 run normally. Instrumentation redirects generated artifacts, limits the train
-loop to one batch, and runs one MC45 corner/one inference batch. Production
+loop to a few batches, and stops MC45 after a genuine first expansion. Production
 processes never add this directory to PYTHONPATH.
 """
 import argparse
@@ -31,10 +31,11 @@ if os.environ.get("REHEARSAL_ONLY") == "true":
             self.loader = loader
 
         def __len__(self):
-            return 1
+            return min(int(os.environ.get("REHEARSAL_BATCHES", "2")), len(self.loader))
 
         def __iter__(self):
-            yield next(iter(self.loader))
+            import itertools
+            yield from itertools.islice(self.loader, len(self))
 
         def __getattr__(self, name):
             return getattr(self.loader, name)
@@ -76,7 +77,7 @@ if os.environ.get("REHEARSAL_ONLY") == "true":
             def wait(self, *a, **kw):
                 status = super().wait(*a, **kw)
                 if status == 85:
-                    print("REHEARSAL_EVAL_INITIALIZATION_PASS (stopped before cache generation)", flush=True)
+                    print("REHEARSAL_EVAL_INITIALIZATION_PASS (stopped after first real expansion)", flush=True)
                     raise SystemExit(0)
                 return status
 
@@ -89,16 +90,22 @@ if os.environ.get("REHEARSAL_ONLY") == "true":
         MC45CornerData.__init__ = initialize
         subprocess.Popen = StartupPopen
 
-    def stop_before_expansion():
-        from validation import Validator
-        from feedforward_validation import FeedForwardCNNValidator
-
-        def initialized(*a, **kw):
-            print("REHEARSAL_CACHE_BOUNDARY_PASS: checkpoint, hardware and dataset initialized; no accuracy measured", flush=True)
-            raise SystemExit(85)
-
-        Validator.__init__ = initialized
-        FeedForwardCNNValidator.__init__ = initialized
+    def stop_after_first_expansion():
+        # Execute an actual convolution-to-CSR expansion, not just the validator
+        # constructor. Isolated caches cannot hide a failed expansion path.
+        import validation
+        def wrap(original):
+            def expand(*a, **kw):
+                result = original(*a, **kw)
+                import torch
+                target = root / "expansion_proofs"
+                target.mkdir(parents=True, exist_ok=True)
+                torch.save(result, target / (str(os.getpid()) + ".pth"))
+                print("REHEARSAL_EXPANSION_PASS: first real CSR saved; no accuracy measured", flush=True)
+                raise SystemExit(85)
+            return expand
+        for name in ("build_unrolled_csr_padded", "build_unrolled_csr_trimmed"):
+            setattr(validation, name, wrap(getattr(validation, name)))
 
     def parse(self, *a, **kw):
         global hooked
@@ -119,9 +126,9 @@ if os.environ.get("REHEARSAL_ONLY") == "true":
                 corner_hook()
                 hooked = True
         elif script in ("ode_inference.py", "evaluate_physical_feedforward_cifar.py"):
-            args.max_eval_batches = 1
-            if not hooked:
-                stop_before_expansion()
+            if os.environ.get("REHEARSAL_SELECTION") != "true" and not hooked:
+                args.max_eval_batches = 1
+                stop_after_first_expansion()
                 hooked = True
         return args
 

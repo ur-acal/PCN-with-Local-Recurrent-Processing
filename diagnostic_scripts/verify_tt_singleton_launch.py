@@ -5,6 +5,7 @@ and resolves/validates every corner's actual child inference command. Future
 FT output checkpoints are checked for consistent paths, not fabricated.
 """
 import io
+import math
 import json
 import os
 from pathlib import Path
@@ -65,7 +66,10 @@ def check_training(script, namespace, args):
     else:
         source = args.resume_checkpoint
         assert args.toggle_timing_mode == "fixed"
-        assert abs(args.toggle_y_time - 15e-9) < 1e-18 and args.one_over_q == 5
+        assert abs(args.toggle_y_time - 15e-9) < 1e-18
+        expected_q = float(os.environ["WRN_ONE_OVER_Q"])
+        assert math.isfinite(expected_q) and expected_q > 0
+        assert args.one_over_q == expected_q
     return readable_checkpoint(source)
 
 

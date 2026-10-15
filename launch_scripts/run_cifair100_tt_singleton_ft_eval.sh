@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Reproduce the August-2026 CiFAIR-100 PCN physical fine-tuning/evaluation
-# recipe while restricting fine-tuning to one selected TT nonlinear-R curve.
+# Reproduce the August-2026 PCN physical fine-tuning/evaluation recipe, with
+# opt-in CiFAIR-10/ResNet support and one selected TT nonlinear-R curve.
 #
 # Required:
-#   MODEL_KIND=pcn|wrn_c27
+#   MODEL_KIND=pcn|wrn_c27|resnet110
+#   TASK=cifar10|cifar100 (default: cifar100, preserving historical runs)
 #   COUPLER_FAMILY=coupler_monte|coupler_monte_v2
 #   TT_SINGLETON=<CSV path or filename under hardware_data/mc_45_corners>
 # Optional:
@@ -19,7 +20,10 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "${REPO_ROOT}"
 
-MODEL_KIND="${MODEL_KIND:?MODEL_KIND must be pcn or wrn_c27}"
+MODEL_KIND="${MODEL_KIND:?MODEL_KIND must be pcn, wrn_c27 or resnet110}"
+TASK="${TASK:-cifar100}"
+case "${TASK}" in cifar10|cifar100) ;; *) echo "Unsupported TASK=${TASK}" >&2; exit 2;; esac
+DATASET_TAG="CiFAIR${TASK#cifar}"
 COUPLER_FAMILY="${COUPLER_FAMILY:?COUPLER_FAMILY must be coupler_monte or coupler_monte_v2}"
 STAGE="${STAGE:-all}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-false}"
@@ -27,6 +31,12 @@ REHEARSAL_ONLY="${REHEARSAL_ONLY:-false}"
 if [[ "${REHEARSAL_ONLY}" == true ]]; then
   export REHEARSAL_ONLY
   export REHEARSAL_ARTIFACT_ROOT="${REHEARSAL_ARTIFACT_ROOT:?Set an isolated rehearsal artifact directory}"
+  export REHEARSAL_ARTIFACT_ROOT="$(realpath -m "${REHEARSAL_ARTIFACT_ROOT}")"
+  case "${REHEARSAL_ARTIFACT_ROOT}" in
+    /tmp/*|"${REPO_ROOT}"/results/rehearsals/*) ;;
+    *) echo "Rehearsals must use /tmp/... or results/rehearsals/..." >&2; exit 2;;
+  esac
+  export STUDY_ARTIFACT_ROOT="${REHEARSAL_ARTIFACT_ROOT}"
   export PYTHONPATH="${REPO_ROOT}/diagnostic_scripts/rehearsal_hooks${PYTHONPATH:+:${PYTHONPATH}}"
 fi
 if [[ "${PREFLIGHT_ONLY}" == true ]]; then
@@ -63,25 +73,41 @@ case "${STAGE}" in
   *) echo "STAGE must be ft, eval, or all; got ${STAGE}" >&2; exit 2 ;;
 esac
 
-TEACHER_CKPT="./checkpoint/efficientnet_v2_l_cifar100_CiFAIR_OldNoTimm_MatchDistill.pth"
+TEACHER_CKPT="${TEACHER_CKPT:-./checkpoint/efficientnet_v2_l_${TASK}_CiFAIR_OldNoTimm_MatchDistill.pth}"
 PCN_RAW_NAME="TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_ToggleODEXInitFFFB_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S96C_0.25Dropout_16Layers4l5l4_2Pool_srrlDistill_a0p3_t2p0_CiFAIR_1REP"
-PCN_QAT_NAME="TIMMQAT5bNoneaNT0p0mul${PCN_RAW_NAME}"
 PCN_SOURCE_ROOT="saved_ckpt_runs/coupler_v2_CiFAIR100_qf1_noENOB_matchdistill_srrl_noRE_toggle_odexinit"
 WRN_NAME="wrn_flexible_cifar_avgpool_shortcut"
 WRN_SOURCE_CKPT="saved_ckpt_runs/coupler_full_range_CiFAIR100_wrn28_c27_avgpool_shortcut_fixedTiming15ns_rescaled_pretrain_iq12/cifar100/custom_noresize/${WRN_NAME}/custom_noresize_cifar100_${WRN_NAME}/custom_noresize_cifar100_${WRN_NAME}_best_ckpt.pth"
+if [[ "${TASK}" == cifar10 ]]; then
+  PCN_RAW_NAME="${PCN_RAW_NAME/_C100_/_}"
+  PCN_SOURCE_ROOT="saved_ckpt_runs/coupler_v2_CiFAIR10_qf1_noENOB_matchdistill_srrl_noRE_ftlr0p002_e200_toggle_odexinit"
+fi
+PCN_QAT_NAME="TIMMQAT5bNoneaNT0p0mul${PCN_RAW_NAME}"
+PCN_SOURCE_ROOT="${PCN_PRETRAIN_ROOT:-${PCN_SOURCE_ROOT}}"
+if [[ "${MODEL_KIND}" == resnet110 ]]; then
+  WRN_NAME=resnet110_cifar
+  export INTERMEDIATE_ACTIVATION="${INTERMEDIATE_ACTIVATION:-relu6}"
+  export FINAL_DROPOUT_RATE="${FINAL_DROPOUT_RATE:-0.25}"
+  export CNN_ARCH_OVERRIDE="${CNN_ARCH_OVERRIDE:-intermediate_activation=${INTERMEDIATE_ACTIVATION},final_dropout_rate=${FINAL_DROPOUT_RATE}}"
+fi
+WRN_SOURCE_CKPT="${CNN_PRETRAIN_CKPT:-${WRN_SOURCE_CKPT}}"
+if [[ "${MODEL_KIND}" == resnet110 || ( "${MODEL_KIND}" == wrn_c27 && "${TASK}" == cifar10 ) ]]; then
+  : "${CNN_PRETRAIN_CKPT:?Specify the new CNN pretrained checkpoint}"
+fi
 WRN_ONE_OVER_Q="${WRN_ONE_OVER_Q:-}"
 
-if [[ "${MODEL_KIND}" == wrn_c27 ]]; then
+if [[ "${MODEL_KIND}" == wrn_c27 || "${MODEL_KIND}" == resnet110 ]]; then
   [[ -n "${WRN_ONE_OVER_Q}" ]] || {
     echo "WRN_ONE_OVER_Q must be set explicitly after the exact-recipe WRN scan" >&2
     exit 2
   }
-  RUN_TAG="${RUN_TAG:-tt_singleton_50ep_CiFAIR100_${MODEL_KIND}_${COUPLER_FAMILY}_fixedTiming15ns_vdd0p1_qinv${WRN_ONE_OVER_Q}_${singleton_tag}}"
+  RUN_TAG="${RUN_TAG:-tt_singleton_50ep_${DATASET_TAG}_${MODEL_KIND}_${COUPLER_FAMILY}_fixedTiming15ns_vdd0p1_qinv${WRN_ONE_OVER_Q}_${singleton_tag}}"
 else
-  RUN_TAG="${RUN_TAG:-tt_singleton_50ep_CiFAIR100_${MODEL_KIND}_${COUPLER_FAMILY}_${singleton_tag}}"
+  RUN_TAG="${RUN_TAG:-tt_singleton_50ep_${DATASET_TAG}_${MODEL_KIND}_${COUPLER_FAMILY}_${singleton_tag}}"
 fi
-FT_ROOT="saved_ckpt_runs/${RUN_TAG}_ft"
-EVAL_ROOT="results/${RUN_TAG}_mc45"
+ARTIFACT_PREFIX="${STUDY_ARTIFACT_ROOT:+${STUDY_ARTIFACT_ROOT}/}"
+FT_ROOT="${ARTIFACT_PREFIX}saved_ckpt_runs/${RUN_TAG}_ft"
+EVAL_ROOT="${ARTIFACT_PREFIX}results/${RUN_TAG}_mc45"
 # Physical feedforward preprocessing is part of the saved-model namespace.
 # The trainer appends this suffix after resolving the source checkpoint's
 # preprocessing metadata.
@@ -104,6 +130,7 @@ run_pcn_ft() {
            MODEL_DIR="${PCN_SOURCE_ROOT}" \
            OUTPUT_SAVE_PATH="${FT_ROOT}" \
            EXP_OVERRIDE="${RUN_TAG}" \
+           LOGDIR="${ARTIFACT_PREFIX}logs/${RUN_TAG}" \
            IMG_TYPE=CiFAIR \
            PCN=PCNetNoBatchNorm \
            ODE_BLOCK_OVERRIDE=ToggleODEXInitFFFB \
@@ -168,11 +195,11 @@ run_pcn_ft() {
            TEACHER_CENTER_CROP=true \
            ADAPT_PIL_TEACHER=false
 
-    bash ./launch_scripts/run_toggle_ode_mixed_ft.sh
+    bash -o pipefail ./launch_scripts/run_toggle_ode_mixed_ft.sh
   )
-  [[ "${PREFLIGHT_ONLY}" == true || "${REHEARSAL_ONLY}" == true ]] && return 0
-  # The legacy PCN launcher pipes Python into tee without pipefail. Verify the
-  # required artifact so a failed trainer cannot be reported as successful.
+  [[ "${PREFLIGHT_ONLY}" == true ]] && return 0
+  # Require both successful exit (including Python's tee pipeline) and the
+  # artifact. A stale checkpoint must not hide a failed trainer.
   [[ -f "${output_ckpt}" ]] || {
     echo "PCN fine-tuning did not produce its expected checkpoint: ${output_ckpt}" >&2
     return 1
@@ -188,9 +215,7 @@ run_wrn_ft() {
     unset RHS_CURRENT_SUMMARY EXTRA_OVERRIDE PRETRAIN_RESUME_CKPT
     export MODEL_NAME="${WRN_NAME}" \
            MODEL_CKPT="${input_ckpt}" \
-           WRN_DEPTH=28 \
-           WRN_FIRST_STAGE_CHANNELS=27 \
-           TASK=cifar100 \
+           TASK="${TASK}" \
            IMG_TYPE=CiFAIR \
            OUTPUT_DIR="${FT_ROOT}" \
            VALIDATION_MODE=false \
@@ -247,7 +272,7 @@ run_wrn_ft() {
            WARMUP_FT=0 \
            WEIGHT_DECAY=0.001 \
            BATCH_SIZE=128 \
-           EXTRA_OVERRIDE=lr=0.005,num_epochs=50,warmup_epoch=0,weight_decay=0.001,batch_size=128,skip_eval_epochs=0 \
+           EXTRA_OVERRIDE="lr=0.005,num_epochs=50,warmup_epoch=0,weight_decay=0.001,batch_size=128,skip_eval_epochs=0${CNN_ARCH_OVERRIDE:+,${CNN_ARCH_OVERRIDE}}" \
            FT_EVAL_EVERY=2 \
            FINAL_EVAL_ONLY=false \
            DISTILL_METHOD=srrl \
@@ -260,11 +285,13 @@ run_wrn_ft() {
            ADAPT_PIL_TEACHER=false \
            TC_FEEDFORWARD=false
 
+    unset WRN_DEPTH WRN_FIRST_STAGE_CHANNELS TIMM_AUG_LEVEL
+    if [[ "${MODEL_KIND}" == wrn_c27 ]]; then export WRN_DEPTH=28 WRN_FIRST_STAGE_CHANNELS=27; fi
     bash ./launch_scripts/run_feedforward_physical_ft.sh
   )
-  [[ "${PREFLIGHT_ONLY}" == true || "${REHEARSAL_ONLY}" == true ]] && return 0
-  local name="custom_noresize_cifar100_${WRN_NAME}"
-  local output_ckpt="${WRN_FT_ROOT}/cifar100/custom_noresize/${WRN_NAME}/${name}/${name}_full_param_best_ckpt.pth"
+  [[ "${PREFLIGHT_ONLY}" == true ]] && return 0
+  local name="custom_noresize_${TASK}_${WRN_NAME}"
+  local output_ckpt="${WRN_FT_ROOT}/${TASK}/custom_noresize/${WRN_NAME}/${name}/${name}_full_param_best_ckpt.pth"
   [[ -f "${output_ckpt}" ]] || {
     echo "WRN fine-tuning did not produce its expected checkpoint: ${output_ckpt}" >&2
     return 1
@@ -332,20 +359,18 @@ run_pcn_eval() {
 }
 
 run_wrn_eval() {
-  local name="custom_noresize_cifar100_${WRN_NAME}"
-  local checkpoint="${WRN_FT_ROOT}/cifar100/custom_noresize/${WRN_NAME}/${name}/${name}_full_param_best_ckpt.pth"
+  local name="custom_noresize_${TASK}_${WRN_NAME}"
+  local checkpoint="${WRN_FT_ROOT}/${TASK}/custom_noresize/${WRN_NAME}/${name}/${name}_full_param_best_ckpt.pth"
   [[ "${PREFLIGHT_ONLY}" == true || "${REHEARSAL_ONLY}" == true || -f "${checkpoint}" ]] || { echo "WRN FT checkpoint not ready: ${checkpoint}" >&2; exit 1; }
 
   (
     unset RHS_CURRENT_SUMMARY
     export MODEL_NAME="${WRN_NAME}" \
            MODEL_CKPT="${checkpoint}" \
-           WRN_DEPTH=28 \
-           WRN_FIRST_STAGE_CHANNELS=27 \
-           TASK=cifar100 \
+           TASK="${TASK}" \
            IMG_TYPE=CiFAIR \
            OUTPUT_DIR="${EVAL_ROOT}" \
-           EXPANDED_WEIGHT_DIR="expanded_weights/${RUN_TAG}" \
+           EXPANDED_WEIGHT_DIR="${ARTIFACT_PREFIX}expanded_weights/${RUN_TAG}" \
            N_TRIALS="${N_TRIALS:-1}" \
            JOBS=1 \
            MAX_EVAL_BATCHES=0 \
@@ -390,6 +415,8 @@ run_wrn_eval() {
            ENABLE_BN_RECALIBRATION=false \
            FINAL_HEAD_TYPE=old_ideal
 
+    unset WRN_DEPTH WRN_FIRST_STAGE_CHANNELS
+    if [[ "${MODEL_KIND}" == wrn_c27 ]]; then export WRN_DEPTH=28 WRN_FIRST_STAGE_CHANNELS=27; fi
     bash ./launch_scripts/run_feedforward_mc45_ablation.sh
   )
 }
@@ -397,7 +424,7 @@ run_wrn_eval() {
 if [[ "${STAGE}" == ft || "${STAGE}" == all ]]; then
   case "${MODEL_KIND}" in
     pcn) run_pcn_ft ;;
-    wrn_c27) run_wrn_ft ;;
+    wrn_c27|resnet110) run_wrn_ft ;;
     *) echo "Unsupported MODEL_KIND=${MODEL_KIND}" >&2; exit 2 ;;
   esac
 fi
@@ -405,7 +432,7 @@ fi
 if [[ "${STAGE}" == eval || "${STAGE}" == all ]]; then
   case "${MODEL_KIND}" in
     pcn) run_pcn_eval ;;
-    wrn_c27) run_wrn_eval ;;
+    wrn_c27|resnet110) run_wrn_eval ;;
     *) echo "Unsupported MODEL_KIND=${MODEL_KIND}" >&2; exit 2 ;;
   esac
 fi
