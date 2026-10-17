@@ -33,6 +33,7 @@ cmd=(
   --enob "${ENOB:-8}"
   --input_quant_bits "${INPUT_QUANT_BITS:-none}"
   --center_student_input "${CENTER_STUDENT_INPUT:-auto}"
+  --normalize_student_input "${NORMALIZE_STUDENT_INPUT:-auto}"
   --enable_spin_variation "${ENABLE_SPIN_VARIATION:-true}"
   --sigma_spin "${SIGMA_SPIN:-0.10}"
   --spin_variation_mean "${SPIN_VARIATION_MEAN:-1.0}"

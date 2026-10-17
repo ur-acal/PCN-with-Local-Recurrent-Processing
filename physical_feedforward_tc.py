@@ -15,7 +15,8 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
     """Fixed input per convolution, continuous current, no pulse duty cycles."""
 
     def __init__(self, *args, one_shot_conv=False, tc_method='dopri5',
-                 tc_tol=1e-6, tc_step_size=None, tc_noise_reference_R=50e3,
+                 tc_tol=1e-6, tc_step_size=None, tc_num_steps=None,
+                 tc_noise_reference_R=50e3,
                  tc_covariance_table=None, tc_curve_sampling='histogram',
                  tc_conv_method='shared', tc_noise_stages='both',
                  reuse_accepted_step_training=False,
@@ -42,12 +43,21 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
             raise ValueError('Use dopri5 or euler with a positive tolerance.')
         if tc_step_size is not None and tc_step_size <= 0:
             raise ValueError('tc_step_size must be positive physical seconds.')
-        if tc_method == 'euler' and tc_step_size is None:
-            raise ValueError('Euler requires tc_step_size in physical seconds.')
+        if tc_num_steps is not None:
+            if (isinstance(tc_num_steps, bool) or not isinstance(tc_num_steps, int)
+                    or tc_num_steps <= 0):
+                raise ValueError('tc_num_steps must be a positive integer.')
+            if tc_method != 'euler' or one_shot_conv:
+                raise ValueError('tc_num_steps requires Euler and one_shot_conv=False.')
+            if tc_step_size is not None:
+                raise ValueError('Specify tc_num_steps or tc_step_size, not both.')
+        if tc_method == 'euler' and tc_step_size is None and tc_num_steps is None:
+            raise ValueError('Euler requires tc_num_steps or tc_step_size in physical seconds.')
         if tc_noise_reference_R <= 0:
             raise ValueError('tc_noise_reference_R must be positive.')
         self.one_shot_conv = one_shot_conv
         self.tc_method, self.tc_tol, self.tc_step_size = tc_method, tc_tol, tc_step_size
+        self.tc_num_steps = tc_num_steps
         self.tc_noise_reference_R = tc_noise_reference_R
         self.tc_covariance_table = tc_covariance_table
         self.tc_curve_sampling = tc_curve_sampling
@@ -159,10 +169,13 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         def rhs(t, v):
             return drift
         rhs.tc_context = context
+        # Resolve per convolution/forward: live-QAT scales can change its duration.
+        step_size = (float(duration) / self.tc_num_steps
+                     if self.tc_num_steps is not None else self.tc_step_size)
         # Same entry point, additive update, projection and accepted-step handling as TC PCN.
         options = dict(t0=0., t1=float(duration), t_eval=[float(duration)],
                        method=self.tc_method, rtol=self.tc_tol, atol=self.tc_tol,
-                       h=self.tc_step_size, eps=eps, noise_type='addi',
+                       h=step_size, eps=eps, noise_type='addi',
                        reuse_accepted_step_training=self.reuse_accepted_step_training,
                        checkpoint_ode_rhs_training=self.checkpoint_ode_rhs_training,
                        proj_fn=self.project_state)

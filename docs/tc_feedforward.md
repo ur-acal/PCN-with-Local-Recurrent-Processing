@@ -7,7 +7,7 @@ Direct Python arguments are `--tc_feedforward true --one_shot_conv false`.
 Existing model, teacher, dataset and checkpoint arguments still apply; no job
 is submitted by importing the implementation or running the numerical checks.
 
-The existing toggle block/wrapper classes, PCN blocks and solvers
+The existing toggle block/wrapper classes and PCN blocks
 are not edited by the CNN implementation. Launcher defaults and failure handling
 are aligned as described below. `TCPhysicalBasicBlock` subclasses the averaged CNN block and
 `TCFeedForwardPhysicalWrapper` subclasses its averaged wrapper. The converter
@@ -31,11 +31,14 @@ trainer and validator. It does not use pulse slicing or integer pulse weights.
   and coupler random streams; no algebraic one-state FB noise is added.
 - Nominal conductance determines noise variance; zero weights and padding
   contribute no coupler noise. Spin gain multiplies drift, not diffusion.
-- Measured activation is fixed 0906 TT MC18 during FT and per-spin from the
-  full 0906 bank during evaluation. Final ReLU stays ideal. Measured pooling
-  includes GAP and uses the 10 kOhm mean plus the TC covariance.
-- FT sampling is renewed per forward; evaluation static samples are fixed per
-  trial. Seed defaults are explicit and increment between evaluation trials.
+- Measured activation defaults to fixed 0906 TT MC18 during FT; the pinned
+  CNN recipe instead resamples the full 0906 bank per forward and per spin.
+  Expanded evaluation assigns curves per spin from that bank, fixed per trial.
+  Scope `all` replaces the final activation too; `pc_only` leaves it ideal.
+  Measured pooling includes GAP and uses the 10 kOhm mean plus the TC covariance.
+- FT nonlinear-R/spin draws and random-mode ReLU assignments are renewed per
+  forward; evaluation static samples are fixed per trial. Fast current noise
+  is sampled per integration interval. Seeds increment between evaluation trials.
 - No scale-factor quantization, ENOB, DTC, extra scalar mismatch or slow noise.
 
 ## Integration and scaling
@@ -43,7 +46,7 @@ trainer and validator. It does not use pulse slicing or integer pulse weights.
 The physical increment is current/(capacitance) times duration plus additive
 diffusion. `one_shot_conv=false` calls the exact `TorchDiffEqPack.odesolver`
 entry point used by TC PCN with `TCNoiseLifecycle`, additive noise, projection,
-dopri5 and rtol=atol=1e-6. No solver changes are made. The fixed CNN current is
+dopri5 and rtol=atol=1e-6 by default. The fixed CNN current is
 computed once and reused by the RHS; PCN's current changes with its state.
 
 `one_shot_conv=true` explicitly draws the integrated noise for the whole
@@ -59,6 +62,24 @@ teacher selection defaults are listed below.
 Evaluation records resolved options and actual per-convolution integration
 durations in `tc_trial_metadata.json` under each trial's result directory.
 
+### Fixed-count projected Euler (FT and evaluation)
+
+Set `TC_METHOD=euler TC_NUM_STEPS=10 ONE_SHOT_CONV=false` through the existing
+local or Slurm launch path. Python equivalents are `--tc_method euler
+--tc_num_steps 10 --one_shot_conv false`. The default remains Dopri5 with no
+step count. A positive integer count selects exactly that many updates for
+each convolution; its timestep is recomputed as `duration / tc_num_steps`
+after every live-QAT scale refresh. Do not also set `TC_STEP_SIZE`.
+
+This reuses the production `ProjEuler` solver, not a diagnostic loop. Each
+update is `clamp(v + dt * drift + sqrt(dt) * diffusion)`, with independent
+summing/coupler noise increments and one final projection. The shared
+`ProjEuler.step` no longer projects before noise: the common integrator owns
+the projection, as for Dopri5. This intentionally changes noisy Euler near
+saturation, including non-TC callers; noiseless integrated Euler and Dopri5
+behavior are unchanged. Run configuration/recovery records retain the solver
+settings, and exact recovery rejects a changed step count or solver.
+
 ## Numerical checks and fairness limits
 
 Run:
@@ -68,7 +89,7 @@ python -m unittest discover -s tests -p 'test_tc_feedforward.py'
 python scripts/check_tc_feedforward_numerics.py
 ```
 
-CPU float64 reference (the unchanged solver has float32 time bookkeeping):
+CPU float64 reference (the solver has float32 time bookkeeping):
 
 | Timing | Max output difference, one-shot vs Dopri5 | Max input-gradient difference | Max weight-gradient difference |
 |---|---:|---:|---:|
@@ -110,7 +131,7 @@ ablations. Unitless pretraining does not enable these hardware defects.
 | Coupler means | `hardware_data/res_vs_vin_10k_150k.csv` | Same |
 | Covariance | Common absolute resistance covariance from all `hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv` curves | Same |
 | Nonlinear-R sampling | Histogram-selected resistance level, one Gaussian curve per convolution tensor/layer/forward, held over solve | Independent per nonzero unrolled coupler, fixed per trial |
-| Activation | Fixed `0906_RELU_Voltage/tt_25_1.csv`, MC18; shared | Full `0906_RELU_Voltage` bank, independently per spin/layer, fixed per trial |
+| Activation | Generic default: fixed `0906_RELU_Voltage/tt_25_1.csv`, MC18, shared. Pinned CNN recipe: full 0906 bank, random per forward and per spin. | Full `0906_RELU_Voltage` bank, independently per spin/layer, fixed per trial |
 | Pooling, including GAP | 10-kOhm mean from the coupler means file and same absolute covariance; independent per channel/window, per forward | Same distribution/granularity, fixed per trial |
 | Spin/gain variation | N(1,0.1^2), independent per spin/branch/layer, held over solve | Same, fixed per trial |
 | Integrated summing noise | 0.6 pA/sqrt(Hz) at 50kOhm, scaled by sqrt(50k/R) | Same |
@@ -118,6 +139,10 @@ ablations. Unitless pretraining does not enable these hardware defects.
 | Physical operating point | R=10kOhm, R_max=150kOhm, C=49fF, rails +/-0.1V, one_over_q=1 | Same |
 | Exclusions | No scalar/diff mismatch, ENOB, scale-factor quantization, DTC or slow offsets | Same |
 | Numerical method | Dopri5, tolerance 1e-6; CNN one_shot_conv=false | Same |
+
+These are generic hardware defaults. The pinned CNN recipe below explicitly
+overrides FT activation sampling to random-per-forward/per-spin and
+`one_over_q` to 32, and disables RGB normalization for student and teacher.
 
 The shared FT row is the selected **method 2a** approximation linked at the top
 of the scientific reference, not its more expensive exact 15-code family.
@@ -131,7 +156,11 @@ One-state PCN also has algebraic FB current noise from the integrated
 `hardware_data/coupler_asd_vs_freq.csv` spectrum, held across accepted-step
 retries. CNN has no algebraic FB path: both convolutions receive the integrated
 FF-style diffusion above. Two-state PCN uses capacitor diffusion on both states.
-Final ReLU remains ideal and the digital classifier is not hardware-perturbed.
+The final activation remains ideal only with scope `pc_only`. Fresh CNN
+pretraining records scope `all`, which FT and expanded evaluation inherit;
+the pinned full pipeline therefore replaces the final activation with measured
+ReLU as well. Older checkpoints retain their saved scope (metadata-free
+checkpoints fall back to `pc_only`). The default digital classifier remains ideal.
 CNN residual topology and physical integration durations remain architecture-
 specific; matching defaults is not a claim of equal energy/latency or dynamics.
 
@@ -159,9 +188,23 @@ No training jobs were submitted to validate these wiring changes.
 
 This command launches unitless pretraining, TC fine-tuning, and expanded TC
 evaluation for every listed CNN on CIFAR-10 and CIFAR-100. Pretraining retains
-its existing augmentation default; only FT uses `rgb_mid`. Accepted-step reuse
+its existing augmentation default and ideal ReLU; only FT uses `rgb_mid` and
+random-per-forward/per-spin measured ReLU from the full 0906 bank. Student
+and teacher both receive raw, uncentered RGB. The teacher's `NoNorm` checkpoint
+metadata determines its preprocessing. Expanded evaluation uses fixed per-spin
+curve assignments per trial, not per-forward resampling. `one_over_q=32` is
+explicit for these CNN runs, as in the successful ResNet-44 fine-tuning run;
+the generic mapping default remains 1. Accepted-step reuse
 is enabled for Dopri5 training, and the RHS-checkpoint portion is selected by
-the automatic memory guard.
+the automatic memory guard. For just ResNet-44/56 on both datasets, replace
+the model list below with `models=(resnet44_cifar resnet56_cifar)`.
+Student normalization is saved in checkpoints and inherited by FT/evaluation
+when no override is supplied; metadata-free checkpoints retain normalized RGB.
+The random activation setting uses independent layer/stage RNG streams and
+resamples per-spin assignments on each full-network forward, including FT tests.
+Fresh pipeline checkpoints use activation scope `all`: measured ReLU includes
+the final activation during FT and expanded evaluation, but is disabled in
+the pinned ideal-ReLU pretraining stage.
 
 ```bash
 module swap slurm slurm/24.05.0.b1
@@ -194,7 +237,7 @@ models=(
 
 for model in "${models[@]}"; do
   for task in cifar10 cifar100; do
-    run_name="tc_rgb_${task}_${model}"
+    run_name="tc_rgb_${task}_${model}_q32_nonorm_rgbmid_rpf_pspin"
 
     (
       export mode=default \
@@ -203,8 +246,16 @@ for model in "${models[@]}"; do
              MODEL_NAME="${model}" \
              TASK="${task}" \
              IMG_TYPE=rgb \
+             NORMALIZE_STUDENT_INPUT=false \
+             CENTER_STUDENT_INPUT=false \
              EXP_PREFIX="${run_name}" \
+             TEACHER_CKPT="./checkpoint/efficientnet_v2_l_${task}_rgb_OldNoTimm_MatchDistill_NoNorm.pth" \
+             TEACHER_ARCH=efficientnet_v2_l \
+             TEACHER_ARCH_SOURCE=torchvision \
+             TOGGLE_ONE_OVER_Q=32 \
              FT_TIMM_AUG_LEVEL=rgb_mid \
+             ACTIVATION_CORNER_MODE=random_per_forward \
+             ACTIVATION_RANDOM_CURVE_SHARING=per_spin \
              REUSE_ACCEPTED_STEP_TRAINING=true \
              CHECKPOINT_ODE_RHS_TRAINING=true \
              CHECKPOINT_ODE_RHS_PORTION=auto

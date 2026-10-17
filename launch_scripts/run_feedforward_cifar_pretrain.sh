@@ -110,6 +110,7 @@ cmd=(
   --scale_train_recipe "${SCALE_TRAIN_RECIPE:-false}"
   --input_quant_bits "${INPUT_QUANT_BITS}"
   --center_student_input "${CENTER_STUDENT_INPUT}"
+  --normalize_student_input "${NORMALIZE_STUDENT_INPUT:-auto}"
   --enable_pretrain_measured_activation "${ENABLE_PRETRAIN_MEASURED_ACTIVATION}"
   --activation_curve_path "${ACTIVATION_CURVE_PATH}"
   --activation_corner "${ACTIVATION_CORNER:-TT}"
@@ -153,6 +154,9 @@ if [[ -n "${UNITLESS_PULLBACK_Q:-}" && "${UNITLESS_PULLBACK_Q,,}" != "none" ]]; 
 fi
 if [[ -n "${ACTIVATION_CURVE_SEED:-}" ]]; then
   cmd+=(--activation_curve_seed "${ACTIVATION_CURVE_SEED}")
+fi
+if [[ -n "${ACTIVATION_RANDOM_CURVE_SHARING:-}" ]]; then
+  cmd+=(--activation_random_curve_sharing "${ACTIVATION_RANDOM_CURVE_SHARING}")
 fi
 if [[ -n "${EXTRA_OVERRIDE}" ]]; then
   cmd+=(--override "${EXTRA_OVERRIDE}")

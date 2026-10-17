@@ -53,6 +53,47 @@ def fake_python(argv):
 
 
 class TCPipelineTests(unittest.TestCase):
+    def test_aligned_resnet_recipe_all_three_stages(self):
+        from test_tc_launch_alignment import parsed, cnn_train, cnn_eval
+        for model in ('resnet44_cifar', 'resnet56_cifar'):
+            for task in ('cifar10', 'cifar100'):
+                with self.subTest(model=model, task=task), tempfile.TemporaryDirectory() as directory:
+                    teacher = f'./checkpoint/efficientnet_v2_l_{task}_rgb_OldNoTimm_MatchDistill_NoNorm.pth'
+                    result, rows = self.run_pipeline(
+                        directory, MODEL_NAME=model, TASK=task,
+                        NORMALIZE_STUDENT_INPUT='false', CENTER_STUDENT_INPUT='false',
+                        TEACHER_CKPT=teacher, TEACHER_ARCH='efficientnet_v2_l',
+                        TEACHER_ARCH_SOURCE='torchvision', TOGGLE_ONE_OVER_Q='32',
+                        FT_TIMM_AUG_LEVEL='rgb_mid',
+                        ACTIVATION_CORNER_MODE='random_per_forward',
+                        ACTIVATION_RANDOM_CURVE_SHARING='per_spin',
+                        REUSE_ACCEPTED_STEP_TRAINING='true',
+                        CHECKPOINT_ODE_RHS_TRAINING='true',
+                        CHECKPOINT_ODE_RHS_PORTION='auto')
+                    self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                    self.assertEqual([row['stage'] for row in rows], ['pretrain', 'ft', 'eval'])
+                    pre, ft, evaluation = [parsed(parser, row['argv']) for parser, row in
+                                           zip((cnn_train, cnn_train, cnn_eval), rows)]
+                    for config in (pre, ft, evaluation):
+                        self.assertFalse(config.normalize_student_input)
+                        self.assertFalse(config.center_student_input)
+                        self.assertEqual(config.one_over_q, 32)
+                        self.assertEqual(config.tc_method, 'dopri5')
+                    self.assertEqual(pre.timm_aug_level, 'none')
+                    self.assertFalse(pre.enable_pretrain_measured_activation)
+                    for config in (pre, ft):
+                        self.assertEqual(config.teacher_ckpt, teacher)
+                        self.assertEqual(config.teacher_arch_source, 'torchvision')
+                    self.assertEqual(ft.timm_aug_level, 'rgb_mid')
+                    self.assertEqual(ft.activation_corner_mode, 'random_per_forward')
+                    self.assertEqual(ft.activation_random_curve_sharing, 'per_spin')
+                    self.assertTrue(Path(ft.activation_curve_path).is_dir())
+                    self.assertTrue(ft.reuse_accepted_step_training)
+                    self.assertTrue(ft.checkpoint_ode_rhs_training)
+                    self.assertEqual(ft.checkpoint_ode_rhs_portion, 'auto')
+                    self.assertEqual(evaluation.activation_curve_sharing, 'per_spin')
+                    self.assertEqual(evaluation.n_trials, 10)
+
     def run_pipeline(self, directory, **overrides):
         directory = Path(directory)
         bindir = directory/'bin'

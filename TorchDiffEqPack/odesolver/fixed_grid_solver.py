@@ -68,19 +68,10 @@ class Euler(FixedGridSolver):
             return out, None,
 
 class ProjEuler(Euler):
+    """Euler with projection after the integrator adds any diffusion noise."""
     def __init__(self, proj_fn, **kwargs):
         super().__init__(**kwargs)
         self.proj_fn = proj_fn
-
-    def step(self, func, t, dt, y, return_variables=False):
-        if return_variables:
-            out, _, k1 = super().step(func, t, dt, y, return_variables)
-            out = tuple(self.proj_fn(_) for _ in out)
-            return out, _, k1
-        else:
-            out, _ = super().step(func, t, dt, y, return_variables)
-            out = tuple(self.proj_fn(_) for _ in out)
-            return out, _
 
 class RK2(FixedGridSolver):
     order = 2

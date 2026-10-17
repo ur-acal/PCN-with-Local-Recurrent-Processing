@@ -81,6 +81,7 @@ cmd=(
   --eval_every "${FT_EVAL_EVERY:-2}"
   --num_workers "${NUM_WORKERS}"
   --img_type "${IMG_TYPE}"
+  --normalize_student_input "${NORMALIZE_STUDENT_INPUT:-auto}"
   --resume_checkpoint "${MODEL_CKPT}"
   --physical_feedforward true
   --physical_level "${PHYSICAL_LEVEL}"
@@ -164,6 +165,9 @@ fi
 
 if [[ -n "${ACTIVATION_CURVE_SEED:-}" ]]; then
   cmd+=(--activation_curve_seed "${ACTIVATION_CURVE_SEED}")
+fi
+if [[ -n "${ACTIVATION_RANDOM_CURVE_SHARING:-}" ]]; then
+  cmd+=(--activation_random_curve_sharing "${ACTIVATION_RANDOM_CURVE_SHARING}")
 fi
 if [[ -n "${NONLINEAR_R_CURVE_SEED:-}" ]]; then
   cmd+=(--nonlinear_R_curve_seed "${NONLINEAR_R_CURVE_SEED}")

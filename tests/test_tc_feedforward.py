@@ -40,6 +40,80 @@ class TCFeedForwardTests(unittest.TestCase):
     def setUpClass(cls):
         torch.set_num_threads(1)
 
+    def test_euler_num_steps_validation(self):
+        for count in (0, -1, True, 2.5):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                block(tc_method='euler', tc_num_steps=count)
+        for options in (dict(tc_method='dopri5'),
+                        dict(tc_method='euler', one_shot_conv=True),
+                        dict(tc_method='euler', tc_step_size=1e-12)):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                block(tc_num_steps=10, **options)
+
+    def test_ten_step_euler_matches_manual_noise_then_clamp(self):
+        from TorchDiffEqPack.odesolver.base import ODESolver
+        model = block(tc_method='euler', tc_num_steps=10,
+                      enable_summing_current_noise=True, enable_coupler_noise=True)
+        model._uses_quantized_weight_scale = True
+        x = torch.full((4, 2, 2, 2), .09, dtype=torch.float64)
+        for scale in (1., 3.):
+            model.scale1.fill_(scale)
+            manual = copy.deepcopy(model)
+            duration = manual._stage_duration(x, 'z')
+            state = manual._output_zeros(manual.conv1, x)
+            drift = manual._current(manual.conv1, x) / (manual.R * manual.C)
+            context, eps = manual._noise_context(manual.conv1, x, state, 'z')
+            dt = duration / 10
+            for _ in range(10):
+                state = manual.project_state(
+                    state + dt * drift + dt.sqrt() * eps * context.normal(state, 0))
+                context.accepted()
+            intervals = []
+            original = ODESolver.addi_noisy_update_and_proj
+
+            def record(solver, h, y_current):
+                intervals.append((float(h), solver.tc_context.index))
+                return original(solver, h, y_current)
+
+            with patch.object(ODESolver, 'addi_noisy_update_and_proj', record):
+                actual = model(x)
+            self.assertEqual([index for _, index in intervals], list(range(10)))
+            self.assertAlmostEqual(sum(h for h, _ in intervals) / float(duration), 1., places=6)
+            self.assertTrue(all(abs(h / float(dt) - 1.) < 2e-6 for h, _ in intervals))
+            torch.testing.assert_close(actual, state, rtol=2e-6, atol=2e-9)
+
+    def test_ten_step_euler_qat_forward_and_gradients(self):
+        for checkpoint in (False, True):
+            physical = block(tc_method='euler', tc_num_steps=10,
+                             checkpoint_ode_rhs_training=checkpoint)
+            multi = TCFeedForwardPhysicalWrapper(physical, qat=True)
+            single = copy.deepcopy(multi)
+            single.block.tc_num_steps = None
+            single.block.one_shot_conv = True
+            x = (torch.rand(2, 2, 3, 3, dtype=torch.float64) * .01).requires_grad_()
+            z = x.detach().clone().requires_grad_()
+            actual, expected = multi(x), single(z)
+            actual.sum().backward()
+            expected.sum().backward()
+            torch.testing.assert_close(actual, expected, rtol=2e-6, atol=2e-9)
+            torch.testing.assert_close(x.grad, z.grad)
+            torch.testing.assert_close(
+                physical.conv1.parametrizations.weight.original.grad,
+                single.block.conv1.parametrizations.weight.original.grad)
+
+    def test_recovery_rejects_changed_euler_grid(self):
+        from types import SimpleNamespace
+        from training_recovery import restore_latest
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'latest.pth')
+            torch.save(dict(training_recovery=dict(
+                version=1, config=dict(tc_method='euler', tc_num_steps=10))), path)
+            for config in (dict(tc_method='dopri5', tc_num_steps=10),
+                           dict(tc_method='euler', tc_num_steps=20)):
+                trainer = SimpleNamespace(recovery_checkpoint=path, recovery_config=config)
+                with self.assertRaisesRegex(ValueError, 'Full recovery requires unchanged tc_'):
+                    restore_latest(trainer)
+
     def test_deterministic_outputs_and_gradients_both_timing_modes(self):
         for timing in ('fixed','derived'):
             a=block(one_shot_conv=True,toggle_timing_mode=timing,toggle_y_time=4.9e-10)
@@ -351,8 +425,9 @@ class TCFeedForwardTests(unittest.TestCase):
         a.reset_nonlinear_R_variation();self.assertFalse(a._tc_samples)
 
     def test_validator_uses_tc_per_coupler_not_pulses(self):
-        for one in (False,True):
-            a=block(one_shot_conv=one)
+        for one, count in ((False, None), (True, None), (False, 10)):
+            a=block(one_shot_conv=one, tc_num_steps=count,
+                    tc_method='euler' if count else 'dopri5')
             a.conv1.weight.data.copy_(torch.tensor([3/15,-6/15,0.,12/15]).reshape_as(a.conv1.weight))
             w=TCFeedForwardPhysicalWrapper(a)
             pkg=package(a,variation=False)
@@ -423,6 +498,7 @@ class TCFeedForwardTests(unittest.TestCase):
             ('ft','run_feedforward_physical_ft.sh',train_parser),
             ('eval','run_feedforward_physical_eval.sh',eval_parser)):
             env=dict(os.environ, TC_FEEDFORWARD='true', REUSE_ACCEPTED_STEP_TRAINING='true',
+                     TC_METHOD='euler', TC_NUM_STEPS='10',
                      MODEL_NAME='wrn_28_2_cifar_nobn_no_bias_avgpool',
                      MODEL_CKPT='/tmp/checkpoint-not-read.pth',IMG_TYPE='rgb',TASK='cifar100')
             result=subprocess.run(['bash','-c',
@@ -435,6 +511,10 @@ class TCFeedForwardTests(unittest.TestCase):
             self.assertTrue(args.tc_feedforward)
             self.assertFalse(args.one_shot_conv)
             self.assertTrue(args.reuse_accepted_step_training)
+            self.assertEqual(args.tc_method, 'euler')
+            self.assertEqual(args.tc_num_steps, 10)
+            from tc_feedforward_cli import conversion_options
+            self.assertEqual(conversion_options(args)['tc_options']['tc_num_steps'], 10)
             self.assertEqual(args.R,1e4)
             self.assertEqual(args.C,49e-15)
             self.assertEqual(args.physical_level,2)
@@ -478,11 +558,16 @@ class TCFeedForwardTests(unittest.TestCase):
         means='./hardware_data/res_vs_vin_10k_150k.csv'
         cov='./hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv'
         models=[]
-        for one in (True,False):
+        for one, count, noisy in ((True, None, False), (False, None, False),
+                                  (False, 10, False), (False, 10, True)):
             model=convert_wide_resnet_to_physical(copy.deepcopy(fp),qat=True,
                 physical_level=2,R=1e4,C=49e-15,v_dd=.1,
                 enable_spin_variation=True,spin_variation_seed=5,
-                tc_options=dict(one_shot_conv=one,tc_covariance_table=cov))
+                enable_summing_current_noise=noisy, enable_coupler_noise=noisy,
+                tc_options=dict(one_shot_conv=one,tc_covariance_table=cov,
+                                tc_method='euler' if count else 'dopri5',
+                                tc_num_steps=count,
+                                checkpoint_ode_rhs_training=count is not None))
             wrappers=list(iter_physical_wrappers(model))
             pkg=wrappers[0].configure_nonlinear_R_training(means,curve_seed=4)
             for w in wrappers[1:]:w.install_nonlinear_R_training_package(pkg)
@@ -496,7 +581,9 @@ class TCFeedForwardTests(unittest.TestCase):
             models.append(model.double())
         x=torch.rand(2,3,8,8,dtype=torch.float64)*.01
         ys=[m(x) for m in models]
-        torch.testing.assert_close(*ys,rtol=2e-5,atol=1e-7)
+        for y in ys[1:3]:
+            torch.testing.assert_close(ys[0],y,rtol=2e-5,atol=1e-7)
+        self.assertTrue(all(torch.isfinite(y).all() for y in ys))
         for y in ys:y.square().sum().backward()
         for m in models:
             self.assertTrue(all(torch.isfinite(p.grad).all() for p in m.parameters() if p.grad is not None))

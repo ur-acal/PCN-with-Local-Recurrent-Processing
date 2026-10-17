@@ -7,6 +7,119 @@ then accuracy retention across the complete circuit population. Repeat the
 CiFAIR-100 study on CiFAIR-10 and extend CiFAIR-100 to ResNet-110. A flatter
 curve is not necessarily a representative training curve.
 
+### Submitted BlueHive jobs — reported 2026-10-15
+
+Submission is confirmed by the user's `sbatch --parsable` output; execution and
+completion have **not** been checked remotely. Jobs are independent Slurm jobs,
+not a dependency queue. Each singleton job processes original then improved
+circuit sequentially, branching from the same pretrained checkpoint.
+
+| Job ID | Experiment | Expected stages |
+|---|---|---|
+| 2153379 | PCN / CiFAIR-10 singleton study | Existing PT → FT50 → MC45, for each family |
+| 2153380 | Narrow WRN c27 / CiFAIR-10 singleton study | PT300 once → select q inverse → FT50 → MC45, for each family |
+| 2153381 | ResNet-110 / CiFAIR-10 singleton study | PT300 once → select q inverse → FT50 → MC45, for each family |
+| 2153382 | ResNet-110 / CiFAIR-100 singleton study | PT300 once → select q inverse → FT50 → MC45, for each family |
+| 2153383 | Narrow WRN c27 / CiFAIR-100, `coupler_full_range`, VDD=0.5, q inverse 20 | Existing independent ÷3/15-ns PT → FT140 → MC45 |
+| 2153384 | Narrow WRN c27 / CiFAIR-100, `coupler_monte_v2`, VDD=0.1, q inverse 5 | Existing independent ÷3/15-ns PT → FT140 → MC45 |
+
+All MC45 stages request expanded Level 3, all 45 corners, one trial per corner,
+and no BN recalibration. The singleton FT curves are TT mcparamset **73** for
+`coupler_monte` and **34** for `coupler_monte_v2`; evaluation uses the full
+corresponding family bank. Measured-ReLU fusion is enabled.
+
+The submitted commands used `RUN_ID="$(date +%Y%m%d)"`. Its expanded value was
+not included in the pasted submission output: recover the actual suffix from
+the remote paths/logs rather than recomputing the date when downloading later.
+Paths below are relative to the remote repository root.
+
+| Job | Submitted tag/prefix (`D` = actual submission `RUN_ID`) |
+|---|---|
+| PCN / CiFAIR-10 | `tt_representative_pcn_cifar10_D` |
+| WRN / CiFAIR-10 | `tt_representative_wrn_c27_cifar10_D` |
+| ResNet / CiFAIR-10 | `tt_representative_resnet110_cifar10_D` |
+| ResNet / CiFAIR-100 | `tt_representative_resnet110_cifar100_D` |
+| Full-range WRN FT140 | `coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_D` |
+| V2 WRN FT140 | `coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_D` |
+
+#### What to download after completion
+
+Keep the relative directory structure. In this checklist, `S` is one of the
+four singleton tags above, `F` is `coupler_monte` or `coupler_monte_v2`, and `P`
+is one of the two full-FT prefixes above. Substitute real names, not literal
+`D`, `S`, `F`, or `P`.
+
+| Artifact | Remote location | Why it is needed |
+|---|---|---|
+| Six Slurm logs | `logs/slurm_jobs/slurm_<JOB_ID>.out` for the six IDs above | Startup failures, actual training commands, PT/FT best accuracy/epoch, and successful stage handoffs |
+| Singleton pipeline logs | `logs/${S}/` for all four jobs | `pretrain.log` for CNNs, family selection/FT/eval logs, and `status.log`; PCN has no new pretraining log |
+| PCN FT's separate logs | `logs/${S}_${F}/` for the PCN job, both families | Preserve the stage's own training log as well as its pipeline copy |
+| CNN q-selection records | `results/${S}_${F}_selection/` for the three CNN jobs | Six `selection.json` files, `selected_one_over_q.txt`, source/curve hashes, sanity checks and candidate scores |
+| Singleton MC45 records | `results/${S}_${F}_mc45/` for all four jobs | Eight result directories, including `summary.md`, `corner_trials.csv`, all corner logs and available resolved configuration/trial outputs |
+| Full-FT MC45 records | `results/${P}_mc45/` for both reruns | Two result directories, including overall `evaluation.log`, summary/CSV, all corner logs, `resolved_config.json` and trial outputs |
+| New CNN PT checkpoints/configs | `saved_ckpt_runs/${S}_pretrain_iq12/` for the three CNN jobs | Three selected pretrained models, `baseline_config.json` and preprocessing metadata |
+| Singleton FT checkpoints/configs | PCN: `saved_ckpt_runs/${S}_${F}_ft/`; CNN: `saved_ckpt_runs/${S}_${F}_ft_iq12/` | Eight FT models; retain best and full-parameter-best checkpoints, configuration files and preprocessing metadata |
+| Full-FT checkpoints/configs | `saved_ckpt_runs/${P}_ft_iq12/` | Two FT models, best/full-parameter-best checkpoints, configuration files and preprocessing metadata |
+
+The two existing source roots are the CiFAIR-10 PCN root listed below and the
+independent CiFAIR-100 WRN ÷3/15-ns root used in the full-FT launch command.
+Their corresponding checkpoints already exist locally. Record their remote
+SHA-256 hashes; download them too if a matching local copy cannot be verified.
+
+Also retain the submitted launcher/code revision (`git rev-parse HEAD`), any
+uncommitted patch, and the two training singleton CSVs. Record the revision used
+at launch, if known: the checkout revision at download time is not proof of the
+code used by an earlier job. Resolved runtime logs/configurations take priority
+over current defaults. A Slurm accounting export with state/exit code/elapsed
+time for these six IDs is useful to distinguish completion from interruption.
+
+**Do not download expanded-weight caches or datasets for initial analysis.**
+They are not needed to reconstruct the tables. Keep them on the remote machine
+for reuse. If transferring whole checkpoint folders is inconvenient, retain
+the best/full-parameter-best `.pth` files and every JSON configuration; retain
+`latest_ckpt` and the original failure logs for any interrupted job.
+
+Expected complete analysis inventory: **3 new CNN PT results, 6 q selections,
+10 FT results, and 10 MC45 result sets (450 corner trials)**. Verify all 45
+corner logs against each CSV before computing a mean; do not silently average
+a partial or stale aggregate. No results have been inferred from submission.
+
+#### Local full-FT v2: queued BN-recalibration control — 2026-10-16
+
+This is the **local** pipeline with prefix
+`coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_20261015`,
+not a dependency on remote Slurm job 2153384. Its FT→unrecalibrated MC45 process
+was identified as PID 125149 (start ticks 3613810). A detached user service,
+`scan-wrn-fullft-v2-bnrecal-20261015.service`, is queued behind that exact
+process identity. The pipeline and its queued control are now **COMPLETE**:
+FT best 57.69% (epoch 110), unrecalibrated MC45 mean 35.9664%, recalibrated mean
+48.1891% (+12.2227 pp). Both CSVs contain 45 unique corner trials and match their
+individual logs. User lingering is enabled, so the service is independent of
+terminal lifetime.
+
+- Require predecessor exit, its final FT+MC45 success message, and exactly 45
+  unique baseline trial records matching the individual corner logs. A missing
+  success marker, partial CSV or log mismatch fails visibly without evaluation.
+- Read the predecessor's actual `resolved_config.json`; replay every evaluator
+  setting, checkpoint, seed, hardware bank and expanded-cache path unchanged.
+  The only recipe changes are `bn_recalibrate=true`, 5,120 training calibration
+  samples and calibration batch size 256. Use a separate result directory;
+  never overwrite the baseline. BN stays unfused and dynamic hardware noise
+  remains enabled during each corner's recalibration.
+- Runner: `diagnostic_scripts/queue_feedforward_bn_recal.py`. Its saved queue
+  state, dependency identity/runtime-path snapshot and eventual replay command
+  are in `logs/local_runs/${P}_bnrecal_queue/`, with `P` equal to this local
+  prefix. Live queue/eval log: `logs/local_runs/${P}_bnrecal5120.queue.log`.
+  Recalibrated results: `results/${P}_mc45_bnrecal5120/`.
+- Validation: 18 queue/BN/pipeline regression tests passed. Rehearsals through
+  both the real queue process and the detached user-service launch path loaded
+  a copy of this running FT's current checkpoint, initialized real corner
+  hardware and stopped after genuine CSR expansion. Dependency-completion
+  artifacts were mocked and all rehearsal outputs isolated under
+  `/tmp/scan-fullft-bn-queue-rehearsal-ikkfm6_h/`; these are startup checks, not
+  full BN-calibration or accuracy results. No running training/evaluation code
+  was changed, and rehearsal outputs cannot satisfy the production dependency.
+
 ### CiFAIR-100 results
 
 All entries below are absolute top-1 percentages. FT uses 50 epochs and SRRL;
@@ -158,7 +271,8 @@ Remaining work, in order:
    values. BN-recalibrated CNN runs are optional, separately labeled controls.
 
 The following sections preserve the **earlier fixed-timing/full-range and
-single-corner experiments**, not the current singleton protocol.
+single-corner experiments and full-bank WRN reruns**, not the current singleton
+protocol.
 
 ## Motivation and question
 
@@ -176,26 +290,53 @@ These are simulation results, not measurements on fabricated hardware.
 ## Completed results
 
 All entries are **CiFAIR-100 top-1 accuracy (%)**. PT and FT are the best saved
-validation scores. L2/L3 entries are arithmetic means, not selected best trials.
-L2 uses five trials per condition; L3 uses three trials per condition on **SS_V2_T2**.
-“—” means BN recalibration is inapplicable because the model has no BN.
+validation scores. L2/L3 entries are arithmetic means, not selected best trials,
+except explicitly marked single-trial results. L2 uses five trials per condition;
+L3 SS uses three trials per condition on **SS_V2_T2**, except the five-cycle
+PCN and v2 WRN rows' one-trial results extracted from MC45. MC45 columns average all 45 corners, one trial per corner;
+do not compare them as though they were the SS-only protocol. “—” means BN
+recalibration is inapplicable because the model has no BN; “n/r” means no result
+is reported for that configuration/protocol here.
 
-| Model | Parameters | Stage times, ns: PCN y/z; CNN conv1/conv2 | PT best | FT best | L2 no recal | L2 recal | L3 no recal | L3 recal |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **PCN 16L96C, 5 cycles** | **1,028,380** | **5 / 15** | **63.90** | **60.02** | **59.120** | — | **58.480** | — |
-| PCN 16L96C, 1 cycle | 1,028,380 | 5 / 15 | 60.98 | 53.84 | 53.374 | — | 50.647 | — |
-| PCN 16L96C, 1 cycle | 1,028,380 | 7.5 / 22.5 | 62.28 | 54.67 | 54.086 | — | 51.093 | — |
-| PCN 16L96C, 1 cycle | 1,028,380 | 25 / 75 | 61.73 | 47.97 | 47.782 | — | 25.327 | — |
-| WRN-28-2 AvgPool, BN | 1,468,612 | 15 / 15 | 66.24 | 35.86 | 26.754 | 39.196 | 1.280 | 7.390 |
-| WRN-28 c27, stride-2 + AvgPool shortcuts, BN | 1,048,497 | 15 / 15 | 63.87 | 27.49 | 13.364 | 30.608 | 1.083 | 2.117 |
-| WRN-28-2 AvgPool, no BN/no conv bias | 1,464,996 | 15 / 15 | 56.37 | 55.64 | 54.634 | — | 49.933 | — |
+| Model | Parameters | Stage times, ns: PCN y/z; CNN conv1/conv2 | PT best | FT best | L2 no recal | L2 recal | L3 SS no recal | L3 SS recal | MC45 no recal | MC45 recal |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **PCN 16L96C, 5 cycles** | **1,028,380** | **5 / 15** | **63.90** | **60.02** | **59.120** | — | **57.81** (1 trial) | — | **56.9136** | — |
+| PCN 16L96C, 1 cycle | 1,028,380 | 5 / 15 | 60.98 | 53.84 | 53.374 | — | 50.647 | — | n/r | — |
+| PCN 16L96C, 1 cycle | 1,028,380 | 7.5 / 22.5 | 62.28 | 54.67 | 54.086 | — | 51.093 | — | n/r | — |
+| PCN 16L96C, 1 cycle | 1,028,380 | 25 / 75 | 61.73 | 47.97 | 47.782 | — | 25.327 | — | n/r | — |
+| WRN-28-2 AvgPool, BN | 1,468,612 | 15 / 15 | 66.24 | 35.86 | 26.754 | 39.196 | 1.280 | 7.390 | n/r | n/r |
+| WRN-28 c27, stride-2 + AvgPool shortcuts, BN; full-range, VDD=0.5 | 1,048,497 | 15 / 15 | 63.87 | 27.49 | 13.364 | 30.608 | 1.083 | 2.117 | n/r | n/r |
+| **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; v2, VDD=0.1** | **1,048,497** | **15 / 15** | **63.87** | **57.69** | n/r | n/r | **35.55** (1 trial) | **50.67** (1 trial) | **35.9664** | **48.1891** |
+| WRN-28-2 AvgPool, no BN/no conv bias | 1,464,996 | 15 / 15 | 56.37 | 55.64 | 54.634 | — | 49.933 | — | n/r | — |
+
+The five-cycle PCN MC45 evaluation uses `coupler_full_range`, VDD=0.5 V,
+q inverse 5, fixed y/z times of 5/15 ns, and the ordinary baked-quantized
+`best` checkpoint; all 45 corners completed with one trial each. Its SS entry
+is extracted from this same run. The previous 58.480% SS result used
+`coupler_monte_v2` and is superseded here because it used the wrong bank for
+this experiment. Evidence: [per-corner results](../results/pcn16l96c_fixed5ns_full_range_mc45_1trial/summary.md),
+[resolved configuration](../results/pcn16l96c_fixed5ns_full_range_mc45_1trial/run_config.txt).
+
+The new v2 row is the **same architecture and pretrained source** as the
+27.49%-FT c27 row, not a different WRN: stem 16, stages 27/54/108, BN enabled,
+stride-2 second convolutions at stage transitions, AvgPool/padding shortcuts.
+Both retain fixed 15 ns, q inverse 5 and the 140-epoch full-bank FT recipe.
+The rerun changes nonlinear-R and pooling from `coupler_full_range` to
+`coupler_monte_v2` and VDD from 0.5 to 0.1 V; measured-ReLU GPU fusion is enabled.
+Its FT best is epoch 110. The paired MC45 control changes only BN recalibration
+(5,120 training samples, batch size 256; dynamic hardware noise remains on)
+and output location, improving the mean by **12.2227 percentage points**.
+
+New-row evidence: [FT/pipeline log](../logs/local_runs/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_20261015.log),
+[unrecalibrated MC45](../results/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_20261015_mc45/summary.md),
+[recalibrated MC45](../results/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_20261015_mc45_bnrecal5120/summary.md).
 
 Parameter counts follow the training logs' model-parameter totals, excluding
 teacher/distillation auxiliary modules and hardware unrolling. Changing PCN
 cycle count or timing does not change its parameter count. The c27 WRN has
 approximately 1.96% more parameters than PCN.
 
-The three WRNs above were pretrained at 5 ns, then their convolution weights
+The three WRN architectures above were pretrained at 5 ns, then their convolution weights
 (and convolution biases where present) were divided by three and stage times
 increased to 15 ns before FT. PT scores refer to the original pretraining
 checkpoints. The older 5 ns BN-WRN FT/evaluation row is intentionally omitted.
@@ -322,11 +463,13 @@ accuracy under otherwise identical settings.
 
 ## Evidence so far
 
-1. **Recurrence is beneficial in the tested PCNs.** The five-cycle model exceeds
-   the best one-cycle result by 5.35 percentage points in FT and 7.387 points at
-   L3. Giving one cycle the same total nominal duration does not recover the
-   five-cycle accuracy. This supports repeated processing over merely extending
-   one integration interval in these operating conditions.
+1. **FT results support recurrence in the tested PCNs.** The five-cycle model
+   exceeds the best one-cycle result by 5.35 percentage points in FT. Giving
+   one cycle the same total nominal duration does not recover the five-cycle
+   FT accuracy. The current L3 entries are not a matched recurrence comparison:
+   five cycles uses `coupler_full_range` with one trial, whereas the one-cycle
+   entries use `coupler_monte_v2` with three trials. Matched-bank L3 evaluation
+   is needed before attributing an L3 gap to recurrence.
 2. **Higher PT accuracy does not guarantee physical robustness.** The BN WRN's
    PT score is 66.24%, above PCN's 63.90%, but its FT and L3 scores are much lower.
    The parameter-matched c27 WRN also underperforms this PCN.
@@ -335,9 +478,12 @@ accuracy under otherwise identical settings.
    from 1.083% to 2.117%. The no-BN/no-conv-bias WRN retains substantially more
    accuracy: 55.64% FT and 49.933% L3.
 4. **The broader claim remains qualified.** Five-cycle PCN exceeds the tested
-   BN-free WRN by 4.38 points in FT and 8.547 points at L3, but their PT accuracy,
-   architecture, and parameter count differ. This is not proof that recurrence
-   alone explains every CNN–PCN gap, or that PCNs universally outperform CNNs.
+   BN-free WRN by 4.38 points in FT, but their PT accuracy, architecture, and
+   parameter count differ. Their current L3 entries also use different coupler
+   banks and trial counts (`coupler_full_range`, one trial, versus
+   `coupler_monte_v2`, three trials), so no matched L3 advantage is claimed.
+   These results do not prove that recurrence alone explains every CNN–PCN gap,
+   or that PCNs universally outperform CNNs.
 
 ## Remaining controlled experiments
 
@@ -499,7 +645,7 @@ failure propagation and a PCN tee-pipeline failure with a stale checkpoint.
 Trainer/validation algorithms were not edited. These bounded rehearsals do not
 claim convergence, full MC45 completion, or an actual Slurm-cluster execution.
 
-## Planned full-FT WRN reruns — existing local/Slurm pipeline
+## Full-FT WRN reruns — existing local/Slurm pipeline
 
 These are **140-epoch full-bank FT**, not the 50-epoch single-curve study:
 
@@ -555,8 +701,9 @@ the final `source` line with
 `bash ./launch_scripts/run_feedforward_pretrain_then_ft.sh`.
 Use `mode=ft_only` to omit MC45. FT logs are in the Slurm job output;
 MC45's overall live log is `results/${EXP_PREFIX}_mc45/evaluation.log` and
-individual corners are logged beside it. These commands are pinned only;
-the production reruns have not been submitted here.
+individual corners are logged beside it. This is the generic recipe example;
+the submitted BlueHive job IDs and date-suffixed output prefixes are pinned at
+the top of this document. Submission is not evidence of successful execution.
 
 ## Result sources
 

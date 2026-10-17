@@ -117,7 +117,8 @@ def get_test_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
 
 def get_bn_calibration_data(bs=128, n_samples=None, img_type="rgb",
                             task="cifar10", input_quant_bits=None,
-                            center_student_input=False, noisy_inp=False):
+                            center_student_input=False, noisy_inp=False,
+                            normalize_student_input=True):
     """Return augmentation-free training samples, optionally with sensor noise.
 
     BN recalibration retains its clean-input default. Operating-point selection
@@ -129,7 +130,7 @@ def get_bn_calibration_data(bs=128, n_samples=None, img_type="rgb",
             mean, std = _CIFAR_STATS[task]
             transform = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize(mean, std),
+                *([transforms.Normalize(mean, std)] if normalize_student_input else []),
             ])
         else:
             transform = transforms.Compose([

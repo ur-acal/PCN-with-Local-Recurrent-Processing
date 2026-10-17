@@ -27,7 +27,7 @@ from feedforward_validation import FeedForwardCNNValidator
 from bn_recalibration import recalibrate_batchnorm
 from data_utils import MISMATCH_LEVELS_5b
 from inference_utils import get_bn_calibration_data, get_test_data
-from input_preprocessing import resolve_preprocessing
+from input_preprocessing import resolve_preprocessing, resolve_student_normalization
 from measured_activation import (
     configure_feedforward_measured_activation,
     feedforward_measured_activation_factory,
@@ -139,6 +139,7 @@ def parse_args():
     p.add_argument("--enob", type=optional_int, default=8)
     p.add_argument("--input_quant_bits", type=optional_int, default=None)
     p.add_argument("--center_student_input", type=optional_bool, default=None)
+    p.add_argument("--normalize_student_input", type=optional_bool, default=None)
     p.add_argument("--enable_spin_variation", type=str2bool, default=True)
     p.add_argument("--sigma_spin", type=float, default=0.10)
     p.add_argument("--spin_variation_mean", type=float, default=1.0)
@@ -260,6 +261,9 @@ def evaluate_once(args):
         args.model_name, cfg, 100 if args.dataset == "cifar100" else 10)
     checkpoint = torch.load(
         args.checkpoint, map_location="cpu", weights_only=False)
+    args.normalize_student_input = resolve_student_normalization(
+        args.checkpoint, getattr(args, 'normalize_student_input', None))
+    print('Student RGB input normalization: {}'.format(args.normalize_student_input), flush=True)
     state_dict = checkpoint.get("net", checkpoint)
     checkpoint_format = classify_checkpoint_state_dict(state_dict)
     if args.checkpoint_kind != "auto":
@@ -415,13 +419,15 @@ def evaluate_once(args):
             img_type=args.img_type, task=args.dataset,
             input_quant_bits=args.input_quant_bits,
             center_student_input=args.center_student_input,
+            normalize_student_input=args.normalize_student_input,
             noisy_inp=True)
     else:
         loader = get_test_data(
             test_bs=args.batch_size, img_type=args.img_type,
             task=args.dataset, shuffle=False,
             input_quant_bits=args.input_quant_bits,
-            center_student_input=args.center_student_input)
+            center_student_input=args.center_student_input,
+            normalize_student_input=args.normalize_student_input)
     os.makedirs(args.result_path, exist_ok=True)
     validator = None
     if args.use_expanded_weights:
@@ -440,7 +446,8 @@ def evaluate_once(args):
             img_type=args.img_type,
             task=args.dataset,
             input_quant_bits=args.input_quant_bits,
-            center_student_input=args.center_student_input)
+            center_student_input=args.center_student_input,
+            normalize_student_input=args.normalize_student_input)
         stats = recalibrate_batchnorm(model, calibration_loader, device)
         print(
             "BN recalibration: batchnorms={num_batchnorms}, "

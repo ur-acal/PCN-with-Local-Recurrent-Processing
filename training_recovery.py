@@ -107,11 +107,14 @@ def restore_latest(trainer):
     # Recovery is continuation, not conversion into another physical stage.
     current = getattr(trainer, 'recovery_config', {})
     for key in ('physical_pretraining', 'physical_feedforward', 'physical_level',
+                'tc_feedforward', 'tc_method', 'tc_tol', 'tc_step_size',
+                'tc_num_steps', 'one_shot_conv',
                 'toggle_timing_mode', 'toggle_y_time', 'z_over_y_time',
                 'scale_train_recipe', 'one_over_q', 'v_dd', 'num_epochs',
                 'override', 'distill_method', 'input_quant_bits',
                 'center_student_input', 'normalize_student_input', '_teacher_preprocessing',
                 'timm_aug_level', 'final_eval_only',
+                'activation_random_curve_sharing',
                 'health_check_epochs', 'health_check_batches',
                 'health_check_seed', 'validation_mode',
                 'final_head_type', 'final_repr_bits', 'final_weight_bits',

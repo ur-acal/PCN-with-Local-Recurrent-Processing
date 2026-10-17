@@ -62,6 +62,7 @@ from measured_pooling import configure_feedforward_measured_pooling
 from input_preprocessing import (
     append_preprocessing_suffix,
     resolve_preprocessing,
+    resolve_student_normalization,
     write_run_config,
 )
 from train_ode_cifar import build_teacher_model, evaluate_teacher, _get_feature_kd_trainer
@@ -228,6 +229,8 @@ def parse_args():
     parser.add_argument("--img_type", default="rgb",
                         help="Input data type: rgb, scanGFI, raw, _raw, or CiFAIR.")
     parser.add_argument("--rggb_to_rgb", type=str2bool, default=False)
+    parser.add_argument("--normalize_student_input", type=optional_bool, default=None,
+                        help="RGB normalization; auto inherits checkpoint metadata, otherwise defaults to true.")
     parser.add_argument("--timm_aug_level", default="none",
                         choices=("none", "no_aug", "mild", "mid", "rgb_mid"))
     parser.add_argument("--timm_re_prob", type=float, default=None)
@@ -337,6 +340,9 @@ def parse_args():
                         choices=("fixed", "random_per_forward"))
     parser.add_argument("--activation_curve_sharing", default="per_model",
                         choices=("per_model", "per_layer", "per_spin"))
+    parser.add_argument("--activation_random_curve_sharing", default=None,
+                        choices=("per_model", "per_layer", "per_spin"),
+                        help="Random-per-forward sampling granularity; defaults to activation_curve_sharing.")
     parser.add_argument("--activation_curve_seed", type=int, default=None)
     parser.add_argument("--activation_interpolation", default="piecewise_linear",
                         choices=("piecewise_linear", "cubic_bspline"))
@@ -486,6 +492,7 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
         adapt_PIL_teacher=args.adapt_PIL_teacher,
         input_quant_bits=args.input_quant_bits,
         center_student_input=args.center_student_input,
+        normalize_student_input=args.normalize_student_input,
 
         # TrainerCiFarTimmStyle-specific args.
         timm_opt=cfg["timm_opt"],
@@ -526,6 +533,9 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
 
 def main():
     args = parse_args()
+    args.normalize_student_input = resolve_student_normalization(
+        args.resume_checkpoint, args.normalize_student_input)
+    logging.warning('Student RGB input normalization: %s', args.normalize_student_input)
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -541,7 +551,8 @@ def main():
             args.center_student_input)
         write_run_config(
             args.output_dir, args.input_quant_bits,
-            args.center_student_input)
+            args.center_student_input,
+            normalize_student_input=args.normalize_student_input)
     img_type_lower = args.img_type.lower()
     if img_type_lower == "cifair":
         args.img_type = "CiFAIR"
@@ -766,15 +777,13 @@ def main():
             if args.physical_pretraining else
             args.enable_measured_activation)
         if activation_enabled:
-            if (args.activation_corner_mode == "random_per_forward" and
-                    args.activation_curve_sharing != "per_model"):
-                raise ValueError(
-                    "random_per_forward matches PCN training semantics and "
-                    "requires activation_curve_sharing=per_model.")
+            random_sharing = (args.activation_random_curve_sharing or
+                              args.activation_curve_sharing)
             activation_factory = feedforward_measured_activation_factory(
                 args.activation_curve_path, args.v_dd,
                 corner=args.activation_corner,
-                curve_sharing=args.activation_curve_sharing,
+                curve_sharing=(random_sharing if args.activation_corner_mode == 'random_per_forward'
+                               else args.activation_curve_sharing),
                 curve_seed=args.activation_curve_seed,
                 normalize_positive_endpoint=(
                     args.activation_normalize_positive_endpoint),
@@ -795,7 +804,7 @@ def main():
                     q=pullback_q)
             configure_measured_activation_corner_mode(
                 model, mode=args.activation_corner_mode,
-                sharing=args.activation_curve_sharing)
+                sharing=random_sharing)
         if (args.nonlinear_R_train_mode != "none" and
                 not args.physical_pretraining):
             wrappers = list(iter_physical_wrappers(model))
@@ -873,6 +882,12 @@ def main():
                 "physical_feedforward": (
                     None if not args.physical_feedforward else {
                         "physical_level": args.physical_level,
+                        "tc_feedforward": args.tc_feedforward,
+                        "tc_method": args.tc_method,
+                        "tc_tol": args.tc_tol,
+                        "tc_step_size": args.tc_step_size,
+                        "tc_num_steps": args.tc_num_steps,
+                        "one_shot_conv": args.one_shot_conv,
                         "linear_bias": args.linear_bias,
                         "physical_pretraining": args.physical_pretraining,
                         "R": args.R,
@@ -887,6 +902,7 @@ def main():
                         "scale_train_recipe": args.scale_train_recipe,
                         "input_quant_bits": args.input_quant_bits,
                         "center_student_input": args.center_student_input,
+                        "normalize_student_input": args.normalize_student_input,
                         "nonlinear_R_train_mode": args.nonlinear_R_train_mode,
                         "nonlinear_R_table": args.nonlinear_R_table,
                         "enable_measured_activation": args.enable_measured_activation,
@@ -895,6 +911,7 @@ def main():
                         "fuse_measured_activation": (
                             args.fuse_measured_activation),
                         "activation_corner_mode": args.activation_corner_mode,
+                        "activation_random_curve_sharing": args.activation_random_curve_sharing,
                         "unitless_measured_pullback_mode": (
                             args.unitless_measured_pullback_mode),
                         "unitless_pullback_q": args.unitless_pullback_q,

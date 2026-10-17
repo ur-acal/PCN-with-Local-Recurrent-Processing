@@ -20,8 +20,13 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     if [[ "${ENABLE_NONLINEAR_R:-true}" == false ]]; then
       export NONLINEAR_R_TRAIN_MODE=none
     fi
-    export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
-    export ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
+    if [[ "${ACTIVATION_CORNER_MODE:-fixed}" == random_per_forward ]]; then
+      export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+      export ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT_25_1_MC18}"
+    else
+      export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
+      export ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
+    fi
     export ACTIVATION_CURVE_SHARING=per_model
   fi
   TC_FEEDFORWARD_ARGS=(--tc_feedforward true
@@ -39,6 +44,9 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     --measured_pooling_nominal_R "${MEASURED_POOLING_NOMINAL_R:-10e3}")
   if [[ -n "${TC_STEP_SIZE:-}" ]]; then
     TC_FEEDFORWARD_ARGS+=(--tc_step_size "$TC_STEP_SIZE")
+  fi
+  if [[ -n "${TC_NUM_STEPS:-}" ]]; then
+    TC_FEEDFORWARD_ARGS+=(--tc_num_steps "$TC_NUM_STEPS")
   fi
   if [[ "$1" != pretrain ]]; then
     TC_FEEDFORWARD_ARGS+=(--enable_spin_variation "${ENABLE_SPIN_VARIATION:-true}"

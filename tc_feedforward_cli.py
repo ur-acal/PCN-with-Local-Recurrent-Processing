@@ -26,6 +26,8 @@ def add_arguments(parser):
                             'CHECKPOINT_ODE_RHS_PORTION', '1.0')))
     parser.add_argument('--tc_tol', type=float, default=1e-6)
     parser.add_argument('--tc_step_size', type=float, default=None)
+    parser.add_argument('--tc_num_steps', type=int, default=None,
+                        help='Euler steps per convolution; mutually exclusive with tc_step_size.')
     parser.add_argument('--tc_noise_reference_R', type=float, default=50e3)
     parser.add_argument('--tc_covariance_table', default='./hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv')
     parser.add_argument('--tc_curve_sampling', choices=('histogram', 'uniform'), default='histogram')
@@ -39,7 +41,7 @@ def conversion_options(args):
     if args.physical_level != 2:
         raise ValueError('TC uses normalized conductances (physical_level=2), never pulse-level weights.')
     return dict(tc_options={key: getattr(args, key) for key in (
-        'one_shot_conv', 'tc_method', 'tc_tol', 'tc_step_size',
+        'one_shot_conv', 'tc_method', 'tc_tol', 'tc_step_size', 'tc_num_steps',
         'tc_noise_reference_R', 'tc_covariance_table', 'tc_curve_sampling',
         'reuse_accepted_step_training', 'checkpoint_ode_rhs_training')})
 
