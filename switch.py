@@ -757,6 +757,7 @@ class ODEXInitFFFBPixelSwitchParallel(ODEXInitFFFBPixelSwitchExplicit):
             # Keep the same N scaling as the original pixel-switch math/code.
             return n_pix * out
 
+        ode_func.accepted_step_reuse_safe = not self.use_cached_patches
         return ode_func
 
     def _get_read_decay(self, pix_idx, n_pix, T_iter, ref_tensor):
@@ -1026,6 +1027,7 @@ class ODEXInitFFFBPixelSwitchEfficient(ODEXInitFFFBPixelSwitchParallel):
             else:
                 return out
 
+        ode_func.accepted_step_reuse_safe = False
         return ode_func
 
 

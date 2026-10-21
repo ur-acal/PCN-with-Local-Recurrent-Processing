@@ -240,8 +240,9 @@ class PCNetNoBatchNorm(PCNet):
                 x = self.max_pool2d(x)
             if clamp:
                 x = torch.clamp(x, -1, 1)
-            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
-                i, x.mean(), x.median(), x.min(), x.max(), x.std()))
+            if log.isEnabledFor(logging.INFO):
+                log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+                    i, x.mean(), x.median(), x.min(), x.max(), x.std()))
 
         # classifier
         if self.dropout > 0.0:
@@ -374,8 +375,9 @@ class PCNetSepBN(PCNetSeparable):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
-            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
-                i, x.mean(), x.median(), x.min(), x.max(), x.std()))
+            if log.isEnabledFor(logging.INFO):
+                log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+                    i, x.mean(), x.median(), x.min(), x.max(), x.std()))
             x = self.BNs[i](x)
 
         # classifier
@@ -401,8 +403,9 @@ class PCNetSepBNRes(PCNetSepBN):
             x = self.PcConvs[i](x, i)  # ReLU + Conv
             if self.max_pool[i]:
                 x = self.max_pool2d(x)
-            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
-                i, x.mean(), x.median(), x.min(), x.max(), x.std()))
+            if log.isEnabledFor(logging.INFO):
+                log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+                    i, x.mean(), x.median(), x.min(), x.max(), x.std()))
             x = self.BNs[i](x) + inp
 
         # classifier

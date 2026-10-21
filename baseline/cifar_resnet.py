@@ -802,6 +802,32 @@ def _register_wrn_control(row, size):
 
 from baseline.wrn_control_specs import ROWS as _CONTROL_ROWS, SIZES as _CONTROL_SIZES
 
+
+def ensure_wrn_registered(name):
+    """Register requested widths on demand in each training/evaluation process."""
+    import re
+    from baseline.wrn_control_specs import parse_size
+    match = re.fullmatch(r'wrn_(\d+_\d+)_cifar(?:_control_r(\d+)|(_nobn(?:_no_bias)?))?', name)
+    if not match:
+        return False
+    depth, width = parse_size(match[1])
+    if name in globals():
+        return True
+    if match[2]:
+        _register_wrn_control(int(match[2]), match[1])
+    else:
+        def factory(pretrained=False, num_classes=10, in_chans=3, **kwargs):
+            if match[3]:
+                builder = _build_wrn_nobn_no_bias if match[3].endswith('_no_bias') else _build_wrn_nobn
+                return builder(depth, width, pretrained, num_classes, in_chans, **kwargs)
+            if pretrained:
+                raise ValueError('CIFAR WRNs require a locally trained checkpoint')
+            return WideResNetCIFAR(depth=depth, widen_factor=width, num_classes=num_classes,
+                                  in_chans=in_chans, **kwargs)
+        factory.__name__ = name
+        globals()[name] = register_model(factory)
+    return True
+
 for _row in _CONTROL_ROWS:
     for _size in _CONTROL_SIZES:
         _register_wrn_control(_row, _size)

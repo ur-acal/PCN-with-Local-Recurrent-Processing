@@ -111,8 +111,11 @@ def validate_model(model):
 def run(args):
     datasets, architectures = split_csv(args.datasets), split_csv(args.architectures)
     kinds = split_csv(args.mismatch_types)
-    if set(architectures) - set(ARCHITECTURES):
-        raise ValueError("Unsupported architecture selection")
+    from baseline.wrn_control_specs import parse_size
+    for architecture in architectures:
+        if not architecture.startswith('WRN_'):
+            raise ValueError("Unsupported architecture selection")
+        parse_size(architecture[4:])
     if set(kinds) - set(LEVELS):
         raise ValueError("Unsupported mismatch type selection")
     if (args.checkpoint_override or args.model_name_override) and (

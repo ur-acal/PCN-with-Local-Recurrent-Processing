@@ -343,11 +343,13 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
                     logging.warning("name: {}, noisy params mean: {}, min: {}, max: {}".format(
                         _name, _p.mean(), _p.min(), _p.max()))
 
-                cur_mean_abs = torch.mean(torch.abs(_p - clean_params[_name]))
-                mean_abs.append(cur_mean_abs)
-                logging.info("Noise check, name: {}, is equal: {}, abs mean change: {}".format(
-                    _name, torch.allclose(_p, clean_params[_name]), cur_mean_abs))
-            logging.info("Summed abs mean change: {}".format(sum(mean_abs)))
+                if logging.getLogger().isEnabledFor(logging.INFO):
+                    cur_mean_abs = torch.mean(torch.abs(_p - clean_params[_name]))
+                    mean_abs.append(cur_mean_abs)
+                    logging.info("Noise check, name: {}, is equal: {}, abs mean change: {}".format(
+                        _name, torch.allclose(_p, clean_params[_name]), cur_mean_abs))
+            if logging.getLogger().isEnabledFor(logging.INFO):
+                logging.info("Summed abs mean change: {}".format(sum(mean_abs)))
 
             if noise_to_bn and not (mismatch_type == "add" and additive_scale_mode == "max_sqrt"):
                 # adding noise to running mean and variance of batch norm

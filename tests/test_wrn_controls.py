@@ -131,19 +131,21 @@ class WRNControlTests(unittest.TestCase):
             x = torch.randn(2, 3, 8, 8)
             test_loader = DataLoader(TensorDataset(x, torch.tensor([0, 1])), batch_size=2)
             calibration = DataLoader(x + 1, batch_size=2)
-            for row, evaluator in ((4, bn_eval), (6, nobn_eval)):
-                name = model_name(row, '16_2')
+            for row, evaluator, size in ((4, bn_eval, '16_2'), (6, nobn_eval, '16_2'),
+                                         (17, bn_eval, '28_6'), (18, bn_eval, '28_8'),
+                                         (6, nobn_eval, '28_6')):
+                name = model_name(row, size)
                 model = build_model(name, get_baseline_config(name), 100)
-                run, checkpoint = paths(args, row, 'cifar100', '16_2')
+                run, checkpoint = paths(args, row, 'cifar100', size)
                 checkpoint.parent.mkdir(parents=True)
                 torch.save({'net': model.state_dict()}, checkpoint)
-                command = test_command(args, row, 'cifar100', '16_2', 'max_additive')
+                command = test_command(args, row, 'cifar100', size, 'max_additive')
                 command[command.index('--noisy_trials') + 1] = '1'
                 command[command.index('--noise_levels') + 1] = '0,0.01'
                 command += ['--device', 'cpu']
                 with patch.object(sys, 'argv', command[2:]), \
                      patch.object(evaluator, 'build_test_loader', return_value=test_loader):
-                    if row == 4:
+                    if ROWS[row][0]:
                         with patch.object(bn_eval, 'build_bn_calibration_loader', return_value=calibration), \
                              patch.object(bn_eval, 'discover_compare_specs', side_effect=AssertionError('Legacy CSV read')):
                             evaluator.main()

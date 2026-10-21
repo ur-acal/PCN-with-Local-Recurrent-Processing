@@ -39,6 +39,12 @@ def odesolve_endtime(func, z0, options, return_solver=False, **kwargs):
     else:
         print('Name of solver not found.')
 
+    solver.reuse_accepted_step_training = options.get('reuse_accepted_step_training', False)
+    solver.reuse_accepted_step_inference = options.get('reuse_accepted_step_inference', True)
+    solver.accepted_step_reuse_safe = (options.get('accepted_step_reuse_safe', True)
+                                      and getattr(func, 'accepted_step_reuse_safe', True))
+    solver.energy_meter = getattr(func, 'energy_meter', None)
+
     if return_solver: # return solver
         return solver
     else: # return integrated value

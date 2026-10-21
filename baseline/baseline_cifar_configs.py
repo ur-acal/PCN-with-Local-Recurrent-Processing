@@ -393,7 +393,8 @@ def infer_case(model_name: str, pretrained: bool = False, prefer_resize: bool = 
     """
     name = model_name.lower()
 
-    if name in CUSTOM_CIFAR_MODELS:
+    from baseline.cifar_resnet import ensure_wrn_registered
+    if name in CUSTOM_CIFAR_MODELS or ensure_wrn_registered(name):
         return "custom_noresize"
 
     if name in ADAPT_NORESIZE_TIMM_MODELS and not prefer_resize:
@@ -436,6 +437,9 @@ def get_baseline_config(
 
 def build_model(model_name: str, cfg: dict, num_classes: int):
     case = cfg["case"]
+
+    from baseline.cifar_resnet import ensure_wrn_registered
+    ensure_wrn_registered(model_name)
 
     model = timm.create_model(
         model_name,

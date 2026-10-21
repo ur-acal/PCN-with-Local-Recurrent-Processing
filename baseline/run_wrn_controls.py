@@ -15,7 +15,7 @@ import sys
 import time
 from copy import copy
 
-from baseline.wrn_control_specs import DATASETS, ROWS, SIZES, model_name, model_options, training_override
+from baseline.wrn_control_specs import DATASETS, ROWS, SIZES, model_name, model_options, training_override, parse_size
 
 ROOT = Path(__file__).resolve().parents[1]
 LEVELS = {
@@ -66,9 +66,16 @@ def parse_args(argv=None):
     args.sizes = args.sizes.split(',')
     args.conditions = args.conditions.split(',')
     for selected, allowed in ((args.rows, ROWS), (args.datasets, DATASETS),
-                              (args.sizes, SIZES), (args.conditions, LEVELS)):
+                              (args.conditions, LEVELS)):
         if not selected or len(set(selected)) != len(selected) or not set(selected) <= set(allowed):
             p.error(f'Invalid or duplicate selection: {selected}')
+    try:
+        if len(set(args.sizes)) != len(args.sizes):
+            raise ValueError('Duplicate sizes')
+        for size in args.sizes:
+            parse_size(size)
+    except ValueError as error:
+        p.error(str(error))
     if args.parallelism < 1 or args.eval_parallelism < 1:
         p.error('parallelism must be positive')
     if args.simulate_failure and not args.simulate:

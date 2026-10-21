@@ -104,6 +104,9 @@ def get_args():
     # ------------------------------------------------------------------
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()), default="ODEBlockPC")
     p.add_argument("--method", type=str, default="dopri5")
+    p.add_argument("--reuse_accepted_step_training", type=str2bool,
+                   default=str2bool(os.environ.get("REUSE_ACCEPTED_STEP_TRAINING", "false")),
+                   help="Reuse accepted adaptive candidates and their autograd graphs instead of replaying.")
     p.add_argument("--tol", type=float, default=1e-3)
     p.add_argument("--n_steps", type=float, default=10)
     p.add_argument("--t_end", type=float, default=1.0)
@@ -322,6 +325,7 @@ def main():
     # Convert PCConv blocks to ODE blocks.
     ode_kw = [
         "offset_eps",
+        "reuse_accepted_step_training",
         "sde_noise_type",
         "patch_node",
         "patch_stride",

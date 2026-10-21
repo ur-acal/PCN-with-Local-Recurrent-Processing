@@ -30,6 +30,10 @@ def get_args():
     model_save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_ckpt")
     # TrainerCiFar args
     p.add_argument("--save_path",     type=str,   default=model_save_path)
+    p.add_argument("--completion_json", type=str, default=None,
+                   help="Optional machine-readable checkpoint handoff, written only after successful training.")
+    p.add_argument("--rehearsal_root", type=str, default=None,
+                   help="Isolated pipeline rehearsal: real initialization and one training batch only.")
     p.add_argument("--skip_eval_epochs", type=int, default=0)
     p.add_argument("--img_type", type=str, default="rgb")
     p.add_argument("--dataset", type=str, choices=["cifar10", "cifar100", "tinyimagenet"], default="cifar10")
@@ -80,6 +84,9 @@ def get_args():
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()),
                         default="ODEBlockPC")
     p.add_argument("--method", type=str, default="dopri5")
+    p.add_argument("--reuse_accepted_step_training", type=str2bool,
+                   default=str2bool(os.environ.get("REUSE_ACCEPTED_STEP_TRAINING", "false")),
+                   help="Reuse accepted adaptive candidates and their autograd graphs instead of replaying.")
     p.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
     p.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     p.add_argument("--t_end", type=float, default=1.0, help="Stop time of the solver")
@@ -290,6 +297,11 @@ def _constr_model_name(args, rep=1):
         model_name += "_" + args.img_type
     if getattr(args, "rggb_to_rgb", False):
         model_name += "_rggb2rgb"
+    if getattr(args, "avg_pooling", False):
+        model_name += "_avgP"
+    from ode_pc import is_adaptive
+    if not is_adaptive(args.method):
+        model_name += "_{}Steps".format(format(args.n_steps, 'g'))
     model_name = model_name + "_" + str(rep) + 'REP'
     if args.model_name is not None or args.ode_wrapper is not None or args.noise_level is not None:
         if args.ode_wrapper is None:
@@ -508,6 +520,8 @@ def _get_feature_kd_trainer(args):
 
 def main():
     args = get_args()
+    from pcn_pipeline import validate_training_paths
+    validate_training_paths(args)
     if args.seed is not None:
         import random
         random.seed(args.seed)
@@ -617,7 +631,7 @@ def main():
 
     # convert block to Neural ode
     # Todo: The offset eps in ode_block is currently useless. Need to pass that to the wrapper.
-    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "patch_node", "patch_stride",
+    ode_kw, ode_kwargs = ["offset_eps", "sde_noise_type", "reuse_accepted_step_training", "patch_node", "patch_stride",
                           "patch_cycle", "patch_pad", "fold_scalar", "n_iters"], {}
     for _name, _val in vars(args).items():
         if _name in ode_kw and _val is not None:
@@ -819,7 +833,14 @@ def main():
     if args.test_only:
         logging.warning("Test only. Run 2 epochs.")
 
-    trainer.train()
+    if args.rehearsal_root:
+        from pcn_pipeline import rehearse_training
+        rehearse_training(trainer, args)
+    else:
+        trainer.train()
+    if args.completion_json:
+        from pcn_pipeline import training_complete
+        training_complete(args, model_name)
 
 if __name__ == "__main__":
     main()

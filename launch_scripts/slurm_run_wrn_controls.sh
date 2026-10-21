@@ -32,7 +32,11 @@ for dataset in "${datasets[@]}"; do
   case "$dataset" in cifar10|cifar100) ;; *) echo "Invalid dataset: $dataset" >&2; exit 2 ;; esac
 done
 for size in "${sizes[@]}"; do
-  case "$size" in 16_2|16_4|28_2|28_4) ;; *) echo "Invalid size: $size" >&2; exit 2 ;; esac
+  # Keep validation in the submission shell; any positive integer width works.
+  if [[ ! "$size" =~ ^([1-9][0-9]*)_([1-9][0-9]*)$ ]] ||
+     (( ${BASH_REMATCH[1]:-0} < 10 || (${BASH_REMATCH[1]:-0} - 4) % 6 != 0 )); then
+    echo "Invalid size: $size (expected depth=6n+4, positive width)" >&2; exit 2
+  fi
 done
 if [[ "${DRY_RUN:-0}" != 1 ]]; then
   if [[ "${SIMULATE}" != 1 ]]; then

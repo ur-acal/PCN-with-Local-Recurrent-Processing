@@ -41,6 +41,10 @@ FF_GAIN_LIST="${FF_GAIN_LIST:-0.90,0.91,0.92,0.93,0.94,0.95,0.96,0.97,0.98,0.99,
 FORCE_RERUN="${FORCE_RERUN:-false}"
 BN_EVAL_MODE="${BN_EVAL_MODE:-legacy}"
 NOISE_TO_BN="${NOISE_TO_BN:-false}"
+EVAL_EXTRA_ARGS=()
+[[ -z "${REHEARSAL_ROOT:-}" ]] || EVAL_EXTRA_ARGS+=(--rehearsal_root "${REHEARSAL_ROOT}")
+[[ -z "${EVAL_DATA_DIR:-}" ]] || EVAL_EXTRA_ARGS+=(--data_dir "${EVAL_DATA_DIR}")
+[[ -z "${EXPANDED_W_DIR:-}" ]] || EVAL_EXTRA_ARGS+=(--expanded_w_dir "${EXPANDED_W_DIR}")
 
 cd "${REPO_ROOT}"
 
@@ -69,7 +73,7 @@ if [[ -n "${MODEL_NAME}" ]]; then
   echo "MODEL_NAME is set; using dynamic mode and ignoring MODEL_SET=${MODEL_SET}."
   if [[ -z "${MODEL_INDEX}" || -z "${ARCHITECTURE}" || -z "${ODE_BLOCK}" || -z "${PC_CONV}" ]]; then
     echo "Dynamic model requires MODEL_INDEX, ARCHITECTURE, ODE_BLOCK, and PC_CONV"
-    exit 2
+    return 2 2>/dev/null || exit 2
   fi
   if [[ "${MODEL_NAME}" == *"_T200_"* || "${MODEL_NAME}" == *"_TINY200_"* ]]; then
     task="tinyimagenet"
@@ -110,7 +114,7 @@ else
   legacy_no_x:3) MODELS=("${OLD_C10_28_4}|cifar10|3|WRN_28_4|WRN_28_4|ODEXInitFFFB|PCConvNoisy" "${OLD_C100_28_4}|cifar100|7|WRN_28_4|WRN_28_4|ODEXInitFFFB|PCConvNoisy") ;;
   *)
     echo "Unsupported MODEL_SET/SHARD_ID: ${MODEL_SET}/${SHARD_ID}"
-    exit 2
+    return 2 2>/dev/null || exit 2
     ;;
   esac
 fi
@@ -127,7 +131,7 @@ for entry in "${MODELS[@]}"; do
   checkpoint="${MODEL_DIR}/${model_name}/${model_name}_best_ckpt.pth"
   if [[ ! -f "${checkpoint}" ]]; then
     echo "Missing checkpoint: ${checkpoint}"
-    exit 3
+    return 3 2>/dev/null || exit 3
   fi
 
   run_eval() {
@@ -159,9 +163,9 @@ for entry in "${MODELS[@]}"; do
       --task "${task}" \
       --img_type rgb \
       --model_dir "${MODEL_DIR}" \
-      --method dopri5 \
+      --method "${METHOD:-dopri5}" \
       --tol 0.0001 \
-      --n_steps 15 \
+      --n_steps "${N_STEPS:-15}" \
       --ts_scale 1 \
       --d_start 0 \
       --d_end 1 \
@@ -180,12 +184,13 @@ for entry in "${MODELS[@]}"; do
       --ode_block "${model_ode_block}" \
       --ff_gain "${ff_gain}" \
       --output_pickle "${output_pickle}" \
+      "${EVAL_EXTRA_ARGS[@]}" \
       >"${log_file}" 2>&1
 
     status=$?
     if [[ "${status}" != 0 ]]; then
       echo "Evaluation failed with status ${status}: ${log_file}"
-      exit "${status}"
+      return "${status}"
     fi
   }
 
@@ -193,7 +198,9 @@ for entry in "${MODELS[@]}"; do
     IFS=',' read -ra gains <<< "${FF_GAIN_LIST}"
     for gain in "${gains[@]}"; do
       gain_tag="${gain/./p}"
-      run_eval "ff_gain/gain_${gain_tag}" "add" "max_abs" "0" "${gain}" "1"
+      run_eval "ff_gain/gain_${gain_tag}" "add" "max_abs" "0" "${gain}" "1" || {
+        status=$?; return "${status}" 2>/dev/null || exit "${status}"
+      }
     done
   elif [[ "${EVAL_MODE}" == "mismatch" ]]; then
     IFS=',' read -ra requested_conditions <<< "${CONDITIONS}"
@@ -205,14 +212,16 @@ for entry in "${MODELS[@]}"; do
         max_sqrt_additive) spec="max_sqrt_additive|add|max_sqrt|${MAX_SQRT_LEVELS}" ;;
         *)
           echo "Unsupported mismatch condition: ${condition}"
-          exit 2
+          return 2 2>/dev/null || exit 2
           ;;
       esac
       IFS='|' read -r condition_name mismatch_type scale_mode levels <<< "${spec}"
-      run_eval "${condition_name}" "${mismatch_type}" "${scale_mode}" "${levels}" "1.0" "${NOISY_TRIALS}"
+      run_eval "${condition_name}" "${mismatch_type}" "${scale_mode}" "${levels}" "1.0" "${NOISY_TRIALS}" || {
+        status=$?; return "${status}" 2>/dev/null || exit "${status}"
+      }
     done
   else
     echo "Unsupported EVAL_MODE: ${EVAL_MODE}"
-    exit 2
+    return 2 2>/dev/null || exit 2
   fi
 done

@@ -269,3 +269,148 @@ null, preserves the error, and records source SHA-256 hashes in the manifest.
 Do not require a Git module or alter the Conda/training environment merely to
 collect this metadata. A regression test simulates missing Git through the
 fake-training and all-three-condition evaluation pipeline.
+
+## PCN Train-to-Mismatch Pipeline (Local and SLURM)
+
+Use [launch_pcn_pipeline.sh](../launch_scripts/launch_pcn_pipeline.sh). It defaults to
+both `PCNetNoBatchNorm` and `PCNetBoundaryBN`, CIFAR-10/100, and WRN-like
+`16_2,16_4,28_2,28_4`: **16 independent model jobs**. Set `PCNS`, `DATASETS`,
+and `SIZES` (space- or comma-separated) to restrict the matrix. This launcher
+does not change the older standalone schedulers' model selections.
+The pipeline accepts only `PCCONV=PCConv`, paired with `PCConvNoisy` at evaluation;
+other activations are rejected before training rather than silently replaced.
+Each job holds a sibling `.lock` file descriptor for the entire worker lifetime,
+including `STAGE=test`; duplicate workers fail without modifying the active job.
+The lock file may remain after exit, but its OS lock is automatically released.
+
+The recipe remains RGB, PCConv, no-X `ODEXInitFFFB`, T=1.75, Dopri5/tolerance
+1e-4, SGD LR=0.01, WD=1e-3, batch=128, final dropout=0.25, 300 epochs,
+five warmup epochs, and the existing timm cosine/augmentation configuration.
+**`REUSE_ACCEPTED_STEP_TRAINING=true` is the launcher default**; explicitly
+set `false` to disable it. Pooling remains MaxPool unless `AVG_POOLING=true`.
+With `METHOD=euler`, `N_STEPS` defaults to 5; it is forwarded unchanged to
+training and evaluation. Pooling/solver/step-count choices have distinct job
+directories and checkpoint names (historical Dopri5/MaxPool names are unchanged).
+
+### Submit on SLURM
+
+Use the already-working module selection in the existing login shell. This
+script directly calls `sbatch`; it does not activate Conda or call Python on
+the login node. The worker retains `source activate base; conda activate scanbase`.
+
+```bash
+mkdir -p logs/scheduler_slurm
+(
+  export BACKEND=slurm STAGE=train-test
+  export RUN_ROOT="$PWD/logs/pcn_pipeline/noX_20261021"
+  source launch_scripts/launch_pcn_pipeline.sh
+) > logs/scheduler_slurm/pcn_pipeline_20261021.log 2>&1 < /dev/null &
+```
+
+One GPU allocation per model: train, confirm completion and checkpoint hash,
+then execute max-additive, multiplicative and RMS-additive **sequentially**.
+SLURM controls concurrency across model jobs. No extra Bash is started after
+worker activation: the existing training and evaluation workers are sourced
+in that same shell. No Git executable is required.
+
+### Run Locally
+
+Activate `scanbase` in your local shell. The same launcher executes model jobs
+sequentially on the visible GPU; it does not assume that all 16 fit concurrently.
+
+```bash
+mkdir -p logs/scheduler_slurm
+nohup env BACKEND=local STAGE=train-test \
+  RUN_ROOT="$PWD/logs/pcn_pipeline/noX_local_20261021" \
+  bash launch_scripts/launch_pcn_pipeline.sh \
+  > logs/scheduler_slurm/pcn_pipeline_local_20261021.log 2>&1 < /dev/null &
+```
+
+For either backend, add `PCNS=PCNetBoundaryBN DATASETS=cifar100 SIZES=28_4`
+to run one model. Add `AVG_POOLING=true METHOD=euler N_STEPS=5` to select the
+AvgPool/five-step Euler configuration. `STAGE=train` stops after training;
+`STAGE=test` uses the **same explicit RUN_ROOT and identical recipe/selectors**
+to evaluate its recorded checkpoints. Existing training directories are never
+retrained or silently resumed; use a new RUN_ROOT for a new attempt.
+
+### Evaluation and Artifact Contract
+
+Defaults: max-additive `0,0.01,...,0.10`, multiplicative `0,0.05,...,0.40`,
+RMS-additive `0.25,0.5,0.75,1.0,1.25`; ten trials at nonzero levels and one
+at zero, base seed 123, test batch 128. No-BN uses the existing single-result
+evaluation path (`BN_EVAL_MODE=legacy`, not a different model).
+Boundary-BN uses paired frozen/recalibrated evaluation, including recalibration
+at zero, the existing 5120-image train-subset calibration protocol, and no BN
+parameter mismatch. Training failure/collapse prevents evaluation.
+
+Each model has `<RUN_ROOT>/<PCN>/<dataset>/<size>/<solver-pooling-reuse identity>/`:
+
+- `config.json`, `train_complete.json`, `handoff.env`, `state.json`.
+- `checkpoints/<exact model name>/*_best_ckpt.pth` and `*_last_ckpt.pth`.
+- `logs/train_*.log` and `results/<dataset>/WRN_<size>/<condition>/run.log`.
+- No-BN: `result.pkl` per condition. Boundary-BN: `frozen/result.pkl`,
+  `recalibrated/result.pkl`, `trials.json`, `full_aggregate.csv`, BN diagnostics,
+  and `paired_complete.json` per condition.
+
+The completion record contains full resolved training arguments and a SHA-256
+of the exact best checkpoint. The handoff validates its identity/hash before
+evaluation; the final status requires all configured levels/trials to contain
+finite accuracies. SLURM job IDs/paths are in `<RUN_ROOT>/submissions.tsv`.
+No guessed REP number or external checkpoint search is used.
+
+### Isolated Rehearsal (No SLURM Needed)
+
+```bash
+BACKEND=local REHEARSAL=1 RUN_ROOT=/tmp/pcn-pipeline-rehearsal-unique \
+  bash launch_scripts/launch_pcn_pipeline.sh
+```
+
+Use a **new directory outside this repository**. All model jobs run through
+the real launcher, training command, recipe, model initialization, optimizer,
+checkpoint writer, and evaluation command. Each trains one real batch and
+validates one batch. Its best/last checkpoints represent that shortened
+dependency, not a fabricated checkpoint or a completed scientific experiment.
+Evaluation loads that exact checkpoint, initializes each mismatch type at its
+highest configured level, and executes one test batch (plus one calibration
+batch and frozen/recalibrated tests for Boundary-BN). The requested full grids,
+ten trials, and training recipe remain recorded in the arguments; the shortened
+work is explicitly recorded separately.
+
+Execution stops before optional expanded-weight cache generation. These FP
+ODE evaluations do not use expanded-weight caches at all, so none are
+fabricated. Checkpoints, logs, configs, results, library scratch directories,
+and the reserved `expanded_weights/` directory all stay under the rehearsal
+root. Installed CIFAR data are read-only inputs; missing data fail preflight
+instead of downloading. No production checkpoint is loaded. Rehearsals write
+`rehearsal_initialization.json` and status `rehearsed`, **not** `result.pkl` or
+`paired_complete.json`; real execution refuses rehearsal roots.
+
+Review `<rehearsal root>/isolation_audit.json`: it checks production checkpoint,
+expanded-weight and log metadata before/after, containment of rehearsal files,
+and completion of every rehearsed job. Rehearsal artifacts cannot affect real
+REP naming, resume/skip checks, dependency records, or result completion.
+
+### Pack Completed Results and Best Checkpoints Separately
+
+Run after the real jobs finish, using the actual RUN_ROOT. Archives must not
+already exist. These commands do not exit your interactive SSH shell.
+
+```bash
+python pcn_pipeline.py pack --root "$RUN_ROOT" \
+  --archive "$PWD/logs/pcn_pipeline_analysis.tar.gz"
+python pcn_pipeline.py pack --root "$RUN_ROOT" --checkpoints \
+  --archive "$PWD/logs/pcn_pipeline_best_checkpoints.tar"
+```
+
+The analysis archive contains small configuration/status/CSV/JSON/pickle/log
+files only; it excludes checkpoints, scratch directories and expanded weights.
+The checkpoint archive contains only each recorded best checkpoint. Rehearsals
+and incomplete jobs are rejected. Extract into a dedicated local directory,
+preserving the per-job paths; do not mix their model directories manually.
+
+Validation on 2026-10-21: 47 regression tests passed. The local GPU rehearsed
+all 16 default model jobs and all 48 mismatch initializations, plus both
+CIFAR-100/28-4 families with AvgPool/five-step Euler and reuse explicitly off.
+Both isolation audits reported zero production artifact changes, zero expanded
+weights, and zero production evaluation markers. SLURM submission was tested
+with a stand-in `sbatch`; the remote cluster environment was not executed.

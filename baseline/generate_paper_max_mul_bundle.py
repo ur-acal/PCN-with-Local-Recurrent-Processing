@@ -160,8 +160,8 @@ def main():
              "[source manifest](paper_max_mul_manifest.json) records hashes and generation-code revision.", "",
              "## Model Legend", ""]
     descriptions = {
-        PCN: "Legacy ODEXInitFFFB; no BN, no convolution biases; all eight pairs.",
-        FIRST: "Legacy PCNetWith1stConv; conventional biased stem, no conv-bias mismatch; six pairs.",
+        PCN: "no-X/BN PCN (ODEXInitFFFB); no BN, no convolution biases; all eight pairs.",
+        FIRST: "no-X/BN PCNetWith1stConv; conventional biased stem, no conv-bias mismatch; six pairs.",
         WITH_PC: "Input-driven RHS, FF-initialized state; CIFAR-100 WRN-28-2 only.",
         WITH_X: "Input-driven RHS, input-initialized state; seven pairs; CIFAR-10 WRN-28-4 TRAINING FAILED (latest retry: user-reported CUDA OOM).",
     }
@@ -177,7 +177,7 @@ def main():
     lines += ["## Primary Results", "",
               "Configured base seed 123 for the main campaigns; historical provenance is not proof of identical RNG streams. "
               "Only corrected PCN max-additive references are included. Original CSV display values are copied unchanged. "
-             "The two newly added PCN columns are calculated from their result pickles, without substituting legacy values.", ""]
+             "The two newly added PCN columns are calculated from their result pickles, without substituting previous values.", ""]
     lines += ["**Failed training:** CIFAR-10 WRN-28-4-sized PCNetNoBatchNorm / ODEBlockXInit / t_end=1.75. "
               "The latest remote retry also failed with CUDA OOM (user report); warmup was already five epochs. "
               "It is not pending evaluation. All its cells remain N/A. Solver-related graph-memory growth is suspected, "
@@ -210,7 +210,7 @@ def main():
               "this is not the all-shortcuts AvgPool variant. Separate training recipe; only the five recorded "
               "multiplicative levels below are available, ten trials each. Do not rank it as a complete-family control.", ""]
     pilot = read_csv(MAXPOOL_PILOT)
-    md_table(lines, ["Level", "Legacy PCN reference", "BN-free MaxPool-shortcut pilot"],
+    md_table(lines, ["Level", "no-X/BN PCN reference", "BN-free MaxPool-shortcut pilot"],
              [[r["mismatch_level"], rows[("cifar10", "WRN_16_2", "multiplicative", float(r["mismatch_level"]))][PCN], fmt(float(r["wrn_nobn_mean_accuracy"]))] for r in pilot])
     for r in pilot:
         record((r["dataset"], r["architecture"], r["mismatch_type"], float(r["mismatch_level"])),

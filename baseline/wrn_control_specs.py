@@ -1,5 +1,7 @@
 """Pinned WRN controls; row 1 is an existing reference, not a training job."""
 
+import re
+
 SIZES = ('16_2', '16_4', '28_2', '28_4')
 DATASETS = ('cifar10', 'cifar100')
 SLURM_ROWS = (2, 4, 5, 6, 7, 8, 9, 10)
@@ -28,8 +30,19 @@ ROWS = {
 }
 
 
+def parse_size(size):
+    """Validate canonical depth_width; SIZES remains the default, not an allowlist."""
+    if not re.fullmatch(r'[1-9][0-9]*_[1-9][0-9]*', size):
+        raise ValueError(f'Invalid WRN size: {size}')
+    depth, width = map(int, size.split('_'))
+    if depth < 10 or (depth - 4) % 6:
+        raise ValueError(f'WRN depth must be 6n+4 with n >= 1: {size}')
+    return depth, width
+
+
 def model_name(row, size):
-    if row not in ROWS or size not in SIZES:
+    parse_size(size)
+    if row not in ROWS:
         raise ValueError(f'Unknown WRN control: row={row}, size={size}')
     return f'wrn_{size}_cifar_control_r{row}'
 

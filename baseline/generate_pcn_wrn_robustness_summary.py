@@ -220,7 +220,7 @@ def report_one(rows, ranking):
         ["Aspect", "PCNetNoBatchNorm", "WRN counterpart"],
         [
             ["Basic computation", "Each PC layer has an FF Conv2d and an FB ConvTranspose2d inside an ODE vector field.", "Each residual block has two distinct 3x3 Conv2d operations and an additive shortcut."],
-            ["Dynamics", "Legacy no-x ODEXInitFFFB: `dy/dt = FF(ReLU(FB(y)))`; adaptive Dopri5, `t_end=1.75`, tolerance `1e-4`.", "Finite feed-forward residual computation; no ODE solve or recurrent weight reuse."],
+            ["Dynamics", "no-X/BN PCN (ODEXInitFFFB): `dy/dt = FF(ReLU(FB(y)))`; adaptive Dopri5, `t_end=1.75`, tolerance `1e-4`.", "Finite feed-forward residual computation; no ODE solve or recurrent weight reuse."],
             ["State/input path", "The layer input initializes `y`; channel increases use deterministic copy/padding. The vector field itself does not use `x`.", "The block input reaches the output through the identity or learned projection shortcut."],
             ["Channel schedule", "Matches the paired WRN widths: stem output 16, then `16k`, `32k`, `64k` for `k=2` or `4`.", "Stem width 16 followed by three WRN stages at `16k`, `32k`, `64k`."],
             ["Nominal depth", "7 PC layers for WRN-16 counterparts; 13 for WRN-28 counterparts.", "Depth 16 has 6 two-conv blocks; depth 28 has 12 two-conv blocks, plus the stem."],

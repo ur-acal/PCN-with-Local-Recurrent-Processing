@@ -29,7 +29,7 @@ fi
 ORIG_T_INP="${ORIG_T_INP:-false}"
 DATASET_NAME="${DATASET_NAME:-cifar100}"
 EXP="DS_PCN"
-LOGDIR="./logs/${EXP}"
+LOGDIR="${TRAIN_LOG_DIR:-./logs/${EXP}}"
 mkdir -p "${LOGDIR}"
 
 if [[ "${ORIG_T_INP}" == "true" ]]; then
@@ -59,6 +59,14 @@ T_END="${T_END:-1.75}"
 WARMUP_EPOCH="${WARMUP_EPOCH:-0}"
 IS_TIMM="${IS_TIMM:-true}"
 TIMM_SCHED="${TIMM_SCHED:-cosine}"
+METHOD="${METHOD:-dopri5}"
+AVG_POOLING="${AVG_POOLING:-false}"
+
+TRAIN_EXTRA_ARGS=()
+[[ -z "${TRAIN_SAVE_PATH:-}" ]] || TRAIN_EXTRA_ARGS+=(--save_path "${TRAIN_SAVE_PATH}")
+[[ -z "${TRAIN_COMPLETION_JSON:-}" ]] || TRAIN_EXTRA_ARGS+=(--completion_json "${TRAIN_COMPLETION_JSON}")
+[[ -z "${N_STEPS:-}" ]] || TRAIN_EXTRA_ARGS+=(--n_steps "${N_STEPS}")
+[[ -z "${REHEARSAL_ROOT:-}" ]] || TRAIN_EXTRA_ARGS+=(--rehearsal_root "${REHEARSAL_ROOT}")
 
 INP_CHANNELS="${INP_CHANNELS:-3 64 64 128 128 256 256 256}"
 OUT_CHANNELS="${OUT_CHANNELS:-64 64 128 128 256 256 256 256}"
@@ -134,7 +142,8 @@ python train_ode_cifar.py \
   --tie_bp        "false" \
   --bypass        "false" \
   --batch_size    128 \
-  --method        "dopri5" \
+  --method        "${METHOD}" \
+  --avg_pooling   "${AVG_POOLING}" \
   --tol           "0.0001" \
   --t_end         "${T_END}" \
   --noise_type    "mul" \
@@ -152,4 +161,5 @@ python train_ode_cifar.py \
   --orig_t_inp      "${ORIG_T_INP}" \
   --distill_alpha "${DISTILL_ALPHA}" \
   --distill_temperature "${DISTILL_TEMPERATURE}" \
+  "${TRAIN_EXTRA_ARGS[@]}" \
   2>&1 | tee "${LOGDIR}/train_${EXP}_${EXP_SUFFIX}.log"

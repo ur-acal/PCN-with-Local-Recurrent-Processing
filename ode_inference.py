@@ -46,6 +46,8 @@ def parse_args():
                         help="Identifier or filename of the model to load")
     parser.add_argument("--task", type=str, default="cifar10", choices=["cifar10", "cifar100", "tinyimagenet"])
     parser.add_argument("--data_dir", type=str, default=None)
+    parser.add_argument("--rehearsal_root", type=str, default=None,
+                        help="Initialize from an isolated rehearsal checkpoint and stop before optional caches.")
     parser.add_argument("--bn_eval_mode", choices=["legacy", "paired"], default="legacy")
     parser.add_argument("--noise_to_bn", type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
                         default=False, help="Perturb BN in paired mode; legacy mode retains its historical policy.")
@@ -510,6 +512,12 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
 
 def run_ode_inference():
     args = parse_args()
+    if args.rehearsal_root:
+        from pcn_pipeline import rehearse_evaluation
+        rehearse_evaluation(args)
+        return
+    from pcn_pipeline import require_real_path
+    require_real_path(args.model_dir)
     if args.bn_eval_mode == "paired":
         from pcn_bn_evaluation import run_paired_bn_evaluation
         run_paired_bn_evaluation(args)

@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from mismatch_utils import ADDITIVE_SCALE_MODES, apply_wrn_ff_gain  # noqa: E402
+from baseline.wrn_control_specs import parse_size
 
 from baseline.run_baseline import (  # noqa: E402
     BNRecalibrationConfig,
@@ -212,10 +213,9 @@ def select_specs(args, specs: List[Dict]) -> List[Dict]:
 def standalone_specs(args):
     if args.mode != 'full' or args.pcn_reference_policy != 'none' or args.noise_levels == 'csv':
         raise ValueError('Standalone evaluation requires full mode, explicit levels, and PCN references disabled')
-    if args.datasets not in {'cifar10', 'cifar100'} or args.architectures not in {
-        'WRN_16_2', 'WRN_16_4', 'WRN_28_2', 'WRN_28_4'
-    } or args.mismatch_types not in {'additive', 'multiplicative'}:
+    if args.datasets not in {'cifar10', 'cifar100'} or not args.architectures.startswith('WRN_') or args.mismatch_types not in {'additive', 'multiplicative'}:
         raise ValueError('Standalone evaluation requires one explicit CIFAR dataset, WRN size, and mismatch type')
+    parse_size(args.architectures[4:])
     return [dict(dataset=args.datasets, architecture=args.architectures,
                  mismatch_type=args.mismatch_types, compare=dict(levels=[], by_level={}))]
 
