@@ -312,6 +312,8 @@ then execute max-additive, multiplicative and RMS-additive **sequentially**.
 SLURM controls concurrency across model jobs. No extra Bash is started after
 worker activation: the existing training and evaluation workers are sourced
 in that same shell. No Git executable is required.
+SLURM stdout/stderr retain the existing repository location:
+`logs/slurm_jobs/slurm_<job_id>.out`, not a directory under `RUN_ROOT`.
 
 ### Run Locally
 

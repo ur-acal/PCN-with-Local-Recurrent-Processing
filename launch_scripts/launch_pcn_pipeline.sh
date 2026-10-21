@@ -84,10 +84,10 @@ _launch_pcn_pipeline() {
         identity="${ODE_BLOCK}_${METHOD}_n${N_STEPS}_t${T_END}_avg${AVG_POOLING}_reuse${REUSE_ACCEPTED_STEP_TRAINING}"
         export PIPELINE_JOB_DIR="${RUN_ROOT}/${p}/${d}/${size}/${identity}"
         if [[ "${backend}" == slurm ]]; then
-          mkdir -p "${RUN_ROOT}/slurm_logs"
+          mkdir -p "${REPO_ROOT}/logs/slurm_jobs"
           job_id=$(sbatch --parsable \
             --chdir="${REPO_ROOT}" \
-            --output="${RUN_ROOT}/slurm_logs/slurm_%j.out" \
+            --output="${REPO_ROOT}/logs/slurm_jobs/slurm_%j.out" \
             --gres=gpu:1 \
             --export=ALL,IS_SLURM=1 \
             "${REPO_ROOT}/launch_scripts/run_pcn_pipeline.sh") || return

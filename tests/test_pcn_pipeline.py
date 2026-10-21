@@ -100,13 +100,16 @@ builtin source launch_scripts/run_pcn_pipeline.sh
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'real'
             capture = Path(directory) / 'submitted'
-            env = dict(os.environ, BACKEND='slurm', RUN_ROOT=str(root), CAPTURE=str(capture))
+            repo = Path(directory) / 'repo'
+            env = dict(os.environ, BACKEND='slurm', RUN_ROOT=str(root), CAPTURE=str(capture),
+                       REPO_ROOT=str(repo))
             for key in pipeline.CONFIG_KEYS + ('PCNS', 'DATASETS', 'SIZES', 'REHEARSAL'):
                 env.pop(key, None)
             # Exercise the real sourced submission script; only sbatch is absent locally.
             shell = '''
 python() { echo "Unexpected login-node Python" >&2; return 99; }
 sbatch() {
+  test -d "$REPO_ROOT/logs/slurm_jobs" || return 88
   printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\\n' "$PCN" "$DATASET_NAME" "$ARCHITECTURE" "$INP_CHANNELS" "$OUT_CHANNELS" "$MAX_POOL" "$BN_EVAL_MODE" "$REUSE_ACCEPTED_STEP_TRAINING" "$WARMUP_EPOCH" "$CONDITIONS" "$*" >> "$CAPTURE"
   echo 12345
 }
@@ -122,10 +125,13 @@ source launch_scripts/launch_pcn_pipeline.sh
                 self.assertEqual(row[7:10], ['true', '5', 'max_additive,multiplicative,rms_additive'])
                 self.assertEqual(row[6], 'paired' if row[0] == 'PCNetBoundaryBN' else 'legacy')
                 self.assertIn('--export=ALL,IS_SLURM=1', row[10])
+                self.assertIn(f'--output={repo}/logs/slurm_jobs/slurm_%j.out', row[10])
+                self.assertNotIn('/slurm_logs/', row[10])
                 self.assertTrue(row[10].endswith('/launch_scripts/run_pcn_pipeline.sh'))
                 if row[2] == 'WRN_28_4':
                     self.assertEqual(row[3], '3 16 64 64 64 64 128 128 128 128 256 256 256')
                     self.assertEqual(row[5], '0 0 0 0 0 1 0 0 0 1 0 0 0')
+            self.assertFalse((root / 'slurm_logs').exists())
 
     def test_rehearsal_root_must_be_separate_and_new(self):
         with self.assertRaises(ValueError):
