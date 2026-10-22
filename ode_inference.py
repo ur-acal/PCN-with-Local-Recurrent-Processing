@@ -1114,6 +1114,8 @@ def run_ode_inference(linear_study=None):
                     if args.tc_nonidealities:
                         from tc_cli import reset_after_probe
                         reset_after_probe(net_)
+                    from compute_time_variation import configure as configure_compute_time
+                    configure_compute_time(net_, args, trial=t)
                     if args.ablation_single_case or args.tc_nonidealities:
                         # Advance the on-the-fly sensor-noise realization together
                         # with the hardware realization for each accuracy trial.

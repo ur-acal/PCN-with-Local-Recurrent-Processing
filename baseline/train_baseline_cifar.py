@@ -198,7 +198,8 @@ def parse_args():
     parser.add_argument(
         "--linear_bias", type=str2bool,
         default=str2bool(os.environ.get("LINEAR_BIAS", "true")))
-    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
+    parser.add_argument("--dataset", type=str,
+                        choices=["cifar10", "cifar100", "cifair10", "cifair100"], required=True)
     parser.add_argument("--data_dir", type=str, default="../data")
     parser.add_argument(
         "--validation_mode", type=str2bool,
@@ -387,6 +388,8 @@ def parse_args():
 
 
 def infer_num_classes(dataset_name: str) -> int:
+    from cifar_rgb import cifar_task
+    dataset_name = cifar_task(dataset_name)
     if dataset_name == "cifar10":
         return 10
     if dataset_name == "cifar100":
@@ -533,6 +536,12 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
 
 def main():
     args = parse_args()
+    from cifar_rgb import cifar_task, require_rgb_alias
+    require_rgb_alias(args.dataset, args.img_type)
+    if args.dataset.startswith("cifair") and args.physical_feedforward:
+        raise ValueError("The ciFAIR dataset aliases currently support digital RGB baselines only; "
+                         "existing physical/sensor commands should keep dataset=cifar10/cifar100")
+    training_task = cifar_task(args.dataset)
     args.normalize_student_input = resolve_student_normalization(
         args.resume_checkpoint, args.normalize_student_input)
     logging.warning('Student RGB input normalization: %s', args.normalize_student_input)
@@ -617,7 +626,7 @@ def main():
     if distill_enabled and not args.teacher_ckpt:
         if args.img_type == "rgb":
             args.teacher_ckpt = (
-                f"checkpoint/efficientnet_v2_l_{args.dataset}_"
+                f"checkpoint/efficientnet_v2_l_{training_task}_"
                 "rgb_OldNoTimm_MatchDistill.pth"
             )
         elif args.img_type == "CiFAIR":
@@ -640,6 +649,10 @@ def main():
         # 224x224 EfficientNet teacher with the baseline-only 1024 batch.
         cfg["test_batch_size"] = cfg["batch_size"]
 
+    if args.dataset.startswith("cifair"):
+        # Fail before training, not after hundreds of epochs at final testing.
+        from cifar_rgb import require_native_rgb_config
+        require_native_rgb_config(cfg)
     model = build_model(args.model_name, cfg, num_classes)
     checkpoint = (
         torch.load(
@@ -854,6 +867,8 @@ def main():
             orig_t_inp=args.orig_t_inp,
         )
 
+    from compute_time_variation import configure as configure_compute_time
+    configure_compute_time(model, args)
     trainer_kwargs = build_trainer_kwargs(args, cfg, model, teacher_model)
     trainer_cls = get_feedforward_kd_trainer(args)
     if args.distill_method == "srrl":
@@ -878,6 +893,12 @@ def main():
         json.dump(
             {
                 "cfg": cfg,
+                "input_quant_bits": args.input_quant_bits,
+                "center_student_input": bool(args.center_student_input),
+                **({"dataset": args.dataset, "training_dataset": training_task,
+                    "evaluation_dataset": args.dataset, "img_type": args.img_type,
+                    "normalize_student_input": args.normalize_student_input}
+                   if args.dataset.startswith("cifair") else {}),
                 "trainer_kwargs_keys": list(trainer_kwargs.keys()),
                 "physical_feedforward": (
                     None if not args.physical_feedforward else {
@@ -887,6 +908,9 @@ def main():
                         "tc_tol": args.tc_tol,
                         "tc_step_size": args.tc_step_size,
                         "tc_num_steps": args.tc_num_steps,
+                        "compute_time_fixed_std": args.compute_time_fixed_std,
+                        "compute_time_noise_std": args.compute_time_noise_std,
+                        "timing_noise_scope": args.timing_noise_scope,
                         "one_shot_conv": args.one_shot_conv,
                         "linear_bias": args.linear_bias,
                         "physical_pretraining": args.physical_pretraining,
@@ -984,6 +1008,30 @@ def main():
         portion=args.checkpoint_ode_rhs_portion,
         memory_fraction=getattr(args, "mem_frac", 1.0))
     trainer.train()
+    if args.dataset.startswith("cifair"):
+        # With validation_mode enabled, the held-out training set selects the
+        # checkpoint; the official ciFAIR test set is evaluated only afterward.
+        from baseline.evaluate_baseline_cifar import evaluate_checkpoint
+        suffix = "_last_ckpt.pth" if trainer.final_eval_only else "_best_ckpt.pth"
+        selected = Path(trainer.save_path) / trainer.model_name / (trainer.model_name + suffix)
+        if trainer.final_eval_only:
+            # train() already tested these final weights once, immediately
+            # before saving _last_ckpt. No optimizer/BN update occurs between
+            # that test and saving; do not repeat the full test here.
+            result = dict(
+                dataset=args.dataset, checkpoint=str(selected.resolve()),
+                checkpoint_epoch=trainer.num_epochs,
+                normalize_student_input=args.normalize_student_input,
+                full_dataset=True, **trainer.final_test_results)
+            output = Path(trainer.save_path) / "test_results.json"
+            output.write_text(json.dumps(result, indent=2) + "\n")
+            print("DIGITAL_TEST_RESULT " + json.dumps(result), flush=True)
+            return
+        evaluate_checkpoint(
+            selected, args.dataset, data_dir=args.data_dir,
+            batch_size=cfg.get("test_batch_size", 1024), device=str(trainer.device),
+            output=Path(trainer.save_path) / "test_results.json",
+            test_loader=trainer.official_test_loader)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,228 @@
 # PCN versus physical feedforward CNN: experiment summary
 
+## TC: physical scaling, current noise, batch normalization and timing
+
+**True-continuous (TC), not toggle.** Unless stated otherwise: CIFAR-10,
+5-bit weights, resistance 10 kOhm, capacitance 49 fF and voltage rails ±0.1 V.
+
+### Head-to-head: trained PCN versus the successful ResNet-44
+
+Full 10,000-image test set; expanded inference, per-spin measured ReLU,
+per-coupler resistance curves and all other TC nonidealities ON. The CNN is
+the successful `one_over_q=32`, `rgb_mid` fine-tuned model, not the collapsed
+`one_over_q=1` model. PCN uses `one_over_q=1` and has no batch normalization.
+
+| Evaluation condition | State-2 PCN, 22 layers | ResNet-44 | PCN minus CNN |
+|---|---:|---:|---:|
+| No added timing variation/noise; original CNN batch-normalization statistics | 95.10% | 90.08% | +5.02 percentage points |
+| No added timing variation/noise; recalibrated CNN batch normalization | **95.10%** | **94.13%** | **+0.97 percentage points** |
+| 20% fixed timing variation + 20% batch-shared timing noise; recalibrated CNN | 92.72% | 71.34% | +21.38 percentage points |
+| 20% fixed timing variation + 20% independent-per-image timing noise; recalibrated CNN | **92.93%** | **76.63%** | **+16.30 percentage points** |
+
+Timing percentages are relative standard deviations. CNN recalibration uses
+5,120 training images with the same hardware effects as testing. Each score
+is one hardware trial. The checkpoints have different training recipes:
+PCN uses raw RGB and random per-spin ReLU during fine-tuning; this CNN uses
+normalized RGB and fixed MC18 during fine-tuning. Solvers: PCN Dopri5 at
+tolerance 1e-6; CNN Euler with 10 steps.
+Sources: [PCN checkpoint/settings](../results/tc_compute_time_sweep_20261017/pcn_s2_22l_fixed0_noise0/trial.jsonl),
+[CNN checkpoint/settings](../results/tc_resnet44_q32_last_euler10_expanded/tc_trial_metadata.json),
+[all comparison scores](../results/tc_compute_time_sweep_20261017/results.csv).
+
+### Why changing `one_over_q` helped ResNet-44 fine-tuning
+
+Larger `one_over_q` reduces physical voltages at unchanged rails. At value 1,
+the failed fine-tuned ResNet-44 had 49.94% outside rails versus PCN's 0.00%
+(32 images; median across layers, before clamping).
+[Layer statistics and checkpoint paths](../results/pcn_collapse_diagnosis/ft_rail_comparison_mapping.json).
+
+| ResNet-44 evaluation | `one_over_q` | Test accuracy |
+|---|---:|---:|
+| Pretrained weights; only 5-bit mapping and rails | 1 | 10.00% |
+| Same pretrained weights; only mapping and rails | 32 | 62.77% |
+| Same pretrained weights; all fine-tuning nonidealities, no updates | 32 | 10.00% |
+| After fine-tuning with `rgb_mid`; fixed training ReLU | 32 | 95.46% |
+| **Final fine-tuned weights; expanded per-spin ReLU, Euler with 10 steps** | 32 | 90.08% |
+| **Same expanded evaluation, with batch-normalization recalibration** | 32 | 94.13% |
+
+Full 10,000-image test set. The successful rerun also changed augmentation;
+scaling alone did not restore accuracy. Sources: [mapping at 1](../results/resnet44_pretrain_q1_noise_control/clean_full/tc_trial_metadata.json),
+[mapping at 32](../results/resnet44_pretrain_q32_noise_control/clean_full/tc_trial_metadata.json),
+[all effects before updates](../results/resnet44_pretrain_q32_all_ft_nonidealities_original_bn/tc_trial_metadata.json),
+[fine-tuning log and final checkpoint](../logs/local_runs/tc_rgb_cifar10_resnet44_cifar_q32_rgb_mid.log),
+[expanded configuration and checkpoint](../results/tc_resnet44_q32_last_euler10_expanded/tc_trial_metadata.json),
+[recalibration controls](../results/tc_compute_time_bn_recal_20261017/results.csv).
+Earlier mapping-only recalibration: **90.76%**, reported in discussion;
+saved record not located. Distinct from the 94.13% result above.
+
+### Current noise before hardware-aware fine-tuning
+
+Pretrained weights; mapping/rails with summing-current and coupler-current
+noise OFF/ON. Other effects and batch-normalization recalibration are off.
+
+| Model | `one_over_q` | Noise OFF | Noise ON |
+|---|---:|---:|---:|
+| ResNet-44 | 1 | 10.00% | 10.00% |
+| ResNet-44 | 32 | 62.77% | 9.50% |
+| State-2 PCN, 22 layers | 1 | 77.02% | 58.51% |
+| State-2 PCN, 22 layers | 6 | 94.22% | 18.49% |
+
+Full test set; PCN solver tolerance 1e-6. Sources: [ResNet at 1](../results/resnet44_pretrain_q1_noise_control/),
+[ResNet at 32](../results/resnet44_pretrain_q32_noise_control/),
+[PCN at 1](../results/pcn_pretrain_q_noise_control/q1_tol1e-6.json),
+[PCN at 6](../results/pcn_pretrain_q_noise_control/q6_tol1e-6.json).
+Noise strongly affects pretrained models. Smaller physical signals make
+unchanged current noise relatively stronger.
+
+### Propagated coupler-noise error in the fine-tuned ResNet-44
+
+Same 128 images, complete forwards with coupler noise OFF/ON; frozen batch
+normalization. Error includes upstream propagation. Signal-to-error ratio is
+`20 log10(RMS(reference) / RMS(noisy-reference))`; RMS means root-mean-square
+magnitude. Each row has its **own** reference, not a common ideal reference.
+
+| Other nonidealities | Final-logit signal-to-error ratio | Final-logit relative RMS error | Layer results before/after batch normalization |
+|---|---:|---:|---|
+| OFF | 11.37 dB | 27.02% | [43 locations](../results/tc_resnet44_q32_last_euler10_coupler_snr_others_off_v2/propagated_snr.csv) |
+| ON, matched between forwards | 15.60 dB | 16.59% | [43 locations](../results/tc_resnet44_q32_last_euler10_coupler_snr_others_on_v2/propagated_snr.csv) |
+
+Higher signal-to-error ratio here does not imply higher accuracy.
+[OFF configuration/checks](../results/tc_resnet44_q32_last_euler10_coupler_snr_others_off_v2/),
+[ON configuration/checks](../results/tc_resnet44_q32_last_euler10_coupler_snr_others_on_v2/).
+
+### Timing noise: independent samples and recalibration
+
+`per_batch` shares timing noise across a batch; `per_sample` draws per image.
+Below: ResNet-44, recalibration on 5,120 training images, full test set,
+all other effects ON.
+
+| Fixed timing standard deviation | Timing-noise standard deviation | Batch-shared noise accuracy | Independent-per-image noise accuracy |
+|---|---|---:|---:|
+| 0% | 0% | 94.13% | 94.13% |
+| 20% | 0% | 94.22% | 94.22% |
+| 0% | 20% | 71.40% | 76.55% |
+| 20% | 20% | 71.34% | 76.63% |
+
+Calibration/test share scope and fixed variation; noise resamples. State-2
+PCN, 22 layers, 20%/20%, no recalibration: **92.72% → 92.93%** for batch-shared
+→ per-image noise. Remaining reruns are ongoing:
+[results](../results/tc_compute_time_sweep_20261017/results.csv),
+[commands, checkpoints and status](../results/tc_compute_time_sweep_20261017/per_sample/).
+
+Four-image validation against batch-size-1 physical-duration solves: maximum
+final-logit difference **2.62e-6** (ResNet) / **1.19e-7** (PCN), with matched
+steps/noise. Separately chosen PCN steps: **1.65e-3** at tolerance 1e-6,
+**1.98e-4** at 1e-7. Within a batch, samples still share step sizes.
+No tested prediction changed. [ResNet logits](../results/tc_timing_scope_validation_20261017/cnn/validation.json),
+[PCN logits](../results/tc_timing_scope_validation_20261017/pcn_convergence/validation.json).
+
+### Why PCN tolerates end-time changes: measured mechanisms
+
+Same 32 CIFAR-10 images and checkpoints as above; static nonidealities retained.
+Isolated-layer tests hold each layer's input fixed and turn current noise OFF.
+Numbers are medians across 22 PCN blocks / 43 CNN convolutions, not image medians.
+
+| Measurement | State-2 PCN | ResNet-44 |
+|---|---:|---:|
+| Layer-output relative RMS change at 80% nominal duration | 6.59% | 19.77% |
+| Layer-output relative RMS change at 120% nominal duration | 6.33% | 19.35% |
+| Endpoint derivative × nominal duration / output RMS | 33.72% | 100.88% |
+| Same derivative estimate after local rail projection | 32.88% | 98.36% |
+| Output-state entries on a rail at nominal duration | 0.82% | 0.24% |
+
+**Not evidence of a full fixed point or special FF null-space alignment.**
+PCN's nominal FF response to its activated z-state is **1.00×** the response
+to shuffled activations of the same magnitude (also 1.00× with nonlinear-R).
+Its z-state still moves: even after projection, derivative × nominal duration
+/ z-state RMS is 55.54% (231% before projection).
+
+**Supported explanation:** PCN preserves a nonzero input-derived initial state
+and adds a dynamic update; its initial-state RMS is 0.97× its final-state RMS
+(not a claim that 97% of the output comes from the input). CNN integrates each
+convolution from zero, making duration directly scale its signal. PCN also has
+96.56% negative z entries and 80.45% locally flat measured-ReLU entries. Its
+output is less time-sensitive, but not generally stationary. Output clamping
+alone does not explain the difference, as the derivative/projection rows show.
+
+With current noise ON and matched noise draws/normalized steps, adding 20%
+fixed variation plus 20% independent timing noise changed final logits by
+**21.39% relative RMS, 1/32 predictions** for PCN versus **102.43%, 17/32** for
+CNN. These are subset sensitivity checks, not new full-test accuracies: CNN
+was recalibrated at nominal timing and then frozen across the paired passes.
+Natural timing scopes are unchanged: one factor per coupled PCN block, one per
+CNN convolution. Both use drift × factor and diffusion × square-root factor;
+the uniform ±20% tests above do not depend on different random-factor draws.
+
+Sources: [PCN layer/state probes](../results/tc_timing_robustness_20261017/pcn_state_analysis/layer_endpoints.csv),
+[CNN layer probes](../results/tc_timing_robustness_20261017/cnn/layer_endpoints.csv),
+[PCN propagated errors and controls](../results/tc_timing_robustness_20261017/pcn_checked/),
+[CNN propagated errors and controls](../results/tc_timing_robustness_20261017/cnn/).
+Runner: `diagnostic_scripts/study_timing_robustness.py`; no production logic changed.
+
+Launches: [TC PCN](current_pcn_reference.md), [TC feedforward](tc_feedforward.md).
+
+## Digital sRGB CIFAR/ciFAIR baseline support — 2026-10-19
+
+`baseline/train_baseline_cifar.py` accepts `dataset=cifair10/cifair100` with
+`img_type=rgb`. These names use ordinary CIFAR training data, the same
+normalization and class count, and official ciFAIR RGB test data. Existing
+`dataset=cifar10/cifar100` and sensor/RGGB `img_type=CiFAIR` are unchanged.
+The new aliases are currently restricted to digital RGB baseline training;
+they do not select the hardware/sensor pipeline.
+
+With `validation_mode=true`, checkpoint selection uses the same persistent
+45k/5k CIFAR training split. After training, the launcher reloads the saved
+best checkpoint and evaluates all 10,000 official ciFAIR test images. It
+writes `test_results.json` next to `baseline_config.json`; the logged best
+training-run accuracy remains **validation**, not ciFAIR test accuracy.
+Checkpoint metadata records `evaluation_dataset`; the internal canonical
+`dataset_name` remains CIFAR for normalization, losses and top-5 handling.
+
+```bash
+for task in cifair10 cifair100; do
+  python baseline/train_baseline_cifar.py \
+    --model_name wrn_flexible_cifar_avgpool_shortcut \
+    --wrn_depth 28 --wrn_first_stage_channels 27 \
+    --dataset "${task}" --img_type rgb --case custom_noresize \
+    --validation_mode false --final_eval_only true \
+    --output_dir "./saved_ckpt_runs/wrn28_c27_${task}_srgb_digital_fulltrain"
+done
+```
+
+This preferred full-training variant uses the complete **50,000-image**
+training pool and performs no test evaluation during epochs. The trainer
+evaluates once after the last epoch and immediately saves those same final
+weights as `_last_ckpt.pth`; there is no optimizer or BN update between the
+test and saving. The launcher records that result in `test_results.json`
+without a second test pass. Set `validation_mode=true` and omit
+`final_eval_only` to instead use the held-out-validation/best-checkpoint
+protocol described above.
+
+This retains the digital default recipe: PT300, SGD LR 0.1, momentum 0.9,
+cosine schedule, warmup 5, WD 0.0005, batch 128; RandAugment
+`rand-m9-mstd0.5-inc1`, horizontal flip 0.5, Mixup 0.2, CutMix 1.0,
+label smoothing 0.1 and random erasing **0.25**. No physical conversion,
+quantization or distillation is enabled. Independent ColorJitter is suppressed
+by timm when this RandAugment policy is active. Architecture remains stem16,
+stages27/54/108, BN, intermediate ReLU6, final dropout0.25, stride-2 main
+convolutions and AvgPool shortcuts. This is not the older RGGB/hardware PT
+recipe (notably erasing, warmup, WD and input representation differ).
+
+The reusable `baseline/evaluate_baseline_cifar.py --checkpoint PATH --dataset
+cifair10` (or `cifair100`, `cifar10`, `cifar100`) rebuilds the architecture from
+the saved run config, strictly loads weights and evaluates without training
+augmentation. Optional `--max_batches` is for diagnostics only. It rejects
+converted/QAT and non-RGB checkpoints rather than guessing their format.
+Official ciFAIR classes and release checksums are in `cifar_rgb.py`; no
+missing-data fallback to CIFAR test data is allowed. Data root defaults to
+`../data`; ciFAIR files remain separate under `ciFAIR-10/ciFAIR-100`.
+
+The narrower WRN digital RGB parameter counts are **1,038,543 / 1,048,353**
+for 10/100 classes. Layer-by-layer reports, including the distinct historical
+four-channel counts, are in
+`results/narrow_wrn_model_summaries/wrn28_c27_cifair{10,100}_torchinfo.txt`.
+Regenerate them with `diagnostic_scripts/summarize_narrow_wrn.py`.
+
 ## Current focus: single-curve adaptation followed by full-bank evaluation
 
 Goal: compare PCN and feedforward CNN adaptation to one circuit realization,
@@ -9,19 +232,18 @@ curve is not necessarily a representative training curve.
 
 ### Submitted BlueHive jobs — reported 2026-10-15
 
-Submission is confirmed by the user's `sbatch --parsable` output; execution and
-completion have **not** been checked remotely. Jobs are independent Slurm jobs,
+Submission is confirmed by the user's `sbatch --parsable` output. Downloaded
+logs/results were checked on **2026-10-18**: PCN completed both families;
+both ResNets completed PT but failed the ideal-physical sanity gate before FT.
+Jobs are independent Slurm jobs,
 not a dependency queue. Each singleton job processes original then improved
 circuit sequentially, branching from the same pretrained checkpoint.
 
 | Job ID | Experiment | Expected stages |
 |---|---|---|
 | 2153379 | PCN / CiFAIR-10 singleton study | Existing PT → FT50 → MC45, for each family |
-| 2153380 | Narrow WRN c27 / CiFAIR-10 singleton study | PT300 once → select q inverse → FT50 → MC45, for each family |
 | 2153381 | ResNet-110 / CiFAIR-10 singleton study | PT300 once → select q inverse → FT50 → MC45, for each family |
 | 2153382 | ResNet-110 / CiFAIR-100 singleton study | PT300 once → select q inverse → FT50 → MC45, for each family |
-| 2153383 | Narrow WRN c27 / CiFAIR-100, `coupler_full_range`, VDD=0.5, q inverse 20 | Existing independent ÷3/15-ns PT → FT140 → MC45 |
-| 2153384 | Narrow WRN c27 / CiFAIR-100, `coupler_monte_v2`, VDD=0.1, q inverse 5 | Existing independent ÷3/15-ns PT → FT140 → MC45 |
 
 All MC45 stages request expanded Level 3, all 45 corners, one trial per corner,
 and no BN recalibration. The singleton FT curves are TT mcparamset **73** for
@@ -41,6 +263,60 @@ Paths below are relative to the remote repository root.
 | ResNet / CiFAIR-100 | `tt_representative_resnet110_cifar100_D` |
 | Full-range WRN FT140 | `coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_D` |
 | V2 WRN FT140 | `coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_D` |
+
+#### Local counterpart of Slurm job 2153380 — launched 2026-10-16
+
+Use the same `MODEL_KIND=wrn_c27`, `TASK=cifar10`, and representative singleton
+CSVs as the submitted WRN/CiFAIR-10 job above. The Slurm worker sources
+`run_tt_singleton_study.sh`; the local command below calls that same body,
+changing only the repository location, activation/submission wrapper and
+artifact tag. The study and FT/eval orchestration scripts are unchanged from
+`55d5cc7`; the local checkout at launch is `178db7e`. Actual remote resolved
+logs for job 2153380 have not been downloaded, so equivalence is to the pinned
+submission and code path, not a verified bitwise replay of remote execution.
+
+Stages: PT300 once (seed 4096, LR 0.1, SGD/cosine, fixed 15 ns from the start,
+VDD=0.5, q inverse 5, scale recipe 1, 12-bit uncentered input, SRRL and standard
+CiFAIR training augmentation); then, sequentially for `coupler_monte` TT
+mcparamset 73 and `coupler_monte_v2` TT mcparamset 34, select q inverse on
+1,280 training samples/10 batches, FT50 at LR 0.005, and expanded L3 MC45
+(45 corners, one trial each, no BN recalibration). Both FT branches start from
+the same newly pretrained checkpoint, use VDD=0.1 and fixed 15/15 ns, measured
+TT current-ReLU/pooling, and the selected q inverse. No intermediate weight
+division is needed because PT already uses 15 ns. Do not confuse this with
+the separate CiFAIR-100 FT140 reruns.
+
+Exact detached local command (already launched; do not paste again to monitor):
+
+```bash
+source /home/rongzeng/anaconda3/etc/profile.d/conda.sh
+conda activate scanbase
+cd /home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN
+mkdir -p logs/local_runs
+
+(
+  export MODEL_KIND=wrn_c27 \
+         TASK=cifar10 \
+         STUDY_TAG=tt_representative_wrn_c27_cifar10_local_20261016 \
+         COUPLER_MONTE_TT_SINGLETON=hardware_data/mc_45_corners/coupler_monte_tt_25_1_mc73_singleton.csv \
+         COUPLER_MONTE_V2_TT_SINGLETON=hardware_data/mc_45_corners/coupler_monte_v2_tt_25_1_mc34_singleton.csv
+
+  exec nohup setsid bash ./launch_scripts/run_tt_singleton_study.sh
+) > logs/local_runs/tt_representative_wrn_c27_cifar10_local_20261016.runner.log 2>&1 < /dev/null &
+disown
+```
+
+Overall log: `logs/local_runs/tt_representative_wrn_c27_cifar10_local_20261016.runner.log`.
+Live pretraining log: `logs/tt_representative_wrn_c27_cifar10_local_20261016/pretrain.log`.
+Startup verified on GPU: detached pipeline PID 320488, pretraining PID 320495,
+with actual epoch-1 batch progress. The logged training arguments confirm
+CiFAIR-10, depth 28/c27, seed 4096, PT300/LR 0.1, fixed 15 ns, VDD=0.5,
+q inverse 5, SRRL, and standard pretraining augmentation. These PIDs are
+startup identifiers, not permanent proof of a currently running process.
+Later family selection and FT/eval logs are in that same study log directory;
+`status.log` records `STUDY_COMPLETE` or the exit status. A failed stage prevents
+subsequent stages through the existing pipeline's `set -euo pipefail` behavior.
+
 
 #### What to download after completion
 
@@ -132,7 +408,7 @@ recalibration. Digital anchors: PCN 64.44%; narrow WRN 63.87%.
 | PCN | `coupler_monte` (original circuit) | 81 | 60.97 | 38.5458 | 73 | 60.89 | 38.1544 |
 | PCN | `coupler_monte_v2` (improved circuit) | 59 | 61.73 | 27.0616 | 34 | 61.38 | 50.9271 |
 | Narrow WRN c27 | `coupler_monte` | 81 | 60.44 | 22.1944 | 73 | 59.59 | 20.8229 |
-| Narrow WRN c27 | `coupler_monte_v2` | 59 | 59.93 | 10.6609 | 34 | In progress | Pending |
+| Narrow WRN c27 | `coupler_monte_v2` | 59 | 59.93 | 10.6609 | 34 | 60.86 | 27.3027 |
 
 Separate flattest-WRN MC45 controls with 5,120-sample BN recalibration reached
 40.4618% (`coupler_monte`) and 46.5036% (`coupler_monte_v2`). Do not mix these
@@ -144,6 +420,153 @@ family curves, of RMS log-resistance distance on 50 voltage points spanning
 approximately -0.096 to +0.1 V. Curve IDs are one-based `mcparamset` values.
 The singleton CSV repeats the selected realization twice solely to satisfy
 the distinct-index FF/FB sampler; the two curves are identical.
+
+### CiFAIR-10 completed single-curve results
+
+These are **CiFAIR-10 top-1 percentages**, separate from CiFAIR-100 above.
+The local counterpart of Slurm job 2153380 completed with exit status 0:
+PT300 once, then q selection → FT50 → MC45 for the original circuit, followed
+by the same sequence for the improved circuit. Both FT branches start from
+the same pretrained model (**88.83%**, epoch 295), trained directly at fixed
+15 ns; no intermediate weight rescaling is used.
+
+| Model | Family | Representative TT curve, mcparamset | PT best | Selected `one_over_q` | Best FT (epoch) | MC45 mean, no BN recal |
+|---|---|---:|---:|---:|---:|---:|
+| Narrow WRN c27 | `coupler_monte` (original circuit) | 73 | 88.83 | 8 | 85.10 (46) | **58.1549** |
+| Narrow WRN c27 | `coupler_monte_v2` (improved circuit) | 34 | 88.83 | 8 | 86.55 (48) | **68.1158** |
+| PCN (local) | `coupler_monte` (original circuit) | 73 | 89.18 | 1 (fixed) | 87.42 (48) | **76.3516** |
+| PCN (local) | `coupler_monte_v2` (improved circuit) | 34 | 89.18 | 1 (fixed) | 87.40 (50) | **82.6782** |
+
+Both models use VDD=0.1 V, the selected singleton for nonlinear-R
+and measured pooling, TT `relu_current_0p2uA_finer.csv`, and SRRL during FT.
+WRN uses fixed 15/15 ns timing and the selected `one_over_q=8`;
+PCN uses derived timing and fixed `one_over_q=1`. Evaluation
+retains the operating point and uses expanded Level 3, the **full corresponding
+45-corner bank**, `relu_monteCarlo` per spin, an `old_ideal` final head, and no
+BN recalibration. Both result sets contain 45 unique corner trials (one per
+corner), verified against their individual logs. Q-selection records are
+preserved; the WRN value 8 selected for both families was not imposed beforehand.
+
+Evidence: [pretraining log](../logs/tt_representative_wrn_c27_cifar10_local_20261016/pretrain.log),
+[original-circuit FT/eval log](../logs/tt_representative_wrn_c27_cifar10_local_20261016/coupler_monte_ft_eval.log),
+[improved-circuit FT/eval log](../logs/tt_representative_wrn_c27_cifar10_local_20261016/coupler_monte_v2_ft_eval.log),
+[original q selection](../results/tt_representative_wrn_c27_cifar10_local_20261016_coupler_monte_selection/selection.json),
+[improved q selection](../results/tt_representative_wrn_c27_cifar10_local_20261016_coupler_monte_v2_selection/selection.json),
+[original MC45](../results/tt_representative_wrn_c27_cifar10_local_20261016_coupler_monte_mc45/summary.md),
+[improved MC45](../results/tt_representative_wrn_c27_cifar10_local_20261016_coupler_monte_v2_mc45/summary.md),
+[pipeline completion](../logs/tt_representative_wrn_c27_cifar10_local_20261016/status.log).
+The exact WRN launch command is pinned in the local-counterpart section above.
+
+### Consolidated representative-curve results — verified 2026-10-18
+
+Absolute top-1 percentages; each MC45 entry averages **45 corners, one trial
+per corner**, without BN recalibration. Original = `coupler_monte`, TT
+mcparamset **73**; improved = `coupler_monte_v2`, TT mcparamset **34**.
+FT trains on that singleton; MC45 samples the full corresponding family.
+
+| Dataset | Model | Digital PT | Original FT50 | Original MC45 | Improved FT50 | Improved MC45 |
+|---|---|---:|---:|---:|---:|---:|
+| CiFAIR-10 | PCN, local | 89.18 | 87.42 | **76.3516** | 87.40 | **82.6782** |
+| CiFAIR-10 | Narrow WRN c27 | 88.83 | 85.10 | **58.1549** | 86.55 | **68.1158** |
+| CiFAIR-100 | PCN | 64.44 | 60.89 | **38.1544** | 61.38 | **50.9271** |
+| CiFAIR-100 | Narrow WRN c27 | 63.87 | 59.59 | **20.8229** | 60.86 | **27.3027** |
+
+PCN retains derived timing, VDD=0.1, q inverse=1. WRN retains fixed 15 ns,
+VDD=0.1, selected q inverse=8 (CiFAIR-10) or 5 (CiFAIR-100). FT uses the TT
+current ReLU; MC45 uses `relu_monteCarlo` per spin, expanded per-coupler
+nonlinear-R, measured pooling, spin variation, current noise and DTC
+nonidealities. These are matched study protocols, not identical architectures
+or operating-point mappings. The separate 200-epoch black reference is not
+an FT50 result.
+
+#### Downloaded versus local CiFAIR-10 PCN
+
+Archive `results/cifair_singlecurve_pretrained_resnets_20261018.tar.gz` was
+extracted into its original `logs/`, `results/` and `saved_ckpt_runs/` paths;
+no existing files were overwritten. The remote prefix is
+`tt_representative_pcn_cifar10_20261015`; local is
+`tt_representative_pcn_cifar10_local_20261018`.
+
+| Circuit | Remote best FT | Local best FT | Remote MC45 | Local MC45 |
+|---|---:|---:|---:|---:|
+| Original | 87.50 | 87.42 | 75.7873 | 76.3516 |
+| Improved | 87.38 | 87.40 | 82.7389 | 82.6782 |
+
+The resolved FT banners, wrapper settings, input preprocessing, checkpoint
+architecture metadata and all 50 logged source-weight statistics match.
+All **90 corner command argument maps** match after normalizing repository
+roots and output/checkpoint namespaces. Both datasets' PCN/WRN result CSVs
+contain 45 unique complete corners; CiFAIR-10 CSV values also match the
+individual corner logs. The jobs are recipe-equivalent, **not bitwise reruns**:
+host execution differs (Slurm memory-checkpoint threshold 80% versus local
+65%), and the logs record different teacher evaluation realizations
+(93.68% versus 93.33%). Remote input/teacher files were not included for a
+byte-for-byte data comparison. The plots below deliberately use **local** PCN
+results, not a mixture of remote and local corners.
+
+#### ResNet-110 failure and correction
+
+Both downloaded ResNet PT checkpoints are intact: CiFAIR-10 **88.07%**
+(epoch 300), CiFAIR-100 **63.70%** (epoch 295). Neither job reached FT or MC45;
+their missing results must not be treated as zero accuracy.
+
+The post-activation ResNet converter scaled the BN state into voltage
+coordinates but left ideal ReLU6 capped at **6**, rather than **6q**. This
+broke equivalence to the unitless pretrained network. The correction in
+`physical_feedforward.py` scales only toggle post-activation ResNet's ideal
+ReLU6 caps, including the stem. Ordinary ReLU, measured block activations,
+legacy WRN and TC conversion are unchanged.
+
+Replaying the failed **10-batch, 1,280-training-sample** sanity checks through
+the production selector after the fix gives:
+
+| Dataset | Unitless reference | Before fix, physical 8-bit | After fix, physical 8-bit |
+|---|---:|---:|---:|
+| CiFAIR-10 | 93.6719 | 19.3750 | **93.5156** |
+| CiFAIR-100 | 79.7656 | 71.0938 | **79.7656** |
+
+These are training-subset diagnostics, **not full-test accuracies**. Sanity
+uses fixed 15 ns, VDD=0.1, q inverse=128, exact weight scale, ideal head and
+all nonidealities disabled. Both datasets also passed isolated two-batch
+FT → saved checkpoint → MC45 startup rehearsals, stopping after the first
+real CSR convolution expansion. No production retraining was launched.
+Q inverse=5 in these handoff rehearsals was a test value, not a completed
+selection sweep; reruns must execute their normal q-selection stage.
+Verification: 46 physical-conversion/selector/pipeline/plot regressions passed,
+plus all 24 TC feedforward tests. Syntax checks and `git diff --check` passed.
+
+Downloaded source checkpoints, ready to reuse without repeating PT:
+
+- [CiFAIR-10 ResNet PT](../saved_ckpt_runs/tt_representative_resnet110_cifar10_20261015_pretrain_iq12/cifar10/custom_noresize/resnet110_cifar/custom_noresize_cifar10_resnet110_cifar/custom_noresize_cifar10_resnet110_cifar_best_ckpt.pth)
+- [CiFAIR-100 ResNet PT](../saved_ckpt_runs/tt_representative_resnet110_cifar100_20261015_pretrain_iq12/cifar100/custom_noresize/resnet110_cifar/custom_noresize_cifar100_resnet110_cifar/custom_noresize_cifar100_resnet110_cifar_best_ckpt.pth)
+
+#### CiFAIR-10 four-curve percentile plots
+
+Digital anchors are verified in the saved best checkpoints: PCN **89.18%**,
+WRN **88.83%**. All curves share the latter as the 100% reference. Black is
+the existing **86.9645%** MC45, 200-epoch PCN reference (10 trials per corner);
+orange/red/dark-red use the local improved PCN/original PCN/original WRN
+single-curve MC45 data above. Each series contributes 45 corner means;
+10/15 markers only change display density. Labels retain the earlier figure's
+“raw” terminology; those three models have received singleton FT50.
+
+[10-marker PDF](../results/mc45_descending_corner_percentiles_CiFAIR10_singlecurve_relative_wrn8883/descending_corner_percentiles_10_dots.pdf),
+[15-marker PDF](../results/mc45_descending_corner_percentiles_CiFAIR10_singlecurve_relative_wrn8883/descending_corner_percentiles_15_dots.pdf).
+PNG, exact ranked data and `plot_sources.json` are saved beside the PDFs.
+Existing CiFAIR-100 plots were not overwritten.
+
+Reproduce with the persistent generator:
+
+```bash
+python diagnostic_scripts/plot_mc45_descending_percentiles.py \
+  --dataset cifar10 --relative-to 88.83 --pcn-ideal 89.18 --wrn-ideal 88.83 \
+  --pcn-adapted-dir results/coupler_monte_v2_CiFAIR10_qf1_noENOB_ftlr0p002_e200_default45 \
+  --pcn-improved-dir results/tt_representative_pcn_cifar10_local_20261018_coupler_monte_v2_mc45 \
+  --pcn-original-dir results/tt_representative_pcn_cifar10_local_20261018_coupler_monte_mc45 \
+  --wrn-original-dir results/tt_representative_wrn_c27_cifar10_local_20261016_coupler_monte_mc45 \
+  --output-dir results/mc45_descending_corner_percentiles_CiFAIR10_singlecurve_relative_wrn8883 \
+  --dots 10 15
+```
 
 ### Pinned commands and operating points
 
@@ -209,7 +632,8 @@ checkpoint path. FT completion is checked before evaluation starts.
 Representative result summaries:
 [PCN original](../results/tt_singleton_50ep_CiFAIR100_pcn_coupler_monte_coupler_monte_tt_25_1_mc73_singleton_mc45/summary.md),
 [PCN improved](../results/tt_singleton_50ep_CiFAIR100_pcn_coupler_monte_v2_coupler_monte_v2_tt_25_1_mc34_singleton_mc45/summary.md),
-[WRN original](../results/tt_singleton_50ep_CiFAIR100_wrn_c27_coupler_monte_fixedTiming15ns_vdd0p1_qinv5_coupler_monte_tt_25_1_mc73_singleton_mc45/summary.md).
+[WRN original](../results/tt_singleton_50ep_CiFAIR100_wrn_c27_coupler_monte_fixedTiming15ns_vdd0p1_qinv5_coupler_monte_tt_25_1_mc73_singleton_mc45/summary.md),
+[WRN improved](../results/tt_singleton_50ep_CiFAIR100_wrn_c27_coupler_monte_v2_fixedTiming15ns_vdd0p1_qinv5_coupler_monte_v2_tt_25_1_mc34_singleton_mc45/summary.md).
 
 Persistent [percentile plot generator](../diagnostic_scripts/plot_mc45_descending_percentiles.py)
 supports result-directory overrides and `--relative-to 63.87`.
@@ -227,15 +651,18 @@ Both existing black lines use the improved `coupler_monte_v2` family; they are
 not 50-epoch singleton-trained models. Plot one mean per corner so their ten
 trials do not give them more percentile observations than singleton runs.
 
-Remaining work, in order:
+Study plan and completion status:
 
-1. Finish the representative-34 CiFAIR-100 WRN FT and unrecalibrated MC45;
-   record the fourth row and optionally add its improved-circuit curve.
+1. **Completed:** representative-34 CiFAIR-100 WRN FT **60.86%** and
+   unrecalibrated MC45 **27.3027%**; all four CiFAIR-100 representative rows
+   are recorded above. Its improved-circuit plot curve remains optional.
 2. The integrated launcher now supports CiFAIR-10/100 and PCN / narrow WRN
    c27 / ResNet-110, with parameterized teacher, source checkpoints, output/cache
    paths and launch/handoff checks. No PCN pretraining is needed.
-3. Pretrain exactly three new CNNs from scratch: ResNet-110 on CiFAIR-10,
-   ResNet-110 on CiFAIR-100, and narrow WRN c27 on CiFAIR-10. Use the WRN
+3. The new-CNN pretraining plan comprises ResNet-110 on CiFAIR-10,
+   ResNet-110 on CiFAIR-100, and narrow WRN c27 on CiFAIR-10. The latter is
+   **completed locally (88.83%)**, with both FT/MC45 branches finished;
+   verify the submitted ResNet jobs' remote artifacts before launching duplicates. Use the WRN
    pretraining recipe: 300 epochs, base LR 0.1, cosine, no warmup, WD 0.001,
    BS 128, SRRL with the dataset-specific teacher, IQ12, no centering, and
    standard pretraining augmentation with random erasing 0. Use intermediate
@@ -253,9 +680,12 @@ Remaining work, in order:
    new runs.
 5. Verify each new CNN's ideal physical initialization before introducing
    nonidealities; validate `one_over_q` for the new ResNets rather than assume
-   WRN's value is suitable. Launch eight 50-epoch FT → MC45 pipelines: two
+   WRN's value is suitable. The plan contains eight 50-epoch FT → MC45 pipelines: two
    families each for CiFAIR-10 PCN, CiFAIR-10 WRN c27, CiFAIR-10 ResNet-110,
-   and CiFAIR-100 ResNet-110. Each model/dataset uses a single pretrained
+   and CiFAIR-100 ResNet-110. CiFAIR-10 WRN and PCN pipelines are complete.
+   Both ResNet PT stages are complete; after the ReLU6 conversion correction,
+   resume at q selection → FT → MC45, reusing the downloaded PT checkpoints.
+   Each model/dataset uses a single pretrained
    checkpoint for both TT representatives (73/34). Keep base FT LR 0.005,
    current measured-ReLU/noise protocol, full corresponding evaluation banks,
    expanded Level 3, one trial per corner, and no BN recalibration.
@@ -267,7 +697,7 @@ Remaining work, in order:
    Reuse finished CiFAIR-100 PCN/WRN results; do not retrain their PCNs.
 7. Produce CiFAIR-10 and extended CiFAIR-100 percentile plots. Normalize all
    curves in a dataset by that dataset's digital WRN accuracy (CiFAIR-100:
-   63.87%; CiFAIR-10: verify first). Report raw accuracies alongside relative
+   63.87%; CiFAIR-10: **88.83%** for this local WRN). Report raw accuracies alongside relative
    values. BN-recalibrated CNN runs are optional, separately labeled controls.
 
 The following sections preserve the **earlier fixed-timing/full-range and
@@ -293,21 +723,39 @@ All entries are **CiFAIR-100 top-1 accuracy (%)**. PT and FT are the best saved
 validation scores. L2/L3 entries are arithmetic means, not selected best trials,
 except explicitly marked single-trial results. L2 uses five trials per condition;
 L3 SS uses three trials per condition on **SS_V2_T2**, except the five-cycle
-PCN and v2 WRN rows' one-trial results extracted from MC45. MC45 columns average all 45 corners, one trial per corner;
+PCN and the two WRN FT140 reruns' one-trial results extracted from MC45. MC45 columns average all 45 corners, one trial per corner;
 do not compare them as though they were the SS-only protocol. “—” means BN
 recalibration is inapplicable because the model has no BN; “n/r” means no result
 is reported for that configuration/protocol here.
 
 | Model | Parameters | Stage times, ns: PCN y/z; CNN conv1/conv2 | PT best | FT best | L2 no recal | L2 recal | L3 SS no recal | L3 SS recal | MC45 no recal | MC45 recal |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **PCN 16L96C, 5 cycles** | **1,028,380** | **5 / 15** | **63.90** | **60.02** | **59.120** | — | **57.81** (1 trial) | — | **56.9136** | — |
-| PCN 16L96C, 1 cycle | 1,028,380 | 5 / 15 | 60.98 | 53.84 | 53.374 | — | 50.647 | — | n/r | — |
-| PCN 16L96C, 1 cycle | 1,028,380 | 7.5 / 22.5 | 62.28 | 54.67 | 54.086 | — | 51.093 | — | n/r | — |
-| PCN 16L96C, 1 cycle | 1,028,380 | 25 / 75 | 61.73 | 47.97 | 47.782 | — | 25.327 | — | n/r | — |
+| **PCN 16L96C, 5 cycles; full-range, VDD=0.5, q inverse 5** | **1,028,380** | **5 / 15** | **63.90** | **60.02** | **59.120** | — | **57.81** (1 trial) | — | **56.9136** | — |
+| PCN 16L96C, 1 cycle; FT/L2 full-range, L3 v2 | 1,028,380 | 5 / 15 | 60.98 | 53.84 | 53.374 | — | 50.647 | — | n/r | — |
+| PCN 16L96C, 1 cycle; FT/L2 full-range, L3 v2 | 1,028,380 | 7.5 / 22.5 | 62.28 | 54.67 | 54.086 | — | 51.093 | — | n/r | — |
+| PCN 16L96C, 1 cycle; FT/L2 full-range, L3 v2 | 1,028,380 | 25 / 75 | 61.73 | 47.97 | 47.782 | — | 25.327 | — | n/r | — |
 | WRN-28-2 AvgPool, BN | 1,468,612 | 15 / 15 | 66.24 | 35.86 | 26.754 | 39.196 | 1.280 | 7.390 | n/r | n/r |
-| WRN-28 c27, stride-2 + AvgPool shortcuts, BN; full-range, VDD=0.5 | 1,048,497 | 15 / 15 | 63.87 | 27.49 | 13.364 | 30.608 | 1.083 | 2.117 | n/r | n/r |
-| **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; v2, VDD=0.1** | **1,048,497** | **15 / 15** | **63.87** | **57.69** | n/r | n/r | **35.55** (1 trial) | **50.67** (1 trial) | **35.9664** | **48.1891** |
+| WRN-28 c27, stride-2 + AvgPool shortcuts, BN; full-range, VDD=0.5, q inverse 5 | 1,048,497 | 15 / 15 | 63.87 | 27.49 | 13.364 | 30.608 | 1.083 | 2.117 | n/r | n/r |
+| **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; full-range, VDD=0.5, q inverse 20** | **1,048,497** | **15 / 15** | **63.87** | **57.53** | n/r | n/r | **32.79** (1 trial) | **48.59** (1 trial) | **24.9869** | **44.3233** |
+| **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; v2, VDD=0.1, q inverse 5** | **1,048,497** | **15 / 15** | **63.87** | **57.69** | n/r | n/r | **35.55** (1 trial) | **50.67** (1 trial) | **35.9664** | **48.1891** |
+| **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; v2, VDD=0.1, q inverse 8** | **1,048,497** | **15 / 15** | **63.87** | **56.46** | n/r | n/r | **32.43** (1 trial) | **50.06** (1 trial) | **33.7211** | **47.1720** |
 | WRN-28-2 AvgPool, no BN/no conv bias | 1,464,996 | 15 / 15 | 56.37 | 55.64 | 54.634 | — | 49.933 | — | n/r | — |
+
+**PCN hardware settings for the four PCN rows above:** all use VDD=0.5 V
+and `one_over_q=5`; timing/cycle differences are listed in the main table.
+Measured ReLU is enabled in FT and hardware evaluation, but its source changes
+between FT/L2 and L3 as recorded below.
+
+| PCN rows / stage | Coupler bank (nonlinear-R and measured pooling) | Measured ReLU | VDD (V) | `one_over_q` |
+|---|---|---|---:|---:|
+| All four PCNs: FT and L2 | `coupler_full_range` | `relu_current_0p2uA_finer.csv`, fixed TT, per-model | 0.5 | 5 |
+| Five-cycle PCN: L3 SS and MC45 | `coupler_full_range` | `relu_monteCarlo`, corner-specific, per-spin; SS uses `relu_ssg8.csv` | Same | Same |
+| Three one-cycle PCNs: recorded L3 SS | `coupler_monte_v2/ss_85_2.csv` | `relu_monteCarlo/relu_ssg8.csv`, per-spin | Same | Same |
+
+The one-cycle L3 records therefore do **not** use the same coupler bank as
+their FT/L2 or the updated five-cycle L3 result. Settings were checked against
+the [one-cycle L2 commands](../results/pcn_onecycle_three_timings_level2/commands.json)
+and [one-cycle L3 logs/configurations](../results/pcn_onecycle_three_timings_SS_V2_T2/).
 
 The five-cycle PCN MC45 evaluation uses `coupler_full_range`, VDD=0.5 V,
 q inverse 5, fixed y/z times of 5/15 ns, and the ordinary baked-quantized
@@ -330,6 +778,41 @@ and output location, improving the mean by **12.2227 percentage points**.
 New-row evidence: [FT/pipeline log](../logs/local_runs/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_20261015.log),
 [unrecalibrated MC45](../results/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_20261015_mc45/summary.md),
 [recalibrated MC45](../results/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv5_20261015_mc45_bnrecal5120/summary.md).
+
+The **full-range q-inverse-20 rerun** retains the same independent weights-÷3
+pretrained source, fixed 15/15 ns timing, VDD=0.5 V and FT140 recipe as the
+historical full-range q-inverse-5 row; its intended recipe change is q inverse
+5 → 20, using current code/speed optimizations rather than a bitwise historical
+replay. Its best FT is **57.53% at epoch 110**. Both unrecalibrated and
+recalibrated MC45 evaluations completed all 45 corners, one trial each. Their
+resolved configurations differ only in BN recalibration, calibration sample
+count/batch size (5,120/256), and output directory; checkpoint, hardware
+settings, seeds and expanded-cache path are unchanged. Dynamic hardware noise
+remains enabled during calibration. BN recalibration increases the MC45 mean
+from **24.9869% to 44.3233%**, a **19.3364 pp** gain. The SS entries in the
+table are extracted from these same two MC45 runs, not separate three-trial
+experiments. The historical q-inverse-5 row is retained separately.
+
+Full-range rerun evidence: [FT/pipeline log](../logs/local_runs/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_20261016.log),
+[unrecalibrated MC45](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_20261016_mc45/summary.md),
+[recalibrated MC45](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_20261016_mc45_bnrecal5120/summary.md).
+
+The **v2 q-inverse-8 rerun** completed FT140 (best **56.46%, epoch 132**) and
+both MC45 evaluations. Verified on 2026-10-21: each CSV contains exactly 45
+unique corners, one trial each, and every value matches its individual log;
+the BN-recalibration queue reports `COMPLETE`. Highest corner / mean accuracy
+are **49.68% (`FS_V1_T2`) / 33.7211%** without recalibration and
+**50.21% (`SS_V1_T2`) / 47.1720%** with recalibration. SS-column entries above
+are specifically `SS_V2_T2`, not the highest corners. BN recalibration uses
+5,120 training samples, batch size 256, with dynamic noise enabled, and raises
+the mean by **13.4509 pp**. Hardware settings, checkpoint, seeds and expanded
+cache are shared between the paired evaluations; only BN calibration and
+output location differ.
+
+Evidence: [FT/pipeline log](../logs/local_runs/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv8_20261021.log),
+[unrecalibrated MC45](../results/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv8_20261021_mc45/summary.md),
+[recalibrated MC45](../results/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv8_20261021_mc45_bnrecal5120/summary.md),
+[queue completion](../logs/local_runs/coupler_monte_v2_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.1_qinv8_20261021_bnrecal_queue/status.json).
 
 Parameter counts follow the training logs' model-parameter totals, excluding
 teacher/distillation auxiliary modules and hardware unrolling. Changing PCN

@@ -54,7 +54,8 @@ def load_corner_means(directory):
 
 
 def plot_descending_percentiles(series, output_dir, marker_counts=(10, 15),
-                                ideal_accuracies=None, relative_to=None):
+                                ideal_accuracies=None, relative_to=None,
+                                dataset_label="CiFAIR-100"):
     """Generate independent PDF/PNG figures and exact data for each marker count."""
     ideal_accuracies = ideal_accuracies or {"PCN": 64.44, "WRN": 63.87}
     if relative_to is not None and (not np.isfinite(relative_to) or relative_to <= 0):
@@ -105,17 +106,18 @@ def plot_descending_percentiles(series, output_dir, marker_counts=(10, 15),
                 marker_rows.append([spec["label"], "ideal", 0, ideal])
                 marker_rows.extend([spec["label"], "percentile", float(x), float(y)]
                                    for x, y in zip(marker_x, fit(marker_x)))
-            ax.set(xlim=(0, 100), ylim=(0, 70 if relative_to is None else 102),
+            upper = max(70, np.ceil(max(ideal_accuracies.values()) / 10) * 10)
+            ax.set(xlim=(0, 100), ylim=(0, upper if relative_to is None else 102),
                    xlabel="Corner percentile (%)",
                    ylabel="Accuracy (%)" if relative_to is None else "Relative Accuracy",
-                   title="CiFAIR-100: descending corner accuracy")
+                   title=f"{dataset_label}: descending corner accuracy")
             if relative_to is not None:
                 ax.set_yticks(np.arange(0, 101, 20))
                 ax.yaxis.set_major_formatter(PercentFormatter(xmax=100, decimals=0))
             ax.set_xticks(np.arange(0, 101, 20))
             ax.grid(axis="y", color="0.9", linewidth=0.8)
             ax.spines[["top", "right"]].set_visible(False)
-            ax.legend(loc="upper right", ncols=2, fontsize=8, frameon=False,
+            ax.legend(loc="best", ncols=2, fontsize=8, frameon=False,
                       columnspacing=1.2, handlelength=2)
             ax.text(0.5, -0.19,
                     "Corners ranked highest to lowest; 0% marks ideal pretrained accuracy.",
@@ -131,6 +133,7 @@ def plot_descending_percentiles(series, output_dir, marker_counts=(10, 15),
             writer.writerow(["series", "point_type", "percentile", accuracy_column])
             writer.writerows(marker_rows)
     metadata = dict(
+        dataset=dataset_label,
         percentile_definition="rank / 45 * 100; rank 1 is the highest corner accuracy",
         interpolation="monotonic PCHIP through all 45 corner means; ideal anchor excluded",
         percentile_marker_counts=list(marker_counts), additional_ideal_marker=True,
@@ -149,8 +152,11 @@ def main():
     parser.add_argument("--output-dir", type=Path,
                         default=REPO / "results/mc45_descending_corner_percentiles")
     parser.add_argument("--dots", nargs="+", type=int, default=[10, 15])
-    parser.add_argument("--pcn-ideal", type=float, default=64.44)
-    parser.add_argument("--wrn-ideal", type=float, default=63.87)
+    parser.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar100")
+    parser.add_argument("--pcn-ideal", type=float)
+    parser.add_argument("--wrn-ideal", type=float)
+    parser.add_argument("--pcn-adapted-dir", type=Path,
+                        help="Override the multi-curve adapted PCN reference.")
     parser.add_argument("--pcn-improved-dir", type=Path,
                         help="Override improved-circuit PCN corner results.")
     parser.add_argument("--pcn-original-dir", type=Path,
@@ -163,6 +169,13 @@ def main():
                         help="Digital accuracy in percent used as the shared 100%% reference.")
     args = parser.parse_args()
     series = [dict(spec) for spec in DEFAULT_SERIES]
+    if args.dataset == "cifar10":
+        # Never silently borrow CiFAIR-100 corner data for a CiFAIR-10 figure.
+        if not all((args.pcn_adapted_dir, args.pcn_improved_dir,
+                    args.pcn_original_dir, args.wrn_original_dir or args.exclude_wrn)):
+            parser.error("CiFAIR-10 requires explicit result directories for every plotted series")
+    if args.pcn_adapted_dir is not None:
+        series[0]["directory"] = args.pcn_adapted_dir
     if args.pcn_improved_dir is not None:
         series[1]["directory"] = args.pcn_improved_dir
     if args.pcn_original_dir is not None:
@@ -171,9 +184,12 @@ def main():
         series[3]["directory"] = args.wrn_original_dir
     if args.exclude_wrn:
         series = [spec for spec in series if spec["model"] != "WRN"]
+    defaults = (89.18, 88.83) if args.dataset == "cifar10" else (64.44, 63.87)
+    ideals = {"PCN": args.pcn_ideal if args.pcn_ideal is not None else defaults[0],
+              "WRN": args.wrn_ideal if args.wrn_ideal is not None else defaults[1]}
     for path in plot_descending_percentiles(series, args.output_dir, args.dots,
-                                            {"PCN": args.pcn_ideal, "WRN": args.wrn_ideal},
-                                            relative_to=args.relative_to):
+                                            ideals, relative_to=args.relative_to,
+                                            dataset_label="CiFAIR-10" if args.dataset == "cifar10" else "CiFAIR-100"):
         print(path)
 
 

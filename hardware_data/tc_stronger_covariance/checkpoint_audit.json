@@ -1,0 +1,85 @@
+[
+  {
+    "model": "resnet44",
+    "dataset": "cifar10",
+    "checkpoint": "saved_ckpt_runs/tc_rgb_cifar10_resnet44_cifar_q32_nonorm_rgbmid_rpf_pspin_pretrain/cifar10/custom_noresize/resnet44_cifar/custom_noresize_cifar10_resnet44_cifar/custom_noresize_cifar10_resnet44_cifar_last_ckpt.pth",
+    "sha256": "2b941ebc7dd906a08bd15b723195e3d21b191df1e1dfc2bac11383b2d5720f7f",
+    "epoch": 300,
+    "checkpoint_accuracy": 0.9568,
+    "student_preprocessing": {
+      "normalize_student_input": false,
+      "dataset": "cifar10",
+      "img_type": "rgb"
+    },
+    "source_job": 2166507,
+    "source_log": "logs/slurm_jobs/slurm_2166507.out",
+    "checkpoint_path_confirmed_in_log": true,
+    "teacher_checkpoint": "checkpoint/efficientnet_v2_l_cifar10_rgb_OldNoTimm_MatchDistill_NoNorm.pth",
+    "teacher_present": true,
+    "FT_one_over_q": 32,
+    "root_run_config_present": true
+  },
+  {
+    "model": "resnet44",
+    "dataset": "cifar100",
+    "checkpoint": "saved_ckpt_runs/tc_rgb_cifar100_resnet44_cifar_q32_nonorm_rgbmid_rpf_pspin_pretrain/cifar100/custom_noresize/resnet44_cifar/custom_noresize_cifar100_resnet44_cifar/custom_noresize_cifar100_resnet44_cifar_last_ckpt.pth",
+    "sha256": "0ac6beedf0617af6eb800c712dabbd8fbadee2ef36cb7c782bc316fdf624ebf0",
+    "epoch": 300,
+    "checkpoint_accuracy": 0.7537,
+    "student_preprocessing": {
+      "normalize_student_input": false,
+      "dataset": "cifar100",
+      "img_type": "rgb"
+    },
+    "source_job": 2166501,
+    "source_log": "logs/slurm_jobs/slurm_2166501.out",
+    "checkpoint_path_confirmed_in_log": true,
+    "teacher_checkpoint": "checkpoint/efficientnet_v2_l_cifar100_rgb_OldNoTimm_MatchDistill_NoNorm.pth",
+    "teacher_present": true,
+    "FT_one_over_q": 5,
+    "root_run_config_present": true,
+    "successful_FT_job": 2174762,
+    "successful_FT_log": "logs/slurm_jobs/slurm_2174762.out",
+    "note": "The q5 FT reuses this q32-named pretrain checkpoint; q5 is not a different pretraining run."
+  },
+  {
+    "model": "pcn_state2_22L_7_6_6",
+    "dataset": "cifar10",
+    "checkpoint": "saved_ckpt_runs/tc_c10_s2_22L_nonorm_rgbmid_rpf_pspin_pretrain/TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_22Layers7l6l6_2Pool_srrlDistill_a0p3_t2p0_1REP/TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_3K1S64C_0.25Dropout_22Layers7l6l6_2Pool_srrlDistill_a0p3_t2p0_1REP_last_ckpt.pth",
+    "sha256": "76fa46e5a6b64d46573d80cc1b6360c91348542fcb384f5203db76c0ffb6de5c",
+    "epoch": 300,
+    "checkpoint_accuracy": 0.9619,
+    "student_preprocessing": {
+      "normalize_student_input": false,
+      "dataset": "cifar10",
+      "img_type": "rgb"
+    },
+    "source_job": 2103927,
+    "source_log": "logs/slurm_jobs/pcn_44_56_logs.tar.gz :: ./logs/slurm_jobs/slurm_2103927.out",
+    "checkpoint_path_confirmed_in_log": true,
+    "teacher_checkpoint": "checkpoint/efficientnet_v2_l_cifar10_rgb_OldNoTimm_MatchDistill_NoNorm.pth",
+    "teacher_present": true,
+    "FT_one_over_q": 1,
+    "root_run_config_present": false
+  },
+  {
+    "model": "pcn_state2_22L_7_6_6",
+    "dataset": "cifar100",
+    "checkpoint": "saved_ckpt_runs/tc_rgb_cifar100_state2_pcn_22L7l6l6_pipeline_student_teacher_no_norm_random_per_forward_per_spin_relu_rgb_mid/TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S64C_0.25Dropout_22Layers7l6l6_2Pool_srrlDistill_a0p3_t2p0_1REP/TIMMPCNetNoBatchNorm_PCConvReLU6_0.0eps_S2NoisyIYAsXZAs0_dopri5Solver_1.75TEnd_0.0001Tol_0.001WD_128BS_0.01LR_C100_3K1S64C_0.25Dropout_22Layers7l6l6_2Pool_srrlDistill_a0p3_t2p0_1REP_last_ckpt.pth",
+    "sha256": "0cffe7ac7d333761a3fffe5b705ffee43ffc05642dfddc8077324cb750180455",
+    "epoch": 300,
+    "checkpoint_accuracy": 0.7528,
+    "student_preprocessing": {
+      "normalize_student_input": false,
+      "dataset": "cifar100",
+      "img_type": "rgb"
+    },
+    "source_job": 2088775,
+    "source_log": "logs/slurm_jobs/slurm_2088775.out",
+    "checkpoint_path_confirmed_in_log": true,
+    "teacher_checkpoint": "checkpoint/efficientnet_v2_l_cifar100_rgb_OldNoTimm_MatchDistill_NoNorm.pth",
+    "teacher_present": true,
+    "FT_one_over_q": 1,
+    "root_run_config_present": true
+  }
+]

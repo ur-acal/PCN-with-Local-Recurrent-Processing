@@ -234,7 +234,7 @@ def _capture_runtime(model):
                     {key: (item, item.get_state().cpu())
                      for key, item in value.items()
                      if isinstance(item, torch.Generator)})
-            elif (name in _RUNTIME_TENSOR_NAMES or
+            elif (name in _RUNTIME_TENSOR_NAMES or name == '_compute_time_fixed_offsets' or
                   name.endswith("_samples")):
                 attributes[name] = ("value", _clone_to_cpu(value))
         runtime.append((module, attributes))

@@ -231,10 +231,12 @@ source ./launch_scripts/slurm_run_mnist.sh
         self.assertIn('pcn/deep/2', result.stdout)
         worker = (ROOT / 'launch_scripts/mnist_pipeline.sbatch').read_text()
         established = (ROOT / 'launch_scripts/run_kdcrd_then_ft.sbatch').read_text()
-        for directive in ('#SBATCH -p ising', '#SBATCH -t 90:10:00',
-                          '#SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082'):
+        for directive in ('#SBATCH -p ising', '#SBATCH -t 90:10:00'):
             self.assertIn(directive, established)
             self.assertIn(directive, worker)
+        # MNIST pins its own supported nodes; the established CIFAR worker
+        # deliberately leaves placement to the scheduler.
+        self.assertIn('#SBATCH --nodelist=bhgrb4x0081,bhgrb4x0082', worker)
         self.assertIn('source activate base\nconda activate scanbase', worker)
         self.assertNotIn('module swap', worker)
 

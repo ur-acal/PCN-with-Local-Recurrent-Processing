@@ -61,6 +61,9 @@ def get_eval_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
                   input_quant_bits=None, center_student_input=False,
                   train=False, normalize_student_input=True):
     """Build an augmentation-free evaluation loader for either CIFAR split."""
+    from cifar_rgb import cifar_task, require_rgb_alias, rgb_dataset_class
+    require_rgb_alias(task, img_type)
+    requested_task, task = task, cifar_task(task)
     if img_type in {"rgb", "rggb"}:
         if img_type == "rgb":
             mean, std = _CIFAR_STATS[task]
@@ -71,7 +74,7 @@ def get_eval_data(test_bs=2048, img_type="rgb", task="cifar10", shuffle=False,
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
                 ToPackedRGGB(return_orig=False), ])
-        dataset_cls = torchvision.datasets.CIFAR100 if task == "cifar100" else torchvision.datasets.CIFAR10
+        dataset_cls = rgb_dataset_class(requested_task, train=train)
         test_set = dataset_cls(root='../data', train=train, download=True, transform=transform_test)
     elif img_type.lower() in {"scangfi", "cifair"}:
         data_root, input_name = _get_scangfi_location(task, img_type)
@@ -124,6 +127,9 @@ def get_bn_calibration_data(bs=128, n_samples=None, img_type="rgb",
     BN recalibration retains its clean-input default. Operating-point selection
     explicitly enables sensor noise to match the training input distribution.
     """
+    from cifar_rgb import cifar_task, require_rgb_alias
+    require_rgb_alias(task, img_type)
+    task = cifar_task(task)
     img_type_lower = img_type.lower()
     if img_type_lower in {"rgb", "rggb"}:
         if img_type_lower == "rgb":

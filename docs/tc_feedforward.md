@@ -62,6 +62,16 @@ teacher selection defaults are listed below.
 Evaluation records resolved options and actual per-convolution integration
 durations in `tc_trial_metadata.json` under each trial's result directory.
 
+Optional physical timing variation uses the shared
+[`COMPUTE_TIME_FIXED_STD` / `COMPUTE_TIME_NOISE_STD` controls](current_pcn_reference.md#optional-physical-compute-time-variation-tc-pcn-and-cnn).
+Both default to zero. Each CNN convolution gets its own fixed offset and
+per-forward jitter; its integration and diffusion use the same perturbed
+duration. This does not change PCN timing scope: one horizon per ODE block.
+`TIMING_NOISE_SCOPE=per_sample` selects independent jitter per image, using
+equivalent drift/diffusion rescaling on a common nominal solver interval.
+The default `per_batch` retains the previous shared-duration implementation.
+BN recalibration and its subsequent test use the same configured scope.
+
 ### Fixed-count projected Euler (FT and evaluation)
 
 Set `TC_METHOD=euler TC_NUM_STEPS=10 ONE_SHOT_CONV=false` through the existing

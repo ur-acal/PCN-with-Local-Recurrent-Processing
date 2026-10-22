@@ -1,0 +1,424 @@
+{
+  "mean_table": "hardware_data/tc_stronger_covariance/res_vs_vin_50k_750k.csv",
+  "mean_source": "hardware_data/res_vs_vin_10k_150k.csv",
+  "mean_source_sha256": "403c01a77dd2078c2d46433c1eb62ed2485f3a1c8faf641354cdcceff5d7e0fc",
+  "mean_table_note": "Synthetic rescaling: multiply both resistance column labels and R(V) by 5; Vin unchanged.",
+  "R_ohms": 50000,
+  "R_max_ohms": 750000,
+  "active_codes": 15,
+  "covariance_note": "One absolute resistance covariance pooled over 45 corners x 100 samples, shared by all codes. No extra covariance scaling.",
+  "cnn_blocker": "TCPhysicalBasicBlock currently rejects R != 10000; these 50k inputs are not yet runnable with the TC CNN wrapper.",
+  "pooling_note": "The TC path also uses the covariance source for measured pooling; set pooling nominal resistance to 50000 for these means.",
+  "sources": {
+    "coupler_monte_v2": {
+      "covariance_file": "/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/tc_stronger_covariance/coupler_monte_v2_all4500_resistance.csv",
+      "sha256": "d2651040a29f509747526a99903ac9fae5c00c6eada515eeffa906c58824e14b",
+      "source_files": [
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_-20_0.csv",
+          "sha256": "662ce23a8376e27c134bb6e3d72e09e60d4534a401c680d4c75e707fa1a27f63"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_25_0.csv",
+          "sha256": "51ee5fd9f2d91712d9224e2f1c70e227c33471ec129280322b6cd0edae20e9c4"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_85_0.csv",
+          "sha256": "12836746c8e6b64f49d6beba1d03250a7a7ef3a20598d7384b3b1f5a2a189b30"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_-20_1.csv",
+          "sha256": "48ea9502839c24bb78334f263833b531216035133fd8895efd6495f12b6d7b23"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_25_1.csv",
+          "sha256": "28a49a6e0b5b252d0189c0a29fff70b25b76acf9a032768969a835f4c7891f82"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_85_1.csv",
+          "sha256": "c3aff7bb3a2d284a69570bf668f8cce54b0410e5dcd667b4a0bba371071bad06"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_-20_2.csv",
+          "sha256": "ae5e483337a2befbff30d6a6a3bf9168d3eee4ac39fdcd639ae6794ca3e980fb"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_25_2.csv",
+          "sha256": "eb030211d7be2715360e9ec7813a756a0ec0936f428b00e4eeba49ad0d4e3e0d"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/tt_85_2.csv",
+          "sha256": "2e78c3692d9e57d5b1efa6309e1b294074f638ca5c5bcc181fa80acf79f52df2"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_-20_0.csv",
+          "sha256": "095f859e839ca8335520ff82e61df0f343dca8ee8563383b7afd965e01086568"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_25_0.csv",
+          "sha256": "c0eac58cd8cc1b4b21ef15b32bc11daf69cbb14d1ad5ead1d405b7a83b758c8a"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_85_0.csv",
+          "sha256": "ec3183dfb47f5c3865c37303b8e1122efe361c620eaa1222913c96e09b451f9c"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_-20_1.csv",
+          "sha256": "8304a52c3ed320380de6df73908cf89d71b166a04dcb45a6d9012200939f9889"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_25_1.csv",
+          "sha256": "ce6b214f7ed6b954a8b6b79362831c688c101c366f42152d3b3dcdf3e39406e5"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_85_1.csv",
+          "sha256": "4a69b579eb5a4694e9e30af097349a0aa993780019179b7eccde0385ba32faba"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_-20_2.csv",
+          "sha256": "ed7f2f8b9bde0ed03e566c23a1d49e81ea7d44cc0055b050be95084fe68d5441"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_25_2.csv",
+          "sha256": "263f3ec35b7e2efaa10cad1413c4fd5c6cd2d26212ec4039f6f9b1e7fbf24435"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ff_85_2.csv",
+          "sha256": "8e2073c9cd6169d0e8a856d6141d4ca8d5163e41a6b1f1555f5a7115c36e4f7f"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_-20_0.csv",
+          "sha256": "2b6fc8027e6f0f2984ecf97985c7c085227d16b8f93cef1a509f38567ff81c46"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_25_0.csv",
+          "sha256": "d7c70e6880eccc6dfd3f36d7bdf202ba740ea90a845be0c668673dbab63907dd"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_85_0.csv",
+          "sha256": "36d489b6c0a1236ec67ede12bd7f8b554e404ce4303be0e3789cf4381ae1588b"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_-20_1.csv",
+          "sha256": "e6c27c5df2369d2317532f11db550755d1797ca6b0913206b85eb4f0305c900c"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_25_1.csv",
+          "sha256": "3ed91c19de11d51d9102310d1ed732a170288ffe9aae2197a3ebd02efb66f2d9"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_85_1.csv",
+          "sha256": "dec410611952283f41b96a984f5abcb27a347991227811fcc05b89a4f2a09469"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_-20_2.csv",
+          "sha256": "8ca2a908f8a157cf223525651449f084a83ccc0b0e7a7d04365b43cc61bad59a"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_25_2.csv",
+          "sha256": "4512230ed5fe54529506d3f99015f77cfb180f1b3cafde3b94627b28d499ec72"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/ss_85_2.csv",
+          "sha256": "24be6a0833032e55ccb7058d7b740b5f8d34dece5e587df70200c4eccb996f17"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_-20_0.csv",
+          "sha256": "579a1ae7a760056d8e6264ae45578f99be75c1db3d3c27dfd269a64ce22f260e"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_25_0.csv",
+          "sha256": "7ba6a7c186b0948a4788260b6f27ea618a3ea14e2b95c664b92b4105fc4a42fb"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_85_0.csv",
+          "sha256": "6e023fb5a5eb0e5ad8b9ad2c8501e25dae93633fc54252336179eef80982db52"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_-20_1.csv",
+          "sha256": "b2ccdb8dd388c1fda1144ea71656b88cd36a2b9055415713dc6db6cb98928812"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_25_1.csv",
+          "sha256": "7afe234619ee3489fa8978b55cf83dd56afce1b6f55bcb384c954fb305a56bc5"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_85_1.csv",
+          "sha256": "1ef340bfa8559578e9a84c01d2327c5fe0d5d2ec3a5e4092e4e2ee33f0be73bf"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_-20_2.csv",
+          "sha256": "0d8857a060332999813f56900ad971af9b83420e9c44fb12c26f599bc804f681"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_25_2.csv",
+          "sha256": "da0142cfb51d727619b52bd7629c11c8f287b10a5bf51484bf531035606c7414"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/fs_85_2.csv",
+          "sha256": "313ddfcc771b5db6e8f05db118fcc9d86eb6528f618bc5f888e24d094592b7da"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_-20_0.csv",
+          "sha256": "5b6180e0aa422f381e40795d59fffb9b4af933c95aed2421fdd8becd4b052a8a"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_25_0.csv",
+          "sha256": "5d5cb36e10d996a818bd0fb953daea3d6661bd05750145719ae73abab8090871"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_85_0.csv",
+          "sha256": "f6c99560ac600a92c3eeca1dc4c8410603a4e64a95641a6f51d141678dd64a37"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_-20_1.csv",
+          "sha256": "86cd693cbdd0c634cf9c8ab62de48872341c6763684fa7bb36ff45109482614b"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_25_1.csv",
+          "sha256": "0edf482c99721d2f763fba0bee5a3c11dbdb6cd8e364c70bcb1a2b359dc70641"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_85_1.csv",
+          "sha256": "5202f9e6294a1946265ed056159140c49e760b0ab42d60c8e1a50b5c46ba1d18"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_-20_2.csv",
+          "sha256": "80d228b9334e65fdc4959e98d768d320fe75a5216ffc534f724dccc194952e1b"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_25_2.csv",
+          "sha256": "e084dcaf1909e0a92338e3be32e39df99da1394cae1dc2230696dd9e82c28463"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_monte_v2/sf_85_2.csv",
+          "sha256": "e29f72271acacb21428ddb4859bee9fc08818c18e2a5b210be480925c949ea61"
+        }
+      ],
+      "curve_count": 4500,
+      "corner_count": 45,
+      "columns": 9000,
+      "grid_points": 50,
+      "grid_min_V": -0.095670117,
+      "grid_max_V": 0.1,
+      "omitted_reference_voltages_V": [
+        -0.1,
+        -0.099670117
+      ],
+      "extrapolation": false,
+      "near_zero_V": 0.000329883,
+      "near_zero_std_ohms": 10680.318642128563,
+      "source_near_zero_mean_ohms": 51106.18751291691,
+      "code15_near_zero_mean_ohms": 49998.1259560568,
+      "code15_near_zero_std_over_mean": 0.2136143792972453,
+      "largest_pointwise_negative_gaussian_probability": 0.00010818987067112025,
+      "floor_hits_10000_draws_per_code": 4,
+      "guard_note": "Gaussian support remains unbounded: finite sampling cannot guarantee no negative draw in expanded models.",
+      "validation": "PASS: production float64/float32 loaders, direct covariance, all 15 means, positive finite input curves."
+    },
+    "coupler_full_range": {
+      "covariance_file": "/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/tc_stronger_covariance/coupler_full_range_all4500_resistance.csv",
+      "sha256": "670ed7c5c1d7d29df61b1ee090967c340e8084f71ac62272f6a9a28c2dcf9579",
+      "source_files": [
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_-20_0.csv",
+          "sha256": "0b04be0db89f238b3377294971cdadbe4f53045ced158ef5095be1c67be268eb"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_25_0.csv",
+          "sha256": "341dee1d2db4df2711b6311ba0794c949d32f569552db32a1846fa3d4c008af4"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_85_0.csv",
+          "sha256": "d29e7df5e7b1a595bb2c37d32b019d2e2e8e8f873c848ca1e2f302ca51761f09"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_-20_1.csv",
+          "sha256": "b4fb7cf7f89e3542af3732237f8c4ebe8f7df9b7597e2e3190234c852aacc679"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_25_1.csv",
+          "sha256": "7b11bb6a51384c282d16bcb9f67b20d281b71a57a7c1980e6300e27e2626b697"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_85_1.csv",
+          "sha256": "7a2cc9e9799c5f4046755f09be1d24e961123a3d676948cded9a22fdd40f1919"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_-20_2.csv",
+          "sha256": "ef702016f0793bbab6d2d2a9ac2d3d6b59a9e1ced1d8d98d87eb8f7249a2e80c"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_25_2.csv",
+          "sha256": "27267d95788bf0d3189e72b3ad575ff8f127915913eb5aca8efd3e46b4b81f1b"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/tt_85_2.csv",
+          "sha256": "cc62af963d098ab42e74e79d90c9356430d5b3251557735608ef6b621976e354"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_-20_0.csv",
+          "sha256": "e6d2439b952345c54cd125cb90426a74449e1dccc4ab29d4b69967fc00c77256"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_25_0.csv",
+          "sha256": "3093f2aa50301be85ce872fa46c235efd12907b25c8d26337a6c421a51fc0ea2"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_85_0.csv",
+          "sha256": "47768cff86e17e0e54a148becd07899893467a9450706ce9ba65971c55a05ac3"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_-20_1.csv",
+          "sha256": "8580ebf7d369c9a4a179d881e532ac45c272f3c473db3f9c9cb38716477c0a57"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_25_1.csv",
+          "sha256": "0f7354eb02fa3633e6dff1d6df50ab8bd1833e3b1b532a2ffabd85fb5db686e3"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_85_1.csv",
+          "sha256": "f7edfba60dd45f21ec0c50c7eda624ec8255df7407fcc2fcbcaebd78e177f62d"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_-20_2.csv",
+          "sha256": "2911b1b322c0b2cd0a12cf71688629a72f1fe06692a6c9337db22e2c18748df1"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_25_2.csv",
+          "sha256": "7e91c732ba00500ba88260ace863a31e48327dff519d7a6345725db672663820"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ff_85_2.csv",
+          "sha256": "8fd7dc100b5f7cbd9e9ebdd35841a8c1cd5c74844454b754999f6180d633fb1e"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_-20_0.csv",
+          "sha256": "47ea66f80899bfea329ef4a9513291fbfe76837a640b5eca341d3028ff859e42"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_25_0.csv",
+          "sha256": "a17131724cea57dbe5b26b7bcad577597e85bf34c46d19408921c4d20a559cf8"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_85_0.csv",
+          "sha256": "6b92aad29c366e77ee259ec39bb6103ac82fdbacbba93fe41d054827214bac0d"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_-20_1.csv",
+          "sha256": "698bc7e16c00efbd23b8f99c0303f9f376ad8835c9a1b2a8361cf8c3d9a67526"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_25_1.csv",
+          "sha256": "ffc06f72cdf7cb1fab4c6c56f74989162d2344ac5aaca0665fb5fd05de302253"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_85_1.csv",
+          "sha256": "39c31b91ddce27de76b22ea18b2762164e94a213d3f8bc707da99f830e77c588"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_-20_2.csv",
+          "sha256": "ecc22b487f947003a7cb23b87dee543a5c102c4626256e281d0ee23320cc3fc6"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_25_2.csv",
+          "sha256": "6452bace0b6055d3326eeb8343934c5c55f457af43ac06ad636edbdacc8d5b7b"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/ss_85_2.csv",
+          "sha256": "a8c36bc87cbce17ac7533a82b2a1b500da490828e36d02175954449efff87905"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_-20_0.csv",
+          "sha256": "24b27fd01cdede74a7d6abcf5bc21f96c8100208cbe428ad58300143cf070da3"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_25_0.csv",
+          "sha256": "c4e90d9f2d228f5b318536c1bd6a5639f7341628e1e2578507c31bea9c4b5c86"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_85_0.csv",
+          "sha256": "4d8b90fa3107bc733a0980a7852503f7e8d56fad18fd3259f3a49aa3d85e5bcc"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_-20_1.csv",
+          "sha256": "c3d6b865c160264291a1dd78e89c55b1de4c0898e06dfa8470aa0082b9c3614e"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_25_1.csv",
+          "sha256": "c8e8c3e34adb93b8035924badaf07369ac581687af7d911b1f21a63b5a20521a"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_85_1.csv",
+          "sha256": "e195d50cf35ed1aee1b6c2a9ecb6a14c44387b2796a36480976c3298eb583be4"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_-20_2.csv",
+          "sha256": "fc678cc348a4b258a2100f150eccb7c24097ced7aaf1d4a2346dc89106829db4"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_25_2.csv",
+          "sha256": "605d0fdc4c5fb447755f22909910b234fd382dee73086a4294305ec59a9fcbf1"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/fs_85_2.csv",
+          "sha256": "72e62efc490a71ff25d217daa9493d9cb06f586cf64e13b1ce7ea0af6514c010"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_-20_0.csv",
+          "sha256": "43138cd56508bcd76e401e1a1f6a8de9521c72c50558bd66575757c2e952c05e"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_25_0.csv",
+          "sha256": "4967da6dfdd74abe2f1485ebcc44237d8b2e8e29ab56007c4223e9343ab28ff4"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_85_0.csv",
+          "sha256": "e6c2aa0f482bf052b1894fef66f8b7c23e6f46c8e05efddb7837de9a54e34b1e"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_-20_1.csv",
+          "sha256": "1e0700e552ceb8c33c889794c1edd95658ee6a9d0ed945a0a9cbc23300661984"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_25_1.csv",
+          "sha256": "7b676bbcbf05183c78fbb8fa33c61057909ecbae261476f19b488e6e30b254f1"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_85_1.csv",
+          "sha256": "8d23bed498cedf6bfadbc29e9faef0c09b2b1cc80b1a198be1cd8b846103c327"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_-20_2.csv",
+          "sha256": "9b9557f561656270a568c3c4890963dd70483877aa23c36ea9957f29ea491fd2"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_25_2.csv",
+          "sha256": "3a787ebd6fe5ca1f096102a4fd46697ea31ec2976244463701450261138cd9c5"
+        },
+        {
+          "path": "hardware_data/mc_45_corners/coupler_full_range/sf_85_2.csv",
+          "sha256": "b6ba817be7bf847cd496e24961895185fcc1bb64acef8a92bad64fd8ea35eee6"
+        }
+      ],
+      "curve_count": 4500,
+      "corner_count": 45,
+      "columns": 9000,
+      "grid_points": 52,
+      "grid_min_V": -0.1,
+      "grid_max_V": 0.1,
+      "omitted_reference_voltages_V": [],
+      "extrapolation": false,
+      "near_zero_V": 0.000329883,
+      "near_zero_std_ohms": 10588.047373874293,
+      "source_near_zero_mean_ohms": 51110.85372780635,
+      "code15_near_zero_mean_ohms": 49998.1259560568,
+      "code15_near_zero_std_over_mean": 0.21176888476140276,
+      "largest_pointwise_negative_gaussian_probability": 0.00021388479802049326,
+      "floor_hits_10000_draws_per_code": 11,
+      "guard_note": "Gaussian support remains unbounded: finite sampling cannot guarantee no negative draw in expanded models.",
+      "validation": "PASS: production float64/float32 loaders, direct covariance, all 15 means, positive finite input curves."
+    }
+  },
+  "mean_table_sha256": "7e1af1b7315d59b27706a5719053714a18e5e1e7bd26764f6471f655d95b3920"
+}

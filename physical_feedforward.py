@@ -66,6 +66,13 @@ class StateScale(nn.Module):
         return x * self.scale
 
 
+def _physical_post_activation(activation, q):
+    """Preserve a post-activation ResNet's ideal ReLU6 in q coordinates."""
+    if isinstance(activation, nn.ReLU6):
+        return nn.Hardtanh(0.0, 6.0 * float(q), inplace=activation.inplace)
+    return activation
+
+
 @torch.no_grad()
 def scale_batchnorm_to_physical_domain(
         model: nn.Module, q: float, *, scale_eps: bool = True):
@@ -928,6 +935,11 @@ def convert_wide_resnet_to_physical(
                 selected_block_cls = post_activation_block_cls
                 act1 = block.relu
                 act2 = block.relu
+                if tc_options is None and physical_kwargs.get("physical", True):
+                    q = float(physical_kwargs.get("v_dd", 0.5)) / float(
+                        physical_kwargs.get("one_over_q", 1.0))
+                    act1 = _physical_post_activation(act1, q)
+                    act2 = _physical_post_activation(act2, q)
             else:
                 selected_block_cls = block_cls
                 act1 = block.relu1
@@ -956,6 +968,12 @@ def convert_wide_resnet_to_physical(
         scale_batchnorm_to_physical_domain(model, q)
         blocks[0].input_scale = q
         model._physical_state_scale = q
+        if (tc_options is None and
+                getattr(model, "physical_model_style", None) == "post_activation"):
+            # The stem's BN output is also a physical voltage. Keep this
+            # outside the head-type branch: both ideal and physical heads
+            # receive the same correctly scaled intermediate activations.
+            model.relu = _physical_post_activation(model.relu, q)
         if getattr(model, 'final_head_type', 'old_ideal') != 'old_ideal':
             model.states_are_physical = True
             model.state_q = q

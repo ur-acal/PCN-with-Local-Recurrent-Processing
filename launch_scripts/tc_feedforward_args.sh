@@ -30,6 +30,9 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     export ACTIVATION_CURVE_SHARING=per_model
   fi
   TC_FEEDFORWARD_ARGS=(--tc_feedforward true
+    --compute_time_fixed_std "${COMPUTE_TIME_FIXED_STD:-0}"
+    --compute_time_noise_std "${COMPUTE_TIME_NOISE_STD:-0}"
+    --timing_noise_scope "${TIMING_NOISE_SCOPE:-per_batch}"
     --tc_intermediate_activation "${TC_INTERMEDIATE_ACTIVATION:-relu6}"
     --one_shot_conv "${ONE_SHOT_CONV:-false}"
     --reuse_accepted_step_training "${REUSE_ACCEPTED_STEP_TRAINING:-false}"

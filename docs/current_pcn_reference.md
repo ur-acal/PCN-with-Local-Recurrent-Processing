@@ -60,6 +60,84 @@ The live-QAT weight cache and fused measured ReLU are already on automatically.
 The three explicit settings below enable accepted-step reuse, RHS checkpointing,
 and automatic selection of the checkpointed layer portion.
 
+### Optional physical compute-time variation (TC PCN and CNN)
+
+Two independent relative timing controls default to zero (unchanged execution):
+
+| Effect | Shell / Python control | Sampling |
+|---|---|---|
+| Fixed timing variation | `COMPUTE_TIME_FIXED_STD` / `--compute_time_fixed_std` | Independent per compute unit; held for the training run or evaluation trial |
+| Forward timing noise | `COMPUTE_TIME_NOISE_STD` / `--compute_time_noise_std` | Independent per unit and forward; held throughout the solve |
+| Timing-noise scope | `TIMING_NOISE_SCOPE` / `--timing_noise_scope` | `per_batch` (default, unchanged behavior) or `per_sample` |
+
+The actual duration is `T * (1 + fixed_fraction + noise_fraction)`, with
+independent zero-mean Gaussian fractions of the requested STD. Thus `0.2`
+means 20%, not 0.2 seconds. Nonpositive durations are resampled (the Gaussian
+tail is truncated, not clamped). PCN uses one factor for the entire ODE block;
+two-state PCN shares that horizon across both simultaneously integrated states.
+CNN uses separate factors for every physical convolution, including the stem.
+BN, pooling, digital classifiers and unitless pretraining are not timed here.
+Analog classifier-head timing is not wired by this option.
+
+`per_sample` draws independent jitter for every image, including within a batch.
+Fixed variation remains shared by the layer. It automatically uses the nominal
+solver interval with drift multiplied by each image's factor and diffusion by
+its square root; no second mode switch is needed. Both coupled PCN states use
+the same image-specific factor. Per-sample timing currently rejects coupler
+energy metering rather than reporting energy with an incorrect shared duration.
+
+Apply the factor after physical/QAT timing is resolved. Integration and current
+diffusion both use the actual duration; capacitances, weight/output scales,
+voltage rails and noise spectral densities are unchanged. No compensation is
+applied. Nominal solver options are never overwritten, avoiding cumulative
+rescaling. Timing RNGs are separate from other circuit RNGs; evaluation trial
+seeds advance normally. Exact recovery and the automatic memory profiler
+preserve timing assignments/RNGs. Shape-discovery runs precede timing setup.
+
+The existing TC PCN and CNN local/Slurm FT/evaluation launchers accept these
+environment variables; direct Python entry points accept the lower-case
+arguments. Timing results are included in TC trial metadata (last forward's
+nominal/actual durations, fixed/noise fractions and factors).
+
+Full-dataset CIFAR-10 sensitivity sweep: nine combinations of each STD in
+`{0, 0.1, 0.2}`, including the zero/zero sanity case; one hardware trial per
+combination. Runner: `diagnostic_scripts/run_compute_time_sweep.py`.
+Results: `results/tc_compute_time_sweep_20261017/results.csv`; launch commands
+and per-case logs are saved alongside it. Models: 22L state-2 PCN
+`tc_c10_s2_22L_nonorm_rgbmid_rpf_pspin` (Dopri5, tolerance 1e-6) and the final
+`tc_rgb_cifar10_resnet44_cifar_q32_rgb_mid_ft` checkpoint (Euler-10).
+Other nonidealities remain enabled. PCN uses raw RGB; this older CNN uses
+normalized RGB. These are within-model timing-sensitivity tests, not a
+matched-training-recipe comparison. Do not infer completion from this recipe;
+consult completed per-case metadata and the scope-tagged results CSV. The
+original all-on 22L PCN `(0.2, 0.2)` trial was completed separately with curve
+CPU offload disabled; the original runner's completion marker is absent.
+The per-sample replay runner is `diagnostic_scripts/rerun_timing_noise_scope.py`;
+it preserves historical rows and processes their original CSV order in reverse,
+starting with the CNN BN-recalibration controls. Calibration and testing use
+the same scope and fixed assignments, with fresh dynamic-noise samples.
+
+Full expanded-model scope validation (four CIFAR-10 images; both timing STDs
+0.2; static nonidealities enabled) compared batched `per_sample` with individual
+`per_batch` physical-duration solves. All predicted classes matched.
+
+| Model | Current diffusion / solver-grid comparison | Maximum absolute logit difference |
+|---|---|---:|
+| ResNet-44 | OFF; native Euler-10 grids | 1.79e-6 |
+| ResNet-44 | ON; matched physical grids and Gaussian innovations | 2.62e-6 |
+| State-2 PCN, 22L | OFF; independent Dopri5 grids, tolerance 1e-6 | 1.65e-3 |
+| State-2 PCN, 22L | OFF; independent Dopri5 grids, tolerance 1e-7 | 1.98e-4 |
+| State-2 PCN, 22L | ON; matched physical grids and Gaussian innovations, tolerance 1e-6 | 1.19e-7 |
+
+The PCN native-grid check at production tolerance exceeded the initial 0.1%
+relative-RMS gate (0.194%); refinement reduced it to 0.0475%, passing the same
+gate. This is convergence evidence, not bit equality between adaptive meshes.
+The sweep retains its original tolerance 1e-6. Raw logits and checks are in
+`results/tc_timing_scope_validation_20261017/{cnn,pcn_convergence}/validation.json`.
+The detached reverse-order replay writes under
+`results/tc_compute_time_sweep_20261017/per_sample`; historical per-batch rows
+are retained separately from appended per-sample results in the main CSV.
+
 ### RGB input-normalization controls
 
 The generic RGB default is unchanged: student and RGB teacher both use the

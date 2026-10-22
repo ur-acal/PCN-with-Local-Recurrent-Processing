@@ -936,6 +936,12 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         if self.final_eval_only:
             val_acc, val_top5, _, _ = self.evaluate(self.val_dataloader)
             val_acc_list.append(val_acc)
+            if getattr(self, "requested_dataset_name", "").startswith("cifair"):
+                self.final_test_results = dict(
+                    samples=len(self.val_dataloader.dataset),
+                    top1_percent=100*val_acc)
+                if val_top5 is not None:
+                    self.final_test_results["top5_percent"] = 100*val_top5
             if self.dataset_name == "cifar100":
                 print("Final validation top1: {}, top5: {}".format(
                     val_acc, val_top5))
@@ -1124,6 +1130,9 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             "interpolation": self.interpolation,
             "validation_split": self.validation_split_metadata,
         }
+
+        if getattr(self, "requested_dataset_name", "").startswith("cifair"):
+            state["evaluation_dataset"] = self.requested_dataset_name
 
         if hasattr(self.model, "init_args"):
             state["init_args"] = self.model.init_args

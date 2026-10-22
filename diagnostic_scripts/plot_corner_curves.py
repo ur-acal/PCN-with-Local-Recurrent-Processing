@@ -101,7 +101,16 @@ def header_metadata(path):
 
 
 def relu_output_reference(path):
-    return 0.6 if Path(path).parent.name == "0906_RELU_Voltage" else 0.0
+    path = Path(path)
+    if path.parent.name != "0906_RELU_Voltage":
+        return 0.0
+    # Match the runtime loader's adapted offset for each supply category.
+    voltage_index = int(path.stem.rsplit("_", 1)[1])
+    return {0: 0.588, 1: 0.600, 2: 0.612}[voltage_index]
+
+
+def voltage_tag(v_dd):
+    return "{:g}".format(v_dd).replace(".", "p")
 
 
 def style_axes():
@@ -133,21 +142,22 @@ def draw_curves(curves, xlabel, ylabel, title, output_path, x_scale=1.0,
     print(output_path)
 
 
-def plot_one_relu(corner, output_dir, relu_source):
+def plot_one_relu(corner, output_dir, relu_source, v_dd=V_DD):
     path = relu_path(corner, relu_source)
     curves = load_paired_curves(path)
     output_reference = relu_output_reference(path)
     curves = [(x, y - output_reference) for x, y in curves]
     vdd, temperature = header_metadata(path)
     v_char = max(np.max(np.abs(curve[0])) for curve in curves)
-    scale = V_DD / v_char
+    scale = v_dd / v_char
     title = (
         "Measured ReLU {}: {} piecewise-linear MC curves\n"
         "characterized VDD={} V, T={} °C; both axes scaled by {:.0f} to v_dd={} V"
-        .format(corner, len(curves), vdd, temperature, scale, V_DD))
+        .format(corner, len(curves), vdd, temperature, scale, v_dd))
     draw_curves(
         curves, "Runtime input voltage (V)", "Runtime output (V)", title,
-        output_dir / "relu_{}_100_curves_scaled_vdd_0p1V.pdf".format(corner),
+        output_dir / "relu_{}_100_curves_scaled_vdd_{}V.pdf".format(
+            corner, voltage_tag(v_dd)),
         x_scale=scale, y_scale=scale)
 
 
@@ -177,7 +187,7 @@ def all_corner_ids():
 
 
 def plot_all(curve_type, output_dir, corner_means=False,
-             relu_source="relu_monteCarlo"):
+             relu_source="relu_monteCarlo", v_dd=V_DD):
     curves = []
     for corner in all_corner_ids():
         path = (relu_path(corner, relu_source) if curve_type == "relu"
@@ -189,7 +199,7 @@ def plot_all(curve_type, output_dir, corner_means=False,
         if corner_means:
             loaded = [mean_curve(loaded)]
         if curve_type == "relu":
-            scale = V_DD / max(np.max(np.abs(curve[0])) for curve in loaded)
+            scale = v_dd / max(np.max(np.abs(curve[0])) for curve in loaded)
             loaded = [(x * scale, y * scale) for x, y in loaded]
         curves.extend(loaded)
     if curve_type == "relu":
@@ -197,9 +207,10 @@ def plot_all(curve_type, output_dir, corner_means=False,
             "45 corner-mean curves" if corner_means
             else "4500 piecewise-linear MC curves")
         filename = (
-            "relu_all_45_corner_mean_curves_scaled_vdd_0p1V.pdf"
+            "relu_all_45_corner_mean_curves_scaled_vdd_{}V.pdf"
             if corner_means
-            else "relu_all_45_corners_4500_curves_scaled_vdd_0p1V.pdf")
+            else "relu_all_45_corners_4500_curves_scaled_vdd_{}V.pdf"
+        ).format(voltage_tag(v_dd))
         draw_curves(
             curves, "Runtime input voltage (V)", "Runtime output (V)",
             "All 45 measured ReLU corners: {}".format(count_description),
@@ -227,6 +238,9 @@ def main():
     parser.add_argument(
         "--relu_source", default="relu_monteCarlo",
         help="ReLU folder name under hardware_data/mc_45_corners, or an absolute path.")
+    parser.add_argument(
+        "--v_dd", type=float, default=V_DD,
+        help="Runtime ReLU voltage scale in volts.")
     parser.add_argument("--corners", default=None,
                         help="Case-insensitive comma-separated corner IDs.")
     parser.add_argument(
@@ -235,6 +249,8 @@ def main():
     parser.add_argument(
         "--output_dir", default=str(REPO_ROOT / "results" / "diagnostic_hardware_curves"))
     args = parser.parse_args()
+    if not np.isfinite(args.v_dd) or args.v_dd <= 0:
+        parser.error("--v_dd must be finite and positive")
     normalize_task(args.task)
     style_axes()
     output_dir = Path(args.output_dir)
@@ -253,14 +269,14 @@ def main():
         for curve_type in selected_types:
             plot_all(
                 curve_type, output_dir, corner_means=args.corner_means,
-                relu_source=args.relu_source)
+                relu_source=args.relu_source, v_dd=args.v_dd)
         return
 
     for corner in sorted(corners, key=corner_sort_key):
         if "nonlinear_R" in selected_types:
             plot_one_nonlinear_r(corner, output_dir)
         if "relu" in selected_types:
-            plot_one_relu(corner, output_dir, args.relu_source)
+            plot_one_relu(corner, output_dir, args.relu_source, args.v_dd)
 
 
 if __name__ == "__main__":

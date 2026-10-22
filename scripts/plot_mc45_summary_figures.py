@@ -175,10 +175,10 @@ def mark_mean_tick(ax, mean):
             label.set_fontweight("semibold")
 
 
-def save_figure(fig, output_dir, filename, output_format):
+def save_figure(fig, output_dir, filename, output_format, bbox_inches="tight"):
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, filename + "." + output_format)
-    fig.savefig(path, format=output_format, bbox_inches="tight")
+    fig.savefig(path, format=output_format, bbox_inches=bbox_inches)
     plt.close(fig)
     print(path)
 
@@ -259,7 +259,8 @@ def _create_pvt_axes(layout, height_scale=1.0):
 
 def plot_pvt_errorbars(results, trials, output_dir, prefix, layout,
                        output_format, red_reference, green_reference,
-                       fixed_y_limits=None, height_scale=1.0):
+                       fixed_y_limits=None, height_scale=1.0,
+                       no_text=False, export_legend_symbols=False):
     missing_trials = sorted(set(results) - set(trials))
     if missing_trials:
         raise ValueError("Missing per-trial data for {}".format(
@@ -348,7 +349,34 @@ def plot_pvt_errorbars(results, trials, output_dir, prefix, layout,
         zorder=20)
 
     filename = "{}_corner_mean_pvt_errorbars_{}".format(prefix, layout)
-    save_figure(fig, output_dir, filename, output_format)
+    if export_legend_symbols:
+        plot_temperature_legend_symbols(handles, output_dir, output_format)
+    bbox_inches = "tight"
+    if no_text:
+        # Reserve the labeled figure's original margins before removing text,
+        # so the graph retains its scale and position in the exported page.
+        fig.canvas.draw()
+        bbox_inches = fig.get_tightbbox(fig.canvas.get_renderer()).padded(
+            plt.rcParams["savefig.pad_inches"])
+        for legend in list(fig.legends):
+            legend.remove()
+        from matplotlib.text import Text
+        for text in fig.findobj(match=Text):
+            text.set_visible(False)
+        filename += "_no_text"
+    save_figure(fig, output_dir, filename, output_format, bbox_inches)
+
+
+def plot_temperature_legend_symbols(handles, output_dir, output_format):
+    """Export all three temperature glyphs in one text-free horizontal PDF."""
+    fig = plt.figure(figsize=(1.8, 0.6), facecolor="white")
+    for center, handle in zip((0.2, 0.5, 0.8), handles):
+        fig.legend([handle], [""], loc="center", frameon=False,
+                   bbox_to_anchor=(center, 0.5),
+                   bbox_transform=fig.transFigure,
+                   handletextpad=0, borderpad=0, borderaxespad=0)
+    save_figure(fig, output_dir, "temperature_legend_horizontal_no_text",
+                output_format, bbox_inches=None)
 
 
 def plot_isolated_errorbar(results, trials, output_dir, prefix, corner,
@@ -417,6 +445,10 @@ def parse_args():
                         help="Fixed shared y-range for the PVT plot")
     parser.add_argument("--pvt_height_scale", type=float, default=1.0,
                         help="Scale the PVT figure height without changing width")
+    parser.add_argument("--no_text", action="store_true",
+                        help="Export PVT plot without any text or legend")
+    parser.add_argument("--export_legend_symbols", action="store_true",
+                        help="Export one text-free figure containing all three temperature symbols")
     parser.add_argument("--isolated_corner",
                         help="Also render only this corner's trials/error bar")
     parser.add_argument("--isolated_y_range", nargs=2, type=float,
@@ -458,7 +490,8 @@ def main():
         plot_pvt_errorbars(results, trials, args.output_dir, args.prefix,
                            layout, args.output_format, args.red_reference,
                            args.green_reference, args.pvt_y_range,
-                           args.pvt_height_scale)
+                           args.pvt_height_scale, args.no_text,
+                           args.export_legend_symbols)
     if args.isolated_corner:
         plot_isolated_errorbar(results, trials, args.output_dir, args.prefix,
                                args.isolated_corner, args.output_format,

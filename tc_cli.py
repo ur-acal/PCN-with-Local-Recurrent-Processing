@@ -9,6 +9,8 @@ NOISE_KEYS = ('enable_spin_variation','sigma_spin','spin_variation_mean','spin_v
     'tc_noise_stages','tc_noise_reference_R','tc_asd_reference_p','tc_fb_asd_path')
 
 def add_tc_arguments(parser):
+    from compute_time_variation import add_arguments
+    add_arguments(parser)
     def boolean(value):
         if str(value).lower() in ('true','1','yes'):
             return True
@@ -175,6 +177,7 @@ def pooling_options(args, wrappers):
                     factor=package.factor, value_scale=1.0, quantity='resistance'))
 
 def record_trial(args, model, trial, accuracy, checkpoint):
+    from compute_time_variation import records
     path=Path(args.tc_metadata_path or Path(args.hw_val_path)/args.model_name/'tc_trials.jsonl')
     path.parent.mkdir(parents=True,exist_ok=True)
     layers=[]
@@ -187,5 +190,6 @@ def record_trial(args, model, trial, accuracy, checkpoint):
     record=dict(trial=trial,accuracy_percent=accuracy,checkpoint=str(Path(checkpoint).resolve()),
                 data_seed=args.data_seed+trial,resolved_trial_options=wrapper_options(args,trial),
                 pooling_seed=(args.hardware_seed if args.hardware_seed is not None else args.data_seed)+trial,
-                working_directory=str(Path.cwd()),options=vars(args),layers=layers)
+                working_directory=str(Path.cwd()),options=vars(args),layers=layers,
+                compute_time_variation=records(model))
     with path.open('a') as handle:handle.write(json.dumps(record,default=str)+'\n')

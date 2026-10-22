@@ -160,10 +160,15 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         if not self.physical:
             return super()._run_stage(module, source, stage)
         duration = self._stage_duration(source, stage)
+        timing = getattr(self, 'compute_time_variation', None)
+        if timing is not None and timing.scope == 'per_batch':
+            duration = timing.duration(duration, stage)
         state = self._output_zeros(module, source)
         drift = self._apply_spin_variation(stage, self._current(module, source))
         drift = drift / (self.R * self._stage_capacitance(stage))
         context, eps = self._noise_context(module, source, state, stage)
+        if timing is not None and timing.scope == 'per_sample':
+            drift, eps = timing.rescale_stage(drift, eps, stage, duration)
         if self.one_shot_conv:
             return self.project_state(duration*drift + duration.sqrt()*eps*context.normal(state, 0))
         def rhs(t, v):

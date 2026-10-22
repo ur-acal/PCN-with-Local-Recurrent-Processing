@@ -273,10 +273,8 @@ _CIFAR_STATS = {
 
 
 def _normalize_dataset_name(dataset_name=None) -> str:
-    name = (dataset_name or "cifar10").lower().replace("-", "").replace("_", "")
-    if name in _CIFAR_STATS:
-        return name
-    raise ValueError(f"Unsupported dataset: {dataset_name}. Use cifar10 or cifar100.")
+    from cifar_rgb import cifar_task
+    return cifar_task(dataset_name)
 
 
 def _default_cifar_dir(dataset_name: str) -> str:
@@ -405,6 +403,14 @@ class TrainerCiFar(object):
             raise ValueError("health_check_batches must be positive")
         self.img_type = img_type
         self.dataset_name = self.normalize_dataset_name(dataset_name)
+        # Preserve subclass task validation (e.g. MNIST); only ciFAIR aliases
+        # need the additional RGB routing contract.
+        self.requested_dataset_name = self.dataset_name
+        requested = (dataset_name or "cifar10").lower().replace("-", "").replace("_", "")
+        if requested in {"cifair10", "cifair100"}:
+            from cifar_rgb import require_rgb_alias
+            require_rgb_alias(requested, img_type)
+            self.requested_dataset_name = requested
         self.distill_alpha = distill_alpha
         self.distill_temperature = distill_temperature
         self.distill_method = (distill_method or "none").lower()
@@ -1142,10 +1148,15 @@ class TrainerCiFar(object):
         validation_source_set = None
         official_test_set = None
         if img_type in {"rgb", "rggb"}:
+            from cifar_rgb import rgb_dataset_class, require_rgb_alias
+            requested = getattr(self, "requested_dataset_name", dataset_name)
+            require_rgb_alias(requested, img_type)
             mean, std = _CIFAR_STATS[dataset_name]
             rgb_normalization = ([transforms.Normalize(mean, std)]
                                  if getattr(self, 'normalize_student_input', True) else [])
             dataset_cls = torchvision.datasets.CIFAR100 if dataset_name == "cifar100" else torchvision.datasets.CIFAR10
+            test_dataset_cls = rgb_dataset_class(requested)
+            data_root = self.validation_data_root if requested.startswith("cifair") else "../data"
             if self.aug:
                 if img_type == "rgb":
                     transform_train = transforms.Compose([
@@ -1188,15 +1199,15 @@ class TrainerCiFar(object):
                 transform_test = transforms.Compose([
                     transforms.ToTensor(),
                     ToPackedRGGB(return_orig=False), ])
-            self.train_set = dataset_cls(root='../data', train=True, download=True, transform=transform_train)
+            self.train_set = dataset_cls(root=data_root, train=True, download=True, transform=transform_train)
             if self.validation_mode:
                 validation_source_set = dataset_cls(
-                    root='../data', train=True, download=True, transform=transform_test)
-                official_test_set = dataset_cls(
-                    root='../data', train=False, download=True, transform=transform_test)
+                    root=data_root, train=True, download=True, transform=transform_test)
+                official_test_set = test_dataset_cls(
+                    root=data_root, train=False, download=True, transform=transform_test)
             else:
-                self.val_set = dataset_cls(
-                    root='../data', train=False, download=True, transform=transform_test)
+                self.val_set = test_dataset_cls(
+                    root=data_root, train=False, download=True, transform=transform_test)
         elif _is_scan_cifar(img_type):
             with tempfile.TemporaryDirectory() as tmpdir:
                 conf_path = Path(os.path.join(tmpdir, "config.json"))

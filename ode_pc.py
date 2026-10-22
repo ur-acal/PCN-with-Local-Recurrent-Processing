@@ -241,17 +241,26 @@ class ODEBlockPC(nn.Module):
     def init_y(self, x):
         return self.act_fn(self.FFconv(x))
 
+    def _prepare_compute_time_solve(self, func, y0):
+        timing = getattr(self, 'compute_time_variation', None)
+        return ((func, self.option_aca) if timing is None else
+                timing.prepare_solve(func, y0, self.option_aca))
+
     def forward(self, x, layer_idx=None):
         y0 = self.init_y(x)
         if self.return_init:
             return y0
         self.integration_time = self.integration_time.type_as(x)
+        # TC RHS construction installs this solve's diffusion coefficients.
+        ode_func, options = self._prepare_compute_time_solve(self._make_ode_fn(x), y0)
         energy_meter = getattr(self, "_tc_energy_meter", None)
         if energy_meter is not None:
+            duration = (self.integration_time[-1] - self.integration_time[0]
+                        if options is self.option_aca else options['t1'] - options['t0'])
             energy_meter.start_solve(
-                y0.shape[0], self.integration_time[-1] - self.integration_time[0])
+                y0.shape[0], duration)
         try:
-            out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca)
+            out = aca_ode_solve(ode_func, y0, options)
         except Exception:
             if energy_meter is not None:
                 energy_meter.abort_solve()
@@ -270,7 +279,8 @@ class ODEBlockPC(nn.Module):
         y0 = self.init_y(x)
         self.integration_time = self.integration_time.type_as(x)
 
-        out = aca_ode_solve(self._make_ode_fn(x), y0, self.option_aca, full_traj=True)
+        func, options = self._prepare_compute_time_solve(self._make_ode_fn(x), y0)
+        out = aca_ode_solve(func, y0, options, full_traj=True)
         # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
 
         if self.bypass is not None:
@@ -2800,7 +2810,8 @@ class ODEState2FFFB(ODEBlockXInit):
             return yz[0]
         self.integration_time = self.integration_time.type_as(x)
 
-        out = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca)
+        func, options = self._prepare_compute_time_solve(self._make_ode_fn(x), yz)
+        out = aca_ode_solve(func, yz, options)
         # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         out = out[0][-1]
 
@@ -2813,7 +2824,8 @@ class ODEState2FFFB(ODEBlockXInit):
         yz = self.init_y(x)
         self.integration_time = self.integration_time.type_as(x)
 
-        out = aca_ode_solve(self._make_ode_fn(x), yz, self.option_aca, full_traj=True)
+        func, options = self._prepare_compute_time_solve(self._make_ode_fn(x), yz)
+        out = aca_ode_solve(func, yz, options, full_traj=True)
         # out = odeint(ode_func, y0, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         out = out
 

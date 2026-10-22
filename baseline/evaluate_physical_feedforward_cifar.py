@@ -439,6 +439,8 @@ def evaluate_once(args):
         if args.tc_feedforward:
             # Expansion installs new modules; eval mode enables fused TC inference.
             model.eval()
+    from compute_time_variation import configure as configure_compute_time
+    configure_compute_time(model, args)
     if args.bn_recalibrate:
         calibration_loader = get_bn_calibration_data(
             bs=args.bn_calibration_batch_size,
@@ -474,6 +476,8 @@ def evaluate_once(args):
                 stage_labels={'z': 'conv1', 'y': 'conv2'},
                 hardware_model=(
                     'TC resistance-coded, constant-input capacitor integration'))
+            from compute_time_variation import records
+            metadata['compute_time_variation'] = records(model)
             (Path(args.result_path)/'tc_trial_metadata.json').write_text(
                 json.dumps(metadata, indent=2, default=str))
         return accuracy

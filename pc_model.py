@@ -309,8 +309,9 @@ class PCNetNoBatchNorm(PCNet):
                 x = self._apply_spatial_pool(x, i)
             if clamp:
                 x = torch.clamp(x, -1, 1)
-            log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
-                i, x.mean(), x.median(), x.min(), x.max(), x.std()))
+            if log.isEnabledFor(logging.INFO):
+                log.info("For intermediate x in layer: {}, Mean={}; Median={}; Min={}; Max={}; std={}".format(
+                    i, x.mean(), x.median(), x.min(), x.max(), x.std()))
 
         # classifier
         if self.dropout > 0.0:

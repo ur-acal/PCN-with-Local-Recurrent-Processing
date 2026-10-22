@@ -33,6 +33,9 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
   export ODE_BLOCK="$tc_block"
   export NONLINEAR_R_CURVE_SEED="${NONLINEAR_R_CURVE_SEED:-4096}"
   TC_ARGS=(--tc_nonidealities true --ode_block "$tc_block"
+    --compute_time_fixed_std "${COMPUTE_TIME_FIXED_STD:-0}"
+    --compute_time_noise_std "${COMPUTE_TIME_NOISE_STD:-0}"
+    --timing_noise_scope "${TIMING_NOISE_SCOPE:-per_batch}"
     --tc_conv_method "${TC_CONV_METHOD:-${tc_default_conv_method}}"
     --tc_curve_sampling "${TC_CURVE_SAMPLING:-histogram}"
     --w_bits 5 --weight_quant_factor_bits none --enob none

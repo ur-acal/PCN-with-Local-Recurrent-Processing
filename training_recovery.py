@@ -22,7 +22,8 @@ def _runtime(model):
     # These are non-buffer hardware RNGs/assignments. Deterministic convolution
     # caches and transient per-forward tensors need not be serialized.
     names = {'_generator', '_gaussian_curve_samples', '_spin_factor_y',
-             '_spin_factor_z', '_nonlinear_R_training_curve_indices'}
+             '_spin_factor_z', '_nonlinear_R_training_curve_indices',
+             '_compute_time_fixed_offsets'}
     modules = list(model.named_modules())
     from final_linear import AnalogLinear
     modules += [(name + '._circuit', module._circuit) for name, module in modules
@@ -106,6 +107,11 @@ def restore_latest(trainer):
         'training-recovery checkpoint')
     # Recovery is continuation, not conversion into another physical stage.
     current = getattr(trainer, 'recovery_config', {})
+    for key in ('compute_time_fixed_std', 'compute_time_noise_std'):
+        if current.get(key, 0.) != recovery['config'].get(key, 0.):
+            raise ValueError(f'Full recovery requires unchanged {key}; use an ordinary checkpoint for a new stage')
+    if current.get('timing_noise_scope', 'per_batch') != recovery['config'].get('timing_noise_scope', 'per_batch'):
+        raise ValueError('Full recovery requires unchanged timing_noise_scope; use an ordinary checkpoint for a new stage')
     for key in ('physical_pretraining', 'physical_feedforward', 'physical_level',
                 'tc_feedforward', 'tc_method', 'tc_tol', 'tc_step_size',
                 'tc_num_steps', 'one_shot_conv',

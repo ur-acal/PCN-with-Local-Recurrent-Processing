@@ -14,6 +14,8 @@ _CTR_TOKEN = re.compile(r"(?:^|_)ctr(?:_|$)", re.IGNORECASE)
 
 def student_preprocessing_metadata(trainer):
     return dict(normalize_student_input=getattr(trainer, 'normalize_student_input', True),
+                input_quant_bits=getattr(trainer, 'input_quant_bits', None),
+                center_student_input=bool(getattr(trainer, 'center_student_input', False)),
                 dataset=getattr(trainer, 'dataset_name', None),
                 img_type=getattr(trainer, 'img_type', None))
 

@@ -1314,6 +1314,9 @@ def main():
             args.activation_corner_mode, args.activation_random_curve_sharing,
             activation_count)
 
+    from compute_time_variation import configure as configure_compute_time
+    configure_compute_time(model, args)
+
     # Get trainer
     logging.warning("Training task: {}".format(args.dataset))
     logging.warning("lr reduce on: {}, max grad norm: {}, cosine annealing T0: {}".format(

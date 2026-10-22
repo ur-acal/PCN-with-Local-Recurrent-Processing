@@ -5,6 +5,8 @@ from checkpoint_memory_profiler import parse_checkpoint_ode_rhs_portion
 
 
 def add_arguments(parser):
+    from compute_time_variation import add_arguments
+    add_arguments(parser)
     def boolean(value):
         if value.lower() not in ('true', 'false'):
             raise ValueError('Expected true or false')

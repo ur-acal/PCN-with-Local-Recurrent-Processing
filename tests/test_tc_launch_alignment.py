@@ -62,6 +62,17 @@ def pcn_stage(stage, state='1', **overrides):
 
 
 class TCLaunchAlignmentTests(unittest.TestCase):
+    def test_timing_noise_scope_reaches_all_tc_entrypoints(self):
+        for state in ('1', '2'):
+            for stage in ('ft', 'eval'):
+                args = pcn_stage(stage, state, TIMING_NOISE_SCOPE='per_sample')
+                self.assertEqual(args.timing_noise_scope, 'per_sample')
+        for args in cnn_stages(TIMING_NOISE_SCOPE='per_sample'):
+            self.assertEqual(args.timing_noise_scope, 'per_sample')
+        self.assertEqual(pcn_stage('eval').timing_noise_scope, 'per_batch')
+        for args in cnn_stages():
+            self.assertEqual(args.timing_noise_scope, 'per_batch')
+
     def test_feedforward_slurm_envelope_uses_proven_cluster_pattern(self):
         submitter = (ROOT/'launch_scripts/slurm_search_feedforward_config.sh').read_text()
         worker = (ROOT/'launch_scripts/feedforward_pretrain_then_ft.sbatch').read_text()
