@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Slurm entry for pretrain -> physical FT -> unrolled evaluation (TC only).
+# Slurm entry for feedforward pretraining/FT and opt-in unrolled evaluation.
 # It mirrors the PCN search launcher's applicable configuration surface; the
 # recurrent/ODE-only controls intentionally do not exist on this path.
 set -e
@@ -135,7 +135,11 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
   export FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-true}"
 else
   export WARMUP_PRETRAIN="${WARMUP_PRETRAIN:-0}"
-  export FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-false}"
+  if [[ "${mode}" == pretrain_ft_and_eval ]]; then
+    export FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-true}"
+  else
+    export FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-false}"
+  fi
 fi
 if [[ "${VALIDATION_MODE}" == "true" ]]; then
   export FINAL_EVAL_ONLY=false

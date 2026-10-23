@@ -209,4 +209,11 @@ cmd+=("${FINAL_HEAD_ARGS[@]}")
 printf 'Running:'
 printf ' %q' "${cmd[@]}"
 printf '\n'
-"${cmd[@]}"
+if [[ "${FEEDFORWARD_SELECT_STAGE:-false}" == true ]]; then
+  read -r -a _q_candidates <<< "${ONE_OVER_Q_CANDIDATES:-1 2 4 5 6 8 16 20 25 32 50 64 128}"
+  python -u diagnostic_scripts/select_feedforward_one_over_q.py \
+    --output "${SELECTION_OUTPUT_DIR:?SELECTION_OUTPUT_DIR is required}" \
+    --candidates "${_q_candidates[@]}" --from_ft_command "${cmd[@]:2}"
+else
+  "${cmd[@]}"
+fi

@@ -723,7 +723,7 @@ All entries are **CiFAIR-100 top-1 accuracy (%)**. PT and FT are the best saved
 validation scores. L2/L3 entries are arithmetic means, not selected best trials,
 except explicitly marked single-trial results. L2 uses five trials per condition;
 L3 SS uses three trials per condition on **SS_V2_T2**, except the five-cycle
-PCN and the two WRN FT140 reruns' one-trial results extracted from MC45. MC45 columns average all 45 corners, one trial per corner;
+PCN and the WRN FT140 reruns' one-trial results extracted from MC45. MC45 columns average all 45 corners, one trial per corner;
 do not compare them as though they were the SS-only protocol. “—” means BN
 recalibration is inapplicable because the model has no BN; “n/r” means no result
 is reported for that configuration/protocol here.
@@ -737,6 +737,8 @@ is reported for that configuration/protocol here.
 | WRN-28-2 AvgPool, BN | 1,468,612 | 15 / 15 | 66.24 | 35.86 | 26.754 | 39.196 | 1.280 | 7.390 | n/r | n/r |
 | WRN-28 c27, stride-2 + AvgPool shortcuts, BN; full-range, VDD=0.5, q inverse 5 | 1,048,497 | 15 / 15 | 63.87 | 27.49 | 13.364 | 30.608 | 1.083 | 2.117 | n/r | n/r |
 | **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; full-range, VDD=0.5, q inverse 20** | **1,048,497** | **15 / 15** | **63.87** | **57.53** | n/r | n/r | **32.79** (1 trial) | **48.59** (1 trial) | **24.9869** | **44.3233** |
+| **WRN-28 c27, BN; full-range, VDD=0.5, q inverse 20; coupled random ReLU FT, best checkpoint** | **1,048,497** | **15 / 15** | **63.87** | **54.94** | n/r | n/r | **54.05** (1 trial) | **52.90** (1 trial) | **39.8207** | **50.5147** |
+| **WRN-28 c27, BN; same coupled FT, last checkpoint** | **1,048,497** | **15 / 15** | **63.87** | **54.94** | n/r | n/r | **54.64** (1 trial) | **52.86** (1 trial) | **38.7942** | **50.6682** |
 | **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; v2, VDD=0.1, q inverse 5** | **1,048,497** | **15 / 15** | **63.87** | **57.69** | n/r | n/r | **35.55** (1 trial) | **50.67** (1 trial) | **35.9664** | **48.1891** |
 | **WRN-28 c27, stride-2 + AvgPool shortcuts, BN; v2, VDD=0.1, q inverse 8** | **1,048,497** | **15 / 15** | **63.87** | **56.46** | n/r | n/r | **32.43** (1 trial) | **50.06** (1 trial) | **33.7211** | **47.1720** |
 | WRN-28-2 AvgPool, no BN/no conv bias | 1,464,996 | 15 / 15 | 56.37 | 55.64 | 54.634 | — | 49.933 | — | n/r | — |
@@ -796,6 +798,37 @@ experiments. The historical q-inverse-5 row is retained separately.
 Full-range rerun evidence: [FT/pipeline log](../logs/local_runs/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_20261016.log),
 [unrecalibrated MC45](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_20261016_mc45/summary.md),
 [recalibrated MC45](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_20261016_mc45_bnrecal5120/summary.md).
+
+The **coupled random-ReLU FT140 rerun** retains the c27 architecture (stride-2
+main paths, AvgPool shortcuts, BN), full-range couplers, VDD=0.5 V, q inverse
+20 and fixed 15/15 ns timing. FT uses `relu_monteCarlo`,
+`random_per_forward`, `per_spin`, and common-corner coupling across nonlinear-R,
+pooling and ReLU. Best FT is **54.94% at epoch 130**; the last checkpoint is
+**52.98% at epoch 140**. Both table rows report the same trajectory's FT best;
+only the checkpoint selected for evaluation differs. All four evaluations
+finished 45/45 corners, one trial each. BN recalibration uses 5,120 training
+samples at batch size 256, with dynamic noise enabled. It improves the mean by
+**10.6940 pp** for best and **11.8740 pp** for last. Highest-corner accuracies
+are 54.69%/52.90% (best without/with recalibration) and 55.28%/52.86% (last).
+
+These rows can be compared with the first five-cycle PCN row as **hardware
+robustness benchmarks**, not a single-variable architecture ablation. Evaluation
+uses the same full-range coupler bank, `relu_monteCarlo` bank, nominal R=50 kOhm,
+C=500 fF, VDD=0.5 V, 5-bit weights, 1-bit scale factors, 12-bit inputs, no ENOB,
+and the same enabled nonideality types and MC45 trial count. Intentional
+differences include q inverse 20 versus 5, 15/15 ns feedforward stages versus
+five PCN cycles at y/z=5/15 ns, BN, and model size. FT ReLU/corner sampling also
+differs: coupled random per-spin ReLU for this WRN versus fixed TT current-ReLU
+for the PCN. Seeds differ; the recalibrated WRN additionally uses training-data
+calibration. PCN's 56.9136% MC45 mean exceeds the best-checkpoint recalibrated
+WRN by **6.3989 pp**, or the last-checkpoint recalibrated WRN by **6.2454 pp**.
+
+Coupled-run evidence: [best without recalibration](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_coupledReLU_20261021_mc45/summary.md),
+[best with recalibration](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_coupledReLU_20261021_mc45_best_bnrecal5120/summary.md),
+[last without recalibration](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_coupledReLU_20261021_mc45_last_no_recal/summary.md),
+[last with recalibration](../results/coupler_full_range_CiFAIR100_wrn28_c27_fullFT140_15ns_vdd0.5_qinv20_coupledReLU_20261021_mc45_last_bnrecal5120/summary.md),
+[queue/configuration manifest](../results/wrn_coupled_checkpoint_comparison_20261022/manifest.json),
+[completion status](../results/wrn_coupled_checkpoint_comparison_20261022/status.json).
 
 The **v2 q-inverse-8 rerun** completed FT140 (best **56.46%, epoch 132**) and
 both MC45 evaluations. Verified on 2026-10-21: each CSV contains exactly 45
@@ -1223,6 +1256,56 @@ original weights-÷3 checkpoint and teacher, reporting all three coupling
 participants. Its resolved optimizer/augmentation recipe matches the saved
 full-FT configuration. Outputs were isolated under `/tmp`; no production job
 was launched as part of adding this wiring.
+
+### Generic toggle CNN PT → q selection → FT → evaluation
+
+The existing `slurm_search_feedforward_config.sh` / `feedforward_pretrain_then_ft.sbatch`
+now accepts `mode=pretrain_ft_and_eval`. Local execution uses the same exports
+with `bash launch_scripts/run_feedforward_pretrain_then_ft.sh`. This opt-in mode
+pretrains, selects `one_over_q`, fine-tunes, then runs expanded Level-3 evaluation.
+Existing modes and TC defaults remain unchanged; no new launcher is required.
+
+- Select a registered convertible CIFAR ResNet/WRN with `MODEL_NAME`; pass WRN
+  depth/first-stage channels only where applicable. BN-free and pooling variants
+  use their existing model registrations. There is no c27-specific recipe.
+- Keep timing consistent from fresh PT onward: no intermediate ÷3 checkpoint.
+  LR, WD, augmentation and other architecture-specific CNN defaults are retained.
+- `MC_RELU_MONTE_CARLO_SOURCE` selects the PT/selection/FT/evaluation bank;
+  explicit `ACTIVATION_CURVE_PATH` / `ACTIVATION_CORNER` still override training.
+  For `1022_RELU_Voltage`, the initial curve is `TT_25_1_MC18`.
+  `PRETRAIN_ACTIVATION_CORNER_MODE` defaults to `fixed` in the new mode;
+  FT uses `ACTIVATION_CORNER_MODE` and `ACTIVATION_RANDOM_CURVE_SHARING`.
+  Use `UNITLESS_MEASURED_PULLBACK_MODE=direct` to enable measured-ReLU PT.
+- `NONLINEAR_R_TABLE` supplies nonlinear-R and measured pooling for selection/FT
+  and the following full corner bank. Conflicting evaluation-family overrides
+  fail before pretraining. `NONLINEAR_R_MC_QUANTITY` is shared with evaluation.
+- The existing selector receives the resolved FT parser arguments, including
+  architecture, classifier, voltage, timing, quantization and noise settings.
+  It first compares ideal unitless/physical accuracy, then evaluates candidates
+  on training samples only, with frozen BN and dropout. Coupled hardware draws
+  and random per-spin activations are resampled per batch without BN updates.
+  The selected value is used for both FT and evaluation; PT retains its initial q.
+- Defaults: `ONE_OVER_Q_CANDIDATES="1 2 4 5 6 8 16 20 25 32 50 64 128"`,
+  `SELECTION_SAMPLES=1280`, `SELECTION_BATCHES=10`, `SELECTION_BATCH_SIZE=128`.
+  Results/configuration are saved under `results/${EXP_PREFIX}_selection`;
+  `SELECTION_OUTPUT_DIR` overrides this. Failed selection blocks FT/evaluation.
+  Held-out validation mode is explicitly unsupported for automatic selection.
+- New-mode `FINAL_EVAL_ONLY=true` selects PT `last` and FT `last` by default.
+  Evaluation defaults to MC45 with one trial per corner; to match the current
+  PCN two-corner jobs, set `CORNER_IDS="FS_V0_T0 FS_V2_T1" N_TRIALS=5`.
+  BN recalibration remains off unless explicitly enabled.
+  To automatically follow this with a paired recalibrated evaluation, set
+  `RUN_BN_RECAL_EVAL=true`: the same checkpoint, corner IDs, seeds and trial count
+  are reused, with 5,120 training calibration samples in batches of 256 by default
+  (`BN_CALIBRATION_SAMPLES` / `BN_CALIBRATION_BATCH_SIZE` override these).
+  Results go to `${RESULT_PATH}_bnrecal` (or `BN_RECAL_RESULT_PATH`); expanded
+  weights are shared with the unrecalibrated evaluation. Dynamic noise remains
+  enabled during calibration. A failed first evaluation blocks the paired run.
+
+`SELECT_ONE_OVER_Q=true` also enables the selector for existing toggle FT modes
+when their source is a unitless physical-pretraining checkpoint. Set it to
+`false` to bypass selection in the new mode. Automatic selection is not a
+recovery mechanism for an already quantized/FT checkpoint.
 
 ## Result sources
 

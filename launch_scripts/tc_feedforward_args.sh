@@ -1,5 +1,17 @@
 # Opt-in defaults only; existing toggle commands remain unchanged.
 TC_FEEDFORWARD_ARGS=()
+# Toggle bank selection mirrors PCN. Explicit training paths still win.
+if [[ "${TC_FEEDFORWARD:-false}" != true && -n "${MC_RELU_MONTE_CARLO_SOURCE:-}" ]]; then
+  _ff_relu_bank="${MC_RELU_MONTE_CARLO_SOURCE%/}"
+  [[ "${_ff_relu_bank}" == */* ]] || _ff_relu_bank="./hardware_data/mc_45_corners/${_ff_relu_bank}"
+  case "${_ff_relu_bank##*/}" in
+    0906_RELU_Voltage|1022_RELU_Voltage) _ff_relu_corner=TT_25_1_MC18 ;;
+    *) _ff_relu_corner=RELU_TTG4_MC1 ;;
+  esac
+  export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-${_ff_relu_bank}}"
+  export ACTIVATION_CORNER="${ACTIVATION_CORNER:-${_ff_relu_corner}}"
+  unset _ff_relu_bank _ff_relu_corner
+fi
 if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
   source "$(dirname "${BASH_SOURCE[0]}")/tc_hardware_defaults.sh" "$1"
   if [[ "$1" == pretrain ]]; then

@@ -165,6 +165,12 @@ def parse_args():
     p.add_argument("--activation_curve_path", default=str(
         PROJECT_ROOT / "hardware_data" / "relu_current_0p2uA_finer.csv"))
     p.add_argument("--activation_corner", default="TT")
+    p.add_argument('--activation_corner_mode', default='fixed',
+                   choices=('fixed', 'random_per_forward'))
+    p.add_argument('--activation_random_curve_sharing', default=None,
+                   choices=('per_model', 'per_layer', 'per_spin'))
+    p.add_argument('--ft_corner_coupled_sampling', type=str2bool, default=False)
+    p.add_argument('--selection_training_hardware', type=str2bool, default=False)
     p.add_argument("--activation_curve_sharing", default="per_model",
                    choices=("per_model", "per_layer", "per_spin"))
     p.add_argument("--activation_curve_seed", type=int, default=None)
@@ -222,7 +228,52 @@ def evaluate(model, loader, device, max_eval_batches=0):
     return 100 * correct / total
 
 
+def configure_selection_hardware_sampling(model, args):
+    """Draw FT hardware per batch without training BN or enabling dropout.
+
+    This is selection-only. Ordinary inference keeps its static trial defects.
+    Setting only physical blocks/pools to training mode activates their normal
+    hardware resampling, not their child BN/dropout modules.
+    """
+    from ft_corner_sampling import configure_ft_corner_coupled_sampling
+    from measured_activation import configure_measured_activation_corner_mode
+    from measured_pooling import MeasuredAvgPool2d
+    from physical_feedforward import iter_physical_blocks
+    if args.ft_corner_coupled_sampling:
+        configure_ft_corner_coupled_sampling(
+            model, activation_corner_mode=args.activation_corner_mode,
+            include_measured_activation=(args.enable_measured_activation and
+                args.activation_corner_mode == 'random_per_forward'))
+        # The normal coordinator is training-only; selection keeps model.eval().
+        model._ft_corner_coupled_sampling_hook.remove()
+        sampler = model._ft_corner_coupled_sampler
+        def sample_corner(module, inputs):
+            sampler.sample()
+        model._ft_corner_coupled_sampling_hook = model.register_forward_pre_hook(
+            sample_corner, prepend=True)
+    if args.enable_measured_activation:
+        configure_measured_activation_corner_mode(
+            model, mode=args.activation_corner_mode,
+            sharing=args.activation_random_curve_sharing or args.activation_curve_sharing)
+
+    def enable_hardware_draws(module, inputs):
+        for block in iter_physical_blocks(module):
+            block.training = True
+        for pool in module.modules():
+            if isinstance(pool, MeasuredAvgPool2d):
+                pool.training = True
+        # The analog head's private circuit is created lazily, outside modules().
+        circuit = getattr(getattr(module, 'fc', None), '_circuit', None)
+        if circuit is not None:
+            circuit.training = True
+    model.register_forward_pre_hook(enable_hardware_draws)
+
+
 def evaluate_once(args):
+    if args.selection_training_hardware and (
+            args.evaluation_split != 'train' or args.physical_level != 2 or
+            args.use_expanded_weights or args.bn_recalibrate or args.tc_feedforward):
+        raise ValueError('Training-hardware sampling requires unexpanded toggle L2 training-subset selection with frozen BN')
     if args.expanded_gaussian_curve_cpu_offload:
         if not args.use_expanded_weights or not args.enable_nonlinear_R:
             raise ValueError(
@@ -246,6 +297,7 @@ def evaluate_once(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     cfg = get_baseline_config(
         args.model_name, case="custom_noresize")
+    cfg.update(getattr(args, 'model_config_override', {}))
     cfg["wrn_depth"] = args.wrn_depth
     cfg["wrn_first_stage_channels"] = args.wrn_first_stage_channels
     cfg["linear_bias"] = args.linear_bias
@@ -415,6 +467,8 @@ def evaluate_once(args):
 
     from final_linear import configure_feedforward_head
     configure_feedforward_head(model, args, physical=args.physical)
+    if args.selection_training_hardware:
+        configure_selection_hardware_sampling(model, args)
     if args.evaluation_split == "train":
         loader = get_bn_calibration_data(
             bs=args.batch_size, n_samples=args.selection_samples,
