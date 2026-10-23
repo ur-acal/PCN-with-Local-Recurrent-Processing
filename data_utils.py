@@ -231,7 +231,12 @@ class MC45CornerData:
         return output
 
     def _load_coupler_file(self):
-        path = self.coupler_source_path
+        return self.coupler_file_corners(
+            self.coupler_source_path, self.coupler_quantity, self.coupler_nominal_R)
+
+    @staticmethod
+    def coupler_file_corners(path, quantity="resistance", nominal_R=1e4):
+        """Parse only coupler headers, without loading unrelated PVT banks."""
         with open(path, newline="") as handle:
             header = next(csv.reader(handle))
         records = []
@@ -254,8 +259,8 @@ class MC45CornerData:
             key = (process, voltages.index(voltage), temperatures.index(temperature))
             entry = output.setdefault(key, {
                 "path": path, "curve_indices": [],
-                "quantity": self.coupler_quantity or "resistance",
-                "nominal_R": self.coupler_nominal_R,
+                "quantity": quantity or "resistance",
+                "nominal_R": nominal_R,
                 "temperature": temperature,
             })
             entry["curve_indices"].append(curve_index)

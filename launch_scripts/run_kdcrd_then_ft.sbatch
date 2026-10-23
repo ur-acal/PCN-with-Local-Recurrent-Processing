@@ -123,13 +123,17 @@ PRETRAIN_ACTIVATION_CORNER_MODE="${PRETRAIN_ACTIVATION_CORNER_MODE:-${ACTIVATION
 ACTIVATION_RANDOM_CURVE_SHARING="${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}"
 FT_CORNER_COUPLED_SAMPLING="${FT_CORNER_COUPLED_SAMPLING:-false}"
 MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
-if [[ "${MC_RELU_MONTE_CARLO_SOURCE%/}" == "0906_RELU_Voltage" ]]; then
+voltage_relu_bank="${MC_RELU_MONTE_CARLO_SOURCE%/}"
+if [[ "${voltage_relu_bank##*/}" == "0906_RELU_Voltage" || "${voltage_relu_bank##*/}" == "1022_RELU_Voltage" ]]; then
+  if [[ "${voltage_relu_bank}" != */* ]]; then
+    voltage_relu_bank="./hardware_data/mc_45_corners/${voltage_relu_bank}"
+  fi
   if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
-    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-${voltage_relu_bank}}"
     ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT_25_1_MC18}"
   else
-    # MC18 is the TT/V1/T1 realization closest to this corner's 100-curve mean.
-    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
+    # Preserve the pinned curve index when switching voltage banks.
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-${voltage_relu_bank}/tt_25_1.csv}"
     ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
   fi
 elif [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
@@ -571,7 +575,8 @@ eval_one_combo_model() {
   if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
     # FT's shared activation settings must not restrict the evaluation bank.
     # Function-local values also leave the next model's FT settings intact.
-    local ACTIVATION_CURVE_PATH="${TC_EVAL_ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    # Leave unset defaults to the TC builder, which resolves the selected bank.
+    local ACTIVATION_CURVE_PATH="${TC_EVAL_ACTIVATION_CURVE_PATH:-}"
     local ACTIVATION_CORNER="${TC_EVAL_ACTIVATION_CORNER:-TT_25_1_MC18}"
   fi
   source ./launch_scripts/tc_nonideality_args.sh eval || return 2

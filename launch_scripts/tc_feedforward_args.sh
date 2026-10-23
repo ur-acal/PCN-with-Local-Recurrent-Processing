@@ -9,10 +9,15 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
   export PHYSICAL_LEVEL=2
   export WEIGHT_QUANT_FACTOR_BITS=-1 ENOB=none
   export NONLINEAR_R_TABLE="$TC_MEAN_TABLE"
+  tc_activation_bank="${MC_RELU_MONTE_CARLO_SOURCE:-0906_RELU_Voltage}"
+  tc_activation_bank="${tc_activation_bank%/}"
+  if [[ "${tc_activation_bank}" != */* ]]; then
+    tc_activation_bank="./hardware_data/mc_45_corners/${tc_activation_bank}"
+  fi
   if [[ "$1" == eval ]]; then
     export NONLINEAR_R_TRAIN_MODE=none
     export NONLINEAR_R_CURVE_SHARING=per_coupler
-    export ACTIVATION_CURVE_PATH="${TC_EVAL_ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    export ACTIVATION_CURVE_PATH="${TC_EVAL_ACTIVATION_CURVE_PATH:-${tc_activation_bank}}"
     export ACTIVATION_CORNER="${TC_EVAL_ACTIVATION_CORNER:-TT_25_1_MC18}"
     export ACTIVATION_CURVE_SHARING=per_spin
   else
@@ -21,10 +26,10 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
       export NONLINEAR_R_TRAIN_MODE=none
     fi
     if [[ "${ACTIVATION_CORNER_MODE:-fixed}" == random_per_forward ]]; then
-      export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+      export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-${tc_activation_bank}}"
       export ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT_25_1_MC18}"
     else
-      export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
+      export ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-${tc_activation_bank}/tt_25_1.csv}"
       export ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
     fi
     export ACTIVATION_CURVE_SHARING=per_model
@@ -42,6 +47,9 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     --tc_method "${TC_METHOD:-dopri5}" --tc_tol "${TC_TOL:-1e-6}"
     --tc_curve_sampling "${TC_CURVE_SAMPLING:-histogram}"
     --tc_covariance_table "${TC_COVARIANCE_TABLE:-./hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv}"
+    --resistance_floor_ohms "${RESISTANCE_FLOOR_OHMS:-none}"
+    --tc_solver_dense_output "${TC_SOLVER_DENSE_OUTPUT:-true}"
+    --tc_noise_replay_cache "${TC_NOISE_REPLAY_CACHE:-true}"
     --tc_noise_reference_R "${TC_NOISE_REFERENCE_R:-50e3}"
     --measured_pooling_curve_path "${MEASURED_POOLING_CURVE_PATH:-${NONLINEAR_R_TABLE}}"
     --measured_pooling_nominal_R "${MEASURED_POOLING_NOMINAL_R:-10e3}")

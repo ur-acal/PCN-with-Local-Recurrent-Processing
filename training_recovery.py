@@ -107,6 +107,11 @@ def restore_latest(trainer):
         'training-recovery checkpoint')
     # Recovery is continuation, not conversion into another physical stage.
     current = getattr(trainer, 'recovery_config', {})
+    from resistance_guard import saved_floor
+    if saved_floor(current) != saved_floor(recovery['config']):
+        raise ValueError('Full recovery requires unchanged resistance_floor_ohms; use an ordinary checkpoint for a new stage')
+    if current.get('ft_corner_coupled_sampling', False) != recovery['config'].get('ft_corner_coupled_sampling', False):
+        raise ValueError('Full recovery requires unchanged ft_corner_coupled_sampling; use an ordinary checkpoint for a new stage')
     for key in ('compute_time_fixed_std', 'compute_time_noise_std'):
         if current.get(key, 0.) != recovery['config'].get(key, 0.):
             raise ValueError(f'Full recovery requires unchanged {key}; use an ordinary checkpoint for a new stage')

@@ -10,11 +10,20 @@ from utils import mc45_corner_ids, mc_training_curve_corner_indices
 _ACTIVATION_CORNER_RE = re.compile(
     r"^(TT|FF|SS|FS|SF)_(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))_([0-2])_",
     re.IGNORECASE)
+_CURRENT_ACTIVATION_CORNER_RE = re.compile(
+    r"^RELU_(TT|FF|SS|FS|SF)G([0-8])_MC[0-9]+$", re.IGNORECASE)
 
 
 def _activation_corner_curve_indices(corner_names):
     parsed = []
     for index, name in enumerate(corner_names):
+        current = _CURRENT_ACTIVATION_CORNER_RE.match(str(name))
+        if current is not None:
+            # Same voltage-major, temperature-minor numbering as MC45CornerData.
+            voltage, temperature = divmod(int(current.group(2)), 3)
+            parsed.append((index, current.group(1).upper(),
+                           (-20.0, 25.0, 85.0)[temperature], voltage))
+            continue
         match = _ACTIVATION_CORNER_RE.match(str(name))
         if match is None:
             raise ValueError(
@@ -87,7 +96,7 @@ class FTCornerCoupledSampler:
 def configure_ft_corner_coupled_sampling(
         model, *, activation_corner_mode="fixed",
         include_measured_activation=False):
-    """Couple empirical FT curve draws to one MC45 corner per train forward.
+    """Couple empirical curves or TC Gaussian factors per training forward.
 
     Fixed measured activations intentionally do not participate.  Evaluation
     clears the active corner and therefore retains its original sampling logic.
@@ -98,6 +107,30 @@ def configure_ft_corner_coupled_sampling(
 
     sampler = FTCornerCoupledSampler(model)
     participants = []
+
+    # TC uses Gaussian resistance covariance, not toggle's empirical selection.
+    # Share each bank across the backbone, pooling and any existing analog head.
+    tc_banks = {}
+
+    def register_tc(module, path, grid, factor):
+        from tc_nonidealities import prepare_tc_corner_factors, TCCornerFactorBank
+        key = (path, tuple(grid.detach().cpu().double().tolist()),
+               factor.device, factor.dtype)
+        if key not in tc_banks:
+            tc_banks[key] = TCCornerFactorBank(prepare_tc_corner_factors(
+                path, grid, dtype=factor.dtype, device=factor.device))
+        module._tc_corner_factors = tc_banks[key]
+        module._ft_corner_coupled_sampler = sampler
+
+    for module in model.modules():
+        package = getattr(module, "_tc_resistance_package", None)
+        if package is None:
+            package = getattr(module, "_tc_curve_package", None)
+        if package is not None:
+            if getattr(module, "mat", None) is not None or package.empirical_bank is not None:
+                raise ValueError("TC corner-coupled FT requires dense Gaussian curves.")
+            register_tc(module, package.covariance_path, package.v_grid, package.factor)
+            participants.append("nonlinear-R")
 
     packages = []
     seen_packages = set()
@@ -125,9 +158,12 @@ def configure_ft_corner_coupled_sampling(
                  if isinstance(module, MeasuredAvgPool2d) and
                  module.enable_nonideality):
         if pool.curve_gaussian:
-            raise ValueError(
-                "FT corner-coupled sampling does not support Gaussian "
-                "measured-pooling banks.")
+            path = getattr(pool, "tc_covariance_path", None)
+            if path is None or pool.gaussian_quantity != "resistance" or pool.gaussian_value_scale != 1.:
+                raise ValueError("FT corner coupling requires TC Gaussian measured-pooling banks.")
+            register_tc(pool, path, pool.gaussian_v_grid, pool.gaussian_factor)
+            participants.append("measured-pooling")
+            continue
         if pool.training_curve_mode != "exact_curve":
             raise ValueError(
                 "FT corner-coupled measured pooling requires "

@@ -1,0 +1,327 @@
+{
+  "source": "/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN/hardware_data/mc_45_corners/1022_RELU_Voltage_raw",
+  "supplies_by_voltage_category": [
+    1.176,
+    1.2,
+    1.224
+  ],
+  "supply_metadata_provenance": "User-approved 0906 midpoint references, consistent with observed 1022 negative-input baselines; not original simulation metadata",
+  "samples": "Copied verbatim, no interpolation, scaling, offset subtraction or resampling",
+  "files": [
+    {
+      "name": "ff_-20_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "008607cec8123bc250e669a8b2a678b1da73ba0a6094b1092e43a385494756f3",
+      "output_sha256": "08c4583d0033af275fb0661f53f0cc185cde878a9a132b4a23759d7d19b449e0"
+    },
+    {
+      "name": "ff_-20_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "c7ebf6ac286610a6165ca8f6356a8a21de23863be35d739ddf71356e9ea340ca",
+      "output_sha256": "52cc5f600407f54f814c846b34f7e6465f7f7fcf90cb40897fa2d5c5c83d570d"
+    },
+    {
+      "name": "ff_-20_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "6a52285cad9c456a7d6954cdc6e9a7a8b0fea1e19603c62e3deef12a9f402512",
+      "output_sha256": "8d505e4f077bad14f82ab713ee039c89d336687d980a322c02a9dc9b84be0ba3"
+    },
+    {
+      "name": "ff_25_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "b6f9636fc5d7c49e7028b511472d9a84f8693bc80add99a88cd9da03c0fd73d0",
+      "output_sha256": "33037633dadd05c9f475e2694dd6c54e21ce512ecc88f544bc35ac157f39bc4a"
+    },
+    {
+      "name": "ff_25_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "a0cec9e78bf7ff17330b27ddebdca5c412994c6c80601fe49f2921ca11bd2f66",
+      "output_sha256": "28cb081566b766c36b72adb5c2ac5a979b4e90c948ad8a4981a5b9b88492f1ea"
+    },
+    {
+      "name": "ff_25_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "8b2a8b048a1c1e40a224c217367ee52c04b04a66407ceda435c0a55586e289d3",
+      "output_sha256": "059957a8c8847fbdecbaea01dadad2fbc32935813f8c77728a4270548b48f379"
+    },
+    {
+      "name": "ff_85_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "c67892576d72bc8c5557e13d7eba45e710e109b281a1539c000ef84050166f49",
+      "output_sha256": "88b96ddf73c994bfc8f8fb2894e8de12dacfa1e331ef0d8d2ab2b9b88cad4c30"
+    },
+    {
+      "name": "ff_85_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "bbaf83543affdea9a62b3b0e4a76e2ffc8fc5b19d2c4c201c288a83bb119e431",
+      "output_sha256": "f55f634dd833d9010e24007a41ca02710fde38f3cb66a8926d45c2ca782f9e90"
+    },
+    {
+      "name": "ff_85_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "f2330fdc38029a1e8053e226e8ec2b1e28a7afa5216eec9743835355376e00d4",
+      "output_sha256": "004d1d94dd933ca76975f4ef73663252d7fe56aba9742ddc45df97568752fadf"
+    },
+    {
+      "name": "fs_-20_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "3f602ede76e3f6381a163cc21be2d769151d5da859763cdcce44d2a21b8bb467",
+      "output_sha256": "fb073717d5d6ffbdfda76d3940b17e433f368f975f4b2c13995ab88fcfd8c136"
+    },
+    {
+      "name": "fs_-20_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "cecc6a729499484b5d584cdfdf055d5ac23d20d40415fb1a6eef8e5ddce7eee3",
+      "output_sha256": "af3db958e02eb72bd0173412dc01d49dfb2428b6a3aa68297a9987394d6133c5"
+    },
+    {
+      "name": "fs_-20_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "148fc093cc642ef3bad1e9e3f8b3118bc9996933cf3e3ce55dd531051a9f5ecf",
+      "output_sha256": "dc36c121ab10eed9fa643dc8be361dc19fde52ec38ba63ad06fb754b7c4d5b23"
+    },
+    {
+      "name": "fs_25_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "30a8b836c3a5773638a45b13449052b48ad8ae54cbde5fce2aba31ac1cc65341",
+      "output_sha256": "3d165123e78e5dc94221dd565bd48c15631f8c066b1657d749fd679b40b62ada"
+    },
+    {
+      "name": "fs_25_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "6c7024bf08aabe5bb29c25f25484c2ef68b34e755a339283b9c31f33ffff914e",
+      "output_sha256": "cb46760d92a28b7d650fd4533fbce5bb059abdcb93dc2148caffefb5e36d1824"
+    },
+    {
+      "name": "fs_25_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "d98f1ab7bd8475ae495dbd21213ff06ae814d37a3742251373774d3caaf6233a",
+      "output_sha256": "8b1cf1d6bbc43a9718e0f3be89d44a6245f700e688d47d7b8cb90996b06d3edf"
+    },
+    {
+      "name": "fs_85_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "a9e600420d649fed65aa3cba66aa8a8d33659be1b7d56a5b96066ff7c75ab58c",
+      "output_sha256": "c4b0b09851a9618f232934d62433cb84d24bedc618451c43ab29be8d64efda22"
+    },
+    {
+      "name": "fs_85_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "28f294889cf55297e807d8a60f5235af4542f1911d02eac1dbdb67d01287139b",
+      "output_sha256": "0e555381748b630573006d5056b4b4b58c8972412578a6fb46fd6a820260e2b3"
+    },
+    {
+      "name": "fs_85_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "a3888bcb8e8e951adff6e5b4aa68390cd56385c8409bf5a9fc0ed309fd4dcf7c",
+      "output_sha256": "414f63a8342c998c216164596c3d0c4318b712735bc7ecb31f3158fbde6c5ad0"
+    },
+    {
+      "name": "sf_-20_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "8286b9d0023822ed5278310549a3705cf0f0effd4bc294f1fa9fcecd053f5212",
+      "output_sha256": "c182d289ecef689bde7b8726a902e905663e872d6924f82a04818f7acce3e88a"
+    },
+    {
+      "name": "sf_-20_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "58eb46e80077588d859ced6289bcabc344c92949368cc6313bcfdb26fbd30ac6",
+      "output_sha256": "8b916ad6166ef0a7915d82d1d9fea7658c4f2dbab6bd10bec0b389100c63c4a9"
+    },
+    {
+      "name": "sf_-20_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "e4b11a00166b93f809e2db73beb455aac47722d11d80601ee9c444c5a8b59ece",
+      "output_sha256": "456ee8ed3aeafa848f7223e7417b7eaed51e9b9edb6aa638e61c49c84c2b3963"
+    },
+    {
+      "name": "sf_25_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "80ff4df8fac420601fde5db4b12cafa7d32d4211e2306773916077e4fc573bd1",
+      "output_sha256": "357f3bfa10ceacea8f17e975f1eab8233f87463df1ece6ffedb99c9830e69632"
+    },
+    {
+      "name": "sf_25_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "c2400df2d91b61844b1a30d23803adbb73ad117d6794f9309c73e44202c58cd4",
+      "output_sha256": "8494bddaf77f43497a731fc97ba2200fffc4cdcabd2e67568241a75d486c9b71"
+    },
+    {
+      "name": "sf_25_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "a40c53929788e22ed55c69cf467173bf358faf1cf8135a288e977f5ecc881957",
+      "output_sha256": "35cfdf9ddf3ecb3e23dc0b84ae2d68a9cf64ba82c201d81b4f13785a904d62df"
+    },
+    {
+      "name": "sf_85_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "8f283e7377ee0478b63b2371fb5cf4c31ac649f62bc0918b3a34a88f7bcde1e6",
+      "output_sha256": "f959307423ab407477132b9e1a6167f365b491589bb23529fa5d92189d3d297f"
+    },
+    {
+      "name": "sf_85_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "e109d41d08b1378d32ab22753555b7b5fff063d065f7c9ec4e3f67476866b83a",
+      "output_sha256": "18e27b40ceb5ba8451a6e62bbaa3660347cd13634d64bcb8764d1b382f00f8b4"
+    },
+    {
+      "name": "sf_85_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "1aa006a8097a6a129317354537af6c182fa14e92cf6348b209f8e2b325806f12",
+      "output_sha256": "1d4cc6ce2669fb5fd035bf3ea357ccb4771e53335e4f8ea20d6f60ad76252188"
+    },
+    {
+      "name": "ss_-20_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "2c015543ef259fdd8cef60ad2223ae283f1aaf1bad54a2857624bf66786423d0",
+      "output_sha256": "cb3100ca36f7961759693a0c74a783355d2c495d1f02287e8d498e6675fe417f"
+    },
+    {
+      "name": "ss_-20_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "614d081f6b47acaa2f658067c0c85f32d2083f06be28fbb71bd44448182ba161",
+      "output_sha256": "d5829f142e110c1744eadbae1ed31317b1f9a5199c1d3aef66dcdd270b777439"
+    },
+    {
+      "name": "ss_-20_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "d9cb99d4100e553832afe724f2653e7ef23b479eae8e969e4be4512122a1f44a",
+      "output_sha256": "04f3bc8858ff307cd5d72c8f3eb42aa1da4fbc34b70218666b09b044d076790c"
+    },
+    {
+      "name": "ss_25_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "228d61c83b01abd448c185352f9554c7c5a674ceaf2897d96d350c3a9f9614f1",
+      "output_sha256": "aafb59ab742f92dcac764aed185b95b4517a744951d025fd48c945d09c8a8f07"
+    },
+    {
+      "name": "ss_25_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "b17c3fd8e90e24c57dca1d4150b4311a9c999c37edcf34690b717d60d29d5fb0",
+      "output_sha256": "7c75d9b90b15a1cb36ddce2e2028e33baac4829d9d003cb0b3f4507e6688f13f"
+    },
+    {
+      "name": "ss_25_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "a04b5f47afcd266e3d6f1eaa52b7171f086004b86f965204f8be0439d64d6c25",
+      "output_sha256": "53125590a4e16e9b3fc8181333a36e3e999fc43520f6a33d3f6a9f5c783f504d"
+    },
+    {
+      "name": "ss_85_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "d325564c441caa0b7a94874dd0f8c860d5e3cfcf2086ec75c25bfab70aecf67a",
+      "output_sha256": "38ace7af48eb6083492f84c6f27e42be47fb66bd9083de049934b766d77928df"
+    },
+    {
+      "name": "ss_85_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "f59a873839a8f6748b30878a7a9959e013336a7160b89f9f8721c987fa1aa914",
+      "output_sha256": "20e7b159b5a88818d6af5eb605f9baf707d8b9922eb040cc7409f30c62a104a7"
+    },
+    {
+      "name": "ss_85_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "e409a169b4c2f4d73e84899f6fad91896713c2881e90bcac1043275c03924c6d",
+      "output_sha256": "ef69a19335ef58e4136db635efb18c7c95419eff2ce17cb8388fb9e5e757d592"
+    },
+    {
+      "name": "tt_-20_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "c5f649aa98099af9159848a2b42bc91d7b802722c4eeda18c3bfc626935e010e",
+      "output_sha256": "39cdad6f68169830a900a7409a6809888788247b3fa87ac3c8433f058d795f48"
+    },
+    {
+      "name": "tt_-20_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "6100c1b813297d203a216e5ef1199857f1654ae48f816297db6cab233791c71f",
+      "output_sha256": "318b811274bfd4a1da430466fbea4044258eb98998aa1ee04ddd17c96627409c"
+    },
+    {
+      "name": "tt_-20_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "6c1808d7e756b91c3012794d8f12ec6bde9b7e7643ef4a72ff20ff3441e1efc3",
+      "output_sha256": "291cd3d18b4a55b43f13897c2feb6247e7c3edf6eb8b54955e4ffe419c6ffe63"
+    },
+    {
+      "name": "tt_25_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "a17de9ff9d5b771054fe4297a35a35e476878c098b55f393e4f701d57976973f",
+      "output_sha256": "ac4dd98afc605cfd3097715c013ae646dde2f15adc51814fda99301fd7d28979"
+    },
+    {
+      "name": "tt_25_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "b6809c26efa22ace17d9a57cdeb98310377ae8164082ce8fe1519b3c18514b45",
+      "output_sha256": "63e830e83027a6f3a280bd56ea418b831f5559fa9c5bf3483896d68c92aa93e9"
+    },
+    {
+      "name": "tt_25_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "71489896af93627b7e7463fc4b209e2f0178338a65e824c1240093ccefde2dfc",
+      "output_sha256": "2fb11e6e0bb791b1d25e921032ec39bbfcdf7ae5e5193cebf60f7be753efee7d"
+    },
+    {
+      "name": "tt_85_0.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "f79f81f9811234e0adadbee8bc145f2c57fc3f898cfc7d4734da6c0fea0db52a",
+      "output_sha256": "cee12764dcb2e4296915f82490ed109ee70beef0ee0b92893ef3c4bef9b5bd88"
+    },
+    {
+      "name": "tt_85_1.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "0d58f64e2b66694a4cc5878b2c85f6f94abaf6f230a3099228915b3b224a4226",
+      "output_sha256": "33c397b2fbe73515ba600e9bf131dcb2c688814d7677f85e27c8a57e8e46827b"
+    },
+    {
+      "name": "tt_85_2.csv",
+      "points_per_curve": 201,
+      "curves": 100,
+      "source_sha256": "78abb466b47c5d6b5a2bb63dc31ad6b1b75a765e0531f3a507855d5b8bec9328",
+      "output_sha256": "0738894042ada387ee5b2cdc5f98b4ff639bae99c4a60ad04479d7c1c2292df3"
+    }
+  ]
+}

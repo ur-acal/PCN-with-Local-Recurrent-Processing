@@ -332,8 +332,11 @@ class AnalogLinear(NonidealLinear):
                                       getattr(template, 'tc_nonidealities', False))
         cls = TCPhysicalBasicBlock if mapped_tc else (
             PulsePhysicalBasicBlock if self._pulse_mode() else AveragedPhysicalBasicBlock)
+        options['resistance_floor_ohms'] = getattr(template, 'resistance_floor_ohms', None)
         if mapped_tc:
             options.update(tc_covariance_table=getattr(template, 'tc_covariance_table', None),
+                           tc_solver_dense_output=getattr(template, 'tc_solver_dense_output', True),
+                           tc_noise_replay_cache=getattr(template, 'tc_noise_replay_cache', True),
                            tc_conv_method=getattr(template, 'tc_conv_method',
                                                   getattr(template, '_tc_conv_method', 'shared')),
                            tc_noise_stages=getattr(template, 'tc_noise_stages',
@@ -359,6 +362,9 @@ class AnalogLinear(NonidealLinear):
                           getattr(template, '_tc_resistance_package', None))
         if package is not None:
             block._tc_resistance_package = package
+            for name in ('_tc_corner_factors', '_ft_corner_coupled_sampler'):
+                if hasattr(template, name):
+                    setattr(block, name, getattr(template, name))
             seed = getattr(template, '_tc_curve_seed', None)
             if seed is None:
                 seed = getattr(template, 'nonlinear_R_curve_seed', None)

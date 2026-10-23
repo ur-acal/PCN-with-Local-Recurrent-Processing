@@ -36,6 +36,22 @@ def package(b, variation=True):
 
 
 class TCFeedForwardTests(unittest.TestCase):
+    def test_configurable_coupler_floor_reaches_pcn_and_cnn(self):
+        mean = './hardware_data/res_vs_vin_10k_150k.csv'
+        cov = './hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv'
+        floor = 26791.33
+        for two in (False, True):
+            wrapper = wrap(make_block(two), nonlinear_R=True,
+                nonlinear_R_table=mean, tc_covariance_table=cov,
+                resistance_floor_ohms=floor)
+            self.assertEqual(wrapper.ode_block._tc_curve_package.floor_ohms, floor)
+        b = block(tc_covariance_table=cov, resistance_floor_ohms=floor)
+        wrapper = TCFeedForwardPhysicalWrapper(b, qat=True)
+        pkg = wrapper.configure_nonlinear_R_training(mean)
+        self.assertEqual(pkg['tc_curve_package'].floor_ohms, floor)
+        pkg = wrapper.configure_nonlinear_R_inference(mean)
+        self.assertEqual(pkg['tc_curve_package'].floor_ohms, floor)
+
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(1)

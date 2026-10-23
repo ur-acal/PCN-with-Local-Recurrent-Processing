@@ -5,6 +5,8 @@ from checkpoint_memory_profiler import parse_checkpoint_ode_rhs_portion
 
 
 def add_arguments(parser):
+    from resistance_guard import add_argument
+    add_argument(parser)
     from compute_time_variation import add_arguments
     add_arguments(parser)
     def boolean(value):
@@ -16,6 +18,9 @@ def add_arguments(parser):
                         choices=('relu', 'relu6'), default='relu6')
     parser.add_argument('--one_shot_conv', type=boolean, default=False)
     parser.add_argument('--tc_method', choices=('dopri5', 'euler'), default='dopri5')
+    parser.add_argument('--tc_solver_dense_output', type=boolean, default=True)
+    parser.add_argument('--tc_noise_replay_cache', type=boolean, default=True,
+                        help='Retain noise history; false releases accepted intervals in no-grad inference only.')
     parser.add_argument('--reuse_accepted_step_training', type=boolean,
                         default=boolean(os.environ.get(
                             'REUSE_ACCEPTED_STEP_TRAINING', 'false')))
@@ -42,10 +47,13 @@ def conversion_options(args):
         return {}
     if args.physical_level != 2:
         raise ValueError('TC uses normalized conductances (physical_level=2), never pulse-level weights.')
-    return dict(tc_options={key: getattr(args, key) for key in (
+    result = dict(tc_options={key: getattr(args, key) for key in (
         'one_shot_conv', 'tc_method', 'tc_tol', 'tc_step_size', 'tc_num_steps',
         'tc_noise_reference_R', 'tc_covariance_table', 'tc_curve_sampling',
         'reuse_accepted_step_training', 'checkpoint_ode_rhs_training')})
+    for key in ('tc_solver_dense_output', 'tc_noise_replay_cache'):
+        result['tc_options'][key] = getattr(args, key, True)
+    return result
 
 
 def initialize_args(args):
@@ -75,4 +83,6 @@ def configure_pooling(model, args):
         model, enable_nonideality=True, nominal_R=args.measured_pooling_nominal_R,
         seed=args.nonlinear_R_curve_seed, training_curve_mode='exact_curve',
         curve_gaussian=dict(v_grid=package.v_grid, mean=package.means[0],
-                            factor=package.factor, value_scale=1., quantity='resistance'))
+                            factor=package.factor, value_scale=1., quantity='resistance',
+                            tc_covariance_path=package.covariance_path),
+        resistance_floor_ohms=getattr(args, 'resistance_floor_ohms', None))

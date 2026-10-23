@@ -1,5 +1,20 @@
 # TC training and inference optimizations
 
+## TC solver inference-history controls
+
+Both controls default to `true`, preserving existing behavior. They are wired
+through the TC PCN and TC feedforward local/Slurm launchers.
+
+| Environment / Python argument | Set `false` to | Safety behavior |
+|---|---|---|
+| `TC_SOLVER_DENSE_OUTPUT` / `tc_solver_dense_output` | Stop retaining every solver step's voltage states | Requested in-range evaluation points still work; retrospective dense evaluation/extrapolation requires history. |
+| `TC_NOISE_REPLAY_CACHE` / `tc_noise_replay_cache` | Release noise tensors after each accepted interval during no-grad inference | Current-interval reuse remains intact. Grad-enabled training retains history for backward replay. Explicit solve replay/graph regeneration without history raises an error. |
+
+These controls do not disable noise, projection, or change random-number draws.
+For PCN Euler with exactly 100 steps, pass `--n_steps 100 --ts_scale 1`;
+the inference Python CLI defaults `ts_scale` to 1. CNN uses
+`--tc_method euler --tc_num_steps 100`.
+
 ## Training results at a glance
 
 Batch-128 TC training OOMs without activation checkpointing. Activation

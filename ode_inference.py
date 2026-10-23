@@ -253,7 +253,7 @@ def parse_args():
                         help="The leak current when the spin voltage is v_dd. Use with switched inference.")
     parser.add_argument("--n_steps", type=float, default=10, help="ODE solver number of steps")
     parser.add_argument("--tol", type=float, default=1e-3, help="ODE solver tolerance")
-    parser.add_argument("--ts_scale", type=int, default=10,
+    parser.add_argument("--ts_scale", type=int, default=1,
                         help="Scale factor of time step; Applies to fixed grid methods")
     parser.add_argument("--d_start", type=float, default=0.1,
                         help="Difference between real t_end and position to start sweep")
@@ -984,6 +984,8 @@ def run_ode_inference(linear_study=None):
                     if args.dtc_timing_seed is not None:
                         ode_params["dtc_timing_seed"] = args.dtc_timing_seed + t
                     trial_wrapper_params = wrapper_params
+                    trial_wrapper_params = dict(trial_wrapper_params,
+                        resistance_floor_ohms=args.resistance_floor_ohms)
                     if (activation_mc_curve_indices is not None or
                             nonlinear_R_mc_curve_indices is not None or
                             args.nonlinear_R_curve_seed is not None or
@@ -1037,7 +1039,8 @@ def run_ode_inference(linear_study=None):
                                         "Gaussian measured pooling requires "
                                         "nonlinear_R Gaussian curve sampling.")
                             pooling_kwargs = dict(curve_path=pooling_curve_path,
-                                curve_gaussian=pooling_curve_gaussian, nominal_R=args.R)
+                                curve_gaussian=pooling_curve_gaussian, nominal_R=args.R,
+                                resistance_floor_ohms=args.resistance_floor_ohms)
                             if args.tc_nonidealities:
                                 from tc_cli import pooling_options
                                 pooling_kwargs = pooling_options(args, saved_wrappers["wrappers"])

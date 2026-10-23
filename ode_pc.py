@@ -399,7 +399,8 @@ class ODEBlockPC(nn.Module):
             scale = self._tc_fb_integral.std_A / cfg['tc_asd_reference_p'] * math.sqrt(ratio)
             fb_coeff = (torch.full_like(fb, a*scale), fb.sqrt()*b*scale)
         context = TCNoiseLifecycle(coefficients, generators, fb_coeff,
-                                   fb.expand(x.shape[0],*fb.shape[1:]))
+                                   fb.expand(x.shape[0],*fb.shape[1:]),
+                                   replay_cache=getattr(self, '_tc_noise_replay_cache', True))
         eps = tuple((a.square()+b.square()).sqrt() for a,b in coefficients)
         self.option_aca.update(eps=eps if two else eps[0], noise_type='addi')
         return context, sy, sz
@@ -413,16 +414,19 @@ class ODEBlockPC(nn.Module):
         if package is None:
             return None
         if self.training or getattr(self, "_tc_curve_samples", None) is None:
+            from tc_nonidealities import tc_training_corner_factor
+            factor = tc_training_corner_factor(self, package.factor)
             if getattr(self, '_tc_conv_method', 'loop') == 'shared':
                 self._tc_curve_samples = {
                     name: package.sample_shared(
                         self._values_to_level_idx(
                             getattr(self, name).weight.detach()),
-                        sampling=self._tc_curve_sampling, generator=self._tc_curve_generator)
+                        sampling=self._tc_curve_sampling, generator=self._tc_curve_generator,
+                        factor=factor)
                     for name in ("FFconv", "FBconv")}
             else:
                 self._tc_curve_samples = {
-                    name: package.sample_levels(generator=self._tc_curve_generator)
+                    name: package.sample_levels(generator=self._tc_curve_generator, factor=factor)
                     for name in ("FFconv", "FBconv")}
         # Capture this dictionary in the solve closure, including backward replay.
         return self._tc_curve_samples
@@ -3557,6 +3561,10 @@ class WrapQuantizeW(ODEWrapperRC):
 
         self.tc_nonidealities = kwargs.pop("tc_nonidealities", False)
         self.tc_covariance_table = kwargs.pop("tc_covariance_table", None)
+        from resistance_guard import resistance_floor
+        self.resistance_floor_ohms = resistance_floor(kwargs.pop('resistance_floor_ohms', None))
+        self.tc_solver_dense_output = kwargs.pop('tc_solver_dense_output', True)
+        self.tc_noise_replay_cache = kwargs.pop('tc_noise_replay_cache', True)
         self.tc_empirical_curve_bank = kwargs.pop('tc_empirical_curve_bank', None)
         self.tc_conv_method = kwargs.pop('tc_conv_method', 'loop')
         self.tc_curve_sampling = kwargs.pop('tc_curve_sampling', 'histogram')
@@ -4005,6 +4013,10 @@ class WrapQuantizeW(ODEWrapperRC):
             if type(self.ode_block) not in (ODEXInitFFFB, S2NoisyIYAsXZAs0):
                 raise TypeError("TC options require ODEXInitFFFB or S2NoisyIYAsXZAs0; not toggle.")
             self.ode_block._tc_current_mode = True
+            self.ode_block.option_aca['dense_output'] = self.tc_solver_dense_output
+            self.ode_block.tc_solver_dense_output = self.tc_solver_dense_output
+            self.ode_block.tc_noise_replay_cache = self.tc_noise_replay_cache
+            self.ode_block._tc_noise_replay_cache = self.tc_noise_replay_cache
             self.ode_block._tc_conv_method = self.tc_conv_method
             self.ode_block._tc_curve_sampling = self.tc_curve_sampling
             self.ode_block._tc_fb_gain = getattr(self, "k", 1.) / self.R
@@ -4027,7 +4039,8 @@ class WrapQuantizeW(ODEWrapperRC):
             block._tc_curve_package = prepare_tc_resistance_curves(
                 self.nonlinear_R_table, self.tc_covariance_table,
                 levels=block._get_quant_magnitude_levels(ref), R=self.R,
-                R_max=self.R_max, dtype=ref.dtype, device=ref.device)
+                R_max=self.R_max, dtype=ref.dtype, device=ref.device,
+                floor_ohms=(self.resistance_floor_ohms if self.resistance_floor_ohms is not None else 1e-6))
             if self.tc_empirical_curve_bank:
                 if self.nonlinear_R_curve_sharing != 'per_coupler':
                     raise ValueError('TC empirical banks require unrolled per-coupler evaluation.')
@@ -4045,6 +4058,7 @@ class WrapQuantizeW(ODEWrapperRC):
                 v_grid=None, R_codes=None, R_left=None, R_slope=None,
                 proj_fn=self.proj_fn, R=self.R,
                 tc_curve_package=block._tc_curve_package,
+                resistance_floor_ohms=self.resistance_floor_ohms,
                 nonlinear_R_curve_seed=self.nonlinear_R_curve_seed,
                 nonlinear_R_curve_edge_chunk_size=self.nonlinear_R_curve_edge_chunk_size)
             return
@@ -4103,6 +4117,7 @@ class WrapQuantizeW(ODEWrapperRC):
             "mul_mismatch_mode": self.mul_mismatch_mode,
             "curve_bank": self.nonlinear_R_curve_bank,
             "curve_gaussian": self.nonlinear_R_curve_gaussian,
+            "resistance_floor_ohms": self.resistance_floor_ohms,
             "nonlinear_R_curve_sampling": self.nonlinear_R_curve_sampling,
             "nonlinear_R_curve_sharing": self.nonlinear_R_curve_sharing,
             "nonlinear_R_curve_seed": self.nonlinear_R_curve_seed,

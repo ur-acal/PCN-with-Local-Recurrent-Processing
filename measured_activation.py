@@ -21,13 +21,13 @@ _RAW_CURVE_COLUMN_RE = re.compile(
 
 
 _ABSOLUTE_VOUT_REFERENCE = 0.6
-_ABSOLUTE_VOUT_SOURCE = "0906_RELU_Voltage"
+_ABSOLUTE_VOUT_SOURCES = {"0906_RELU_Voltage", "1022_RELU_Voltage"}
 
 
 def _absolute_vout_reference(path, adapt_relu_offset=True):
-    """0906 only: fixed 0.6 V, or one reference per supply category."""
+    """Absolute-Vout banks: fixed 0.6 V, or one reference per supply category."""
     source = os.path.basename(os.path.dirname(os.path.abspath(os.fspath(path))))
-    if source != _ABSOLUTE_VOUT_SOURCE:
+    if source not in _ABSOLUTE_VOUT_SOURCES:
         return 0.0
     if adapt_relu_offset:
         voltage_index = int(os.path.splitext(os.path.basename(path))[0].rsplit('_', 1)[1])
@@ -193,8 +193,8 @@ class CubicBSplineActivation(_CurveSharingMixin, nn.Module):
 
     The CSV axes are in volts. Runtime scaling uses s = v_dd / max(abs(Vin)),
     evaluates the spline at clamp(x / s), and returns s * Vout. Curves in the
-    0906_RELU_Voltage bank are first referred to the fixed 0.6 V output
-    reference; this is deliberately not adapted per PVT corner. Other tables
+    0906/1022 voltage banks first subtract the per-supply midpoint reference
+    (or fixed 0.6 V when adapt_relu_offset=False). Other tables
     preserve their existing zero reference. Fitted coefficients are fixed
     non-persistent buffers, not trainable parameters; gradients still propagate
     through the activation input during training. The buffers are rebuilt from

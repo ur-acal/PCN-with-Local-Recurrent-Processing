@@ -53,6 +53,7 @@ if [[ "$stage" == ft ]]; then
   fi
   TEACHER_CKPT="${TEACHER_CKPT:-${default_teacher}}"
   cmd=(python -u train_ode_cifar.py --model_name "$MODEL_NAME"
+    --ft_corner_coupled_sampling "${FT_CORNER_COUPLED_SAMPLING:-false}"
     --save_path "${MODEL_DIR:-./saved_ckpt_runs}" --output_save_path "${OUTPUT_DIR:-./saved_ckpt_runs/tc_nonidealities_ft}"
     --dataset "${TASK:-cifar100}" --img_type "${IMG_TYPE:-CiFAIR}" --ckpt "${CKPT:-best}"
     --input_quant_bits "${INPUT_QUANT_BITS:-none}" --center_student_input "${CENTER_STUDENT_INPUT:-false}"

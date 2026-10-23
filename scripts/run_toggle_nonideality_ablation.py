@@ -277,6 +277,8 @@ def parse_args():
                         type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=False)
     parser.add_argument("--measured_activation_baseline", action="store_true",
                         help="Keep measured activation enabled in every selected case.")
+    from resistance_guard import add_argument
+    add_argument(parser)
     return parser.parse_args()
 
 
@@ -353,6 +355,7 @@ def build_command(args, case_name):
         "--nonlinear_R_mc_quantity", "conductance",
         "--nonlinear_R_curve_sharing", args.nonlinear_R_curve_sharing,
         "--nonlinear_R_curve_sampling", args.nonlinear_R_curve_sampling,
+        "--resistance_floor_ohms", str(getattr(args, 'resistance_floor_ohms', None)),
         "--expanded_gaussian_curve_cpu_offload",
         bool_arg(args.expanded_gaussian_curve_cpu_offload),
         "--nonlinear_R_curve_seed", str(args.base_seed),

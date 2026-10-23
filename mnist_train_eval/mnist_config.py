@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from checkpoint_memory_profiler import parse_checkpoint_ode_rhs_portion
+from resistance_guard import resistance_floor
 
 from mnist_train_eval.mnist_data import DEFAULT_DATA_DIR
 
@@ -76,6 +77,9 @@ def parse_args(argv=None, *, evaluation=False):
         'nonlinear_R_table': ('TC_MEAN_TABLE', str, './hardware_data/res_vs_vin_10k_150k.csv'),
         'tc_covariance_table': ('TC_COVARIANCE_TABLE', str, './hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv'),
         'tc_curve_sampling': ('TC_CURVE_SAMPLING', str, 'histogram'),
+        'resistance_floor_ohms': ('RESISTANCE_FLOOR_OHMS', resistance_floor, None),
+        'tc_solver_dense_output': ('TC_SOLVER_DENSE_OUTPUT', boolean, True),
+        'tc_noise_replay_cache': ('TC_NOISE_REPLAY_CACHE', boolean, True),
         'tc_conv_method': ('TC_CONV_METHOD', str, 'shared'),
         'tc_noise_reference_R': ('TC_NOISE_REFERENCE_R', float, 50e3),
         'tc_asd_reference_p': ('TC_ASD_REFERENCE_P', float, .6e-12),

@@ -375,7 +375,7 @@ def get_args():
     p.add_argument(
         "--ft_corner_coupled_sampling", type=str2bool, default=False,
         help="During fine-tuning, sample one MC45 corner per student training "
-             "forward and restrict all participating empirical curve draws "
+             "forward and restrict participating empirical curves or TC covariance "
              "to that corner. Validation remains uncoupled.")
     p.add_argument(
         "--activation_interpolation", type=str,
@@ -912,6 +912,19 @@ def _configure_training_recovery(trainer, args, checkpoint_path):
         logging.warning("Training mode: new training run from initialization")
 
 
+def _backfill_recovery_defaults(args):
+    """Preserve legacy saved arguments when recovery bypasses the parser."""
+    if not hasattr(args, 'resistance_floor_ohms'):
+        from resistance_guard import saved_floor
+        args.resistance_floor_ohms = saved_floor(vars(args))
+    if not hasattr(args, "fuse_measured_activation"):
+        args.fuse_measured_activation = True
+    if not hasattr(args, "measured_activation_scope"):
+        args.measured_activation_scope = None
+    if not hasattr(args, "ft_corner_coupled_sampling"):
+        args.ft_corner_coupled_sampling = False
+
+
 def main():
     args = get_args()
     job_id = slurm_job_id()
@@ -922,12 +935,7 @@ def main():
         100 * auto_checkpoint_memory_threshold())
     # Recovery and diagnostic scripts may reconstruct Namespaces saved before
     # this option existed instead of going through the current parser.
-    if not hasattr(args, "fuse_measured_activation"):
-        args.fuse_measured_activation = True
-    if not hasattr(args, "measured_activation_scope"):
-        args.measured_activation_scope = None
-    if not hasattr(args, "ft_corner_coupled_sampling"):
-        args.ft_corner_coupled_sampling = False
+    _backfill_recovery_defaults(args)
     seed_training(args.seed)
     from input_preprocessing import resolve_student_normalization
     normalization_checkpoint = (os.path.join(
@@ -1241,6 +1249,7 @@ def main():
                           "enob": args.enob, "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "nonlinear_R": args.nonlinear_R,
+                          "resistance_floor_ohms": args.resistance_floor_ohms,
                           "nonlinear_R_table": args.nonlinear_R_table,
                           "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
                           "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,

@@ -489,8 +489,10 @@ class MVMConv(nn.Module):
                    nonlinear_R_curve_edge_chunk_size=65536,
                    nonlinear_R_curve_assignment=None,
                    nonlinear_R_curve_sampling="empirical_with_replacement",
-                   curve_gaussian=None, tc_curve_package=None):
+                   curve_gaussian=None, tc_curve_package=None, resistance_floor_ohms=None):
         self.csv_enabled = True
+        from resistance_guard import resistance_floor
+        self.resistance_floor_ohms = resistance_floor(resistance_floor_ohms)
         # Reconfiguration starts a new curve realization and must not retain an
         # offloaded tensor from the preceding trial/configuration.
         self.clear_gaussian_curve_storage()
@@ -654,7 +656,6 @@ class MVMConv(nn.Module):
         factor_t = self.nonlinear_R_curve_gaussian_factor.t()
         value_scale = self.nonlinear_R_curve_gaussian_value_scale
         quantity = self.nonlinear_R_curve_gaussian_quantity
-        positive_floor = torch.finfo(self.mat.dtype).eps * value_scale
         with torch.no_grad():
             for start in range(0, n_groups, chunk_size):
                 stop = min(start + chunk_size, n_groups)
@@ -662,12 +663,10 @@ class MVMConv(nn.Module):
                     (stop - start, n_points), device=self.mat.device,
                     dtype=self.mat.dtype, generator=generator)
                 sampled = (mean + eps @ factor_t) * value_scale
-                sampled.clamp_(min=positive_floor)
-                if quantity == "conductance":
-                    sampled_R_normalized[start:stop] = (
-                        sampled.reciprocal() / self.R)
-                else:
-                    sampled_R_normalized[start:stop] = sampled / self.R
+                from resistance_guard import gaussian_resistance
+                sampled_R_normalized[start:stop] = gaussian_resistance(
+                    sampled, quantity, value_scale,
+                    getattr(self, 'resistance_floor_ohms', None)) / self.R
         self.nonlinear_R_curve_gaussian_R_normalized = sampled_R_normalized
         return self.nonlinear_R_curve_gaussian_R_normalized
 
@@ -1008,7 +1007,10 @@ class MVMConv(nn.Module):
         left_v = grid[interval]
         right_v = grid[interval + 1]
         fraction = (query - left_v) / (right_v - left_v)
-        return nominal_R * (left + fraction * (right - left))
+        result = nominal_R * (left + fraction * (right - left))
+        from resistance_guard import guard_resistance
+        floor = getattr(self, 'resistance_floor_ohms', None)
+        return guard_resistance(result, floor) if floor is not None else result
 
 
     def _get_curve_bank_R_eff(self, v, curve_index):

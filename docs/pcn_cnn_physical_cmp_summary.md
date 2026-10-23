@@ -1188,6 +1188,42 @@ individual corners are logged beside it. This is the generic recipe example;
 the submitted BlueHive job IDs and date-suffixed output prefixes are pinned at
 the top of this document. Submission is not evidence of successful execution.
 
+### Optional coupled-corner CNN FT
+
+The existing full-FT launcher now accepts:
+
+```bash
+ACTIVATION_CORNER_MODE=random_per_forward
+ACTIVATION_CURVE_SHARING=per_spin
+FT_CORNER_COUPLED_SAMPLING=true
+```
+
+With this combination, unless explicitly overridden, FT loads
+`hardware_data/mc_45_corners/relu_monteCarlo/` (the same ReLU bank as MC45).
+The initial corner is `RELU_TTG4_MC1`; training draws replace it each forward.
+One common corner is chosen per training forward for nonlinear-R, measured
+pooling and measured ReLU; each component draws empirical realizations within
+that corner, with ReLU sharing set to per spin. Coupling requires physical
+Level-2 FT and complete 45-corner empirical banks (100 curves per corner).
+An incompatible bank fails explicitly rather than silently falling back.
+
+Coupling defaults to **false**, so historical commands retain their behavior.
+Explicit activation paths/corners still take precedence. Non-coupled random
+ReLU retains the previous `relu_current_0p2uA_all.csv` default. The flag, bank
+path and sharing mode are recorded in `baseline_config.json`. The coupling
+hook is inactive in evaluation mode; the standalone MC45 launcher/evaluator
+is unchanged. This option does not couple spin variation or current noise.
+
+Validated with the real current-ReLU and full-range coupler banks: all 45
+ReLU corner mappings agree with `MC45CornerData`, two WRN forward/backward
+passes stay in the selected common corner across all three components, and
+the existing shell launcher forwards the options. The actual c27 full-range,
+VDD=0.5/q-inverse-20 launcher also passed print-only initialization with the
+original weights-÷3 checkpoint and teacher, reporting all three coupling
+participants. Its resolved optimizer/augmentation recipe matches the saved
+full-FT configuration. Outputs were isolated under `/tmp`; no production job
+was launched as part of adding this wiring.
+
 ## Result sources
 
 - Five-cycle PCN: [evaluation records](../results/pcn16l96c_full_range_fixed5ns_5cycle_wrn_comparison/).

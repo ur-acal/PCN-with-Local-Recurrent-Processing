@@ -9,6 +9,8 @@ NOISE_KEYS = ('enable_spin_variation','sigma_spin','spin_variation_mean','spin_v
     'tc_noise_stages','tc_noise_reference_R','tc_asd_reference_p','tc_fb_asd_path')
 
 def add_tc_arguments(parser):
+    from resistance_guard import add_argument
+    add_argument(parser)
     from compute_time_variation import add_arguments
     add_arguments(parser)
     def boolean(value):
@@ -19,6 +21,7 @@ def add_tc_arguments(parser):
         raise ArgumentTypeError('Expected true or false.')
     options=dict(tc_nonidealities=(boolean,False),tc_covariance_table=(str,None),tc_conv_method=(str,'loop'),
         tc_curve_sampling=(str,'histogram'),tc_empirical_curve_bank=(str,None),
+        tc_solver_dense_output=(boolean,True),tc_noise_replay_cache=(boolean,True),
         measured_pooling_curve_path=(str,None),measured_pooling_nominal_R=(float,None),
         measure_coupler_energy=(boolean,False),coupler_supply_voltage=(float,1.3),
         tc_coupler_energy_path=(str,None),
@@ -58,6 +61,9 @@ def wrapper_options(args, trial=None):
     result.update(tc_nonidealities=True,tc_covariance_table=args.tc_covariance_table,
                   tc_conv_method=args.tc_conv_method,tc_curve_sampling=args.tc_curve_sampling)
     result['tc_empirical_curve_bank'] = getattr(args, 'tc_empirical_curve_bank', None)
+    result['resistance_floor_ohms'] = getattr(args, 'resistance_floor_ohms', None)
+    for key in ('tc_solver_dense_output', 'tc_noise_replay_cache'):
+        result[key] = getattr(args, key, True)
     if trial is not None:
         base=args.hardware_seed if args.hardware_seed is not None else args.data_seed
         for key in ('spin_variation_seed','summing_noise_seed','coupler_noise_seed',
@@ -174,7 +180,9 @@ def pooling_options(args, wrappers):
         dtype=ref.dtype, device=ref.device)
     return dict(curve_path=None, nominal_R=float(nominal_R),
                 curve_gaussian=dict(v_grid=package.v_grid, mean=package.means[0],
-                    factor=package.factor, value_scale=1.0, quantity='resistance'))
+                    factor=package.factor, value_scale=1.0, quantity='resistance',
+                    tc_covariance_path=package.covariance_path),
+                resistance_floor_ohms=getattr(args, 'resistance_floor_ohms', None))
 
 def record_trial(args, model, trial, accuracy, checkpoint):
     from compute_time_variation import records

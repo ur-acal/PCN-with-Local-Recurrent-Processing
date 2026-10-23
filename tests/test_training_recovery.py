@@ -109,6 +109,45 @@ def test_exact_recovery_preserves_saved_recipe_and_model_directory(tmp_path):
     assert config['teacher_ckpt'] == '/saved/teacher.pth'
 
 
+@pytest.mark.parametrize('saved,current', [(True, False), (False, True), (None, True), (True, None)])
+def test_recovery_rejects_changed_corner_coupling(tmp_path, saved, current):
+    trainer = make_trainer(tmp_path)
+    trainer.recovery_config = {} if saved is None else {'ft_corner_coupled_sampling': saved}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    resumed.recovery_config = {} if current is None else {'ft_corner_coupled_sampling': current}
+    resumed.recovery_checkpoint = latest_path(trainer)
+    with pytest.raises(ValueError, match='unchanged ft_corner_coupled_sampling'):
+        restore_latest(resumed)
+
+
+@pytest.mark.parametrize('saved,current', [(True, True), (False, False), (None, False), (False, None)])
+def test_recovery_preserves_matching_corner_coupling(tmp_path, saved, current):
+    trainer = make_trainer(tmp_path)
+    trainer.recovery_config = {} if saved is None else {'ft_corner_coupled_sampling': saved}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    resumed.recovery_config = {} if current is None else {'ft_corner_coupled_sampling': current}
+    resumed.recovery_checkpoint = latest_path(trainer)
+    assert restore_latest(resumed)[0] == 1
+
+
+@pytest.mark.parametrize('config,expected', [
+    ({}, None),
+    ({'tc_nonidealities': True}, 1e-6),
+    ({'tc_nonidealities': True, 'tc_resistance_floor_ohms': 123.}, 123.),
+    ({'tc_nonidealities': False, 'tc_resistance_floor_ohms': 123.}, None),
+    ({'tc_nonidealities': True, 'resistance_floor_ohms': None}, None),
+    ({'resistance_floor_ohms': 456.}, 456.),
+])
+def test_legacy_pcn_recovery_backfills_resistance_floor(config, expected):
+    from train_ode_cifar import _backfill_recovery_defaults
+    args = SimpleNamespace(**config)
+    _backfill_recovery_defaults(args)
+    assert args.resistance_floor_ohms == expected
+    assert args.ft_corner_coupled_sampling is False
+
+
 def step(trainer):
     trainer.optimizer.zero_grad()
     x = torch.randn(8, 3) + random.random() + np.random.rand()

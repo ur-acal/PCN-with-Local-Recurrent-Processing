@@ -116,6 +116,9 @@ def odesolve(func, y0, options, return_solver=False, proj_fn=None, full_traj=Fal
         print('Name of solver not found.')
 
     solver.tc_context = getattr(func, "tc_context", None)
+    if (solver.tc_context is not None and solver.regenerate_graph
+            and not getattr(solver.tc_context, 'replay_cache', True)):
+        raise ValueError('regenerate_graph requires tc_noise_replay_cache=true.')
     solver.energy_meter = getattr(func, "energy_meter", None)
     solver.reuse_accepted_step_training = options.get(
         "reuse_accepted_step_training", False)

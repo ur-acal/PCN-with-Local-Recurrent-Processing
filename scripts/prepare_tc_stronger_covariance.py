@@ -55,7 +55,7 @@ def main():
         mean_table_note='Synthetic rescaling: multiply both resistance column labels and R(V) by 5; Vin unchanged.',
         R_ohms=50000, R_max_ohms=750000, active_codes=15,
         covariance_note='One absolute resistance covariance pooled over 45 corners x 100 samples, shared by all codes. No extra covariance scaling.',
-        cnn_blocker='TCPhysicalBasicBlock currently rejects R != 10000; these 50k inputs are not yet runnable with the TC CNN wrapper.',
+        cnn_mapping='TC CNN supports positive nominal R with the existing derived R_max=15R; these inputs use 50k/750k.',
         pooling_note='The TC path also uses the covariance source for measured pooling; set pooling nominal resistance to 50000 for these means.',
         sources={},
     )

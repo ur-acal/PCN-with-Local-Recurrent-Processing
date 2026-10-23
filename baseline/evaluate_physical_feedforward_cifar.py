@@ -279,6 +279,7 @@ def evaluate_once(args):
     from tc_feedforward_cli import conversion_options
     model = convert_wide_resnet_to_physical(
         model, activation_factory=None,
+        resistance_floor_ohms=args.resistance_floor_ohms,
         **conversion_options(args),
         physical_level=args.physical_level, physical=args.physical,
         qat=checkpoint_is_full_param,
@@ -404,6 +405,7 @@ def evaluate_once(args):
                 model, enable_nonideality=True,
                 curve_path=pooling_curve_path,
                 curve_gaussian=pooling_curve_gaussian,
+                resistance_floor_ohms=args.resistance_floor_ohms,
                 quantity=args.nonlinear_R_mc_quantity,
                 nominal_R=args.R,
                 seed=args.nonlinear_R_curve_seed,

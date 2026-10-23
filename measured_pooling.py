@@ -23,13 +23,15 @@ class MeasuredAvgPool2d(nn.Module):
                  curve_path=None, quantity="conductance", curve_indices=None,
                  nominal_R=1.0, seed=None, training_curve_mode=None,
                  corner_range="all", curve_gaussian=None,
-                 curve_sharing="per_window"):
+                 curve_sharing="per_window", resistance_floor_ohms=None):
         super().__init__()
         self.kernel_size = kernel_size
         self.stride = stride
         self.input_scale = float(input_scale)
         self.nominal_R = float(nominal_R)
         self.curve_sharing = str(curve_sharing).lower()
+        from resistance_guard import resistance_floor
+        self.resistance_floor_ohms = resistance_floor(resistance_floor_ohms)
         self.training_curve_source = (
             None if training_curve_mode is None else curve_path)
         self.training_curve_mode = training_curve_mode
@@ -65,6 +67,7 @@ class MeasuredAvgPool2d(nn.Module):
                 "gaussian_factor", curve_gaussian["factor"], persistent=False)
             self.gaussian_value_scale = float(curve_gaussian["value_scale"])
             self.gaussian_quantity = str(curve_gaussian["quantity"]).lower()
+            self.tc_covariance_path = curve_gaussian.get("tc_covariance_path")
         elif self.enable_nonideality:
             if training_curve_mode is None:
                 curve_bank = load_mc_res_curve_bank(
@@ -134,19 +137,13 @@ class MeasuredAvgPool2d(nn.Module):
                 (n_groups, n_points), generator=self._generator,
                 dtype=self.gaussian_mean.dtype)
             eps = eps.to(device=self.gaussian_mean.device)
-            sampled = (
-                self.gaussian_mean + eps @ self.gaussian_factor.t())
+            from tc_nonidealities import tc_training_corner_factor
+            factor = tc_training_corner_factor(self, self.gaussian_factor)
+            sampled = self.gaussian_mean + eps @ factor.t()
             sampled = sampled * self.gaussian_value_scale
-            positive_floor = (
-                torch.finfo(sampled.dtype).eps * self.gaussian_value_scale)
-            sampled.clamp_(min=positive_floor)
-            if self.gaussian_quantity == "conductance":
-                curves = sampled.reciprocal()
-            elif self.gaussian_quantity == "resistance":
-                curves = sampled
-            else:
-                raise ValueError(
-                    "Measured-pooling Gaussian quantity is invalid.")
+            from resistance_guard import gaussian_resistance
+            curves = gaussian_resistance(sampled, self.gaussian_quantity,
+                self.gaussian_value_scale, getattr(self, 'resistance_floor_ohms', None))
             self._gaussian_curve_samples[key] = curves
         elif curves.device != x.device:
             curves = curves.to(x.device)
@@ -186,7 +183,9 @@ class MeasuredAvgPool2d(nn.Module):
         right = curves.gather(1, right_interval)
         v_left = grid[interval]
         v_right = grid[right_interval]
-        return left + (right - left) * (query - v_left) / (v_right - v_left)
+        result = left + (right - left) * (query - v_left) / (v_right - v_left)
+        from resistance_guard import guard_resistance
+        return guard_resistance(result, getattr(self, 'resistance_floor_ohms', None))
 
     def forward(self, x, pool_id=None):
         physical_x = x * self.input_scale
@@ -238,7 +237,7 @@ def configure_measured_pooling(model, wrappers, enable_nonideality=False,
                                curve_path=None, quantity="conductance",
                                curve_indices=None, nominal_R=1.0, seed=None,
                                training_curve_mode=None, corner_range="all",
-                               curve_gaussian=None):
+                               curve_gaussian=None, resistance_floor_ohms=None):
     """Install physical-domain average pooling without changing ideal scaling."""
     if not wrappers:
         raise ValueError("Measured pooling requires wrapped ODE layers.")
@@ -252,6 +251,7 @@ def configure_measured_pooling(model, wrappers, enable_nonideality=False,
     common = {
         "curve_path": curve_path,
         "curve_gaussian": curve_gaussian,
+        "resistance_floor_ohms": resistance_floor_ohms,
         "quantity": quantity,
         "curve_indices": curve_indices,
         "nominal_R": nominal_R,
@@ -277,13 +277,14 @@ def configure_feedforward_measured_pooling(
         model, *, enable_nonideality=False, curve_path=None,
         quantity="conductance", nominal_R=1.0, seed=None,
         training_curve_mode=None, corner_range="all", curve_indices=None,
-        curve_gaussian=None):
+        curve_gaussian=None, resistance_floor_ohms=None):
     """Install measured pooling at feedforward global, main and shortcut pools."""
     from physical_feedforward import iter_physical_blocks
 
     common = dict(
         curve_path=curve_path if enable_nonideality else None,
         curve_gaussian=curve_gaussian if enable_nonideality else None,
+        resistance_floor_ohms=resistance_floor_ohms,
         quantity=quantity, nominal_R=nominal_R,
         curve_indices=curve_indices,
         training_curve_mode=training_curve_mode,

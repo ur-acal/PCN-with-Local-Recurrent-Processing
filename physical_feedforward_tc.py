@@ -7,7 +7,8 @@ import torch.nn.functional as F
 from TorchDiffEqPack.odesolver import odesolve
 from ode_pc import ODEBlockPC
 from physical_feedforward import AveragedPhysicalBasicBlock, AveragedFeedForwardPhysicalWrapper
-from tc_nonidealities import TCNoiseLifecycle, prepare_tc_resistance_curves
+from tc_nonidealities import (TCNoiseLifecycle, prepare_tc_resistance_curves,
+                             tc_training_corner_factor)
 from tc_shared_correction import shared_correction
 
 
@@ -18,6 +19,7 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                  tc_tol=1e-6, tc_step_size=None, tc_num_steps=None,
                  tc_noise_reference_R=50e3,
                  tc_covariance_table=None, tc_curve_sampling='histogram',
+                 tc_solver_dense_output=True, tc_noise_replay_cache=True,
                  tc_conv_method='shared', tc_noise_stages='both',
                  reuse_accepted_step_training=False,
                  checkpoint_ode_rhs_training=False, **kwargs):
@@ -37,8 +39,6 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                 self.enable_dtc_nonideality or self.enable_slow_coupler_noise or
                 self.enable_slow_summing_current):
             raise ValueError('TC CNN excludes ENOB, scalar mismatch, DTC and slow noise.')
-        if not math.isclose(self.R, 1e4):
-            raise ValueError('This TC CNN mapping uses R=10k and R_max=150k; other code grids are not implemented.')
         if tc_method not in ('dopri5', 'euler') or tc_tol <= 0:
             raise ValueError('Use dopri5 or euler with a positive tolerance.')
         if tc_step_size is not None and tc_step_size <= 0:
@@ -58,6 +58,8 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         self.one_shot_conv = one_shot_conv
         self.tc_method, self.tc_tol, self.tc_step_size = tc_method, tc_tol, tc_step_size
         self.tc_num_steps = tc_num_steps
+        self.tc_solver_dense_output = tc_solver_dense_output
+        self.tc_noise_replay_cache = tc_noise_replay_cache
         self.tc_noise_reference_R = tc_noise_reference_R
         self.tc_covariance_table = tc_covariance_table
         self.tc_curve_sampling = tc_curve_sampling
@@ -105,14 +107,15 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                     self._tc_samples.clear()
                 key = self._module_key(module)
                 if self.training or key not in self._tc_samples:
+                    factor = tc_training_corner_factor(self, package.factor)
                     seed = getattr(self, '_tc_curve_seed', 4096)
                     generator = self._tc_generator(source, 'curve:'+key, seed)
                     self._tc_samples[key] = (
                         package.sample_shared(
                             self._values_to_level_idx(module.weight.detach()),
-                            sampling=self.tc_curve_sampling, generator=generator)
+                            sampling=self.tc_curve_sampling, generator=generator, factor=factor)
                         if self.tc_conv_method == 'shared' else
-                        package.sample_levels(generator=generator))
+                        package.sample_levels(generator=generator, factor=factor))
                 curve = self._tc_samples[key]
                 if curve is not None:
                     if self.tc_conv_method != 'shared':
@@ -152,7 +155,8 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         for name, seed in (('sum', self.summing_noise_seed), ('coupler', self.coupler_noise_seed)):
             generators[(0, name)] = self._tc_generator(
                 state, stage+':'+name, 4096 if seed is None else seed)
-        return TCNoiseLifecycle([coefficients], generators), torch.hypot(*coefficients)
+        return TCNoiseLifecycle([coefficients], generators,
+            replay_cache=getattr(self, 'tc_noise_replay_cache', True)), torch.hypot(*coefficients)
 
     def _run_stage(self, module, source, stage):
         if self._capture_dense_modules:
@@ -179,6 +183,7 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                      if self.tc_num_steps is not None else self.tc_step_size)
         # Same entry point, additive update, projection and accepted-step handling as TC PCN.
         options = dict(t0=0., t1=float(duration), t_eval=[float(duration)],
+                       dense_output=getattr(self, 'tc_solver_dense_output', True),
                        method=self.tc_method, rtol=self.tc_tol, atol=self.tc_tol,
                        h=step_size, eps=eps, noise_type='addi',
                        reuse_accepted_step_training=self.reuse_accepted_step_training,
@@ -215,7 +220,9 @@ class TCFeedForwardPhysicalWrapper(AveragedFeedForwardPhysicalWrapper):
         package = prepare_tc_resistance_curves(
             nonlinear_R_table, self.block.tc_covariance_table,
             levels=self.block._get_quant_magnitude_levels(ref), R=self.R,
-            R_max=self.R_max, device=ref.device, dtype=ref.dtype)
+            R_max=self.R_max, device=ref.device, dtype=ref.dtype,
+            floor_ohms=(getattr(self.block, 'resistance_floor_ohms', None)
+                        if getattr(self.block, 'resistance_floor_ohms', None) is not None else 1e-6))
         result = dict(tc_curve_package=package, nonlinear_R_curve_seed=curve_seed)
         self.install_nonlinear_R_training_package(result)
         return result
@@ -230,6 +237,7 @@ class TCFeedForwardPhysicalWrapper(AveragedFeedForwardPhysicalWrapper):
                                       curve_edge_chunk_size=65536, **kwargs):
         result = self.configure_nonlinear_R_training(nonlinear_R_table, curve_seed=curve_seed)
         result.update(v_grid=None, R_codes=None, R_left=None, R_slope=None,
+                      resistance_floor_ohms=getattr(self.block, 'resistance_floor_ohms', None),
                       proj_fn=self.proj_fn, R=self.R,
                       nonlinear_R_curve_edge_chunk_size=curve_edge_chunk_size)
         self.install_nonlinear_R_inference_package(result)

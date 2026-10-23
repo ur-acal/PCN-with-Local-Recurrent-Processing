@@ -49,6 +49,20 @@ class TCDataTests(unittest.TestCase):
             levels=mapping(3)._get_quant_magnitude_levels(torch.empty(0, dtype=torch.float64)),
             R=1e4, R_max=3e4, **kwargs)
 
+    def test_configurable_floor_preserves_default_and_bounds_samples(self):
+        implicit, explicit = self.package(), self.package(floor_ohms=1e-6)
+        codes = torch.ones(20, dtype=torch.long)
+        def draw(package):
+            return package.sample(codes, generator=torch.Generator().manual_seed(17))
+        self.assertTrue(torch.equal(draw(implicit), draw(explicit)))
+        bounded = self.package(floor_ohms=40000.)
+        self.assertTrue((draw(bounded) == 40000.).all())
+        shared = bounded.sample_shared(codes, generator=torch.Generator().manual_seed(17))
+        self.assertTrue((shared.resistance == 40000.).all())
+        for floor in (0., -1., float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                self.package(floor_ohms=floor)
+
     def test_pooling_path_and_nominal_resistance_overrides(self):
         from types import SimpleNamespace
         from tc_cli import pooling_options

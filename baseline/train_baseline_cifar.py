@@ -341,6 +341,8 @@ def parse_args():
                         choices=("fixed", "random_per_forward"))
     parser.add_argument("--activation_curve_sharing", default="per_model",
                         choices=("per_model", "per_layer", "per_spin"))
+    parser.add_argument("--ft_corner_coupled_sampling", type=str2bool, default=False,
+                        help="Sample one common MC45 corner per FT forward for empirical banks or TC covariance.")
     parser.add_argument("--activation_random_curve_sharing", default=None,
                         choices=("per_model", "per_layer", "per_spin"),
                         help="Random-per-forward sampling granularity; defaults to activation_curve_sharing.")
@@ -536,6 +538,10 @@ def build_trainer_kwargs(args, cfg: dict, model: nn.Module, teacher_model=None) 
 
 def main():
     args = parse_args()
+    if args.ft_corner_coupled_sampling and (
+            not args.physical_feedforward or args.physical_pretraining or
+            args.physical_level != 2):
+        raise ValueError("FT corner-coupled sampling requires physical Level-2 fine-tuning")
     from cifar_rgb import cifar_task, require_rgb_alias
     require_rgb_alias(args.dataset, args.img_type)
     if args.dataset.startswith("cifair") and args.physical_feedforward:
@@ -712,6 +718,7 @@ def main():
         model = convert_wide_resnet_to_physical(
             model,
             **conversion_options(args),
+            resistance_floor_ohms=args.resistance_floor_ohms,
             activation_factory=None,
             physical_level=args.physical_level,
             physical=not args.physical_pretraining,
@@ -844,6 +851,14 @@ def main():
                     if args.nonlinear_R_train_mode != "none"
                     else "exact_curve"),
                 corner_range=args.nonlinear_R_corner_range)
+        if args.ft_corner_coupled_sampling:
+            from ft_corner_sampling import configure_ft_corner_coupled_sampling
+            participants = configure_ft_corner_coupled_sampling(
+                model, activation_corner_mode=args.activation_corner_mode,
+                include_measured_activation=(activation_enabled and
+                    args.activation_corner_mode == "random_per_forward"))
+            logging.warning("FT corner-coupled sampling enabled across: %s",
+                            ", ".join(participants))
     elif state_dict is not None:
         model.load_state_dict(state_dict, strict=True)
     from final_linear import configure_feedforward_head
@@ -915,6 +930,7 @@ def main():
                         "linear_bias": args.linear_bias,
                         "physical_pretraining": args.physical_pretraining,
                         "R": args.R,
+                        "resistance_floor_ohms": args.resistance_floor_ohms,
                         "C": args.C,
                         "v_dd": args.v_dd,
                         "one_over_q": args.one_over_q,
@@ -935,6 +951,9 @@ def main():
                         "fuse_measured_activation": (
                             args.fuse_measured_activation),
                         "activation_corner_mode": args.activation_corner_mode,
+                        "activation_curve_path": args.activation_curve_path,
+                        "activation_curve_sharing": args.activation_curve_sharing,
+                        "ft_corner_coupled_sampling": args.ft_corner_coupled_sampling,
                         "activation_random_curve_sharing": args.activation_random_curve_sharing,
                         "unitless_measured_pullback_mode": (
                             args.unitless_measured_pullback_mode),

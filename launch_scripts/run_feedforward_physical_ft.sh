@@ -63,7 +63,12 @@ if [[ "${NONLINEAR_R_TABLE}" != */* ]]; then
 fi
 ACTIVATION_CORNER_MODE="${ACTIVATION_CORNER_MODE:-fixed}"
 if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
-  ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
+  if [[ "${FT_CORNER_COUPLED_SAMPLING:-false}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Tt])$ ]]; then
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/relu_monteCarlo}"
+    ACTIVATION_CORNER="${ACTIVATION_CORNER:-RELU_TTG4_MC1}"
+  else
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_all.csv}"
+  fi
 else
   ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/relu_current_0p2uA_finer.csv}"
 fi
@@ -137,6 +142,7 @@ cmd=(
   --activation_corner "${ACTIVATION_CORNER:-TT}"
   --activation_corner_mode "${ACTIVATION_CORNER_MODE}"
   --activation_curve_sharing "${ACTIVATION_CURVE_SHARING:-per_model}"
+  --ft_corner_coupled_sampling "${FT_CORNER_COUPLED_SAMPLING:-false}"
   --activation_interpolation "${ACTIVATION_INTERPOLATION:-piecewise_linear}"
   --activation_spline_parameters "${ACTIVATION_SPLINE_PARAMETERS:-10}"
   --activation_fit_constraint "${ACTIVATION_FIT_CONSTRAINT:-auto}"

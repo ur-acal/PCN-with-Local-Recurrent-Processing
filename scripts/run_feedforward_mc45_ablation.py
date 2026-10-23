@@ -38,6 +38,7 @@ def optional_bool(value):
 
 
 def parse_args():
+    from resistance_guard import add_argument
     p = argparse.ArgumentParser()
     from final_linear import add_final_head_args
     add_final_head_args(p)
@@ -112,6 +113,7 @@ def parse_args():
     p.add_argument("--bn_recalibrate", type=str2bool, default=False)
     p.add_argument("--bn_calibration_batch_size", type=int, default=128)
     p.add_argument("--bn_calibration_samples", type=optional_int, default=None)
+    add_argument(p)
     return p.parse_args()
 
 
@@ -161,6 +163,7 @@ def run_corner(args, corner, relu_indices):
         "--nonlinear_R_mc_quantity", corner["coupler"]["quantity"],
         "--nonlinear_R_curve_sharing", args.nonlinear_R_curve_sharing,
         "--nonlinear_R_curve_sampling", args.nonlinear_R_curve_sampling,
+        "--resistance_floor_ohms", str(getattr(args, 'resistance_floor_ohms', None)),
         "--expanded_gaussian_curve_cpu_offload",
         bool_text(args.expanded_gaussian_curve_cpu_offload),
         "--nonlinear_R_curve_bank_indices", ",".join(

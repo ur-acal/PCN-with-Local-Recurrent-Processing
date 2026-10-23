@@ -52,17 +52,24 @@ class TCNoiseLifecycle:
     Restarting on predefined grids replays the same Gaussian samples. Physical
     spin/curve realizations are captured separately in the owning RHS closure.
     """
-    def __init__(self, coefficients, generators, fb_coefficients=None, fb_ref=None):
+    def __init__(self, coefficients, generators, fb_coefficients=None, fb_ref=None,
+                 replay_cache=True):
         self.coefficients = coefficients
         self.generators = generators
         self.fb_coefficients, self.fb_ref = fb_coefficients, fb_ref
         self.tape = {}
         self.index = 0
+        # Training may revisit old intervals during checkpoint recomputation.
+        self.replay_cache = bool(replay_cache) or torch.is_grad_enabled()
 
     def restart(self):
+        if not self.replay_cache and self.index:
+            raise RuntimeError('Noise replay requires tc_noise_replay_cache=true.')
         self.index = 0
 
     def accepted(self):
+        if not self.replay_cache:
+            self.tape.clear()
         self.index += 1
 
     def _sample(self, key, ref, coefficients):
@@ -103,7 +110,8 @@ def positive_resistance(values, floor_ohms=1e-6):
     represented = torch.tensor(floor, dtype=values.dtype)
     if not torch.isfinite(represented) or represented.item() <= 0:
         raise ValueError("Resistance floor is not representable in this dtype.")
-    return values.clamp_min(floor)
+    from resistance_guard import guard_resistance
+    return guard_resistance(values, floor)
 
 
 @dataclass(frozen=True)
@@ -155,7 +163,7 @@ class TCResistanceCurves:
         """
         return self.factor @ self.factor.T
 
-    def sample(self, codes, *, generator=None, chunk_size=65536):
+    def sample(self, codes, *, generator=None, chunk_size=65536, factor=None):
         """Independent draws per requested code occurrence, in bounded chunks.
 
         Training passes codes 1..15 once per tensor. Inference passes the
@@ -164,6 +172,7 @@ class TCResistanceCurves:
         Zero codes return +inf placeholders (open circuits), consume no RNG,
         and must never be interpolated as physical curves.
         """
+        factor = self.factor if factor is None else factor
         if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
             raise ValueError("chunk_size must be a positive integer.")
         codes = torch.as_tensor(codes, device=self.means.device)
@@ -176,25 +185,26 @@ class TCResistanceCurves:
         active = torch.nonzero(flat, as_tuple=False).flatten()
         for start in range(0, active.numel(), chunk_size):
             positions = active[start:start + chunk_size]
-            noise = torch.randn((positions.numel(), self.factor.shape[1]),
+            noise = torch.randn((positions.numel(), factor.shape[1]),
                                 dtype=self.means.dtype, device=self.means.device,
                                 generator=generator)
-            sampled = self.means[flat[positions] - 1] + noise @ self.factor.T
+            sampled = self.means[flat[positions] - 1] + noise @ factor.T
             result[positions] = positive_resistance(sampled, self.floor_ohms)
         return result.reshape(*codes.shape, self.v_grid.numel())
 
-    def sample_levels(self, *, generator=None):
+    def sample_levels(self, *, generator=None, factor=None):
         """One batched independent draw for every nonzero code; no code loop."""
         codes = torch.arange(1, self.means.shape[0] + 1, device=self.means.device)
-        return self.sample(codes, generator=generator, chunk_size=codes.numel())
+        return self.sample(codes, generator=generator, chunk_size=codes.numel(), factor=factor)
 
     @torch.no_grad()
-    def sample_shared(self, codes, *, sampling="histogram", generator=None):
+    def sample_shared(self, codes, *, sampling="histogram", generator=None, factor=None):
         """Choose a Gaussian, then draw its curve; no spatial unrolling or STE.
 
         Uniform means uniform over all characterized nonzero codes, including
         codes absent from this tensor. An all-zero tensor consumes no RNG.
         """
+        factor = self.factor if factor is None else factor
         if sampling not in ("histogram", "uniform"):
             raise ValueError("tc_curve_sampling must be histogram or uniform.")
         codes = codes.detach().to(device=self.means.device, dtype=torch.long)
@@ -206,10 +216,68 @@ class TCResistanceCurves:
         else:
             probabilities = self.means.new_ones(count)
         index = torch.multinomial(probabilities, 1, generator=generator).squeeze(0)
-        noise = torch.randn(self.factor.shape[1], device=self.means.device,
+        noise = torch.randn(factor.shape[1], device=self.means.device,
                             dtype=self.means.dtype, generator=generator)
-        resistance = positive_resistance(self.means[index] + self.factor @ noise, self.floor_ohms)
+        resistance = positive_resistance(self.means[index] + factor @ noise, self.floor_ohms)
         return TCSharedCurve(index+1, resistance, self.programmed_resistances[index])
+
+
+def prepare_tc_corner_factors(covariance_path, v_grid, *, dtype, device):
+    """Fit absolute resistance covariance per corner; leave code means alone."""
+    from data_utils import MC45CornerData
+    from utils import mc45_corner_ids
+    entries = MC45CornerData.coupler_file_corners(covariance_path)
+    entries = {f"{p.upper()}_V{v}_T{t}": entry
+               for (p, v, t), entry in entries.items()}
+    if set(entries) != set(mc45_corner_ids()) or any(
+            len(entry['curve_indices']) != 100 for entry in entries.values()):
+        raise ValueError("TC corner coupling requires 45 corners with 100 curves each.")
+    target = v_grid.detach().cpu().double()
+    factors = {}
+    for corner in mc45_corner_ids():
+        fit = load_mc_res_curve_gaussian(
+            covariance_path, quantity='resistance',
+            curve_indices=entries[corner]['curve_indices'], dtype=torch.float64)
+        grid = fit['v_grid']
+        # The installed grid may already be FP32; match nearest coordinates
+        # rather than letting roundoff send searchsorted to the next voltage.
+        indices = (grid[:, None] - target[None, :]).abs().argmin(0)
+        if not torch.allclose(grid[indices], target, rtol=1e-6, atol=1e-9):
+            raise ValueError("TC corner covariance grids must match the existing TC grid.")
+        factor = fit['factor'] * fit['value_scale']
+        if indices.numel() != grid.numel():
+            rows = factor[indices]
+            factor = torch.linalg.cholesky(rows @ rows.T)
+        factor = factor.to(device=device, dtype=dtype)
+        if not torch.isfinite(factor).all():
+            raise ValueError("Nonfinite TC corner covariance factor.")
+        factors[corner] = factor
+    return factors
+
+
+class TCCornerFactorBank:
+    """Shared factors; migrate once per device/dtype, not once per layer."""
+
+    def __init__(self, factors):
+        ref = next(iter(factors.values()))
+        self.factors = factors
+        self._device_cache = {(ref.device, ref.dtype): factors}
+
+    def get(self, corner, ref):
+        key = (ref.device, ref.dtype)
+        if key not in self._device_cache:
+            self._device_cache[key] = {
+                name: factor.to(device=ref.device, dtype=ref.dtype)
+                for name, factor in self.factors.items()}
+        return self._device_cache[key][corner]
+
+
+def tc_training_corner_factor(module, default):
+    """Select a resident factor in training; migrate only on first device use."""
+    sampler = getattr(module, '_ft_corner_coupled_sampler', None)
+    if module.training and sampler is not None and sampler.active_corner is not None:
+        return module._tc_corner_factors.get(sampler.active_corner, default)
+    return default
 
 
 def prepare_tc_resistance_curves(mean_path, covariance_path, *, levels,

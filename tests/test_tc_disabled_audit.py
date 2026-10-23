@@ -114,6 +114,11 @@ class TCDisabledAuditTests(unittest.TestCase):
         old,new = self.results
         for stage in ('train_defaults','eval_defaults'):
             for key,value in old[stage].items():
+                if stage == 'eval_defaults' and key == 'ts_scale':
+                    # Intentional CLI default: one requested step is one step.
+                    self.assertEqual(value, 10)
+                    self.assertEqual(new[stage][key], 1)
+                    continue
                 self.assertEqual(value,new[stage][key],stage+':'+key)
             self.assertFalse(new[stage]['tc_nonidealities'])
         self.assertEqual(old['pullback'],new['pullback'])
@@ -125,6 +130,26 @@ class TCDisabledAuditTests(unittest.TestCase):
         # Comparing the full class ASTs below still catches any other change,
         # including removal of the guard or broadening the expansion condition.
         fixes = [
+            # Already-committed corner coupling restricts the two empirical
+            # draws only when its coordinator supplies an active corner.
+            ('        if not self._nonlinear_R_training_curve_indices:\n'
+             '            n_curves = int(package["v_grid"].shape[0])',
+             '        if not self._nonlinear_R_training_curve_indices:\n'
+             '            allowed = None\n'
+             '            sampler = package.get("ft_corner_coupled_sampler")\n'
+             '            if sampler is not None:\n'
+             '                allowed = sampler.allowed_indices(\n'
+             '                    package["ft_corner_curve_indices"])\n'
+             '            n_curves = (\n'
+             '                int(package["v_grid"].shape[0])\n'
+             '                if allowed is None else len(allowed))'),
+            ('                generator=self._nonlinear_R_training_generator(ref))[:2].tolist()',
+             '                generator=self._nonlinear_R_training_generator(ref))[:2]\n'
+             '            if allowed is not None:\n'
+             '                allowed = torch.as_tensor(\n'
+             '                    allowed, dtype=torch.long, device=ref.device)\n'
+             '                pair = allowed.index_select(0, pair)\n'
+             '            pair = pair.tolist()'),
             ("level_sum = coupler_level_sum.to(device=state.device, dtype=state.dtype)",
              "level_sum = coupler_level_sum.to(device=state.device, dtype=state.dtype).clamp_min(0.0)"),
             ("    def run_z_stage(self, y_hold, z, T_z):\n"
@@ -168,6 +193,16 @@ class TCDisabledAuditTests(unittest.TestCase):
         for old, new in fixes:
             self.assertEqual(previous.count(old), 1, "Pinned baseline changed: " + old)
             previous = previous.replace(old, new, 1)
+        # The committed rail-bound option affects the static/dynamic methods
+        # of both one-state wrappers. Allow exactly these four guarded branches.
+        old = ('            if isinstance(self.ode_block, '
+               '(ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):')
+        new = ('            if self.relu6_bound_mode == "rail":\n'
+               '                upper = self.v_dd\n'
+               '            elif isinstance(self.ode_block, '
+               '(ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):')
+        self.assertEqual(previous.count(old), 4, 'Pinned rail-bound branches changed')
+        previous = previous.replace(old, new)
         def classes(source):
             return {node.name:ast.dump(node,include_attributes=False)
                     for node in ast.parse(source).body

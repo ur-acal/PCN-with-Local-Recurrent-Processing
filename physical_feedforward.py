@@ -140,7 +140,7 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
             dtc_width_variation_std: float = 0.018,
             dtc_leading_edge_jitter_std: float = 0.005,
             dtc_falling_edge_jitter_std: float = 0.005,
-            dtc_timing_seed=None):
+            dtc_timing_seed=None, resistance_floor_ohms=None):
         # The PCN constructors require recurrent PCConv state.  CNN blocks have
         # a separate constructor while inheriting their numerical kernels.
         nn.Module.__init__(self)
@@ -169,6 +169,8 @@ class AveragedPhysicalBasicBlock(ToggleAveragedPhysicalFFFB):
         self.layer_idx = int(layer_idx)
         self.physical = bool(physical)
         self.R = float(R)
+        from resistance_guard import resistance_floor
+        self.resistance_floor_ohms = resistance_floor(resistance_floor_ohms)
         self.C = float(C)
         self.capacitance1 = self.C
         self.capacitance2 = self.C
@@ -747,6 +749,7 @@ class FeedForwardPhysicalWrapper(WrapQuantizeW):
             "R": self.R,
             "proj_fn": self.proj_fn,
             "nonlinear_R_train_mode": mode,
+            "nonlinear_R_table": nonlinear_R_table,
             "nonlinear_R_corner_range": corner_range,
             "nonlinear_R_curve_seed": curve_seed,
         }
@@ -786,6 +789,7 @@ class FeedForwardPhysicalWrapper(WrapQuantizeW):
             "mul_mismatch_mode": self.mul_mismatch_mode,
             "curve_bank": self.nonlinear_R_curve_bank,
             "curve_gaussian": self.nonlinear_R_curve_gaussian,
+            "resistance_floor_ohms": self.block.resistance_floor_ohms,
             "nonlinear_R_curve_sampling": self.nonlinear_R_curve_sampling,
             "nonlinear_R_curve_sharing": self.nonlinear_R_curve_sharing,
             "nonlinear_R_curve_seed": self.nonlinear_R_curve_seed,

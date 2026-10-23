@@ -36,6 +36,22 @@ def resolved(stage, state='1', **extra):
 
 
 class TCCommandTests(unittest.TestCase):
+    def test_solver_cache_forwarding(self):
+        for stage in ('ft', 'eval'):
+            defaults = wrapper_options(resolved(stage))
+            self.assertTrue(defaults['tc_solver_dense_output'])
+            self.assertTrue(defaults['tc_noise_replay_cache'])
+            args = resolved(stage, TC_SOLVER_DENSE_OUTPUT='false', TC_NOISE_REPLAY_CACHE='false')
+            options = wrapper_options(args)
+            self.assertFalse(options['tc_solver_dense_output'])
+            self.assertFalse(options['tc_noise_replay_cache'])
+
+    def test_resistance_floor_forwarding(self):
+        for stage in ('ft', 'eval'):
+            self.assertIsNone(wrapper_options(resolved(stage))['resistance_floor_ohms'])
+            args = resolved(stage, RESISTANCE_FLOOR_OHMS='26791.33')
+            self.assertEqual(wrapper_options(args)['resistance_floor_ohms'], 26791.33)
+
     def test_eval_batch_limit_canonical_and_legacy_alias(self):
         default = resolved(
             'eval', MAX_EVAL_BATCHES='', TC_MAX_EVAL_BATCHES='')
@@ -194,7 +210,7 @@ class TCCommandTests(unittest.TestCase):
         from measured_pooling import MeasuredAvgPool2d
         package = SimpleNamespace(v_grid=torch.tensor([-.1, .1]),
             means=torch.tensor([[10000., 11000.]]),
-            factor=torch.eye(2)*100.)
+            factor=torch.eye(2)*100., covariance_path='cov.csv')
         wrappers = [SimpleNamespace(ode_block=SimpleNamespace(FFconv=nn.Conv2d(1,1,1)))]
         args = SimpleNamespace(measured_pooling_curve_path='pool.csv',
                                measured_pooling_nominal_R=None, tc_covariance_table='cov.csv')
@@ -314,6 +330,7 @@ class TCCommandTests(unittest.TestCase):
                    TC_EVAL_ACTIVATION_CURVE_PATH='./eval_bank',
                    TC_EVAL_ACTIVATION_CORNER='eval_corner',
                    TC_CONV_METHOD='shared',TC_CURVE_SAMPLING='uniform',
+                   RESISTANCE_FLOOR_OHMS='26791.333455',
                    TC_CURVE_CPU_OFFLOAD='true',
                    MEASURED_POOLING_CURVE_PATH='./pooling', TASK='cifar100')
         out = subprocess.check_output(['bash','launch_scripts/slurm_search_config.sh'],
@@ -328,6 +345,7 @@ class TCCommandTests(unittest.TestCase):
                           'TC_EVAL_ACTIVATION_CURVE_PATH=./eval_bank',
                           'TC_EVAL_ACTIVATION_CORNER=eval_corner',
                           'TC_CONV_METHOD=shared','TC_CURVE_SAMPLING=uniform',
+                          'RESISTANCE_FLOOR_OHMS=26791.333455',
                           'TC_CURVE_CPU_OFFLOAD=true'):
                 self.assertIn(field,exports)
 
@@ -348,8 +366,10 @@ finetune_one_combo_model inspect "$MODEL_NAME" "$ODE_BLOCK"
 eval_one_combo_model inspect "$MODEL_NAME" post_ft "$ODE_BLOCK"
 finetune_one_combo_model inspect "$MODEL_NAME" "$ODE_BLOCK"
 '''
-            for state in ('1','2'):
+            for state, bank in ((s, b) for s in ('1', '2')
+                                for b in ('0906_RELU_Voltage', '1022_RELU_Voltage')):
                 env = dict(os.environ, TC_NONIDEALITIES='true', TC_STATE=state,
+                           MC_RELU_MONTE_CARLO_SOURCE=bank,
                            TOGGLE_MODE='none', SWITCH_INF='false', COMB_LIST='inspect',
                            MODEL_NAME=name, TASK='cifar100', IMG_TYPE='CiFAIR',
                            OUTPUT_SAVE_PATH=directory, N_TRIALS='3')
@@ -363,7 +383,7 @@ finetune_one_combo_model inspect "$MODEL_NAME" "$ODE_BLOCK"
                             args = parser()
                     except SystemExit:
                         self.fail(error.getvalue().splitlines()[-1])
-                    local = resolved(stage,state)
+                    local = resolved(stage,state,MC_RELU_MONTE_CARLO_SOURCE=bank)
                     for key in ('ode_block','ode_wrapper','w_bits','R','R_max','C','v_dd','one_over_q','k','sde_noise_type',
                                 'enob','weight_quant_factor_bits','nonlinear_R','nonlinear_R_table',
                                 'tc_covariance_table','enable_measured_pooling','enable_measured_activation',

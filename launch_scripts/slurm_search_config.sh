@@ -107,13 +107,17 @@ PRETRAIN_ACTIVATION_CORNER_MODE="${PRETRAIN_ACTIVATION_CORNER_MODE:-${ACTIVATION
 ACTIVATION_RANDOM_CURVE_SHARING="${ACTIVATION_RANDOM_CURVE_SHARING:-per_layer}"
 FT_CORNER_COUPLED_SAMPLING="${FT_CORNER_COUPLED_SAMPLING:-false}"
 MC_RELU_MONTE_CARLO_SOURCE="${MC_RELU_MONTE_CARLO_SOURCE:-relu_monteCarlo}"
-if [[ "${MC_RELU_MONTE_CARLO_SOURCE%/}" == "0906_RELU_Voltage" ]]; then
+voltage_relu_bank="${MC_RELU_MONTE_CARLO_SOURCE%/}"
+if [[ "${voltage_relu_bank##*/}" == "0906_RELU_Voltage" || "${voltage_relu_bank##*/}" == "1022_RELU_Voltage" ]]; then
+  if [[ "${voltage_relu_bank}" != */* ]]; then
+    voltage_relu_bank="./hardware_data/mc_45_corners/${voltage_relu_bank}"
+  fi
   if [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
-    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage}"
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-${voltage_relu_bank}}"
     ACTIVATION_CORNER="${ACTIVATION_CORNER:-TT_25_1_MC18}"
   else
-    # MC18 is the TT/V1/T1 realization closest to this corner's 100-curve mean.
-    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-./hardware_data/mc_45_corners/0906_RELU_Voltage/tt_25_1.csv}"
+    # Preserve the pinned curve index when switching voltage banks.
+    ACTIVATION_CURVE_PATH="${ACTIVATION_CURVE_PATH:-${voltage_relu_bank}/tt_25_1.csv}"
     ACTIVATION_CORNER="${ACTIVATION_CORNER:-MC18}"
   fi
 elif [[ "${ACTIVATION_CORNER_MODE}" == "random_per_forward" ]]; then
@@ -810,8 +814,9 @@ submit_chunk() {
   sbatch_exports+=",CHUNK_ID=${chunk_id},CHUNK_TAG=${chunk_tag},COMB_LIST=${comb_list}"
 
   echo "Submitting: C${chan0} N${num_layers} chunk=${chunk_id} tag=${chunk_tag} combos_in_job=${MAX_TASKS_PER_GPU}"
+  [[ ! -v RESISTANCE_FLOOR_OHMS ]] || sbatch_exports+=",RESISTANCE_FLOOR_OHMS=${RESISTANCE_FLOOR_OHMS}"
   if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
-    for key in TC_EVAL_ACTIVATION_CURVE_PATH TC_EVAL_ACTIVATION_CORNER; do
+    for key in TC_EVAL_ACTIVATION_CURVE_PATH TC_EVAL_ACTIVATION_CORNER TC_SOLVER_DENSE_OUTPUT TC_NOISE_REPLAY_CACHE; do
       [[ ! -v "$key" ]] || sbatch_exports+=",${key}=${!key}"
     done
     [[ ! -v TC_CONV_METHOD ]] || sbatch_exports+=",TC_CONV_METHOD=${TC_CONV_METHOD}"

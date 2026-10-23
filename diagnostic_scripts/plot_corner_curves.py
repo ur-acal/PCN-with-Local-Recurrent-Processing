@@ -13,6 +13,7 @@ CIFAR-10, results/coupler_monte_v2_cifar10
 """
 
 import argparse
+import csv
 from pathlib import Path
 import re
 
@@ -45,12 +46,22 @@ def corner_sort_key(corner):
 
 
 def load_paired_curves(path):
+    with Path(path).open() as handle:
+        header = next(csv.reader(handle))
     data = np.loadtxt(path, delimiter=",", skiprows=1)
+    if data.ndim != 2 or data.shape[1] < 2:
+        raise ValueError("Expected a table of input/output curves: {}".format(path))
+    shared_input = header[0].strip().lower() == "vin"
+    if not shared_input and data.shape[1] % 2:
+        raise ValueError("Paired X/Y columns must have even column count: {}".format(path))
     curves = []
-    for index in range(data.shape[1] // 2):
-        x = data[:, 2 * index]
-        y = data[:, 2 * index + 1]
+    columns = range(1, data.shape[1]) if shared_input else range(1, data.shape[1], 2)
+    for column in columns:
+        x = data[:, 0 if shared_input else column - 1]
+        y = data[:, column]
         valid = np.isfinite(x) & np.isfinite(y)
+        if valid.sum() < 2 or np.any(np.diff(x[valid]) <= 0):
+            raise ValueError("Curve inputs must be finite and increasing: {}".format(path))
         curves.append((x[valid], y[valid]))
     return curves
 
@@ -70,7 +81,7 @@ def mean_curve(curves):
 def relu_path(corner, source="relu_monteCarlo"):
     process, voltage, temperature = corner.lower().split("_")
     source_path = Path(source)
-    if not source_path.is_absolute():
+    if not source_path.is_absolute() and not source_path.is_dir():
         source_path = MC45_ROOT / source_path
     temperatures = (-20, 25, 85)
     pvt_named_path = source_path / "{}_{}_{}.csv".format(
@@ -83,11 +94,19 @@ def relu_path(corner, source="relu_monteCarlo"):
     return source_path / "relu_{}{}.csv".format(process_name, index)
 
 
-def nonlinear_r_path(corner):
+def nonlinear_r_path(corner, source="coupler_monte_v2"):
     process, voltage, temperature = corner.lower().split("_")
     temperatures = (-20, 25, 85)
-    return MC45_ROOT / "coupler_monte_v2" / "{}_{}_{}.csv".format(
+    source_path = Path(source)
+    if not source_path.is_absolute() and not source_path.is_dir():
+        source_path = MC45_ROOT / source_path
+    path = source_path / "{}_{}_{}.csv".format(
         process, temperatures[int(temperature[1:])], int(voltage[1:]))
+    if path.is_file():
+        return path
+    legacy = source_path / "{}g_{}_{}.csv".format(
+        process, temperatures[int(temperature[1:])], int(voltage[1:]))
+    return legacy if legacy.is_file() else path
 
 
 def header_metadata(path):
@@ -100,13 +119,27 @@ def header_metadata(path):
         None if temperature is None else float(temperature.group(1)))
 
 
-def relu_output_reference(path):
+def relu_output_reference(path, mode="auto", supply_voltages=None):
     path = Path(path)
-    if path.parent.name != "0906_RELU_Voltage":
+    if mode == "none" or (mode == "auto" and supply_voltages is None and
+                          path.parent.name not in {"0906_RELU_Voltage", "1022_RELU_Voltage"}):
         return 0.0
-    # Match the runtime loader's adapted offset for each supply category.
-    voltage_index = int(path.stem.rsplit("_", 1)[1])
-    return {0: 0.588, 1: 0.600, 2: 0.612}[voltage_index]
+    vdd, _ = header_metadata(path)
+    if supply_voltages is not None:
+        if re.search(r"_[0-2]$", path.stem):
+            voltage_index = int(path.stem.rsplit("_", 1)[1])
+        else:
+            match = re.search(r"g([0-8])$", path.stem, re.IGNORECASE)
+            if match is None:
+                raise ValueError("Cannot determine supply category: {}".format(path))
+            voltage_index = int(match.group(1)) // 3
+        supplied = supply_voltages[voltage_index]
+        if vdd is not None and not np.isclose(vdd, supplied):
+            raise ValueError("Supply override conflicts with CSV metadata: {}".format(path))
+        vdd = supplied
+    if vdd is None:
+        raise ValueError("Missing supply metadata; pass --relu_supply_voltages V0 V1 V2")
+    return vdd / 2
 
 
 def voltage_tag(v_dd):
@@ -138,14 +171,16 @@ def draw_curves(curves, xlabel, ylabel, title, output_path, x_scale=1.0,
     ax.grid(alpha=0.2)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
+    fig.savefig(output_path.with_suffix(".png"), dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(output_path)
 
 
-def plot_one_relu(corner, output_dir, relu_source, v_dd=V_DD):
+def plot_one_relu(corner, output_dir, relu_source, v_dd=V_DD,
+                  offset_mode="auto", supply_voltages=None):
     path = relu_path(corner, relu_source)
     curves = load_paired_curves(path)
-    output_reference = relu_output_reference(path)
+    output_reference = relu_output_reference(path, offset_mode, supply_voltages)
     curves = [(x, y - output_reference) for x, y in curves]
     vdd, temperature = header_metadata(path)
     v_char = max(np.max(np.abs(curve[0])) for curve in curves)
@@ -161,8 +196,8 @@ def plot_one_relu(corner, output_dir, relu_source, v_dd=V_DD):
         x_scale=scale, y_scale=scale)
 
 
-def plot_one_nonlinear_r(corner, output_dir):
-    path = nonlinear_r_path(corner)
+def plot_one_nonlinear_r(corner, output_dir, source="coupler_monte_v2"):
+    path = nonlinear_r_path(corner, source)
     curves = load_paired_curves(path)
     vdd, temperature = header_metadata(path)
     process, voltage, temp_level = corner.split("_")
@@ -187,14 +222,16 @@ def all_corner_ids():
 
 
 def plot_all(curve_type, output_dir, corner_means=False,
-             relu_source="relu_monteCarlo", v_dd=V_DD):
+             relu_source="relu_monteCarlo", v_dd=V_DD,
+             coupler_source="coupler_monte_v2", offset_mode="auto",
+             supply_voltages=None):
     curves = []
     for corner in all_corner_ids():
         path = (relu_path(corner, relu_source) if curve_type == "relu"
-                else nonlinear_r_path(corner))
+                else nonlinear_r_path(corner, coupler_source))
         loaded = load_paired_curves(path)
         if curve_type == "relu":
-            output_reference = relu_output_reference(path)
+            output_reference = relu_output_reference(path, offset_mode, supply_voltages)
             loaded = [(x, y - output_reference) for x, y in loaded]
         if corner_means:
             loaded = [mean_curve(loaded)]
@@ -238,6 +275,13 @@ def main():
     parser.add_argument(
         "--relu_source", default="relu_monteCarlo",
         help="ReLU folder name under hardware_data/mc_45_corners, or an absolute path.")
+    parser.add_argument("--coupler_source", default="coupler_monte_v2",
+                        help="Coupler folder under mc_45_corners, or a filesystem path.")
+    parser.add_argument("--relu_offset_mode", choices=("auto", "none", "vdd_half"),
+                        default="auto", help="auto applies midpoint correction to recognized 0906/1022 banks.")
+    parser.add_argument("--relu_supply_voltages", nargs=3, type=float,
+                        metavar=("V0", "V1", "V2"),
+                        help="Characterized supplies for per-file VDD/2 subtraction when headers omit them.")
     parser.add_argument(
         "--v_dd", type=float, default=V_DD,
         help="Runtime ReLU voltage scale in volts.")
@@ -251,6 +295,10 @@ def main():
     args = parser.parse_args()
     if not np.isfinite(args.v_dd) or args.v_dd <= 0:
         parser.error("--v_dd must be finite and positive")
+    if args.relu_supply_voltages is not None and (
+            not np.isfinite(args.relu_supply_voltages).all() or
+            min(args.relu_supply_voltages) <= 0):
+        parser.error("Characterized supplies must be finite and positive")
     normalize_task(args.task)
     style_axes()
     output_dir = Path(args.output_dir)
@@ -269,14 +317,17 @@ def main():
         for curve_type in selected_types:
             plot_all(
                 curve_type, output_dir, corner_means=args.corner_means,
-                relu_source=args.relu_source, v_dd=args.v_dd)
+                relu_source=args.relu_source, v_dd=args.v_dd,
+                coupler_source=args.coupler_source, offset_mode=args.relu_offset_mode,
+                supply_voltages=args.relu_supply_voltages)
         return
 
     for corner in sorted(corners, key=corner_sort_key):
         if "nonlinear_R" in selected_types:
-            plot_one_nonlinear_r(corner, output_dir)
+            plot_one_nonlinear_r(corner, output_dir, args.coupler_source)
         if "relu" in selected_types:
-            plot_one_relu(corner, output_dir, args.relu_source, args.v_dd)
+            plot_one_relu(corner, output_dir, args.relu_source, args.v_dd,
+                          args.relu_offset_mode, args.relu_supply_voltages)
 
 
 if __name__ == "__main__":

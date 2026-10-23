@@ -17,6 +17,46 @@ trainer and validator. It does not use pulse slicing or integer pulse weights.
 
 ## Physical contract
 
+### Gaussian resistance floor (TC and toggle, CNN and PCN)
+
+`RESISTANCE_FLOOR_OHMS` / `--resistance_floor_ohms` optionally sets a
+pointwise physical lower bound in ohms. It is unset by default: TC couplers
+retain their existing 1e-6-ohm floor; generic Gaussian couplers and pooling
+retain their existing native-unit numerical guard. An explicit override
+also reaches Gaussian pooling, analog heads and CPU-offloaded expanded curves.
+Conductance draws retain their positive numerical guard before inversion;
+the physical floor is then applied in ohms. Invalid/nonrepresentable floor
+values fail explicitly. No additional draws or resampling are introduced.
+
+Empirical measured curves bypass this guard, including pinned toggle FT and
+MC45 commands. Exact resume checks the saved effective floor. Historical
+checkpoint metadata is read compatibly, but there is no TC-prefixed CLI alias.
+
+The 26,791.333455-ohm measured minimum belongs to the stronger 50-kOhm
+bank experiment: do not apply it to the standard 10-kOhm recipe, where it
+would clip legitimate resistance values. TC CNN now accepts other positive
+nominal resistances while retaining the existing derived `R_max = 15R`.
+
+### Optional corner-coupled fine-tuning (TC CNN and PCN)
+
+Set `FT_CORNER_COUPLED_SAMPLING=true` (Python: `--ft_corner_coupled_sampling true`);
+default is OFF. One MC45 corner is selected per training forward for the whole
+network. Coupler and measured-pooling Gaussian draws use covariance fitted from
+that corner's 100 resistance curves, retaining the existing nominal mean curves.
+Random-per-forward measured ReLU uses the same corner's bank, preserving its
+per-layer/per-spin sharing. Fixed ReLU is unchanged. Spin-variation statistics
+and current-noise strength are **not** corner-conditioned by this flag.
+
+The 45 covariance factors are shared across compatible layers (about 0.46 MiB
+in FP32), fitted once, and transferred once per device/dtype. Solver backward
+replay retains the forward's sampled curves. Validation/evaluation remains
+uncoupled. The source must contain all 45 labelled corners with 100 curves each;
+unlabelled synthetic banks and expanded/empirical TC training are unsupported.
+This does not enable the separate stronger-covariance experiment or change the
+existing nonpositive-resistance guard.
+
+### Mapping
+
 - Initial support: bias-free ordinary Conv2d WRNs, including stride-2 and
   stride-1-plus-pooling variants; the existing BN support is retained, although
   the recommended controlled architecture is BN-free and convolution-bias-free.
