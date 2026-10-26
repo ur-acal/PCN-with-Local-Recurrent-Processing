@@ -37,11 +37,13 @@ if [[ "${TC_NONIDEALITIES:-false}" == true ]]; then
   export ODE_BLOCK="$tc_block"
   export NONLINEAR_R_CURVE_SEED="${NONLINEAR_R_CURVE_SEED:-4096}"
   TC_ARGS=(--tc_nonidealities true --ode_block "$tc_block"
+    --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING:-multivariate_gaussian}"
     --compute_time_fixed_std "${COMPUTE_TIME_FIXED_STD:-0}"
     --compute_time_noise_std "${COMPUTE_TIME_NOISE_STD:-0}"
     --timing_noise_scope "${TIMING_NOISE_SCOPE:-per_batch}"
     --tc_conv_method "${TC_CONV_METHOD:-${tc_default_conv_method}}"
     --tc_curve_sampling "${TC_CURVE_SAMPLING:-histogram}"
+    --tc_curve_top_n "${TC_CURVE_TOP_N:-0}"
     --w_bits 5 --weight_quant_factor_bits none --enob none
     --R "${R_VAL:-10e3}" --R_max "${R_MAX:-150e3}" --C "${C_VAL:-49e-15}" --v_dd "${V_DD:-0.1}"
     --one_over_q "${TOGGLE_ONE_OVER_Q:-1}" --sde_noise_type add

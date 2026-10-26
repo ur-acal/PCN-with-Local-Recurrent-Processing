@@ -247,6 +247,9 @@ def get_args():
         help="Measured-ReLU coverage. Fresh models default to all; checkpoints "
              "inherit saved metadata, and old checkpoints default to pc_only.")
     # ODE hyper-params
+    p.add_argument('--fuse_toggle_nonlinear_R_input', type=str2bool,
+                   default=str2bool(os.environ.get('FUSE_TOGGLE_NONLINEAR_R_INPUT', 'false')),
+                   help='Opt-in CUDA FP32 averaged-toggle input correction; unsupported cases use the original arithmetic.')
     p.add_argument("--ode_block", type=str, choices=list(ODEBLOCK_CLASSES.keys()),
                         default="ODEBlockPC")
     p.add_argument("--method", type=str, default="dopri5")
@@ -914,6 +917,8 @@ def _configure_training_recovery(trainer, args, checkpoint_path):
 
 def _backfill_recovery_defaults(args):
     """Preserve legacy saved arguments when recovery bypasses the parser."""
+    from tc_empirical import sampling_mode
+    sampling_mode(args)
     if not hasattr(args, 'resistance_floor_ohms'):
         from resistance_guard import saved_floor
         args.resistance_floor_ohms = saved_floor(vars(args))
@@ -1249,12 +1254,14 @@ def main():
                           "enob": args.enob, "qat_cls": QUANTIZER_CLASSES[args.qat_cls],
                           "tie_cap": args.tie_cap, "one_over_q": args.one_over_q,
                           "nonlinear_R": args.nonlinear_R,
+                          "nonlinear_R_curve_sampling": args.nonlinear_R_curve_sampling,
                           "resistance_floor_ohms": args.resistance_floor_ohms,
                           "nonlinear_R_table": args.nonlinear_R_table,
                           "nonlinear_R_mc_quantity": args.nonlinear_R_mc_quantity,
                           "nonlinear_R_curve_sharing": args.nonlinear_R_curve_sharing,
                           "nonlinear_R_curve_seed": args.nonlinear_R_curve_seed,
                           "nonlinear_R_train_mode": args.nonlinear_R_train_mode,
+                          "fuse_toggle_nonlinear_R_input": getattr(args, 'fuse_toggle_nonlinear_R_input', False),
                           "nonlinear_R_corner_range": args.nonlinear_R_corner_range,
                           "enable_measured_activation": args.enable_measured_activation,
                           "activation_curve_path": args.activation_curve_path,
@@ -1276,7 +1283,7 @@ def main():
             raise ValueError(
                 "Measured pooling training requires a wrapped ODE model.")
         pooling_source = args.measured_pooling_curve_path or args.nonlinear_R_table
-        if args.tc_nonidealities and args.measured_pooling_curve_path is None:
+        if args.tc_nonidealities and args.nonlinear_R_curve_sampling == 'multivariate_gaussian' and args.measured_pooling_curve_path is None:
             raise ValueError("TC measured pooling requires measured_pooling_curve_path, not the coupler means.")
         pooling_R = args.measured_pooling_nominal_R
         if pooling_R is None:
@@ -1298,7 +1305,8 @@ def main():
         logging.warning(
             "Measured average-pooling training enabled: table=%s, "
             "quantity=%s, nominal_R=%s",
-            pooling_source, args.nonlinear_R_mc_quantity, pooling_R)
+            pooling_kwargs.get('curve_path') or pooling_source,
+            args.nonlinear_R_mc_quantity, pooling_kwargs['nominal_R'])
 
     if args.ft_corner_coupled_sampling:
         from ft_corner_sampling import configure_ft_corner_coupled_sampling
@@ -1560,6 +1568,8 @@ def main():
         logging.warning("Test only. Run 2 epochs.")
 
     _configure_training_recovery(trainer, args, ckpt_path)
+    from tc_empirical import record_bank_identity
+    record_bank_identity(args, trainer.model)
     trainer.recovery_config = vars(args).copy()
     trainer.recovery_config["validation_manifest_checksum"] = (
         trainer.validation_split_metadata.get("manifest_checksum")

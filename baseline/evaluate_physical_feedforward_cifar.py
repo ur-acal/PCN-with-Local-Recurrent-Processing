@@ -275,6 +275,8 @@ def evaluate_once(args):
             args.use_expanded_weights or args.bn_recalibrate or args.tc_feedforward):
         raise ValueError('Training-hardware sampling requires unexpanded toggle L2 training-subset selection with frozen BN')
     if args.expanded_gaussian_curve_cpu_offload:
+        if args.tc_feedforward and args.nonlinear_R_curve_sampling == 'empirical_with_replacement':
+            raise ValueError('Gaussian curve CPU offload does not support empirical TC banks.')
         if not args.use_expanded_weights or not args.enable_nonlinear_R:
             raise ValueError(
                 "Expanded Gaussian curve CPU offload requires expanded "

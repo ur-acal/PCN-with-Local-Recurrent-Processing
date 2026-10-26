@@ -23,8 +23,11 @@ class MeasuredAvgPool2d(nn.Module):
                  curve_path=None, quantity="conductance", curve_indices=None,
                  nominal_R=1.0, seed=None, training_curve_mode=None,
                  corner_range="all", curve_gaussian=None,
-                 curve_sharing="per_window", resistance_floor_ohms=None):
+                 curve_sharing="per_window", resistance_floor_ohms=None, tc_empirical=False):
         super().__init__()
+        if tc_empirical:
+            training_curve_mode = None
+            quantity = 'conductance'
         self.kernel_size = kernel_size
         self.stride = stride
         self.input_scale = float(input_scale)
@@ -81,6 +84,11 @@ class MeasuredAvgPool2d(nn.Module):
                     corner_range=corner_range, quantity=quantity)
             for name, value in curve_bank.items():
                 self.register_buffer(name, value, persistent=False)
+            if tc_empirical:
+                from data_utils import MC45CornerData
+                entries = MC45CornerData.coupler_file_corners(curve_path)
+                self._tc_empirical_mapping = {f'{p.upper()}_V{v}_T{t}': e['curve_indices']
+                    for (p, v, t), e in entries.items()}
 
     def _pool_geometry(self, x):
         if self.kernel_size is None:
@@ -237,7 +245,7 @@ def configure_measured_pooling(model, wrappers, enable_nonideality=False,
                                curve_path=None, quantity="conductance",
                                curve_indices=None, nominal_R=1.0, seed=None,
                                training_curve_mode=None, corner_range="all",
-                               curve_gaussian=None, resistance_floor_ohms=None):
+                               curve_gaussian=None, resistance_floor_ohms=None, tc_empirical=False):
     """Install physical-domain average pooling without changing ideal scaling."""
     if not wrappers:
         raise ValueError("Measured pooling requires wrapped ODE layers.")
@@ -249,6 +257,7 @@ def configure_measured_pooling(model, wrappers, enable_nonideality=False,
     curve_path = curve_path if enable_nonideality else None
     curve_gaussian = curve_gaussian if enable_nonideality else None
     common = {
+        "tc_empirical": tc_empirical,
         "curve_path": curve_path,
         "curve_gaussian": curve_gaussian,
         "resistance_floor_ohms": resistance_floor_ohms,
@@ -277,11 +286,12 @@ def configure_feedforward_measured_pooling(
         model, *, enable_nonideality=False, curve_path=None,
         quantity="conductance", nominal_R=1.0, seed=None,
         training_curve_mode=None, corner_range="all", curve_indices=None,
-        curve_gaussian=None, resistance_floor_ohms=None):
+        curve_gaussian=None, resistance_floor_ohms=None, tc_empirical=False):
     """Install measured pooling at feedforward global, main and shortcut pools."""
     from physical_feedforward import iter_physical_blocks
 
     common = dict(
+        tc_empirical=tc_empirical,
         curve_path=curve_path if enable_nonideality else None,
         curve_gaussian=curve_gaussian if enable_nonideality else None,
         resistance_floor_ohms=resistance_floor_ohms,

@@ -47,6 +47,8 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     export ACTIVATION_CURVE_SHARING=per_model
   fi
   TC_FEEDFORWARD_ARGS=(--tc_feedforward true
+    --nonlinear_R_curve_sampling "${NONLINEAR_R_CURVE_SAMPLING:-multivariate_gaussian}"
+    --tc_empirical_curve_bank "${TC_EMPIRICAL_CURVE_BANK:-}"
     --compute_time_fixed_std "${COMPUTE_TIME_FIXED_STD:-0}"
     --compute_time_noise_std "${COMPUTE_TIME_NOISE_STD:-0}"
     --timing_noise_scope "${TIMING_NOISE_SCOPE:-per_batch}"
@@ -58,6 +60,8 @@ if [[ "${TC_FEEDFORWARD:-false}" == true ]]; then
     --w_bits 5 --enob none --weight_quant_factor_bits -1
     --tc_method "${TC_METHOD:-dopri5}" --tc_tol "${TC_TOL:-1e-6}"
     --tc_curve_sampling "${TC_CURVE_SAMPLING:-histogram}"
+    --tc_curve_top_n "${TC_CURVE_TOP_N:-0}"
+    --tc_conv_method "${TC_CONV_METHOD:-shared}"
     --tc_covariance_table "${TC_COVARIANCE_TABLE:-./hardware_data/mc_45_corners/CU_4500_r_vs_vin.csv}"
     --resistance_floor_ohms "${RESISTANCE_FLOOR_OHMS:-none}"
     --tc_solver_dense_output "${TC_SOLVER_DENSE_OUTPUT:-true}"

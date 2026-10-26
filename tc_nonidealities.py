@@ -124,8 +124,10 @@ class TCSharedCurve:
 
     def prepare(self, grid, ref, floor):
         """Validate/cache constants once per draw/device/dtype, never per pixel RHS."""
-        key = (grid.data_ptr(), grid._version, self.resistance._version,
-               self.nominal_R._version, ref.device, ref.dtype, float(floor))
+        key = (grid.data_ptr(),
+               *(None if t.is_inference() else t._version
+                 for t in (grid,self.resistance,self.nominal_R)),
+               ref.device, ref.dtype, float(floor))
         if key not in self._prepared:
             g, table, nominal = (t.to(ref).contiguous() for t in (grid,self.resistance,self.nominal_R))
             if g.ndim != 1 or table.shape != g.shape or nominal.numel() != 1:
@@ -276,6 +278,8 @@ def tc_training_corner_factor(module, default):
     """Select a resident factor in training; migrate only on first device use."""
     sampler = getattr(module, '_ft_corner_coupled_sampler', None)
     if module.training and sampler is not None and sampler.active_corner is not None:
+        if getattr(module, '_tc_empirical_coupling', False):
+            return sampler.active_corner
         return module._tc_corner_factors.get(sampler.active_corner, default)
     return default
 

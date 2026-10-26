@@ -15,17 +15,18 @@ For PCN Euler with exactly 100 steps, pass `--n_steps 100 --ts_scale 1`;
 the inference Python CLI defaults `ts_scale` to 1. CNN uses
 `--tc_method euler --tc_num_steps 100`.
 
-## Training results at a glance
+## Historical solver, weight-cache and ReLU benchmarks
 
-Batch-128 TC training OOMs without activation checkpointing. Activation
-checkpointing is therefore the fixed memory-saving baseline for the
+These measurements predate the dense nonlinear-R backend changes below.
+In those runs, batch-128 TC training OOMed without activation checkpointing.
+Checkpointing was therefore the fixed memory-saving baseline for the
 batch-128 speed comparison below; it is not counted as a speed optimization.
 The three speed optimizations are accepted-step reuse, the live-QAT weight
 cache, and fused measured ReLU.
 
 ### Batch 64: all OFF versus speed optimizations plus checkpointing
 
-Current CIFAR-10 state-1/state-2 models, all TC nonidealities, production
+Then-current CIFAR-10 state-1/state-2 models, all TC nonidealities, production
 shared/histogram convolution, and matched randomness. The four optimizations
 are activation checkpointing plus the three speed optimizations. Values are
 five-repeat post-warm-up medians from the current `colab_all` branch.
@@ -79,7 +80,8 @@ overhead is higher.
 | RHS activation checkpoint | Memory | `CHECKPOINT_ODE_RHS_TRAINING` plus `CHECKPOINT_ODE_RHS_PORTION`; Python: `checkpoint_ode_rhs_training`, `checkpoint_ode_rhs_portion` | Yes; numeric portion or `auto` | No-op under `no_grad` | Adjoint, energy metering, training BatchNorm, cached-RHS variants, ODE23s, Sym12Async |
 | Live-QAT weight cache | Speed | Default ON; auto fallback for unsupported cases | Yes | Yes when live QAT exists; baked QAT inference is a no-op | Non-QAT and stochastic parametrizations |
 | Fused measured ReLU | Speed | `FUSE_MEASURED_ACTIVATION` / `fuse_measured_activation` | Yes | Yes | PyTorch fallback for CPU, non-FP32 CUDA, missing Triton, trainable/mismatched curves, cubic spline, or higher-order gradients |
-| Fused per-edge nonlinear-R convolution | Speed | Default ON; auto fallback for unsupported cases | No | Yes | Combines resistance interpolation, edge-current calculation, and output accumulation for CUDA float32 TC Gaussian per-coupler curves. Unsupported cases include empirical banks, energy metering, unsupported projections/devices/dtypes, and enabled gradients |
+| Fused dense nonlinear-R input correction | Speed and memory | Default ON for supported TC calls; no public launcher flag. Diagnostic OFF: `_tc_fused_correction=False` | Yes; first-order backward supported | Dense only | Combines resistance interpolation and input correction for Gaussian and empirical sampling. Single-curve and batched multi-curve layouts are specializations of this same fusion; ordinary/grouped convolution runs separately. PyTorch fallback for CPU, unsupported dtypes, missing Triton, or differentiable curve constants |
+| Fused per-edge nonlinear-R convolution | Speed | Default ON; auto fallback for unsupported cases | No | Expanded only | Combines resistance interpolation, edge-current calculation, and output accumulation for CUDA float32 TC Gaussian or empirical per-coupler curves. Empirical TC reuses the toggle native-grid kernel. Exclusions include energy metering, unsupported projections/devices/dtypes/layouts, and enabled gradients |
 | Nonzero-edge TC resistance-curve storage | Memory | Default ON; auto fallback for unsupported cases | No | Yes | Stores sampled curves only for nonzero expanded TC edges; empirical banks and toggle storage are unchanged |
 | Expanded Gaussian curve CPU offload | Memory | `EXPANDED_GAUSSIAN_CURVE_CPU_OFFLOAD` / `expanded_gaussian_curve_cpu_offload`; default OFF | No | Yes | Static expanded Gaussian per-coupler curves only. Supports TC PCN state 1/2, TC CNN, Toggle pulse PCN, pulse CNN, and their expanded analog head; falls back to synchronous one-owner staging when asynchronous prefetch is unavailable or unsafe |
 
@@ -515,7 +517,7 @@ guards permit:
 1. Adaptive Dopri5/ProjDopri5 reuses the accepted search result instead of
    replaying the accepted step. This solver optimization also applies to
    non-TC inference; it is not controlled by the training flag.
-2. Expanded Gaussian per-coupler TC evaluation fuses curve interpolation,
+2. Expanded Gaussian or empirical per-coupler TC evaluation fuses curve interpolation,
    signed edge-current calculation, and convolution accumulation in one
    Triton kernel on CUDA float32.
 
@@ -526,8 +528,8 @@ GPU and overlaps the next transfer with current-layer computation when pinned
 memory and GPU headroom permit. Curve generation, random seeds, ODE stages,
 and the fixed-per-trial curve lifetime are unchanged.
 
-Energy-metered solves use the original paths. Gaussian edge fusion also falls
-back for training or any enabled gradient, empirical curve banks, unsupported
+Energy-metered solves use the original paths. Edge fusion falls
+back for training or any enabled gradient, unsupported
 devices/dtypes/projections, or modules outside evaluation mode. Neither
 optimization changes curve sampling, quantization, solver tolerances, rail
 projection, or the accepted-step/noise lifecycle. Atomic accumulation can
@@ -554,19 +556,19 @@ the solve and retain the existing fixed-per-realization lifetime.
 TC and toggle use separate lookup backends because they model different
 hardware encodings:
 
-| Property | TC | Toggle |
+| Property | TC Gaussian | Toggle empirical |
 |---|---|---|
 | Weight magnitude | One of 15 resistance/conductance codes | Pulse duration/count at one nominal resistance |
 | Curve distribution | Code-specific mean plus shared covariance | Finite empirical common-resistance curve bank |
 | Per-coupler draw | Independent Gaussian draw conditioned on code | Empirical curve sampled with replacement |
 | Fused runtime layout | Common voltage grid plus a pre-sampled curve row per active edge | Per-curve grids/slopes/lengths plus an assignment index and instantaneous pulse value |
 
-The final current operation is structurally the same, so a future common
-expanded-edge interface could share dispatch and accumulation. The lookup
-backends must remain distinct. TC empirical-bank sampling could use a
-generalized empirical kernel only if assignment remains conditioned on the TC
-resistance code; toggle's common-resistance bank cannot represent all TC
-codes. Toggle's existing empirical-current fusion is recorded separately in
+The final current operation is structurally the same. TC empirical-bank
+inference now reuses the existing empirical kernel, while its caller retains
+TC's resistance-code-conditioned assignment. Gaussian storage still needs its
+different lookup backend. Toggle's common-resistance data bank cannot represent
+all TC codes; sharing the kernel does not mean sharing the data bank.
+Toggle's existing empirical-current fusion is recorded separately in
 `docs/toggle_inference_optimization_audit.md`.
 
 ### Nonzero-edge TC resistance-curve storage
@@ -705,3 +707,647 @@ The automated and end-to-end checks cover:
   one-/two-state models, fallback conditions, and energy accounting;
 - batch-64 old TC, current state-1/state-2 TC, and toggle output, gradient,
   timing, and kernel-launch comparisons.
+
+## Multi-level empirical TC curves
+
+`NONLINEAR_R_CURVE_SAMPLING=empirical_with_replacement` selects
+`TC_EMPIRICAL_CURVE_BANK` exclusively. Gaussian mode remains the default and
+uses only `TC_MEAN_TABLE` and `TC_COVARIANCE_TABLE`. The inactive bank arguments
+are ignored, not combined. Local and Slurm PCN/CNN launchers forward the selector.
+
+The new directory contains `pseudo_res_5uS.csv` through `pseudo_res_75uS.csv`
+in 5-uS increments. Use `R_VAL=13.3e3`, `R_MAX=200e3`; CNN retains its existing
+derived maximum of `15*R` (199.5 kOhm). Pooling defaults to the 75-uS bank at
+13.3 kOhm. Each curve retains its own voltage grid. FT samples independently
+per forward, layer and convolution: per selected group in shared/top-N mode,
+or per nonzero code in full-level mode. The solve and backward replay reuse
+that draw. Expanded inference fixes independent code-conditioned
+assignments per edge for each trial. Corner-coupled FT uses the corresponding
+corner's empirical curves.
+
+The temporary `pseudo_res_15uS.csv` duplicates the supplied 10-uS file, as
+requested for implementation testing. `TEST_ONLY_DUPLICATE.json` and a runtime
+warning mark this bank as **not suitable for scientific accuracy results**.
+The supplied 10-uS file itself measures approximately 15 uS at the nominal
+corner; a genuine physical 10-uS level still needs clarification/replacement.
+
+| Optimization | Empirical TC status |
+|---|---|
+| Accepted-step reuse, live-QAT weight cache, fused measured ReLU | Applicable; existing controls unchanged |
+| RHS checkpointing, including automatic/partial selection | Applicable; batch-128 empirical grouped FT fits comfortably with all 22 layers checkpointed (see sweep below). Do not infer that checkpointing can be disabled |
+| Gaussian expanded curve CPU offload | Not applicable; leave disabled |
+| Fused per-edge nonlinear-R convolution | Default ON for supported empirical TC inference; reuses the native-grid empirical kernel, with `_tc_fused_edges=False` available for diagnostic comparisons |
+| Fused dense nonlinear-R input correction | Same optimization as in the main controls table; supports both Gaussian and empirical sampling with first-order backward. CPU/unsupported types use PyTorch. Diagnostic OFF: `_tc_fused_correction=False` |
+| Batched multi-curve layout of the same correction fusion | Default ON for supported grouped CUDA FP32 calls. Generates the selected groups' corrections directly in grouped-input layout (15 groups for full-level processing); combines their input-gradient contributions in one backward kernel. Diagnostic OFF: `_tc_batched_correction=False` retains separate fused calls and concatenation; one group always uses the scalar layout |
+| Grouped per-code dense convolution | `TC_CONV_METHOD=grouped` combines all 15 empirical code-specific convolutions. With `shared`, `TC_CURVE_TOP_N=0` uses one shared curve/ordinary convolution; N>0 combines the selected groups with the same grouped implementation. Wired for PCN, TC CNN and analog heads; Gaussian N=0 is unchanged |
+| Empirical weight-level routing cache | Default ON. Reuses detached weight-level codes and boolean masks across RHS evaluations/replay; does not cache differentiable packed weights. Diagnostic OFF: `_tc_cache_level_routing=False`. Pinned Gaussian shared TC and toggle paths do not use it |
+| Compact Gaussian per-active-edge curve storage | Replaced by shared empirical bank plus per-edge indices; no per-edge sampled curve tensor needed |
+
+The measured bank tensors occupy **40.68 MiB** in FP32, including all corner
+indices, shared between convolution modules on the same device/dtype. Expanded
+assignment storage adds 8 bytes per stored edge, versus 208 bytes per active
+edge for a 52-point FP32 Gaussian curve (excluding common connectivity and other
+bookkeeping). Pooling has separate small banks. These are storage calculations,
+not measured full-model peak GPU memory. Empirical FT may use more activation
+memory and time than shared-Gaussian FT when using the full 15-level path;
+shared N=0 uses one correction and one convolution. Do not disable checkpointing
+on the basis of curve-bank storage alone.
+
+`diagnostic_scripts/rehearse_tc_multilevel_empirical.py` reuses the isolated
+rehearsal hooks: batch four, four real FT batches, checkpoint save, then the real
+evaluation entry point stopped after its first CSR expansion. It can wait for
+an existing pipeline and an idle GPU; it never stops or modifies that pipeline.
+
+### Empirical fusion validation and benchmarks — 2026-10-23
+
+Both real 22-layer CIFAR-100 rehearsals completed: four FT batches, batch four,
+checkpoint save, and evaluation stopped after its first genuine expansion.
+Subsequent fusion validation completed full expansion and compared final model
+outputs on the same four test images, with all TC nonidealities enabled and
+matched hardware/noise seeds. Neither assignments nor random-number consumption
+are changed by fusion. The complete PCN state-1/state-2 checks below use the
+four-batch rehearsal checkpoints; these are numerical/performance tests, not
+scientific accuracy results. CUDA tests also cover TC CNN, expanded analog heads,
+native-grid boundaries, and unchanged toggle fusion.
+
+Median of three post-warm-up GPU forwards, without a profiler; peak allocated
+GPU memory includes the resident expanded model. Initialization is excluded.
+The diagnostic uses the identical existing CSR builder on CPU to avoid repeated
+GPU scalar synchronization during unmeasured initialization.
+
+| 22-layer model, batch 4 | Empirical inference fusion OFF → ON | Peak allocated OFF → ON | Maximum final-output difference | Prediction changes |
+|---|---:|---:|---:|---:|
+| State 1 | 5.986 → 1.102 s (5.43× faster) | 4.516 → 4.481 GiB | 7.82e-8 | 0/4 |
+| State 2 | 8.102 → 1.591 s (5.09× faster) | 4.519 → 4.484 GiB | 1.99e-7 | 0/4 |
+
+The following historical FT comparison predates empirical correction fusion
+and grouped-convolution wiring. It uses the same original pretrained weights per state, real SRRL
+teacher, RGB `rgb_mid` recipe, unnormalized student/teacher inputs, all TC
+nonidealities, accepted-step reuse, live-QAT cache and fused measured ReLU.
+Both sides use fixed RHS checkpointing on **2/22 layers**, not automatic
+selection. Gaussian uses its pinned shared/histogram approximation and 10-kOhm
+mapping; empirical uses the new 13.3/200-kOhm bank and 15 separate code-specific
+convolutions. Thus this measures the two actual curve/computation configurations,
+not an isolated comparison of distribution samplers. Data-loader work is excluded:
+a real augmented batch is cached, with two warm-up optimizer steps and three
+timed optimizer steps. Inference fusion is default-on but **does not run in FT**.
+
+| Model | Batch | Shared Gaussian FT: time / peak allocated | Empirical per-level FT: time / peak allocated |
+|---|---:|---:|---:|
+| State 1 | 4 | 0.472 s / 0.976 GiB | 5.668 s / 11.339 GiB |
+| State 2 | 4 | 0.592 s / 1.049 GiB | 6.540 s / 12.197 GiB |
+| State 1 | 128 | 0.643 s / 10.657 GiB | OOM before a measured step |
+| State 2 | 128 | 0.822 s / 12.620 GiB | OOM before a measured step |
+
+Do not extrapolate a batch-128 empirical runtime from the OOM cases. More
+checkpointing may make those runs fit; that policy search was not benchmarked.
+The empirical FT optimizations below supersede the per-level reference timings;
+they do not change the historical OOM measurements.
+
+Reproduction: `diagnostic_scripts/benchmark_tc_empirical.py`. Numerical/timing
+records are under `results/tc_empirical_fusion_benchmark_20261023/`; batch-128
+records are under `results/tc_empirical_fusion_benchmark_20261023_bs128/`.
+
+### Empirical FT correction fusion and grouped convolution
+
+Correction fusion reuses the existing CUDA FP32 kernel and first-order backward
+on each of the 15 selected native-grid curves. It is default-on when supported;
+`_tc_fused_correction=False` selects the PyTorch reference for diagnostics.
+`TC_CONV_METHOD=grouped` combines the 15 convolutions through the existing grouped
+implementation. This is opt-in; Gaussian shared/histogram and toggle behavior are
+unchanged. Curves are prepared once per solve and retained for backward replay.
+
+Full 22-layer CIFAR-100 checks use batch 4, identical pretrained weights, augmented
+inputs, all TC nonidealities, random-per-forward/per-spin ReLU, real SRRL, and
+checkpointing on 2/22 layers. Optimizer updates are suppressed. All four variants
+draw identical curves. Strict FP32 and deterministic convolution algorithms are
+used **for validation only**; production precision settings are not changed.
+Repeating the unoptimized reference gives identical outputs and gradients.
+
+| State | Enabled optimizations | Maximum final-output difference | Maximum model weight-gradient difference | Model gradient relative L2 error | Median forward/backward time | Peak allocated memory |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | Neither | 0 | 0 | 0 | 4.027 s | 10.448 GiB |
+| 1 | Correction fusion | 0 | 2.38e-7 | 0.0000253% | 2.497 s | 5.545 GiB |
+| 1 | Grouping | 1.14e-7 | 3.91e-4 | 0.0182% | 3.460 s | 10.472 GiB |
+| 1 | Both | 1.14e-7 | 3.91e-4 | 0.0182% | 1.870 s | 5.569 GiB |
+| 2 | Neither | 0 | 0 | 0 | 4.967 s | 12.170 GiB |
+| 2 | Correction fusion | 0 | 1.86e-7 | 0.0000316% | 3.116 s | 6.274 GiB |
+| 2 | Grouping | 1.21e-7 | 2.84e-4 | 0.0377% | 4.159 s | 12.197 GiB |
+| 2 | Both | 1.21e-7 | 2.84e-4 | 0.0377% | 2.139 s | 6.300 GiB |
+
+No predictions change. Times are medians of three post-warm-up passes without a
+profiler, using the same no-update comparison loop. These are not timings of a
+complete epoch or an optimizer update. Grouping alone does not reduce peak memory;
+the memory reduction comes from fused correction saving fewer backward tensors.
+
+Numerical bounds: outputs use `atol=1e-5, rtol=1e-4`. Full-model input, model and
+SRRL auxiliary gradients each satisfy **maximum absolute error <=1e-3 AND relative
+L2 error <=0.1%**. These bounds are explicitly looser than the original elementwise
+gradient check (`atol=1e-5, rtol=1e-4`), which grouping does **not** pass for every
+full-model gradient entry. Raw reports retain those strict-check failures; the
+summary records the full-model bounds separately. Smaller complete PCN/CNN,
+individual operators, native-grid boundary, and checkpoint replay tests pass the
+stricter elementwise check. The Gaussian grouped path also matches the literal
+pre-change implementation exactly in the regression test.
+
+Reproduce the full check and benchmark with:
+
+```bash
+VERIFY_STRICT_FP32=1 python diagnostic_scripts/benchmark_tc_empirical.py \
+  --training-optimizations --ft-only --output ./results/tc_empirical_ft_check
+```
+
+Raw results and the explicit-tolerance summary are in
+`results/tc_empirical_training_optimizations_20261023_deterministic/`.
+Normal TF32/non-deterministic settings were also checked separately. They do
+**not** satisfy the same full-model bounds, even for a repeated OFF/OFF forward.
+No gradient clipping was used in either precision comparison.
+
+| Precision check | State 1 model-gradient relative L2 difference | State 2 model-gradient relative L2 difference |
+|---|---:|---:|
+| Repeated OFF/OFF, normal settings | 1.073% | 0.155% |
+| Both optimizations versus OFF, normal settings | 5.983% | 1.199% |
+| Both optimizations versus OFF, deterministic FP32 | 0.0182% | 0.0377% |
+
+Therefore, the tight parity result is conditional on the stated deterministic
+FP32 settings, not a guarantee for ordinary TF32 training. Grouping stays opt-in;
+no production precision defaults are silently changed. The normal-settings raw
+failure reports are retained in
+`results/tc_empirical_training_optimizations_20261023_default_precision/`.
+
+The supplied bank is still test-only (duplicated 15-uS file); these checks establish
+numerical/performance behavior, not scientific accuracy.
+
+### Batch-128 empirical FT: checkpoint portion sweep
+
+Both correction fusion and grouped convolution are enabled. These runs use the
+same 22-layer CIFAR-100 FT recipe, real SRRL teacher and optimizer updates, and
+all TC nonidealities. Normal production precision is retained (TF32 allowed;
+no deterministic override). Each configuration starts in a fresh process on an
+otherwise idle RTX 4090 with 24 GiB VRAM. Only the checkpointed layer count changes.
+Checkpointing selects the first N layers, as in the existing production policy.
+
+Times are medians of **three complete training steps after two warm-ups**. Each
+step includes student/teacher computation, backward and optimizer update; the
+same real augmented batch of 128 is cached, so data-loader work is excluded.
+Memory columns are maxima over **all five steps, including warm-up**, not just
+the timed three. OOM cases failed on the first step and have no reported timing.
+
+| State | Checkpointed layers | Portion | Median step time | Peak allocated | Peak reserved | Status |
+|---|---:|---:|---:|---:|---:|---|
+| 1 | 18/22 | 81.82% | — | — | — | OOM |
+| 1 | 20/22 | 90.91% | — | — | — | OOM |
+| 1 | 21/22 | 95.45% | 4.052 s | 22.093 GiB | 22.857 GiB | Fits, little headroom |
+| 1 | 22/22 | 100% | 4.247 s | 4.520 GiB | 4.697 GiB | Fits |
+| 2 | 18/22 | 81.82% | — | — | — | OOM |
+| 2 | 20/22 | 90.91% | 4.883 s | 20.096 GiB | 20.793 GiB | Fits |
+| 2 | 21/22 | 95.45% | 4.934 s | 15.160 GiB | 15.705 GiB | Fits |
+| 2 | 22/22 | 100% | 4.978 s | 7.817 GiB | 8.145 GiB | Fits |
+
+**Recommended starting point: `CHECKPOINT_ODE_RHS_PORTION=1.0` for both states.**
+It leaves substantial memory headroom at batch 128, with little extra measured
+time compared with the fitting partial portions. These are short memory/time
+benchmarks, not evidence of full-training accuracy or a guarantee about every
+future batch. The empirical bank is still the test-only bank described above.
+
+Reproduction (diagnostic only; no production checkpoint is overwritten):
+
+```bash
+python diagnostic_scripts/benchmark_tc_empirical.py \
+  --output ./results/tc_empirical_bs128_checkpoint_sweep \
+  --batch-size 128 --checkpoint-layers 22 21 20 18
+```
+
+Per-configuration logs and JSON, including per-step loss, allocated/reserved
+memory and the selected layer count, are saved in
+`results/tc_empirical_bs128_checkpoint_sweep_20261023/`.
+`checkpoint_summary.json` combines the eight configurations.
+
+### Empirical weight-level routing cache
+
+`EmpiricalLevels.weight_routing` caches codes and masks for one FF/FB curve draw,
+instead of rebuilding them at each RHS evaluation. It holds only a weak reference
+to the source weight, and checks tensor identity/version and scalar quantization
+settings before reuse. New training draws get independent caches. Weight updates
+or replacement invalidate routing; inference-mode and tensor-valued settings use
+the uncached fallback. Checkpoint replay reuses the captured draw. Differentiable
+weight masking/packing still runs normally, so no weight gradient is detached.
+This is separate from the existing live-QAT weight cache.
+
+Storage is **23 bytes per routed weight**: one int64 code and 15 boolean masks.
+The 22-layer models route 632,160 FF/FB weights across 44 convolutions, totaling
+**14,539,680 bytes = 13.87 MiB per model**, independent of batch size. The cache
+does not hold input activations or differentiable packed weights.
+
+Full-model parity checks at batch 128 with all 22 layers checkpointed used
+identical weights, inputs, sampled hardware and RNG, with deterministic FP32.
+Final outputs and auxiliary gradients are bit-identical. Maximum input-gradient
+differences are 1.51e-9 / 6.52e-9 for state 1 / state 2; maximum model-parameter
+gradient difference is **4.47e-8** for both, passing the stricter elementwise
+`atol=1e-5, rtol=1e-4` check. No predictions change. Tests also verify replay,
+cache reuse, invalidation, fallback, ordinary/grouped/transpose convolution and
+the unchanged Gaussian path.
+
+The following benchmark changes **only routing cache OFF/ON**. Batch 128,
+22/22 checkpointing, correction fusion and grouped convolution are unchanged.
+Normal production precision (TF32 allowed), real SRRL and optimizer updates are
+used. Each variant runs in a fresh process; times are medians of five measured
+steps after two warm-ups. Data loading is excluded, and memory peaks include all
+seven steps. The benchmark GPU was otherwise idle.
+
+| State | Median step time OFF → ON | Time reduction | Peak allocated OFF → ON | Peak reserved OFF → ON | Added routing storage |
+|---|---:|---:|---:|---:|---:|
+| 1 | 4.226 → 4.139 s | 2.1% | 4.627 → 4.675 GiB | 4.799 → 4.832 GiB | 13.87 MiB |
+| 2 | 5.026 → 4.920 s | 2.1% | 7.817 → 7.829 GiB | 8.148 → 8.162 GiB | 13.87 MiB |
+
+The observed speed improvement is modest. Total peak differences include
+workspace/trajectory variation, not just the persistent routing tensors.
+These remain short benchmarks with the test-only empirical bank, not full
+training-accuracy evidence. No production checkpoint was overwritten.
+
+```bash
+VERIFY_STRICT_FP32=1 VERIFY_CAPTURE_ONLY=1 \
+python diagnostic_scripts/benchmark_tc_empirical.py \
+  --output ./results/tc_empirical_routing_validation \
+  --batch-size 128 --routing-cache-ablation --training-optimizations
+
+python diagnostic_scripts/benchmark_tc_empirical.py \
+  --output ./results/tc_empirical_routing_benchmark \
+  --batch-size 128 --routing-cache-ablation
+```
+
+Raw parity results: `results/tc_empirical_routing_cache_20261023_validation/`.
+Raw timings, memory/cache sizes and per-step losses:
+`results/tc_empirical_routing_cache_20261023_benchmark/`.
+
+### Batched empirical correction: full-model validation and benchmark
+
+The new path reuses the existing `_correct` arithmetic with a second kernel-grid
+dimension for resistance level. Selected native-grid rows and lengths are
+prepared once per draw without regridding or a CPU length readback. It writes
+directly into `[batch, 15*channels, height, width]`, eliminating the 15 temporary
+corrected-input tensors and their concatenation. One first-order backward kernel
+accumulates the 15 contributions to the input gradient in fixed reverse level
+order. Ordinary PyTorch grouped convolution still computes weight gradients.
+When input gradients are unnecessary, no derivative tensor is allocated.
+
+This is default-on only for eligible empirical grouped CUDA FP32 calls with
+correction fusion enabled. OFF retains the previous separate fused corrections.
+Unsupported device/dtype/input shape or trainable curve constants retain that
+reference path. Gaussian shared/level-specific paths, toggle correction, loop
+convolution and expanded inference keep their existing computations. The routing
+cache remains ON on both sides of this ablation.
+
+**End-to-end check:** complete 22-layer CIFAR-100 state-1/state-2 models, batch
+128, checkpointing 22/22 layers, real SRRL loss and all configured TC nonidealities.
+Weights, inputs, hardware draws and global/module-local RNG states match.
+TF32 is disabled and deterministic cuDNN algorithms are selected for validation
+only. Optimizer updates are suppressed for comparison. OFF/OFF is checked first.
+The actual new path is instrumented in this diagnostic, not just requested by a
+flag: all **44/44 FF/FB convolutions** execute it in both models, including
+checkpoint replay (2,664 / 3,238 batched calls in the respective checked passes).
+
+| Model | Maximum final-logit difference | Maximum input-gradient difference | Maximum model-parameter-gradient difference | Maximum SRRL auxiliary-gradient difference | Prediction changes |
+|---|---:|---:|---:|---:|---:|
+| State 1 | 0 | 2.56e-9 | 5.96e-8 | 0 | 0/128 |
+| State 2 | 0 | 8.15e-9 | 7.45e-8 | 0 | 0/128 |
+
+All four categories pass the stricter elementwise `atol=1e-5, rtol=1e-4`
+comparison; none of the full-model relaxed bounds needs to be relied on here.
+Maximum OFF/OFF model-gradient difference is 4.47e-8. Native-grid knots,
+different per-curve lengths, padded grids, rail boundaries, noncontiguous inputs,
+nonfinite forward semantics, ordinary/transpose grouped convolutions, analog
+heads, and both PCN states with/without checkpoint replay are also tested.
+
+**Production-precision benchmark:** batch 128, checkpointing 22/22, grouped
+convolution, scalar correction fusion and routing cache ON in both variants;
+only batched correction changes. Fresh sequential processes on an otherwise idle
+RTX 4090, TF32 allowed, real SRRL forward/backward and optimizer updates. Times
+are medians of five measured steps after two warm-ups; data loading is excluded.
+Both memory peaks include all seven steps, including warm-up. No profiler runs
+during timing.
+
+| Model | Median step time OFF → ON | Time reduction | Peak allocated OFF → ON | Peak reserved OFF → ON |
+|---|---:|---:|---:|---:|
+| State 1 | 4.170 → 3.396 s | 18.6% | 4.605 → 4.694 GiB | 4.832 → 5.133 GiB |
+| State 2 | 4.937 → 4.070 s | 17.6% | 7.825 → 7.825 GiB | 8.295 → 8.574 GiB |
+
+This gives a clear measured speed improvement, but **does not reduce total peak
+training memory under full RHS checkpointing**. The batched path still needs a
+packed derivative tensor when input gradients are required; checkpointing already
+discards internal activations, and allocation/workspace patterns also differ.
+The prior routing-cache and checkpoint-portion tables predate this optimization.
+The curve bank remains test-only, so these are numerical/performance results,
+not full-training accuracy evidence. No production checkpoint is overwritten.
+
+```bash
+VERIFY_STRICT_FP32=1 VERIFY_CAPTURE_ONLY=1 \
+python diagnostic_scripts/benchmark_tc_empirical.py \
+  --output ./results/tc_batched_validation \
+  --batch-size 128 --batched-correction-ablation --training-optimizations
+
+python diagnostic_scripts/benchmark_tc_empirical.py \
+  --output ./results/tc_batched_benchmark \
+  --batch-size 128 --batched-correction-ablation
+```
+
+Raw parity results: `results/tc_batched_correction_20261023_validation/`.
+Raw per-step timings, losses and memory: `results/tc_batched_correction_20261023_benchmark/`.
+
+## Histogram top-level groups (2026-10-24)
+
+`TC_CURVE_TOP_N` / `--tc_curve_top_n` defaults to **0** (range 0–L,
+where L is the number of nonzero quantization levels; currently 15).
+With `TC_CONV_METHOD=shared`, each FF/FB convolution independently counts its
+own current nonzero QAT weight codes. The top N occupied levels get separate
+curves; the remaining occupied levels share one curve. Its representative level
+is drawn from the remaining levels' conditional histogram. Ties select the
+lower code first. Empty groups are omitted. Curves and routing masks are held
+through the solve and checkpoint recomputation, not resampled at every RHS.
+For N>0, the first evaluation solve after training refreshes the groups using
+post-update weights; subsequent evaluation batches retain that realization.
+As before, explicitly reset realizations after replacing weights during evaluation.
+
+Both Gaussian and empirical-with-replacement sampling are supported, including
+the currently selected training corner. Corrections use the selected level's
+own nominal resistance. Gaussian N=0 directly retains the original shared
+sampler and ordinary convolution: no group masks, packed input, or additional
+correction kernels. Pinned Gaussian commands need no changes. Empirical shared
+N=0 now means one shared empirical curve, rather than the former implicit
+15-level treatment. `TC_CONV_METHOD=loop` or `grouped` retains that full-level
+treatment. Nonzero N requires shared/histogram for dense training.
+
+Empirical N=0 skips ranking and weight-sized masks; its PyTorch fallback also
+avoids a one-element concatenation. Eligible CUDA calls retain the one-group
+native-grid fused correction followed by one ordinary convolution. Native-grid
+row gathering still differs from Gaussian curve generation. The current
+consolidation uses the same scalar correction kernel for both at N=0; fixed
+row lengths are recorded when loading the bank, not copied to CPU per solve.
+These fixes have numerical/regression checks, not new speed measurements;
+the historical timings below predate them. Sampling follows the package/RNG
+device, with routing masks on the weight device, including CPU-built wrappers
+subsequently moved to CUDA. Diagnostics require a fresh output directory and
+never silently reuse old JSON reports.
+
+Zero codes do not enter the histogram. They remain assigned to the shared
+remainder for QAT STE gradients, preserving the original Gaussian shared
+behavior (or the last selected group if no remainder exists). Consequently
+N=L explicitly represents every occupied level (N=L−1 also covers all levels
+when the last remaining level forms the shared group),
+but the old full-level implementation's zero-code gradient suppression is not
+introduced. Exact recovery checks N (old recipes imply 0). Expanded per-edge
+evaluation, ordinary pretraining and toggle paths do not change. Give new
+experiments separate output roots, as with other recipe changes.
+
+Legacy empirical recovery needs special handling: before this option, its
+method named `shared` actually ran the full-level loop. The PCN recovery entry
+point preserves that by resolving it to `loop` when the saved N is absent;
+recovery guards reject changing between those semantics and the new shared
+approximation. Old Gaussian recovery remains shared N=0.
+
+Validation uses real 22-layer CIFAR-100 state-1/state-2 models, the SRRL teacher,
+all TC nonidealities, identical curve/noise draws between comparison passes,
+and full RHS checkpointing. Operator tests additionally compare checkpoint
+ON/OFF, convolution/transposed convolution and the full-level endpoint. Timing
+uses batch 128, two warm-up plus five measured optimizer steps on a cached real
+augmented batch, with no profiler or concurrent GPU job. Weight coverage is
+measured before optimizer updates and recorded per FF/FB convolution and in
+total; percentages exclude zero weights. The empirical bank still contains the
+documented test-only duplicated 15-uS file: these are performance/numerical
+checks, not scientific accuracy evidence.
+
+### Top-N numerical checks
+
+Full-model final logits and gradients, batch 4, all 22 RHS layers checkpointed,
+FP32 with TF32 disabled and deterministic cuDNN. Maxima below are across
+N=0,1,2,3. N=0 Gaussian is compared with the literal saved pre-change methods;
+other cases compare the optimized correction with native PyTorch correction
+and the same grouped-convolution reduction order. All final logits matched
+exactly, all predictions matched, and every tensor passed elementwise
+`atol=1e-5, rtol=1e-4` (not just an aggregate gradient metric).
+
+| Model | Sampling | Max final-logit difference | Max input-gradient difference | Max parameter-gradient difference | Max SRRL-gradient difference |
+|---|---|---:|---:|---:|---:|
+| State 1 | Gaussian | 0 | 5.22e-8 | 1.79e-7 | 0 |
+| State 1 | Empirical | 0 | 5.96e-8 | 2.98e-7 | 0 |
+| State 2 | Gaussian | 0 | 1.18e-7 | 1.49e-7 | 0 |
+| State 2 | Empirical | 0 | 1.14e-7 | 4.77e-7 | 0 |
+
+An earlier serial-convolution reference is retained, not discarded. State-2
+Gaussian N=3 produced max final-logit difference 6.84e-7, max model-gradient
+difference 5.05e-4, and SRRL-gradient relative L2 difference 0.188%, exceeding
+the 0.1% aggregate-gradient threshold. Changing convolution reduction order
+can amplify small FP32 differences through the solver/SRRL calculation. The
+same-grouped reference above isolates correction fusion; small operator tests
+also verify the serial sum and grouped sum. This is not a claim of strict
+full-model gradient equality across different convolution reduction orders.
+
+### Weight coverage before optimizer updates
+
+Each model has 632,160 FF/FB weights. State 1 has 516,689 nonzero and 115,471
+zero weights; state 2 has 538,442 nonzero and 93,718 zero weights. The coverage
+is identical between sampling modes for these matched initial weights.
+
+| N | State-1 individually represented | State-1 shared remainder | State-2 individually represented | State-2 shared remainder |
+|---:|---:|---:|---:|---:|
+| 0 | 0 (0%) | 516,689 | 0 (0%) | 538,442 |
+| 1 | 188,856 (36.55%) | 327,833 | 171,775 (31.90%) | 366,667 |
+| 2 | 317,694 (61.49%) | 198,995 | 307,969 (57.20%) | 230,473 |
+| 3 | 403,538 (78.10%) | 113,151 | 403,271 (74.90%) | 135,171 |
+
+Every raw report contains the histogram, selected codes, weight counts and
+percentages for each of the 44 FF/FB convolutions, in addition to these totals.
+Validation reports: `results/tc_top_n_20261024_validation_grouped/summary.json`.
+Earlier serial-reference results: `results/tc_top_n_20261024_validation/`.
+
+### Top-N training benchmark
+
+RTX 4090, batch 128, full 22/22 RHS checkpointing, reuse/live-QAT/fused measured
+activation enabled, production TF32 settings. Median seconds per optimizer
+step includes forward, backward, SRRL and the optimizer, but excludes loading.
+Memory is the maximum across both warm-up and all five measured steps, in GiB.
+Each configuration runs in a fresh process sequentially, without a profiler.
+
+Gaussian uses the unchanged pinned 10-kOhm/150-kOhm mapping and covariance;
+empirical uses 13.3-kOhm/200-kOhm and the test bank. Comparisons within each
+sampling mode use identical initial weights/settings. Cross-mode timings also
+include those physical-data differences. These are actual stochastic optimizer
+steps; TF32/atomic numerical variability can make trajectories diverge slightly
+even between repeated baseline runs.
+
+| Gaussian setting | State-1 seconds | State-1 allocated / reserved GiB | State-2 seconds | State-2 allocated / reserved GiB |
+|---|---:|---:|---:|---:|
+| Literal pre-change shared | 0.982 | 4.304 / 4.406 | 1.198 | 7.508 / 7.625 |
+| N=0 | 0.996 | 4.304 / 4.406 | 1.181 | 7.508 / 7.625 |
+| N=1 | 1.252 | 4.364 / 4.467 | 1.548 | 7.472 / 7.584 |
+| N=2 | 1.344 | 4.292 / 4.396 | 1.649 | 7.475 / 7.717 |
+| N=3 | 1.470 | 4.329 / 4.445 | 1.798 | 7.520 / 7.830 |
+
+N=0 timing differs by about 1.4% in either direction; peak memory is unchanged
+to the displayed precision. The original Gaussian sampler and convolution are
+retained directly, with no group allocations or extra correction launches.
+
+| Empirical setting | State-1 seconds | State-1 allocated / reserved GiB | State-2 seconds | State-2 allocated / reserved GiB |
+|---|---:|---:|---:|---:|
+| N=0 | 1.113 | 4.853 / 4.984 | 1.319 | 8.180 / 8.316 |
+| N=1 | 1.374 | 5.257 / 5.420 | 1.643 | 8.923 / 9.119 |
+| N=2 | 1.359 | 4.501 / 4.672 | 1.697 | 7.726 / 7.859 |
+| N=3 | 1.503 | 4.500 / 4.625 | 1.849 | 7.718 / 7.967 |
+| Existing full 15-level grouped | 3.378 | 4.552 / 5.133 | 4.108 | 7.825 / 8.574 |
+
+N=3 reduces step time versus full-level empirical processing by 55.5% for
+state 1 and 55.0% for state 2. With full checkpointing, total peak memory is not
+monotonic in group count: adaptive trajectories, autograd state and convolution
+workspaces also contribute. These measurements do not establish an accuracy
+benefit or quantify approximation error against full-level hardware evaluation.
+
+All 20 final benchmark configurations completed with five measured steps each.
+Final records, including per-convolution coverage and allocated/reserved memory:
+`results/tc_top_n_20261024_benchmark_final/summary.json`.
+
+Reproduce from the repository in the scanbase environment:
+
+```bash
+python diagnostic_scripts/benchmark_tc_top_n.py \
+  --output results/tc_top_n_validation_repeat --verify --batch-size 4 \
+  --original results/tc_top_n_20261024_validation/prechange_ode_pc.py.snapshot
+
+python diagnostic_scripts/benchmark_tc_top_n.py \
+  --output results/tc_top_n_benchmark_repeat --batch-size 128 \
+  --original results/tc_top_n_20261024_validation/prechange_ode_pc.py.snapshot
+```
+
+### Common dense backend consolidation (2026-10-24; performance matrix completed)
+
+Gaussian and empirical samplers remain separate. Already sampled curves feed
+one dense backend (`tc_curve_groups.group_convolution`), shared by PCN, CNN
+and analog heads. Gaussian full-level rows are adapted to the same prepared
+native-grid representation; no voltage-grid resampling is introduced.
+
+- One group: one scalar correction and one ordinary convolution, for either sampler.
+- Multiple groups: one batched correction and grouped convolution when eligible.
+- OFF reference: the common PyTorch correction with serial convolution/summation.
+- CPU/other-dtype fallbacks and explicit optimization-OFF controls remain.
+  Serial fused convolution also remains: it is faster for some small late-layer
+  groups, and passes the stricter gradient check where grouping sometimes does not.
+
+The sampler-specific duplicate convolution branches were removed. The scalar
+and packed autograd wrappers serve different group counts around the same
+correction kernel; neither samples curves. N=0 no longer takes a sampler-specific
+optimized path. Pinned commands and the default N=0 are unchanged. Expanded
+per-edge inference is not routed through this dense backend.
+
+Scalar and packed correction also share row preparation: selected curves are
+gathered once with `index_select`, then viewed in scalar or packed layout.
+This removes individual CUDA-index readbacks in the scalar empirical path.
+
+Current checks use strict FP32 with matched inputs, weights, sampled-curve hashes
+and RNG state. Final logits must satisfy `atol=1e-5, rtol=1e-4`; gradient maximum
+absolute error and relative L2 error must both be at most `1e-3`. Prediction
+changes are recorded separately. These limits were not relaxed after failures.
+
+The complete 22-layer, batch-4, 22/22-checkpointed comparisons are finished.
+The common OFF backend passes against the independent original OFF expression,
+and fused serial ON passes against OFF in all 20 configurations. Below, “gradient
+limit” means logits passed but at least one gradient measure exceeded the limit.
+
+| State | Sampler; grouped ON versus OFF | N=0 | N=1 | N=2 | N=3 | N=15 | Maximum logit error | Maximum gradient relative L2 error |
+|---|---|---|---|---|---|---|---:|---:|
+| 1 | Gaussian | Pass | Pass | Pass | Pass | Gradient limit | 1.04e-7 | 0.204% |
+| 1 | Empirical | Pass | Pass | Pass | Pass | Gradient limit | 1.08e-7 | 0.305% |
+| 2 | Gaussian | Pass | Pass | Pass | Gradient limit | Pass | 6.84e-7 | 0.188% |
+| 2 | Empirical | Pass | Pass | Pass | Pass | Pass | 1.79e-7 | 0.0951% |
+
+All sampled-curve hashes matched and no prediction changed. The allowed relative
+gradient error is 0.1%, not 1%; therefore the three marked cases are not certified.
+The independent OFF expression uses the same curve data, not a separately drawn
+hardware realization. Checkpoint-disabled/replay, CNN and analog-head cases also
+have focused operator/small-model regression coverage; the real 22-layer numerical
+matrix above uses full checkpointing.
+
+For state-1 N=15, grouped logit errors were 1.04e-7 (Gaussian) and 1.08e-7
+(empirical), with zero prediction changes. Maximum model-gradient errors were
+1.11e-3 and 1.76e-3 respectively. A diagnostic serial group-output reduction did
+not remove the Gaussian gradient discrepancy. Do not interpret passing operator
+tests or timing results as full SRRL-gradient equivalence.
+
+Batch-128 isolated convolution/transposed-convolution candidate checks all
+passed against OFF (228 measurements, each including output and input/weight
+gradients). Scalar one-group dispatch was selected instead of the redundant
+one-group packed dispatch. Grouping is not universally faster: with 64 channels,
+8×8 maps and 2–4 groups, separate fused convolutions beat grouped convolution;
+grouping wins other measured shapes. These are operator results, not whole-model
+optimizer-step speedups.
+
+The final minimum/full-checkpoint benchmark matrix is under
+`results/tc_unification_20261024_state2_counterfix/` (`performance.md` and
+`combined_summary.json`). It combines the finished state-1 measurements with
+the corrected state-2 rerun. The earlier state-2 failure was diagnostic-only:
+the RHS call counter stripped the module's solver/state-dict interface; it now
+uses a module pre-hook. No production solver change was needed.
+The table reports N, individually covered weight count, minimum fitting layer
+count, 22/22 timing, and peak allocated memory including warm-up. Each case uses
+batch 128, two warm-ups and five measured optimizer steps, with real SRRL and
+the real augmented batch. Minimum counts are established by ascending search;
+unfinished searches are marked as such. Numerical failures remain visible in
+the parity JSON files even when their timing is measured. The empirical bank
+still contains the explicitly requested test-only 15-uS duplicate: no scientific
+accuracy claim is made from these checks. No production checkpoint is written.
+
+### Grouped-convolution numerical audit (2026-10-25)
+
+The three full-model gradient-limit failures above reproduce; they are not a
+correction-fusion or checkpoint-replay defect. Disabling correction fusion while
+retaining grouped convolution reproduces the discrepancy. Repeating serial OFF
+is exact, and fused correction with serial convolution passes the unchanged limit.
+The grouped operator matches the independent serial expression in FP64 to
+`2.78e-17` in outputs, `4.44e-16` in input gradients and `1.39e-17` in weight
+gradients; input/weight finite-difference checks pass for convolution and
+transposed convolution. Checkpoint replay is exact in these operator tests.
+
+The full-model audit uses the real 22-layer CIFAR-100 checkpoints, the same augmented
+batch of four, matched sampled curves, restored hardware/RNG states, SRRL and
+22/22 RHS checkpointing. Values below
+are the largest relative L2 discrepancy across input, model and SRRL gradients,
+against independent serial OFF at the same precision. The limit remains **0.1%**.
+
+| State | Sampler | N | Ordinary FP32 grouped | Diagnostic FP64 convolution + group sum |
+|---|---|---:|---:|---:|
+| 1 | Gaussian | 15 | 0.204368% | 0.0000713% |
+| 1 | Empirical | 15 | 0.305414% | 0.0000708% |
+| 2 | Gaussian | 3 | 0.187602% | 0.0000623% |
+
+FP32 grouped convolution/reduction changes rounding, not the mathematical
+operator. In the state-2 FP32 comparison, those small forward differences flip
+three training-only SRRL ReLU gates, amplifying the gradient discrepancy. Keeping
+convolution and group-sum accumulation in FP64 makes all three final-logit
+differences exactly zero, changes no SRRL gates and passes the original bounds.
+FP32 states, solver and correction arithmetic are retained in that diagnostic;
+the final convolution result is cast back to FP32 once after group reduction.
+
+**No production precision, grouping default or tolerance was changed.** These
+controls support numerical sensitivity rather than an incorrect grouped backward;
+they do not certify the ordinary FP32 grouped cases against serial OFF. Serial
+convolution remains the verified alternative when that strict parity is required.
+The diagnostic's missing module-name lookup and precision-option forwarding were
+repaired; neither repair changes training/evaluation computation.
+Raw comparisons: `results/tc_grouped_gradient_audit_20261025/`;
+the complete high-precision control is under `fp64_convolution_and_sum/`.
+
+### Removed experiment: dense correction + convolution fusion (2026-10-25)
+
+A separate Triton kernel fused resistance interpolation, input correction and
+convolution. Patch reuse and tile tuning improved the prototype, but it remained
+slower than the existing correction-only fusion followed by cuDNN. At batch 128
+with matched 22/22 RHS checkpointing, measured training steps were 9–85% slower.
+With zero RHS checkpoints, N=0 used 35–37% less peak allocated memory but was
+22–29% slower. Full-model equivalence also failed: with TF32 permitted, maximum
+logit error was `4.26e-4`, worst gradient relative L2 was `5.98%`, and up to two
+predictions changed per 128 images. No tolerance was relaxed.
+
+The intermediate cuDNN-backed selective-recomputation alternative was a different
+memory-saving strategy, not convolution fusion. Both experimental implementations,
+their flag and all active wiring/tests/diagnostics have been removed. Existing
+correction-only fusion, grouped convolution and expanded per-edge inference fusion
+are retained. Historical measurements and recoverable source snapshots remain under
+`results/tc_genuine_conv_20261025/` and `results/tc_dense_conv_diagnosis_20261025/`.

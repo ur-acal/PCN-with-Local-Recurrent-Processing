@@ -130,7 +130,7 @@ The augmentation studies used `--mem_frac 1.0` after the first all-on attempt
 hit the 90% process-memory cap. This changes only the permitted GPU-memory
 fraction, not the training recipe.
 
-## Pending experiment: matched 16L/96C RGB architecture control
+## Completed experiment: 16L/96C RGB architecture control
 
 The state-1 RGB CIFAR-100 pretraining job changes only the student architecture
 from 22Layers6l7l6, 64 final channels to 16Layers4l5l4, 96 final channels. It
@@ -138,10 +138,85 @@ retains the same RGB teacher and pretraining recipe.
 
 | Stage | Status | Slurm job | Configuration |
 |---|---|---:|---|
-| Pretraining | Submitted | `2051275` | `N16_C24_n04_n15_n24` (16Layers4l5l4, 24/48/96 channels) |
-| All-on `rgb_mid` FT and expanded TC evaluation | Submitted | `2102423` | State 1; `N16_C24_n04_n15_n24`; **normalized student and teacher inputs**; all TC nonidealities; random-per-forward/per-spin measured ReLU |
+| Pretraining | Completed: top-1 79.27%, top-5 96.02%; epoch 300 | `2051275` | `N16_C24_n04_n15_n24` (16Layers4l5l4, 24/48/96 channels) |
+| All-on `rgb_mid` FT and expanded TC evaluation | Completed: FT top-1 75.02%, top-5 94.02%; epoch 140; expanded top-1 74.90 ± 0.21% | `2102423` | State 1; `N16_C24_n04_n15_n24`; **normalized student and teacher inputs**; all TC nonidealities; random-per-forward/per-spin measured ReLU |
 
-With pretraining complete, launch the normal all-on TC FT and subsequent
+Results recorded 2026-10-23 from the user's final-log excerpts:
+`logs/slurm_jobs/slurm_2051275.out` and `logs/slurm_jobs/slurm_2102423.out`.
+The full logs were not available locally when these completion values were recorded.
+
+| Pretrain top-1 | Final FT top-1 | Expanded evaluation top-1 | PT→FT loss | FT→evaluation loss |
+|---:|---:|---:|---:|---:|
+| 79.27% | 75.02% | 74.90 ± 0.21% | 4.25 pp | 0.12 pp |
+
+Original motivation: investigate the unusually large RGB state-1 **pretrain→FT**
+loss, including the remaining mapping-only loss, by trying the older shallower,
+wider 16L/96C architecture with the same RGB teacher. This was not primarily
+an FT→expanded-evaluation-gap experiment. The final run below uses all-on FT,
+not the initially proposed mapping-only ablation, so it does not isolate
+mapping-only architecture sensitivity. It has `rgb_mid` and random-per-forward/
+per-spin measured ReLU, but **does not match the latest unnormalized-input recipe**:
+both student and teacher still use normalized input. Its small 0.12-pp FT→eval
+difference shows that the large loss here is before/during FT, not expansion.
+
+### Differences from the current pinned TC recipe and next step
+
+Excluding the intentional 1-state, 16L/24→48→96 architecture choice, the
+recipe differences are only:
+
+| Setting | Completed 16L96C run | Current pinned TC recipe |
+|---|---|---|
+| Student input normalization | Enabled | Disabled |
+| Teacher checkpoint/input normalization | Normalized teacher/input | `NoNorm` teacher/unnormalized input |
+
+**Next experiment — pending, not submitted:** run the full pretrain→FT→expanded
+evaluation pipeline below with both normalizations disabled, retaining state 1
+and `N16_C24_n04_n15_n24`. Use fresh output roots; do not reuse the normalized
+pretraining checkpoint for this matched pipeline. All other recipe settings
+follow the [pinned TC pipeline](current_pcn_reference.md#slurm-pipeline-pretrain-only-ft-only-or-ft-then-eval).
+
+```bash
+module swap slurm slurm/24.05.0.b1
+cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
+mkdir -p logs/scheduler_slurm logs/slurm_jobs
+
+run_name="tc_c100_s1_16L96C_nonorm_rgbmid_rpf_pspin"
+pretrain_root="./saved_ckpt_runs/${run_name}_pretrain"
+ft_root="./saved_ckpt_runs/${run_name}"
+
+(
+  export mode=default \
+         TC_NONIDEALITIES=true \
+         TC_STATE=1 \
+         TASK=cifar100 \
+         IMG_TYPE=rgb \
+         NORMALIZE_STUDENT_INPUT=false \
+         CENTER_STUDENT_INPUT=false \
+         EXP_PREFIX="$run_name" \
+         PRETRAIN_SAVE_PATH="$pretrain_root" \
+         FT_OUTPUT_SAVE_PATH="$ft_root" \
+         TEACHER_CKPT=./checkpoint/efficientnet_v2_l_cifar100_rgb_OldNoTimm_MatchDistill_NoNorm.pth \
+         TEACHER_ARCH=efficientnet_v2_l \
+         TEACHER_ARCH_SOURCE=torchvision \
+         FT_TIMM_AUG_LEVEL=rgb_mid \
+         ACTIVATION_CORNER_MODE=random_per_forward \
+         ACTIVATION_RANDOM_CURVE_SHARING=per_spin \
+         PCN_CHAN_0_LIST=24 \
+         PCN_NUM_LAYERS_LIST=16 \
+         COMB_SEL_SET=2 \
+         REUSE_ACCEPTED_STEP_TRAINING=true \
+         CHECKPOINT_ODE_RHS_TRAINING=true \
+         CHECKPOINT_ODE_RHS_PORTION=auto
+
+  source ./launch_scripts/slurm_search_config.sh
+) > "./logs/scheduler_slurm/${run_name}.log" 2>&1 < /dev/null &
+
+echo "${run_name}: scheduler PID $!"
+```
+
+### Historical command for completed job 2102423
+
+The recorded command for the normal all-on TC FT and subsequent
 expanded TC evaluation with `rgb_mid` augmentation and
 random-per-forward/per-spin measured ReLU:
 

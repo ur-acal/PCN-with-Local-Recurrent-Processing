@@ -126,6 +126,7 @@ if [[ "${NONLINEAR_R_TRAIN_MODE:-none}" != "none" ]]; then
   ENABLE_NONLINEAR_R=true
 fi
 NONLINEAR_R_TRAIN_ARGS=(
+  --fuse_toggle_nonlinear_R_input "${FUSE_TOGGLE_NONLINEAR_R_INPUT:-false}"
   --nonlinear_R "${ENABLE_NONLINEAR_R:-false}"
   --nonlinear_R_table "${NONLINEAR_R_TABLE}"
   --nonlinear_R_mc_quantity "${NONLINEAR_R_MC_QUANTITY:-conductance}"

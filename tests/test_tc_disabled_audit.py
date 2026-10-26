@@ -130,6 +130,27 @@ class TCDisabledAuditTests(unittest.TestCase):
         # Comparing the full class ASTs below still catches any other change,
         # including removal of the guard or broadening the expansion condition.
         fixes = [
+            # Opt-in averaged-toggle correction: only add the preparation cache
+            # and guarded fast path; the literal OFF/fallback body is unchanged.
+            ('        self._nonlinear_R_training_curve_indices = {}\n',
+             '        self._nonlinear_R_training_curve_indices = {}\n'
+             '        self._toggle_nonlinear_R_prepared = {}\n'),
+            ('    def reset_nonlinear_R_variation(self):\n'
+             '        self._nonlinear_R_training_curve_indices.clear()\n',
+             '    def reset_nonlinear_R_variation(self):\n'
+             '        self._nonlinear_R_training_curve_indices.clear()\n'
+             '        # CNN/TC subclasses reuse this method without calling this constructor.\n'
+             "        if hasattr(self, '_toggle_nonlinear_R_prepared'):\n"
+             '            self._toggle_nonlinear_R_prepared.clear()\n'),
+            ('        length = int(package["lengths"][curve_index].item())\n',
+             "        if getattr(self, '_fuse_toggle_nonlinear_R_input', False):\n"
+             '            from tc_shared_correction import toggle_empirical_correction\n'
+             '            corrected = toggle_empirical_correction(\n'
+             '                source, package, curve_index, self._toggle_nonlinear_R_prepared)\n'
+             '            if corrected is not None:\n'
+             '                return corrected\n'
+             '        # Literal original arithmetic: OFF path and every unsupported fallback.\n'
+             '        length = int(package["lengths"][curve_index].item())\n'),
             # Already-committed corner coupling restricts the two empirical
             # draws only when its coordinator supplies an active corner.
             ('        if not self._nonlinear_R_training_curve_indices:\n'

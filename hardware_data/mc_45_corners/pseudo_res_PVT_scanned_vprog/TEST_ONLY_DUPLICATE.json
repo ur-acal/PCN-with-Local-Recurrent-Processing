@@ -1,0 +1,8 @@
+{
+  "test_only": true,
+  "synthetic_file": "pseudo_res_15uS.csv",
+  "copied_from": "pseudo_res_10uS.csv",
+  "sha256": "fe5e09c560a1deab072cb0b75b8ee997c81e0cc2395afda125f5a3407e20f419",
+  "purpose": "User-requested duplicate for implementation tests; not independent hardware characterization.",
+  "warning": "The source file measures approximately 14.756 uS at TT/25C/nominal supply. Duplicating it completes filenames, not a physically valid 15-level characterization. Do not use this bank for scientific accuracy results until corrected."
+}

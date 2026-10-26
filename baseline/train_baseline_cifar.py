@@ -1016,6 +1016,8 @@ def main():
     if teacher_model is not None:
         evaluate_teacher(teacher_model, trainer)
     trainer.recovery_checkpoint = args.resume_checkpoint
+    from tc_empirical import record_bank_identity
+    record_bank_identity(args, trainer.model)
     trainer.recovery_config = vars(args).copy()
     trainer.recovery_config["validation_manifest_checksum"] = (
         trainer.validation_split_metadata.get("manifest_checksum")

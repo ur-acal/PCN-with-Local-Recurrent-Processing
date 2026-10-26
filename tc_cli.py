@@ -9,6 +9,11 @@ NOISE_KEYS = ('enable_spin_variation','sigma_spin','spin_variation_mean','spin_v
     'tc_noise_stages','tc_noise_reference_R','tc_asd_reference_p','tc_fb_asd_path')
 
 def add_tc_arguments(parser):
+    if '--nonlinear_R_curve_sampling' not in parser._option_string_actions:
+        parser.add_argument('--nonlinear_R_curve_sampling', default=None,
+                            choices=('multivariate_gaussian', 'empirical_with_replacement'))
+    else:
+        parser.set_defaults(nonlinear_R_curve_sampling=None)
     from resistance_guard import add_argument
     add_argument(parser)
     from compute_time_variation import add_arguments
@@ -20,7 +25,7 @@ def add_tc_arguments(parser):
             return False
         raise ArgumentTypeError('Expected true or false.')
     options=dict(tc_nonidealities=(boolean,False),tc_covariance_table=(str,None),tc_conv_method=(str,'loop'),
-        tc_curve_sampling=(str,'histogram'),tc_empirical_curve_bank=(str,None),
+        tc_curve_sampling=(str,'histogram'),tc_curve_top_n=(int,0),tc_empirical_curve_bank=(str,None),
         tc_solver_dense_output=(boolean,True),tc_noise_replay_cache=(boolean,True),
         measured_pooling_curve_path=(str,None),measured_pooling_nominal_R=(float,None),
         measure_coupler_energy=(boolean,False),coupler_supply_voltage=(float,1.3),
@@ -33,6 +38,10 @@ def add_tc_arguments(parser):
     for key,(kind,default) in options.items():
         if '--'+key not in parser._option_string_actions:
             parser.add_argument('--'+key,type=kind,default=default)
+    parser._option_string_actions['--tc_curve_top_n'].help = (
+        'With tc_conv_method=shared: give the top N occupied nonzero weight levels '
+        'individual curves and histogram-share the remainder (0 through the nonzero level count; default 0). '
+        'Expanded per-coupler evaluation is unchanged.')
     if '--expanded_gaussian_curve_cpu_offload' not in parser._option_string_actions:
         parser.add_argument(
             '--expanded_gaussian_curve_cpu_offload',
@@ -61,6 +70,8 @@ def wrapper_options(args, trial=None):
     result.update(tc_nonidealities=True,tc_covariance_table=args.tc_covariance_table,
                   tc_conv_method=args.tc_conv_method,tc_curve_sampling=args.tc_curve_sampling)
     result['tc_empirical_curve_bank'] = getattr(args, 'tc_empirical_curve_bank', None)
+    result['tc_curve_top_n'] = getattr(args, 'tc_curve_top_n', 0)
+    result['nonlinear_R_curve_sampling'] = getattr(args, 'nonlinear_R_curve_sampling', None) or 'multivariate_gaussian'
     result['resistance_floor_ohms'] = getattr(args, 'resistance_floor_ohms', None)
     for key in ('tc_solver_dense_output', 'tc_noise_replay_cache'):
         result[key] = getattr(args, key, True)
@@ -84,7 +95,7 @@ def validate_expanded_gaussian_curve_offload(args, inference=False):
         raise ValueError(
             'Expanded Gaussian curve CPU offload requires per-coupler curves.')
     if getattr(args, 'tc_nonidealities', False):
-        if getattr(args, 'tc_empirical_curve_bank', None):
+        if getattr(args, 'nonlinear_R_curve_sampling', None) == 'empirical_with_replacement':
             raise ValueError(
                 'Expanded Gaussian curve CPU offload does not support empirical banks.')
     else:
@@ -97,10 +108,16 @@ def validate_expanded_gaussian_curve_offload(args, inference=False):
 
 
 def validate_tc(args, inference=False):
+    from tc_empirical import sampling_mode
+    sampling_mode(args)
     validate_expanded_gaussian_curve_offload(args, inference=inference)
     if not args.tc_nonidealities:return
-    if getattr(args, 'tc_empirical_curve_bank', None) and (not inference or not args.nonlinear_R):
-        raise ValueError('TC empirical banks require nonlinear-R unrolled inference, not dense FT.')
+    from tc_curve_groups import validate_top_n
+    validate_top_n(getattr(args, 'tc_curve_top_n', 0), 2**(args.w_bits-1)-1)
+    if getattr(args, 'tc_curve_top_n', 0) and args.tc_curve_sampling != 'histogram':
+        raise ValueError('tc_curve_top_n > 0 requires histogram sampling.')
+    if not inference and getattr(args, 'tc_curve_top_n', 0) and args.tc_conv_method != 'shared':
+        raise ValueError('tc_curve_top_n > 0 requires tc_conv_method=shared for training.')
     if args.tc_max_eval_batches < 0:
         raise ValueError('tc_max_eval_batches must be nonnegative (0 means full dataset).')
     if args.tc_conv_method not in ('loop','grouped','shared'):
@@ -120,9 +137,10 @@ def validate_tc(args, inference=False):
     if args.w_bits!=5:raise ValueError('The selected TC recipe uses 5-bit weights.')
     if any(getattr(args,key,False) for key in ('enable_slow_summing_current','enable_slow_coupler_noise','enable_dtc_nonideality')):
         raise ValueError('TC has no slow offsets or DTC in this recipe.')
-    if args.enable_measured_pooling and not args.measured_pooling_curve_path:
+    gaussian = args.nonlinear_R_curve_sampling == 'multivariate_gaussian'
+    if gaussian and args.enable_measured_pooling and not args.measured_pooling_curve_path:
         raise ValueError('TC pooling needs its own measured_pooling_curve_path.')
-    if args.nonlinear_R and not args.tc_covariance_table:
+    if gaussian and args.nonlinear_R and not args.tc_covariance_table:
         raise ValueError('TC nonlinear-R needs tc_covariance_table as well as the mean table.')
     if inference:
         if args.noisy_trials < 1:
@@ -169,6 +187,12 @@ def pooling_options(args, wrappers):
     """
     import torch
     from tc_nonidealities import prepare_tc_resistance_curves
+    from tc_empirical import is_npz_bank
+    if (getattr(args, 'nonlinear_R_curve_sampling', None) == 'empirical_with_replacement'
+            and not is_npz_bank(getattr(args, 'tc_empirical_curve_bank', None))):
+        from tc_empirical import pooling_options as empirical_pooling
+        return empirical_pooling(args, wrappers[0].ode_block.FFconv.weight)
+    # A legacy NPZ replaces only couplers; keep independently configured pooling.
     block = wrappers[0].ode_block
     nominal_R = args.measured_pooling_nominal_R
     if nominal_R is None:

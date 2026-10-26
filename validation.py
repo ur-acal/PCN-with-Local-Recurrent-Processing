@@ -522,6 +522,9 @@ class MVMConv(nn.Module):
                 self.mat.values().sign(), size=self.mat.shape,
                 device=self.mat.device, dtype=self.mat.dtype)
             bank = getattr(tc_curve_package, 'empirical_bank', None)
+            if bank is not None and bank.get('native_layout'):
+                from tc_empirical import empirical_bank_on
+                bank = empirical_bank_on(bank, self.mat.device, self.mat.dtype)
             if bank is None:
                 self.sample_nonlinear_R_gaussian_curves()
             else:
@@ -1058,7 +1061,9 @@ class MVMConv(nn.Module):
             pulse_weight, x_flat * nominal_R / R_eff)
 
     def _forward_pulse_per_edge(self, x_flat, pulse_weight, nominal_R):
-        if getattr(self, '_toggle_pulse_edges', False):
+        package = getattr(self, '_tc_curve_package', None)
+        if (getattr(self, '_toggle_pulse_edges', False)
+                or (package is not None and package.empirical_bank is not None)):
             from toggle_edge_inference import empirical_edge_forward
             fused = empirical_edge_forward(self, x_flat, pulse_weight, nominal_R)
             if fused is not None:
@@ -1706,6 +1711,11 @@ class Validator(nn.Module):
                         nonlinear_R_pkg["nonlinear_R_curve_assignment"] = [
                             shared_curve_assignment[mod_name]]
                     mvm_conv.enable_csv(**nonlinear_R_pkg)
+                    package = getattr(mvm_conv, '_tc_curve_package', None)
+                    if package is not None and package.empirical_bank is not None:
+                        # New children do not inherit eval mode automatically.
+                        # Allow empirical fusion during shape-discovery solves too.
+                        mvm_conv.train(parent.training)
                 setattr(parent, mod_name, mvm_conv)
                 hook_handlers["pre_hook"].remove()
                 hook_handlers["post_hook"].remove()

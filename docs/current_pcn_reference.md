@@ -627,9 +627,11 @@ mkdir -p logs/scheduler_slurm
 
 (
   export TOGGLE_MODE=odexinit \
+         mode=ft_and_eval \
          TASK=cifar100 \
          IMG_TYPE=CiFAIR \
-         EXP_PREFIX=C100_C96L16_cc_randSpin_full \
+         EXP_PREFIX=C100_C96L16_cc_randSpin \
+         PRETRAIN_SAVE_PATH=saved_ckpt_runs/C100_C96_454_16L_allReLU_digital_biasfalse_iq12_toggle_odexinit \
          TEACHER_CKPT=./checkpoint/efficientnet_v2_l_cifar100_CiFAIR_OldNoTimm_MatchDistill.pth \
          ADAPT_PIL_TEACHER=false \
          DISTILL_METHOD=srrl \
@@ -665,7 +667,7 @@ mkdir -p logs/scheduler_slurm
          COMB_SEL_SET=2
 
   source ./launch_scripts/slurm_search_config.sh
-) > logs/scheduler_slurm/cifair100_C96L16_cc_randSpin_full.log 2>&1 < /dev/null &
+) > logs/scheduler_slurm/cifair100_C96L16_cc_randSpin.log 2>&1 < /dev/null &
 
 echo "C96L16 corner-coupled randSpin scheduler PID: $!"
 ```
@@ -881,6 +883,121 @@ order differs. All nonideality sampling and pulse/state-update logic remain
 unchanged. Results: `results/toggle_full_fusion/summary.md`.
 Details, fallbacks and reproduction commands:
 [Toggle optimization audit](toggle_inference_optimization_audit.md).
+
+### Averaged-toggle FT input-correction fusion (opt-in; production parity not established)
+
+`FUSE_TOGGLE_NONLINEAR_R_INPUT=true` (CLI
+`--fuse_toggle_nonlinear_R_input true`) enables the training-capable shared
+correction kernel from `tc_shared_correction.py` in
+`ToggleAveragedPhysicalFFFB._averaged_nonlinear_R_source`. **Default: false**,
+because tight production-precision parity is not established. This fuses
+only projection, native-grid resistance interpolation and `x * R / R(x)`;
+the following convolution and its trainable weights remain ordinary PyTorch.
+It is not expanded-inference convolution fusion and does not use grouped
+15-level convolutions or `toggle_edge_inference.py`.
+
+The scheduler explicitly forwards the control to the worker environment; the
+training parser forwards it through the QAT wrapper to the averaged block.
+The standalone mixed-FT launcher also forwards it explicitly. Existing TC
+correction callers retain their defaults. Expanded toggle inference has no
+training curve package and does not enter this path. No CNN launcher was changed.
+
+Supported fast path: CUDA FP32, native-grid piecewise-linear positive resistance,
+and either no query projection or an ordinary, non-inplace symmetric
+`nn.Hardtanh`. Hardtanh's **zero derivative at rail endpoints** is preserved;
+TC's inclusive clamp-endpoint derivative remains unchanged. No resistance floor
+is added. CPU, other dtypes/projections and gradient-bearing constants return
+to the **literal original toggle arithmetic**. Curve data is trusted, as in
+the reference path; the helper does not validate it again on GPU. First-order
+autograd only, as in the reused TC kernel.
+
+FF/FB indices are still chosen by the original sampler, including its common
+corner restriction and without-replacement pair selection. Selected constants
+are cached per realization/device/dtype and cleared by the existing realization
+reset. Neither correction forward nor backward draws random values. The OFF
+path does not call the correction helper.
+
+Validation on 2026-10-23, RTX 4090:
+
+| Check | Result |
+|---|---|
+| Operator CUDA FP32 output, literal reference | Passed `atol=1e-5`, `rtol=1e-4` |
+| Operator input/ordinary-convolution weight gradients | Passed the same tolerances |
+| Five selected actual full-range bank curves: knots, interval midpoints, rails and outside rails | Output max absolute difference 0; input-gradient max absolute difference `1.1920929e-7`, max relative L2 `5.5598768e-8` |
+| RHS checkpoint replay, FF/FB assignments, global/local RNG unchanged | Passed operator-level tests; not complete-model replay |
+| CPU fallback; unsupported projection/dtype/gradient-bearing-constant fallbacks; TC/CNN shared callers | Passed regression tests |
+| Relevant regression suite | 55 passed, including CUDA tests |
+
+The current pinned `mode=ft_and_eval` command explicitly selects the following
+pretraining root. Its `CiFAIR_1REP` best checkpoint is available locally:
+
+```text
+saved_ckpt_runs/C100_C96_454_16L_allReLU_digital_biasfalse_iq12_toggle_odexinit/
+  <TIMMPCNet...C100_3K1S96C...16Layers4l5l4_2Pool...CiFAIR_<rep>REP>/
+  <same_model_name>_best_ckpt.pth
+```
+
+Provenance: pinned `PRETRAIN_SAVE_PATH` → `slurm_search_config.sh` →
+`run_kdcrd_then_ft.sbatch` → `finetune_one_combo_model` loads its **best**
+checkpoint (`FINAL_EVAL_ONLY` is not set). This is the job-2090063 pretrained
+source, not a QAT checkpoint. The operator diagnostic now resolves the source
+from this pinned command instead of hardcoding an obsolete run root.
+
+Existing complete-model checks (not rerun for the top-N fixes) are recorded in
+`results/toggle_input_correction_fusion/guard_removed_20261024/summary.md`.
+Batch 128, real SRRL teacher, identical assignments/RNG and suppressed optimizer
+updates were used for parity. No layers were checkpointed in this recipe.
+
+| Complete pinned-model deterministic-FP32 parity | OFF/OFF max absolute error | OFF/ON max absolute error |
+|---|---|---|
+| Final logits | 0 | 0 |
+| Post-input-quantization gradients | 0 | 2.42e-8 |
+| All model-parameter gradients | 0 | 5.96e-8 |
+| Distillation auxiliary gradients | 0 | 0 |
+| Prediction changes | 0/128 | 0/128 |
+
+Predeclared acceptance: deterministic FP32 logits `atol=1e-5`, `rtol=1e-4`;
+each full-model gradient category must have **both** maximum absolute error
+≤`1e-3` and relative L2 error ≤`1e-3` (0.1%). Retain the stricter elementwise
+`atol=1e-5`, `rtol=1e-4` result; require identical gradient keys/None status,
+finite values and explicitly matching hardware assignments. Prediction equality
+alone is insufficient. These deterministic-FP32 checks pass, including gradient
+keys/None status. Raw input gradients are zero because of the unchanged input
+quantizer; the table reports the nonzero post-quantization gradients separately.
+Production precision was also tested: both OFF/OFF and OFF/ON fail the fixed
+parity criteria despite matching assignments/RNG and predictions. This does not
+isolate a fusion regression; keep fusion opt-in/default OFF.
+
+| Production FT benchmark (batch 128) | Median step time | Peak allocated / reserved |
+|---|---|---|
+| OFF | 306.453 ms | 2.7856 / 4.3027 GiB |
+| ON | 356.199 ms | 1.9185 / 3.7148 GiB |
+
+These historical timings use sequential fresh processes, two warm-ups and five
+measured real optimizer steps; data loading is excluded and memory includes
+warm-up peaks. Fusion was slower in this short run but used less memory. There
+is no general speedup or production-precision equivalence claim. The separate
+full-model diagnostic `benchmark_toggle_input_correction.py` captures the actual
+pinned command and refuses an existing output directory.
+It derives conclusions from the saved validation records and exits nonzero if
+either precision check fails, after retaining the reports; this also applies to
+`--report-only`. The known production-precision failure is not silently accepted.
+
+Persistent operator/checkpoint report generator and reproduction:
+
+```bash
+OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 python diagnostic_scripts/check_toggle_input_correction.py \
+  --output results/toggle_input_correction_fusion/operator_report.json
+python -m pytest -q tests/test_toggle_input_correction.py \
+  tests/test_tc_shared_correction.py tests/test_tc_empirical_training_optimizations.py \
+  tests/test_tc_dense_training.py tests/test_feedforward_corner_coupling.py
+```
+
+The report generator refuses to overwrite an existing report; choose a new
+output filename when repeating it. Results and regression log:
+`results/toggle_input_correction_fusion/operator_report.json` and
+`results/toggle_input_correction_fusion/regression.log`. It does not launch a
+training job. All existing production jobs/checkpoints are untouched.
 
 The two subsequent optional stage-reuse experiments were removed. The retained
 fusion was reverified against the original unoptimized FF-fixed path on 1,280

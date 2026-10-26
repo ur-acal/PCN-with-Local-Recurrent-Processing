@@ -107,6 +107,29 @@ def restore_latest(trainer):
         'training-recovery checkpoint')
     # Recovery is continuation, not conversion into another physical stage.
     current = getattr(trainer, 'recovery_config', {})
+    saved_config = recovery['config']
+    if current.get('tc_nonidealities', False) or current.get('tc_feedforward', False):
+        if current.get('tc_curve_top_n', 0) != saved_config.get('tc_curve_top_n', 0):
+            raise ValueError('Full recovery requires unchanged tc_curve_top_n')
+        # Older TC training ignored the generic empirical selector and used Gaussian.
+        def distribution(config):
+            return (config.get('nonlinear_R_curve_sampling', 'multivariate_gaussian')
+                    if config.get('_tc_distribution_version') else 'multivariate_gaussian')
+        if distribution(current) != distribution(saved_config):
+            raise ValueError('Full recovery requires unchanged TC curve distribution')
+        def convolution(config):
+            method = config.get('tc_conv_method', 'shared' if config.get('tc_feedforward') else 'loop')
+            if (distribution(config) == 'empirical_with_replacement'
+                    and 'tc_curve_top_n' not in config and method == 'shared'):
+                return 'per_level'  # Legacy empirical shared meant the full-level loop.
+            # Loop/grouped differ only in the convolution backend, not sampling.
+            return 'shared' if method == 'shared' else 'per_level'
+        if convolution(current) != convolution(saved_config):
+            raise ValueError('Full recovery requires unchanged tc_conv_method semantics')
+        if distribution(current) == 'empirical_with_replacement':
+            for key in ('tc_empirical_curve_bank', '_tc_empirical_identity'):
+                if current.get(key) != saved_config.get(key):
+                    raise ValueError(f'Full recovery requires unchanged {key}')
     from resistance_guard import saved_floor
     if saved_floor(current) != saved_floor(recovery['config']):
         raise ValueError('Full recovery requires unchanged resistance_floor_ohms; use an ordinary checkpoint for a new stage')

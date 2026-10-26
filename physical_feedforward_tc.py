@@ -9,7 +9,6 @@ from ode_pc import ODEBlockPC
 from physical_feedforward import AveragedPhysicalBasicBlock, AveragedFeedForwardPhysicalWrapper
 from tc_nonidealities import (TCNoiseLifecycle, prepare_tc_resistance_curves,
                              tc_training_corner_factor)
-from tc_shared_correction import shared_correction
 
 
 class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
@@ -18,7 +17,8 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
     def __init__(self, *args, one_shot_conv=False, tc_method='dopri5',
                  tc_tol=1e-6, tc_step_size=None, tc_num_steps=None,
                  tc_noise_reference_R=50e3,
-                 tc_covariance_table=None, tc_curve_sampling='histogram',
+                 tc_covariance_table=None, tc_curve_sampling='histogram', tc_curve_top_n=0,
+                 tc_distribution='multivariate_gaussian', tc_empirical_curve_bank=None,
                  tc_solver_dense_output=True, tc_noise_replay_cache=True,
                  tc_conv_method='shared', tc_noise_stages='both',
                  reuse_accepted_step_training=False,
@@ -62,7 +62,13 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
         self.tc_noise_replay_cache = tc_noise_replay_cache
         self.tc_noise_reference_R = tc_noise_reference_R
         self.tc_covariance_table = tc_covariance_table
+        self.tc_distribution = tc_distribution
+        self.tc_empirical_curve_bank = tc_empirical_curve_bank
         self.tc_curve_sampling = tc_curve_sampling
+        from tc_curve_groups import validate_top_n
+        self.tc_curve_top_n = self._tc_curve_top_n = validate_top_n(tc_curve_top_n, self.q_hi)
+        if self.tc_curve_top_n and tc_curve_sampling != 'histogram':
+            raise ValueError('tc_curve_top_n > 0 requires histogram sampling.')
         if tc_conv_method not in ('shared', 'loop', 'grouped'):
             raise ValueError('tc_conv_method must be shared, loop or grouped.')
         if tc_noise_stages not in ('both', 'ff', 'fb'):
@@ -106,27 +112,32 @@ class TCPhysicalBasicBlock(AveragedPhysicalBasicBlock):
                     self._tc_resistance_package = package
                     self._tc_samples.clear()
                 key = self._module_key(module)
-                if self.training or key not in self._tc_samples:
+                if (self.training or key not in self._tc_samples or
+                        (self.tc_curve_top_n and getattr(self._tc_samples[key], 'training_draw', False))):
                     factor = tc_training_corner_factor(self, package.factor)
                     seed = getattr(self, '_tc_curve_seed', 4096)
                     generator = self._tc_generator(source, 'curve:'+key, seed)
-                    self._tc_samples[key] = (
-                        package.sample_shared(
-                            self._values_to_level_idx(module.weight.detach()),
-                            sampling=self.tc_curve_sampling, generator=generator, factor=factor)
-                        if self.tc_conv_method == 'shared' else
-                        package.sample_levels(generator=generator, factor=factor))
+                    if self.tc_conv_method == 'shared' and (self.tc_curve_top_n or package.empirical_bank is not None):
+                        from tc_curve_groups import sample_groups
+                        self._tc_samples[key] = sample_groups(package,
+                            self._values_to_level_idx(module.weight.detach()), self.tc_curve_top_n,
+                            generator=generator, factor=factor, sampling=self.tc_curve_sampling)
+                        if self._tc_samples[key] is not None:
+                            self._tc_samples[key].training_draw = self.training
+                    else:
+                        self._tc_samples[key] = (
+                            package.sample_shared(
+                                self._values_to_level_idx(module.weight.detach()),
+                                sampling=self.tc_curve_sampling, generator=generator, factor=factor)
+                            if self.tc_conv_method == 'shared' and package.empirical_bank is None else
+                            package.sample_levels(generator=generator, factor=factor))
                 curve = self._tc_samples[key]
                 if curve is not None:
-                    if self.tc_conv_method != 'shared':
-                        # Reuse the PCN's per-code arithmetic and QAT gradients.
-                        self._tc_curve_package = package
-                        current = ODEBlockPC._tc_dense_conv(self, module, source, curve)
-                    else:
-                        source = shared_correction(source, curve, package.v_grid,
-                                                   self.v_dd, package.floor_ohms)
-                        current = F.conv2d(source, module.weight, None, module.stride,
-                                           module.padding, module.dilation, module.groups)
+                    self._tc_curve_package = package
+                    # CNN bias is a separate current contribution below. Reuse
+                    # the common bias-free arithmetic, not PCN's bias rejection.
+                    from tc_curve_groups import group_convolution
+                    current = group_convolution(self, module, source, curve)
                 else:
                     current = F.conv2d(source, module.weight, None, module.stride,
                                        module.padding, module.dilation, module.groups)
@@ -217,8 +228,10 @@ class TCFeedForwardPhysicalWrapper(AveragedFeedForwardPhysicalWrapper):
     def configure_nonlinear_R_training(self, nonlinear_R_table, mode='exact_curve',
                                      curve_seed=None, **kwargs):
         ref = self.block.conv1.weight
-        package = prepare_tc_resistance_curves(
+        from tc_empirical import prepare_curves
+        package = prepare_curves(
             nonlinear_R_table, self.block.tc_covariance_table,
+            mode=self.block.tc_distribution, empirical_path=self.block.tc_empirical_curve_bank,
             levels=self.block._get_quant_magnitude_levels(ref), R=self.R,
             R_max=self.R_max, device=ref.device, dtype=ref.dtype,
             floor_ohms=(getattr(self.block, 'resistance_floor_ohms', None)

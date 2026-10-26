@@ -2,7 +2,8 @@
 
 No sampling, pulse generation, noise or state updates occur here.
 Unsupported cases return None for the original implementation.
-Enabled for supported toggle inference; GPU reductions are not bitwise stable.
+Enabled for supported toggle and TC empirical inference; GPU reductions are
+not bitwise stable. Sampling and resistance-code assignment stay with callers.
 """
 import torch
 from tc_edge_inference import triton
@@ -69,8 +70,10 @@ if triton is not None:
 
 
 def _supported(module, voltage):
+    package = getattr(module, '_tc_curve_package', None)
+    tc_empirical = package is not None and package.empirical_bank is not None
     if (triton is None or torch.is_grad_enabled() or module.training
-            or not getattr(module, '_toggle_pulse_edges', False)
+            or not (getattr(module, '_toggle_pulse_edges', False) or tc_empirical)
             or getattr(module, '_tc_measure_coupler_energy', False)
             or not voltage.is_cuda or voltage.dtype != torch.float32
             or voltage.ndim != 2):
@@ -117,7 +120,9 @@ def empirical_resistance(module, voltage, curve_index):
 
 def empirical_edge_forward(module, x, weight, nominal_R):
     """Fused per-physical-edge current; pulse values already include DTC/mismatch."""
-    if (not getattr(module, '_toggle_fused_edges', True)
+    flag = ('_tc_fused_edges' if getattr(module, '_tc_curve_package', None) is not None
+            else '_toggle_fused_edges')
+    if (not getattr(module, flag, True)
             or not _supported(module, x)
             or module.nonlinear_R_curve_sharing != 'per_coupler'
             or module.nonlinear_R_curve_sampling != 'empirical_with_replacement'
@@ -125,7 +130,7 @@ def empirical_edge_forward(module, x, weight, nominal_R):
         return None
     values = weight.values()
     if values.numel() != module.mat.values().numel():
-        raise ValueError('Toggle fused pulse weights must match physical connectivity.')
+        raise ValueError('Fused empirical weights must match physical connectivity.')
     assignment = module.nonlinear_R_curve_assignment
     if (values.dtype != x.dtype or not values.is_contiguous()
             or assignment is None or not assignment.is_contiguous()):

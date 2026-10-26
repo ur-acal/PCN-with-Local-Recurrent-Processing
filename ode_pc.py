@@ -413,10 +413,24 @@ class ODEBlockPC(nn.Module):
         package = getattr(self, "_tc_curve_package", None)
         if package is None:
             return None
-        if self.training or getattr(self, "_tc_curve_samples", None) is None:
+        if (self.training or getattr(self, "_tc_curve_samples", None) is None
+                or (getattr(self, '_tc_curve_top_n', 0) and any(
+                    getattr(draw, 'training_draw', False)
+                    for draw in self._tc_curve_samples.values()))):
             from tc_nonidealities import tc_training_corner_factor
             factor = tc_training_corner_factor(self, package.factor)
-            if getattr(self, '_tc_conv_method', 'loop') == 'shared':
+            if (getattr(self, '_tc_conv_method', 'loop') == 'shared'
+                    and (getattr(self, '_tc_curve_top_n', 0) or package.empirical_bank is not None)):
+                from tc_curve_groups import sample_groups
+                self._tc_curve_samples = {
+                    name: sample_groups(package,
+                        self._values_to_level_idx(getattr(self, name).weight.detach()),
+                        getattr(self, '_tc_curve_top_n', 0), generator=self._tc_curve_generator,
+                        factor=factor, sampling=self._tc_curve_sampling) for name in ('FFconv', 'FBconv')}
+                for draw in self._tc_curve_samples.values():
+                    if draw is not None:
+                        draw.training_draw = self.training
+            elif getattr(self, '_tc_conv_method', 'loop') == 'shared' and package.empirical_bank is None:
                 self._tc_curve_samples = {
                     name: package.sample_shared(
                         self._values_to_level_idx(
@@ -444,63 +458,8 @@ class ODEBlockPC(nn.Module):
             raise TypeError("TC dense nonlinear-R requires an unexpanded convolution.")
         if module.bias is not None or module.padding_mode != "zeros":
             raise ValueError("TC nonlinear-R expects bias-free, zero-padded convolutions.")
-        from tc_nonidealities import positive_resistance, TCSharedCurve
-        package = self._tc_curve_package
-        weight = module.weight
-        if isinstance(curves, TCSharedCurve):
-            from tc_shared_correction import shared_correction
-            corrected = shared_correction(source, curves, package.v_grid,
-                                          self.v_dd, package.floor_ohms)
-            # Keep the ordinary differentiable QAT weights, including their
-            # existing zero-code STE behavior. No detached amplitude/sign path.
-            if isinstance(module, nn.ConvTranspose2d):
-                return F.conv_transpose2d(corrected, weight, None, module.stride,
-                    module.padding, module.output_padding, module.groups, module.dilation)
-            return F.conv2d(corrected, weight, None, module.stride,
-                            module.padding, module.dilation, module.groups)
-        codes = self._values_to_level_idx(weight.detach())
-        grid = package.v_grid.to(source)
-        table = curves.to(source).T.contiguous()
-        slope = (table[1:] - table[:-1]) / (grid[1:] - grid[:-1])[:, None]
-        # Match toggle level-2's rail + characterized-grid clamp for R queries.
-        query = source.clamp(-self.v_dd, self.v_dd).clamp(grid[0], grid[-1])
-        if getattr(self, '_tc_conv_method', 'loop') == 'grouped':
-            # One input/kernel group per resistance code; retain the original
-            # convolution groups inside each code. QAT weights stay attached.
-            count = package.means.shape[0]
-            intervals = (torch.bucketize(query, grid)-1).clamp(0, grid.numel()-2)
-            resistance = (table[intervals] + slope[intervals]*(query-grid[intervals]).unsqueeze(-1))
-            resistance = positive_resistance(resistance, package.floor_ohms)
-            corrected = source.unsqueeze(-1)*package.programmed_resistances.to(source)/resistance
-            packed_input = corrected.permute(0,4,1,2,3).reshape(
-                source.shape[0],count*source.shape[1],*source.shape[2:])
-            mask = codes.unsqueeze(0) == torch.arange(1,count+1,device=weight.device).reshape(-1,1,1,1,1)
-            packed_weight = (weight.unsqueeze(0)*mask).reshape(
-                count*weight.shape[0],*weight.shape[1:])
-            if isinstance(module, nn.ConvTranspose2d):
-                result = F.conv_transpose2d(packed_input,packed_weight,None,module.stride,module.padding,
-                    module.output_padding,count*module.groups,module.dilation)
-            else:
-                result = F.conv2d(packed_input,packed_weight,None,module.stride,module.padding,
-                    module.dilation,count*module.groups)
-            return result.reshape(source.shape[0],count,module.out_channels,*result.shape[-2:]).sum(1)
-        output = None
-        for index in range(package.means.shape[0]):
-            resistance = interpolate_R_eff(
-                query, grid, package.programmed_resistances, table[:-1],
-                slope, index)
-            corrected = source * package.programmed_resistances[index].to(source) / positive_resistance(
-                resistance, package.floor_ohms)
-            masked_weight = weight * (codes == index + 1)
-            if isinstance(module, nn.ConvTranspose2d):
-                value = F.conv_transpose2d(
-                    corrected, masked_weight, None, module.stride, module.padding,
-                    module.output_padding, module.groups, module.dilation)
-            else:
-                value = F.conv2d(corrected, masked_weight, None, module.stride,
-                                 module.padding, module.dilation, module.groups)
-            output = value if output is None else output + value
-        return output
+        from tc_curve_groups import group_convolution
+        return group_convolution(self, module, source, curves)
 
     def _get_sparse_sigma_tensor(self, values):
         if not isinstance(self.noise_level, dict):
@@ -1072,6 +1031,7 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         self._training_pulse_mismatch = None
         self._nonlinear_R_training_generators = {}
         self._nonlinear_R_training_curve_indices = {}
+        self._toggle_nonlinear_R_prepared = {}
 
     def begin_training_pulse_mismatch(self, noise_level, mismatch_type):
         """Sample one post-quantization coupler-amplitude mismatch for this forward."""
@@ -1120,6 +1080,9 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
 
     def reset_nonlinear_R_variation(self):
         self._nonlinear_R_training_curve_indices.clear()
+        # CNN/TC subclasses reuse this method without calling this constructor.
+        if hasattr(self, '_toggle_nonlinear_R_prepared'):
+            self._toggle_nonlinear_R_prepared.clear()
 
     def reset_slow_current_noise(self):
         self._slow_summing_current_samples.clear()
@@ -1200,6 +1163,13 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
         module_key = self._nonlinear_R_training_module_key(module)
         curve_index = self._sample_nonlinear_R_training_curve(
             source, module_key)
+        if getattr(self, '_fuse_toggle_nonlinear_R_input', False):
+            from tc_shared_correction import toggle_empirical_correction
+            corrected = toggle_empirical_correction(
+                source, package, curve_index, self._toggle_nonlinear_R_prepared)
+            if corrected is not None:
+                return corrected
+        # Literal original arithmetic: OFF path and every unsupported fallback.
         length = int(package["lengths"][curve_index].item())
         grid = package["v_grid"][curve_index, :length].to(
             device=source.device, dtype=source.dtype)
@@ -3453,9 +3423,12 @@ class LSQWeight(SymQuantizeWeight):
 
 class ODEWrapperRC(nn.Module):
     def __init__(self, ode_block: ODEBlockPC, state_bound=50.0, R=1e5, C=49e-15,
-                 v_dd=1.0, patch=True, relu6_bound_mode="scaled", **kwargs):
+                 v_dd=1.0, patch=True, relu6_bound_mode="scaled",
+                 fuse_toggle_nonlinear_R_input=False, **kwargs):
         super().__init__()
         self.ode_block = ode_block
+        if isinstance(ode_block, ToggleAveragedPhysicalFFFB):
+            ode_block._fuse_toggle_nonlinear_R_input = bool(fuse_toggle_nonlinear_R_input)
         self.ode_block._physical_coordinate_wrapper = True
 
         self.R = R
@@ -3566,8 +3539,13 @@ class WrapQuantizeW(ODEWrapperRC):
         self.tc_solver_dense_output = kwargs.pop('tc_solver_dense_output', True)
         self.tc_noise_replay_cache = kwargs.pop('tc_noise_replay_cache', True)
         self.tc_empirical_curve_bank = kwargs.pop('tc_empirical_curve_bank', None)
+        self.tc_distribution = kwargs.get('nonlinear_R_curve_sampling', 'multivariate_gaussian')
         self.tc_conv_method = kwargs.pop('tc_conv_method', 'loop')
         self.tc_curve_sampling = kwargs.pop('tc_curve_sampling', 'histogram')
+        from tc_curve_groups import validate_top_n
+        self.tc_curve_top_n = validate_top_n(kwargs.pop('tc_curve_top_n', 0), 2**(w_bits-1)-1)
+        if self.tc_curve_top_n and self.tc_curve_sampling != 'histogram':
+            raise ValueError('tc_curve_top_n > 0 requires histogram sampling.')
         if self.tc_nonidealities and self.tc_conv_method not in ('loop','grouped','shared'):
             raise ValueError('tc_conv_method must be loop, grouped or shared.')
         if self.tc_nonidealities and self.tc_curve_sampling not in ('histogram','uniform'):
@@ -4019,6 +3997,7 @@ class WrapQuantizeW(ODEWrapperRC):
             self.ode_block._tc_noise_replay_cache = self.tc_noise_replay_cache
             self.ode_block._tc_conv_method = self.tc_conv_method
             self.ode_block._tc_curve_sampling = self.tc_curve_sampling
+            self.ode_block._tc_curve_top_n = self.tc_curve_top_n
             self.ode_block._tc_fb_gain = getattr(self, "k", 1.) / self.R
             self._configure_tc_noise()
             if not self.nonlinear_R:
@@ -4031,22 +4010,17 @@ class WrapQuantizeW(ODEWrapperRC):
                 raise ValueError("Dense TC training uses one curve per tensor/resistance code.")
             if self.nonlinear_R_train_mode == "mean":
                 raise ValueError("TC covariance sampling does not support mean-only training.")
-            if self.tc_covariance_table is None or self.nonlinear_R_table is None:
+            if self.tc_distribution == 'multivariate_gaussian' and (self.tc_covariance_table is None or self.nonlinear_R_table is None):
                 raise ValueError("TC nonlinear-R requires separate mean and covariance tables.")
-            from tc_nonidealities import prepare_tc_resistance_curves
+            from tc_empirical import prepare_curves
             block = self.ode_block
             ref = block.FFconv.weight
-            block._tc_curve_package = prepare_tc_resistance_curves(
+            block._tc_curve_package = prepare_curves(
                 self.nonlinear_R_table, self.tc_covariance_table,
+                mode=self.tc_distribution, empirical_path=self.tc_empirical_curve_bank,
                 levels=block._get_quant_magnitude_levels(ref), R=self.R,
                 R_max=self.R_max, dtype=ref.dtype, device=ref.device,
                 floor_ohms=(self.resistance_floor_ohms if self.resistance_floor_ohms is not None else 1e-6))
-            if self.tc_empirical_curve_bank:
-                if self.nonlinear_R_curve_sharing != 'per_coupler':
-                    raise ValueError('TC empirical banks require unrolled per-coupler evaluation.')
-                from tc_nonidealities import load_tc_empirical_bank
-                block._tc_curve_package = load_tc_empirical_bank(
-                    block._tc_curve_package, self.tc_empirical_curve_bank)
             block._tc_curve_generator = None
             if self.nonlinear_R_curve_seed is not None:
                 block._tc_curve_generator = torch.Generator(device=ref.device).manual_seed(

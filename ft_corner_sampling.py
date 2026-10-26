@@ -108,7 +108,7 @@ def configure_ft_corner_coupled_sampling(
     sampler = FTCornerCoupledSampler(model)
     participants = []
 
-    # TC uses Gaussian resistance covariance, not toggle's empirical selection.
+    # TC uses corner-specific covariance or code-conditioned empirical curves.
     # Share each bank across the backbone, pooling and any existing analog head.
     tc_banks = {}
 
@@ -127,6 +127,15 @@ def configure_ft_corner_coupled_sampling(
         if package is None:
             package = getattr(module, "_tc_curve_package", None)
         if package is not None:
+            if package.empirical_bank is not None:
+                if getattr(module, 'mat', None) is not None:
+                    raise ValueError('Corner-coupled FT requires dense TC convolutions.')
+                if not package.empirical_bank.get('corner_indices'):
+                    raise ValueError('Corner-coupled TC empirical FT requires an MC45 directory bank.')
+                module._tc_empirical_coupling = True
+                module._ft_corner_coupled_sampler = sampler
+                participants.append('nonlinear-R')
+                continue
             if getattr(module, "mat", None) is not None or package.empirical_bank is not None:
                 raise ValueError("TC corner-coupled FT requires dense Gaussian curves.")
             register_tc(module, package.covariance_path, package.v_grid, package.factor)
@@ -163,6 +172,11 @@ def configure_ft_corner_coupled_sampling(
                 raise ValueError("FT corner coupling requires TC Gaussian measured-pooling banks.")
             register_tc(pool, path, pool.gaussian_v_grid, pool.gaussian_factor)
             participants.append("measured-pooling")
+            continue
+        if getattr(pool, '_tc_empirical_mapping', None) is not None:
+            pool._ft_corner_curve_indices = pool._tc_empirical_mapping
+            pool._ft_corner_coupled_sampler = sampler
+            participants.append('measured-pooling')
             continue
         if pool.training_curve_mode != "exact_curve":
             raise ValueError(
