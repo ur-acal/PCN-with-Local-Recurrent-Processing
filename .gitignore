@@ -43,6 +43,7 @@ hw_validation_data/
 
 # Original dense coupler exports; retain the independent 150-point bank.
 /hardware_data/mc_45_corners/coupler_full_range_0p6/
+/hardware_data/mc_45_corners/coupler_full_range_0p6_1024/
 /hardware_data/mc_45_corners/1022_RELU_Voltage_raw/
 
 # Downloaded model initialization weights and local backup/download artifacts

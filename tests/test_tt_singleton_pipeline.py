@@ -83,6 +83,46 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(len(data["candidates"]), 3)
             self.assertEqual(data["selected_one_over_q"], 4)
 
+    def test_accuracy_drop_warns_and_completes_selection(self):
+        from baseline.evaluate_physical_feedforward_cifar import parse_args
+        from diagnostic_scripts.select_feedforward_one_over_q import select
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "source.pth"
+            checkpoint.write_bytes(b"source identity")
+            output = Path(directory) / "result"
+            with patch("sys.argv", ["select", "--model_name", "resnet110_cifar",
+                                    "--checkpoint", str(checkpoint)]):
+                args = parse_args()
+            with patch("baseline.evaluate_physical_feedforward_cifar.evaluate_once",
+                       side_effect=[95.3125, 88.203125, 10.0, 12.0]), \
+                 patch("builtins.print") as printed:
+                winner = select(args, [4, 8], output)
+            self.assertEqual(winner, 8)
+            data = json.loads((output / "selection.json").read_text())
+            self.assertFalse(data["sanity"]["passed"])
+            self.assertEqual(data["sanity"]["absolute_difference_pp"], 7.109375)
+            self.assertEqual(len(data["candidates"]), 2)
+            self.assertEqual((output / "selected_one_over_q.txt").read_text(), "8\n")
+            self.assertTrue(any("SELECTION_SANITY_WARNING" in str(call)
+                                for call in printed.call_args_list))
+
+    def test_nonfinite_accuracy_still_blocks_selection(self):
+        from baseline.evaluate_physical_feedforward_cifar import parse_args
+        from diagnostic_scripts.select_feedforward_one_over_q import select
+        for values in ([float('nan')], [95., 88., float('inf')]):
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:
+                checkpoint = Path(directory) / "source.pth"
+                checkpoint.touch()
+                output = Path(directory) / "result"
+                with patch("sys.argv", ["select", "--model_name", "resnet110_cifar",
+                                        "--checkpoint", str(checkpoint)]):
+                    args = parse_args()
+                with patch("baseline.evaluate_physical_feedforward_cifar.evaluate_once",
+                           side_effect=values):
+                    with self.assertRaisesRegex(RuntimeError, "Non-finite selection accuracy"):
+                        select(args, [4], output)
+                self.assertFalse((output / "selected_one_over_q.txt").exists())
+
     def test_failed_candidate_cannot_leave_success_selection(self):
         from baseline.evaluate_physical_feedforward_cifar import parse_args
         from diagnostic_scripts.select_feedforward_one_over_q import select
