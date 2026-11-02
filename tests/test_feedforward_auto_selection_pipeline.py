@@ -170,6 +170,72 @@ def test_paired_bn_evaluation_changes_only_calibration_and_destination():
         assert raw['expanded_weight_dir'] == recal['expanded_weight_dir']
 
 
+def test_explicit_singleton_ft_selects_on_singleton_and_evaluates_full_bank():
+    with tempfile.TemporaryDirectory() as directory:
+        singleton = ROOT / 'hardware_data/mc_45_corners/coupler_monte_v2_tt_25_1_mc34_singleton.csv'
+        result, rows = run_pipeline(directory,
+            NONLINEAR_R_TABLE=str(singleton), FT_COUPLER_BANK_MODE='single',
+            FT_CORNER_COUPLED_SAMPLING='false',
+            MC_COUPLER_NONLINEAR_VARIATION_SOURCE='coupler_monte_v2',
+            N_TRIALS='10', CORNER_IDS='')
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [r['stage'] for r in rows] == ['pretrain', 'selection', 'ft', 'eval']
+        selected, trained = rows[1]['args'], rows[2]['args']
+        assert Path(selected['nonlinear_R_table']).resolve() == singleton.resolve()
+        assert Path(trained['nonlinear_R_table']).resolve() == singleton.resolve()
+        evaluated = rows[-1]['args']
+        assert Path(evaluated['mc_coupler_nonlinear_variation_source']).name == 'coupler_monte_v2'
+        assert evaluated['n_trials'] == 10
+        assert evaluated['corner_ids'] is None
+
+
+def test_singleton_mode_rejects_corner_coupling_before_pretraining():
+    with tempfile.TemporaryDirectory() as directory:
+        result, rows = run_pipeline(directory,
+            NONLINEAR_R_TABLE=str(ROOT / 'hardware_data/mc_45_corners/coupler_monte_v2_tt_25_1_mc34_singleton.csv'),
+            FT_COUPLER_BANK_MODE='single', FT_CORNER_COUPLED_SAMPLING='true',
+            MC_COUPLER_NONLINEAR_VARIATION_SOURCE='coupler_monte_v2')
+        assert result.returncode != 0 and not rows
+        assert 'cannot use full-MC45 corner coupling' in result.stderr
+
+
+@pytest.mark.parametrize('hardware', ['cur_v2', 'volt_v2', 'volt_cas'])
+@pytest.mark.parametrize('bank_mode', ['single', 'full'])
+def test_clean_matrix_wrn_handoffs(tmp_path, hardware, bank_mode):
+    cascode = hardware == 'volt_cas'
+    family = 'coupler_low_volt_cascode' if cascode else 'coupler_monte_v2'
+    singleton = ('coupler_low_volt_cascode_tt_representative_singleton.csv' if cascode else
+                 'coupler_monte_v2_tt_25_1_mc34_singleton.csv')
+    source = ROOT/'hardware_data/mc_45_corners'/(singleton if bank_mode == 'single' else family)
+    if not source.exists():
+        pytest.skip(f'Characterized hardware data not installed: {source}')
+    voltage = hardware != 'cur_v2'
+    coupled = voltage and bank_mode == 'full'
+    result, rows = run_pipeline(tmp_path,
+        MODEL_NAME=('wrn_28_2_cifar_avgpool_shortcut' if cascode else
+                    'wrn_flexible_cifar_avgpool_shortcut'),
+        TASK='cifar10' if hardware == 'cur_v2' else 'cifar100',
+        FINAL_HEAD_TYPE='analog' if bank_mode == 'single' else 'digital',
+        NONLINEAR_R_TABLE=str(source), FT_COUPLER_BANK_MODE=bank_mode,
+        MC_COUPLER_NONLINEAR_VARIATION_SOURCE=family,
+        MC_RELU_MONTE_CARLO_SOURCE='1022_RELU_Voltage' if voltage else 'relu_monteCarlo',
+        ACTIVATION_CURVE_PATH=str(ROOT/'hardware_data'/('mc_45_corners/1022_RELU_Voltage' if voltage else 'relu_current_0p2uA_finer.csv')),
+        ACTIVATION_CORNER='TT_25_1_MC18' if voltage else 'TT',
+        ACTIVATION_CORNER_MODE='random_per_forward' if coupled else 'fixed',
+        FT_CORNER_COUPLED_SAMPLING='true' if coupled else 'false',
+        V_DD='0.6' if cascode else '0.1', R_VAL='67e3' if cascode else '50e3',
+        TOGGLE_Y_TIME='50e-9', N_TRIALS='10', CORNER_IDS='')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [r['stage'] for r in rows] == ['pretrain', 'selection', 'ft', 'eval']
+    pre, selected, ft, evaluated = [r['args'] for r in rows]
+    assert pre['activation_corner_mode'] == 'fixed'
+    assert selected['ft_corner_coupled_sampling'] == ft['ft_corner_coupled_sampling'] == coupled
+    assert selected['activation_curve_path'] == ft['activation_curve_path'] == pre['activation_curve_path']
+    assert ft['one_over_q'] == evaluated['one_over_q'] == 8  # Fixture selector handoff.
+    assert evaluated['toggle_y_time'] == pytest.approx(50e-9)
+    assert evaluated['n_trials'] == 10 and evaluated['corner_ids'] is None
+
+
 def test_first_evaluation_failure_blocks_paired_calibration():
     with tempfile.TemporaryDirectory() as directory:
         result, rows = run_pipeline(directory, RUN_BN_RECAL_EVAL='true', FAIL_STAGE='eval')
@@ -202,6 +268,7 @@ def test_actual_selection_loads_unitless_checkpoint_and_draws_coupled_hardware(t
         '--fuse_measured_activation', 'false']
     with patch.dict(os.environ, SELECTION_SAMPLES='4', SELECTION_BATCHES='2', SELECTION_BATCH_SIZE='2'):
         args = args_from_ft_command(argv)
+    args.selection_training_hardware = False  # select() enables its new default itself.
     torch.manual_seed(7)
     cfg = get_baseline_config(args.model_name, case='custom_noresize')
     cfg.update(RGGB_DEFAULTS, wrn_depth=10, wrn_first_stage_channels=16, linear_bias=False)
@@ -221,17 +288,34 @@ def test_actual_selection_loads_unitless_checkpoint_and_draws_coupled_hardware(t
                 'center_student_input': False, 'measured_activation_scope': 'all'}, source)
     loader = DataLoader(TensorDataset(inputs, torch.zeros(4, dtype=torch.long)), batch_size=2)
     checks = []
+    initial_bn_counts = []
+    sanity_modes = []
+    source_bytes = source.read_bytes()
     original = evaluator.configure_selection_hardware_sampling
+    original_evaluate = evaluator.evaluate
+    def check_evaluate(model, loader, device, max_eval_batches=0):
+        if not model.training:
+            assert all(not m.training for m in model.modules())
+            sanity_modes.append(model.training)
+        return original_evaluate(model, loader, device, max_eval_batches)
     def check_sampling(model, args):
+        assert args.selection_training_hardware
         original(model, args)
         norms = [m for m in model.modules() if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)]
-        before = [m.running_mean.clone() for m in norms]
-        assert all(not m.training for m in norms)
-        assert not model.training  # Functional final dropout also remains disabled.
-        assert all(not m.training for m in model.modules() if isinstance(m, torch.nn.Dropout))
+        initial_bn_counts.append([int(m.num_batches_tracked) for m in norms])
+        assert all(m.training for m in norms)
+        assert model.training  # Enables functional dropout as in FT.
+        assert all(m.training for m in model.modules() if isinstance(m, torch.nn.Dropout))
+        weights = {name: value.detach().clone() for name, value in model.named_parameters()}
+        batch_count = 0
         def after(module, inputs, output):
-            for norm, mean in zip(norms, before):
-                torch.testing.assert_close(norm.running_mean, mean)
+            nonlocal batch_count
+            batch_count += 1
+            assert not torch.is_grad_enabled()
+            for norm, initial in zip(norms, initial_bn_counts[-1]):
+                assert int(norm.num_batches_tracked) == initial + batch_count
+            for name, value in module.named_parameters():
+                torch.testing.assert_close(value, weights[name], rtol=0, atol=0)
             assert module._last_ft_corner_coupled_corner is not None
             corner = module._last_ft_corner_coupled_corner
             from physical_feedforward import iter_physical_blocks
@@ -252,9 +336,13 @@ def test_actual_selection_loads_unitless_checkpoint_and_draws_coupled_hardware(t
         model.register_forward_hook(after)
     with patch.object(evaluator, 'get_bn_calibration_data', return_value=loader), \
          patch.object(evaluator, 'configure_selection_hardware_sampling', side_effect=check_sampling), \
+         patch.object(evaluator, 'evaluate', side_effect=check_evaluate), \
          patch('torch.cuda.is_available', return_value=False):
         selected = select(args, [6, 8], tmp_path/'selection', sanity_tolerance=100.)
     assert selected in (6, 8) and len(checks) == 4
-    assert source.is_file()
+    assert sanity_modes == [False, False]
+    assert initial_bn_counts[0] == initial_bn_counts[1]  # Fresh BN state per q.
+    assert source.read_bytes() == source_bytes
+    assert not args.selection_training_hardware  # Caller configuration is unchanged.
 
 

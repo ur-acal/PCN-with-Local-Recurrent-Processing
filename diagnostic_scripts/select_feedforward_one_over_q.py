@@ -2,7 +2,8 @@
 """Advisory training-subset sanity check and family-specific q selection.
 
 Uses the production physical evaluator with unexpanded Level-2 operations and
-frozen BN. Every candidate reloads the original unitless pretrained checkpoint.
+training-mode BN/dropout. Every candidate reloads the original unitless
+pretrained checkpoint.
 No test images, BN recalibration or optimizer updates are used for selection.
 """
 import argparse
@@ -66,6 +67,8 @@ def args_from_ft_command(argv):
 def select(args, candidates, output, *, sanity_tolerance=5.0):
     if not candidates or any(not math.isfinite(q) or q <= 0 for q in candidates):
         raise ValueError("Supply positive finite q candidates")
+    args = copy.copy(args)
+    args.selection_training_hardware = True
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     (output / "selected_one_over_q.txt").unlink(missing_ok=True)
@@ -79,6 +82,10 @@ def select(args, candidates, output, *, sanity_tolerance=5.0):
         "source": str(Path(args.checkpoint).resolve()),
         "source_sha256": hashlib.sha256(Path(args.checkpoint).read_bytes()).hexdigest(),
         "configuration": vars(copy.copy(args)),
+        "candidate_forward_mode": (
+            "train: batch BN, dropout, hardware resampled per batch; "
+            "no optimizer updates"),
+        "sanity_forward_mode": "eval: frozen BN, dropout disabled",
         "tie_break": "highest training-subset top1, then smallest one_over_q",
         "candidates": [],
     }
@@ -167,7 +174,7 @@ def main():
         sys.argv = [sys.argv[0], *remaining]
         args = evaluator.parse_args()
     if args.evaluation_split != "train" or args.use_expanded_weights or args.bn_recalibrate:
-        raise ValueError("Selection requires training data, unexpanded weights, and frozen BN")
+        raise ValueError("Selection requires training data, unexpanded weights, and no BN recalibration")
     if args.physical_level != 2 or args.checkpoint_kind != "unitless_physical":
         raise ValueError("Selection requires Level 2 and a unitless physical pretrained checkpoint")
     select(args, own.candidates, own.output, sanity_tolerance=own.sanity_tolerance_pp)

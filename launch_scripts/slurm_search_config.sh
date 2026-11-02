@@ -280,7 +280,7 @@ esac
 ##############################################################################################
 
 TRAIN_MODE="kd_crd_ft" # "kd_crd_ft", "train_ft", "mix_all"
-REPO_ROOT="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing"
+REPO_ROOT="${REPO_ROOT:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing}"
 if [[ "${TRAIN_MODE}" == "mix_all" ]]; then
   SBATCH_SCRIPT="${REPO_ROOT}/launch_scripts/run_all_mixed.sbatch"
 elif [[ "${TRAIN_MODE}" == "kd_crd_ft" ]]; then

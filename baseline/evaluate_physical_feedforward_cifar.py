@@ -229,51 +229,33 @@ def evaluate(model, loader, device, max_eval_batches=0):
 
 
 def configure_selection_hardware_sampling(model, args):
-    """Draw FT hardware per batch without training BN or enabling dropout.
+    """Score q candidates with FT-mode BN, dropout and hardware sampling.
 
     This is selection-only. Ordinary inference keeps its static trial defects.
-    Setting only physical blocks/pools to training mode activates their normal
-    hardware resampling, not their child BN/dropout modules.
+    The no-grad evaluator makes no optimizer updates; candidate-local BN buffers
+    are discarded when the next candidate reloads the source checkpoint.
     """
     from ft_corner_sampling import configure_ft_corner_coupled_sampling
     from measured_activation import configure_measured_activation_corner_mode
-    from measured_pooling import MeasuredAvgPool2d
-    from physical_feedforward import iter_physical_blocks
+    model.train()
     if args.ft_corner_coupled_sampling:
         configure_ft_corner_coupled_sampling(
             model, activation_corner_mode=args.activation_corner_mode,
             include_measured_activation=(args.enable_measured_activation and
                 args.activation_corner_mode == 'random_per_forward'))
-        # The normal coordinator is training-only; selection keeps model.eval().
-        model._ft_corner_coupled_sampling_hook.remove()
-        sampler = model._ft_corner_coupled_sampler
-        def sample_corner(module, inputs):
-            sampler.sample()
-        model._ft_corner_coupled_sampling_hook = model.register_forward_pre_hook(
-            sample_corner, prepend=True)
     if args.enable_measured_activation:
         configure_measured_activation_corner_mode(
             model, mode=args.activation_corner_mode,
             sharing=args.activation_random_curve_sharing or args.activation_curve_sharing)
-
-    def enable_hardware_draws(module, inputs):
-        for block in iter_physical_blocks(module):
-            block.training = True
-        for pool in module.modules():
-            if isinstance(pool, MeasuredAvgPool2d):
-                pool.training = True
-        # The analog head's private circuit is created lazily, outside modules().
-        circuit = getattr(getattr(module, 'fc', None), '_circuit', None)
-        if circuit is not None:
-            circuit.training = True
-    model.register_forward_pre_hook(enable_hardware_draws)
 
 
 def evaluate_once(args):
     if args.selection_training_hardware and (
             args.evaluation_split != 'train' or args.physical_level != 2 or
             args.use_expanded_weights or args.bn_recalibrate or args.tc_feedforward):
-        raise ValueError('Training-hardware sampling requires unexpanded toggle L2 training-subset selection with frozen BN')
+        raise ValueError(
+            'Training-mode selection requires unexpanded toggle L2 '
+            'training-subset selection without BN recalibration')
     if args.expanded_gaussian_curve_cpu_offload:
         if args.tc_feedforward and args.nonlinear_R_curve_sampling == 'empirical_with_replacement':
             raise ValueError('Gaussian curve CPU offload does not support empirical TC banks.')

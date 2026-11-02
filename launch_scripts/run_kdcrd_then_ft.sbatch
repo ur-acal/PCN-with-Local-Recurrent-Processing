@@ -23,8 +23,10 @@ if [[ "$mode" != default && "${SWITCH_INF:-false}" != false ]]; then
 fi
 
 # ---- Conda activation (non-interactive safe) ----
-source activate base
-conda activate scanbase
+if [[ "${IS_SLURM:-1}" == 1 ]]; then
+  source activate base
+  conda activate scanbase
+fi
 
 ##########################################################################
 # Inputs from launcher (packed COMB_LIST)
@@ -271,7 +273,7 @@ if [[ -z "${COMB_LIST}" ]]; then
   exit 2
 fi
 
-LOGDIR="/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${SAN_BLOCKS}"
+LOGDIR="${LOGDIR:-/scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing/logs/${EXP}_${SAN_BLOCKS}}"
 mkdir -p "$LOGDIR"
 
 if [[ "${CIRC_CONF}" == "NoCirc" ]]; then
@@ -295,6 +297,7 @@ else
   FINAL_EVAL_ONLY="${FINAL_EVAL_ONLY:-false}"
 fi
 FT_LEARNING_RATE="${FT_LEARNING_RATE:-0.005}"
+PRETRAIN_LEARNING_RATE="${PRETRAIN_LEARNING_RATE:-0.01}"
 FT_NUM_EPOCHS="${FT_NUM_EPOCHS:-140}"
 TIMM_RE_PROB="${TIMM_RE_PROB:-0.0}"
 REVIEWKD_WEIGHT="${REVIEWKD_WEIGHT:-1.0}"
@@ -504,7 +507,7 @@ run_one_combo () {
     --health_check_batches "${HEALTH_CHECK_BATCHES:-4}" \
     --health_check_seed "${HEALTH_CHECK_SEED:-4096}" \
     --warmup_epoch  "${WARMUP_PRETRAIN}" \
-    --learning_rate 0.01 \
+    --learning_rate "${PRETRAIN_LEARNING_RATE}" \
     --offset_eps    0.0 \
     --inp_channels  "${INP[@]}" \
     --out_channels  "${OUT[@]}" \
@@ -610,7 +613,15 @@ eval_one_combo_model() {
   local test_bs=128
 
   if [[ "${TOGGLE_MODE}" != "none" ]]; then
-    echo "[EVAL ${tag}] comb=${comb_tag} ${name}: FS_V0_T0 adverse + FS_V2_T1 average, 5 trials each, per-spin ReLU, coupler=${NONLINEAR_R_TABLE}, R=${R_VAL} → $dir/job.log"
+    local eval_corners="${POST_FT_EVAL_CORNER_IDS:-FS_V0_T0 FS_V2_T1}"
+    local -a eval_corner_args=()
+    if [[ "${eval_corners,,}" != all ]]; then
+      local -a eval_corner_list
+      read -r -a eval_corner_list <<< "${eval_corners}"
+      eval_corner_args=(--corner_ids "${eval_corner_list[@]}")
+    fi
+    local eval_couplers="${MC_COUPLER_NONLINEAR_VARIATION_SOURCE:-${NONLINEAR_R_TABLE}}"
+    echo "[EVAL ${tag}] comb=${comb_tag} ${name}: corners=${eval_corners}, ${POST_FT_EVAL_N_TRIALS:-5} trials each, per-spin ReLU, coupler=${eval_couplers}, R=${R_VAL} → $dir/job.log"
     source ./launch_scripts/rhs_current_args.sh
     OMP_NUM_THREADS=${THREADS_PER_PROC} \
     python -u scripts/run_toggle_nonideality_ablation.py \
@@ -621,7 +632,7 @@ eval_one_combo_model() {
       --mc_spin_variation_source PVT_Monte_Carlo_Results_SPIN.csv \
       --mc_dtc_pulse_width_variation_source PVT_45corner_DTC_pulse_width.csv \
       --mc_relu_monte_carlo_source "${MC_RELU_MONTE_CARLO_SOURCE}" \
-      --mc_coupler_nonlinear_variation_source "${NONLINEAR_R_TABLE}" \
+      --mc_coupler_nonlinear_variation_source "${eval_couplers}" \
       --mc_coupler_nonlinear_variation_quantity "${NONLINEAR_R_MC_QUANTITY}" \
       --mc_coupler_nominal_R "${R_VAL}" \
       --full_45_corner_enable_spin_variation true \
@@ -636,8 +647,8 @@ eval_one_combo_model() {
       --full_45_corner_enable_slow_coupler_noise "${ENABLE_SLOW_COUPLER_NOISE}" \
       --full_45_corner_slow_coupler_noise "${SLOW_COUPLER_NOISE}" \
       --full_45_corner_enable_dtc_nonideality true \
-      --corner_ids FS_V0_T0 FS_V2_T1 \
-      --n_trials 5 \
+      "${eval_corner_args[@]}" \
+      --n_trials "${POST_FT_EVAL_N_TRIALS:-5}" \
       --base_seed 20260723 \
       --model_name "${name}" \
       --model_dir "${MODEL_DIR}" \
@@ -677,7 +688,7 @@ eval_one_combo_model() {
       --activation_fit_constraint auto \
       --activation_normalize_positive_endpoint false \
       --compile_measured_activation false \
-      --expanded_w_dir expanded_weights \
+      --expanded_w_dir "${EXPANDED_WEIGHT_DIR:-expanded_weights}" \
       2>&1 | tee -a "$dir/job.log"
     return
   fi

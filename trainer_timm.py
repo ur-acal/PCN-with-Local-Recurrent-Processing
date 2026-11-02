@@ -1544,7 +1544,9 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
         new_group = {
             "params": params,
-            "lr": base_group["lr"],
+            # The first scheduler may already have applied warmup. The
+            # rebuilt scheduler must use the intended base LR for auxiliaries.
+            "lr": base_group.get("initial_lr", base_group["lr"]),
             "weight_decay": base_group.get("weight_decay", 0.0),
         }
 

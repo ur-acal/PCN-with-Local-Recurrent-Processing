@@ -29,9 +29,22 @@ if [[ "$mode" == pretrain_ft_and_eval || "$SELECT_ONE_OVER_Q" == true ]]; then
   _ft_bank="${_ft_bank%/}"; _eval_bank="${_eval_bank%/}"
   [[ "${_ft_bank}" == */* ]] || _ft_bank="hardware_data/mc_45_corners/${_ft_bank}"
   [[ "${_eval_bank}" == */* ]] || _eval_bank="hardware_data/mc_45_corners/${_eval_bank}"
-  [[ "$(realpath -m "${_ft_bank}")" == "$(realpath -m "${_eval_bank}")" ]] || {
-    echo 'Conflicting FT/evaluation coupler families' >&2; exit 2;
-  }
+  if [[ "${FT_COUPLER_BANK_MODE:-full}" == single ]]; then
+    # Explicit singleton studies train/select q on one realization but evaluate
+    # the corresponding full family. Never silently relax the legacy check.
+    [[ -f "${_ft_bank}" && -d "${_eval_bank}" ]] || {
+      echo 'Single-curve FT requires a singleton CSV and a full evaluation directory' >&2; exit 2;
+    }
+    [[ "${FT_CORNER_COUPLED_SAMPLING:-false}" == false ]] || {
+      echo 'Single-curve FT cannot use full-MC45 corner coupling' >&2; exit 2;
+    }
+  elif [[ "${FT_COUPLER_BANK_MODE:-full}" == full ]]; then
+    [[ "$(realpath -m "${_ft_bank}")" == "$(realpath -m "${_eval_bank}")" ]] || {
+      echo 'Conflicting FT/evaluation coupler families' >&2; exit 2;
+    }
+  else
+    echo 'FT_COUPLER_BANK_MODE must be single or full' >&2; exit 2
+  fi
 fi
 
 MODEL_NAME="${MODEL_NAME:?MODEL_NAME is required}"
