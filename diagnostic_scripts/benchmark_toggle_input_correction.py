@@ -982,6 +982,159 @@ def s2_pretrained_diagnostic():
     print('COMPLETE', out/'summary.md', flush=True)
 
 
+def s2_pulse_ft_cache_diagnostic():
+    """Small-batch production pulse FT; compare worktrees without runtime flags.
+
+    Reuse the actual FT argv, checkpoint, trainer, teacher and SRRL loss. Only
+    the batch size, pulse selection, full checkpointing and diagnostic outputs
+    are overridden. No trained checkpoint is saved or live process modified.
+    """
+    p = argparse.ArgumentParser()
+    p.add_argument('--s2-pulse-ft-cache', action='store_true')
+    p.add_argument('--source-root', required=True)
+    p.add_argument('--ft-args', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--batch-cache', required=True)
+    p.add_argument('--batch-size', type=int, default=4)
+    p.add_argument('--memory-fraction', type=float, default=.2)
+    p.add_argument('--phase', choices=('parity', 'parity-production', 'benchmark'), default='benchmark')
+    p.add_argument('--warmups', type=int, default=2)
+    p.add_argument('--steps', type=int, default=5)
+    o = p.parse_args()
+    o.ft_args = str(Path(o.ft_args).resolve())
+    o.output = str(Path(o.output).resolve())
+    o.batch_cache = str(Path(o.batch_cache).resolve())
+    global ROOT
+    ROOT = Path(o.source_root).resolve()
+    sys.path.insert(0, str(ROOT))
+    os.chdir(ROOT)
+
+    import numpy as np
+    import torch
+    import train_ode_cifar as training
+    from trainer_timm import TrainerCiFarTimmStyle
+    assert Path(training.__file__).resolve().parent == ROOT
+    out = Path(o.output).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    argv = json.loads(Path(o.ft_args).read_text())
+
+    def option(key, value):
+        if key in argv:
+            argv[argv.index(key) + 1] = str(value)
+        else:
+            argv.extend((key, str(value)))
+
+    for key, value in {
+        '--batch_size': o.batch_size, '--num_workers': 0,
+        '--ode_block': 'S2DTCPulseFFFB', '--s2_dtc_ordering_pairs': 0,
+        '--s2_dtc_substeps': 1, '--method': 'rk2',
+        '--checkpoint_ode_rhs_training': 'true', '--checkpoint_ode_rhs_portion': 1.0,
+        '--fuse_toggle_nonlinear_R_input': 'false',
+        '--output_save_path': out / 'initialization', '--mem_frac': o.memory_fraction,
+    }.items():
+        option(key, value)
+    sys.argv = ['train_ode_cifar.py', *argv]
+    write(out / 'command.json', dict(source_root=str(ROOT), argv=argv, options=vars(o)))
+    training.evaluate_teacher = lambda *args, **kw: None
+
+    def run(trainer):
+        model = trainer.model
+        blocks = list(model.PcConvs)
+        assert len(blocks) == 16
+        assert all(type(b).__name__ == 'S2DTCPulseFFFB' and b.checkpoint_ode_rhs_training
+                   and b.method == 'rk2' and b.s2_dtc_substeps == 1
+                   and b.s2_dtc_ordering_pairs == 0 for b in blocks)
+        cache = Path(o.batch_cache).resolve()
+        if cache.exists():
+            batch = torch.load(cache, map_location='cpu', weights_only=False)
+        else:
+            batch = next(iter(trainer.train_dataloader))
+            batch = tuple(v.detach().cpu() if torch.is_tensor(v) else v for v in batch)
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(batch, cache)
+        assert batch[0].shape == (o.batch_size, 4, 16, 16)
+        trainer.train_dataloader = [batch]
+        metadata = dict(source_root=str(ROOT), gpu=torch.cuda.get_device_name(),
+            batch_size=o.batch_size, batch_hash=digest(batch),
+            initial_model_hash=digest(model.state_dict()),
+            initial_auxiliary_hash=digest(trainer._feature_kd_loss.state_dict()),
+            checkpointed_layers=16, method='rk2', substeps=1, ordering_pairs=0,
+            model_layers=16, fuse_nonlinear_R_input=False,
+            cudnn_benchmark=torch.backends.cudnn.benchmark,
+            cudnn_deterministic=torch.backends.cudnn.deterministic,
+            cudnn_allow_tf32=torch.backends.cudnn.allow_tf32,
+            matmul_allow_tf32=torch.backends.cuda.matmul.allow_tf32,
+            memory_fraction=o.memory_fraction,
+            timing_scope='Actual teacher, student, SRRL loss, backward and optimizer; cached batch, no loading/saving.')
+        random.seed(31337)
+        np.random.seed(31337)
+        torch.manual_seed(31337)
+        torch.cuda.manual_seed_all(31337)
+        if o.phase != 'benchmark':
+            if o.phase == 'parity':
+                torch.backends.cudnn.benchmark = False
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.allow_tf32 = False
+                torch.backends.cuda.matmul.allow_tf32 = False
+                torch.use_deterministic_algorithms(True)
+            metadata.update(precision='strict' if o.phase == 'parity' else 'production',
+                            cudnn_benchmark=torch.backends.cudnn.benchmark,
+                            cudnn_deterministic=torch.backends.cudnn.deterministic,
+                            cudnn_allow_tf32=torch.backends.cudnn.allow_tf32,
+                            matmul_allow_tf32=torch.backends.cuda.matmul.allow_tf32,
+                            optimizer_updates=False)
+            captured = {}
+            original = trainer._student_forward_feature_kd
+
+            def forward(inputs):
+                inputs = inputs.detach().requires_grad_(True)
+                inputs.register_hook(lambda g: captured.update(input_gradient=g.detach().cpu().clone()))
+                logits, features = original(inputs)
+                captured['logits'] = logits.detach().cpu().clone()
+                captured['features'] = [feature.detach().cpu().clone() for feature in features]
+                return logits, features
+
+            trainer._student_forward_feature_kd = forward
+            trainer.optimizer.step = lambda *args, **kw: None
+            loss = trainer.train_one_epoch(0)
+            captured['model_gradients'] = {n: None if v.grad is None else v.grad.detach().cpu().clone()
+                                           for n, v in model.named_parameters()}
+            captured['auxiliary_gradients'] = {n: None if v.grad is None else v.grad.detach().cpu().clone()
+                                               for n, v in trainer._feature_kd_loss.named_parameters()}
+            metadata.update(loss=float(loss), assignments_hash=digest(hardware(model)),
+                end_rng_hash=digest((random.getstate(), np.random.get_state(), torch.get_rng_state(),
+                                     torch.cuda.get_rng_state_all())),
+                module_rng_hash=digest({n: {k: {str(i): g.get_state() for i, g in v.items()}
+                    for k, v in vars(m).items() if k.endswith('_generators') and isinstance(v, dict)}
+                    for n, m in model.named_modules()}))
+            torch.save(captured, out / 'outputs_gradients.pt')
+            write(out / 'result.json', metadata)
+            print('S2_PULSE_FT_PARITY_SAVED', out, flush=True)
+            return
+
+        rows = []
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        for step in range(o.warmups + o.steps):
+            torch.cuda.synchronize()
+            start = time.perf_counter()
+            loss = trainer.train_one_epoch(0)
+            torch.cuda.synchronize()
+            rows.append(dict(step=step, warmup=step < o.warmups,
+                             seconds=time.perf_counter() - start, loss=float(loss)))
+            print('S2_PULSE_FT_STEP', rows[-1], flush=True)
+        measured = [r['seconds'] for r in rows if not r['warmup']]
+        metadata.update(steps=rows, median_seconds=statistics.median(measured),
+            min_seconds=min(measured), max_seconds=max(measured),
+            peak_allocated_bytes=torch.cuda.max_memory_allocated(),
+            peak_reserved_bytes=torch.cuda.max_memory_reserved())
+        write(out / 'result.json', metadata)
+        print('S2_PULSE_FT_BENCHMARK_SAVED', out, flush=True)
+
+    TrainerCiFarTimmStyle.train = run
+    training.main()
+
+
 def s2_main():
     p = argparse.ArgumentParser()
     p.add_argument('--s2-dtc', action='store_true')
@@ -1074,7 +1227,9 @@ def s2_main():
 
 
 if __name__=='__main__':
-    if '--s2-pretrained' in sys.argv:
+    if '--s2-pulse-ft-cache' in sys.argv:
+        s2_pulse_ft_cache_diagnostic()
+    elif '--s2-pretrained' in sys.argv:
         s2_pretrained_diagnostic()
     elif '--s2-dtc' in sys.argv:
         s2_main()

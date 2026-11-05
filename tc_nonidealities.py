@@ -53,12 +53,15 @@ class TCNoiseLifecycle:
     spin/curve realizations are captured separately in the owning RHS closure.
     """
     def __init__(self, coefficients, generators, fb_coefficients=None, fb_ref=None,
-                 replay_cache=True):
+                 replay_cache=True, active_sources=None):
         self.coefficients = coefficients
         self.generators = generators
         self.fb_coefficients, self.fb_ref = fb_coefficients, fb_ref
         self.tape = {}
         self.index = 0
+        # Optional immutable S2 masks, prepared once for the pulse schedule.
+        # Existing TC/toggle callers keep their original coefficient checks.
+        self.active_sources = active_sources
         # Training may revisit old intervals during checkpoint recomputation.
         self.replay_cache = bool(replay_cache) or torch.is_grad_enabled()
 
@@ -76,8 +79,10 @@ class TCNoiseLifecycle:
         cache_key = (self.index, key)
         if cache_key not in self.tape:
             value = torch.zeros_like(ref)
-            for source, coefficient in zip(("sum", "coupler"), coefficients):
-                if torch.count_nonzero(coefficient):
+            for index, (source, coefficient) in enumerate(zip(("sum", "coupler"), coefficients)):
+                enabled = (torch.count_nonzero(coefficient) if self.active_sources is None
+                           else self.active_sources[key][index])
+                if enabled:
                     value = value + coefficient * torch.randn(
                         ref.shape, dtype=ref.dtype, device=ref.device,
                         generator=self.generators[(key, source)])

@@ -1,5 +1,82 @@
 # Truly continuous DTC PCN
 
+## Isolated pulse-FT cache prototype (2026-11-05)
+
+Temporary branch: `perf/s2-pulse-ft-cache`, worktree
+`ScAN-PCN-s2-pulse-ft-cache`, based on `6bced59`. The original ordering
+worktree and its ongoing training were not edited, restarted or stopped.
+There are no new production CLI options and no checkpoint-policy changes.
+
+The prototype implements only these three optimizations:
+
+1. Cache selected S2 nonlinear-R curve lengths and native-grid views within
+   each forward, removing repeated scalar device-to-host lookups in the RHS.
+2. Prepare exact nonzero-noise masks once for the pulse schedule and pass
+   Python booleans to `TCNoiseLifecycle`. Zero coefficients still skip the same
+   draws; summing and coupler noise remain independent and fresh each slice.
+3. Reuse the 15 dense pulse masks, active-coupler counts and diffusion
+   coefficients across five frames within one forward. Graphs are not detached,
+   and the cache is rebuilt after every optimizer update/forward. DTC
+   variation/jitter bypasses this schedule cache; expanded evaluation retains
+   its existing path. Legacy toggle/TC callers do not opt into these caches.
+
+### Full sixteen-layer, small-batch benchmark
+
+Actual C24→48→96, `4:5:4`, sixteen-layer model, loaded from the completed
+`C100_C96L16_s2_rk2_pt_iq12_s2_dtc` last checkpoint. Both variants use pulse
+RK2 N=1 (75 steps/layer), **full RHS checkpointing, 16/16 layers**, batch 4,
+the real EfficientNet teacher/SRRL/SGD step, all configured FT nonidealities,
+1022 random-per-forward per-spin ReLU with corner coupling, cascode curves,
+R=67 kΩ, C=500 fF, VDD=0.6 V and inverse-q=6. Nonlinear-R input fusion remains
+off and measured-ReLU fusion remains on. No approximation is introduced.
+
+RTX 4090 **shared with the unchanged ongoing avg4 run**; OMP/MKL threads=4,
+per-process GPU memory cap=20%. Sequential fresh-process order was baseline,
+optimized, optimized, baseline. Each process used two warmups and five timed
+steps on the same cached real training batch. Timing includes teacher/student
+forward, SRRL loss, backward and optimizer; data loading and checkpoint saving
+are excluded. No trained checkpoint was saved. These are not idle-GPU or
+batch-128 Slurm timing predictions.
+
+| Implementation | Median s/batch (10 timed steps) | Range (s) | Peak allocated GiB | Peak reserved GiB |
+|---|---:|---:|---:|---:|
+| Baseline | 15.403 | 15.216–15.771 | 2.625 | 3.000 |
+| Three caches | 8.177 | 7.075–8.501 | 1.520 | 1.887 |
+
+Measured speedup: **1.884×**, or **46.91% less batch time**. All runs fit
+without OOM. Initial model/auxiliary weights and cached batch hashes match.
+
+### Correctness and numerical limits
+
+- Strict deterministic FP32: logits, SRRL features, total loss, auxiliary
+  gradients, hardware assignments and ending global/module RNG states match
+  exactly. Model-gradient max absolute difference is `1.1921e-7`, relative
+  L2 difference `7.1802e-8`; all compared tensors are finite.
+- Production precision: logits/predictions, hardware assignments and ending
+  RNG states match. Model-gradient relative L2 difference is **0.10738%**
+  (max absolute `0.0013801`), versus **0.00424%** (max absolute `0.000054434`)
+  in a repeated baseline. Consequently production-gradient parity is **not
+  established**; this exceeds the existing diagnostic's 0.1%/0.001 limits.
+  Do not claim bitwise-equivalent gradients, identical SGD trajectories or
+  final-accuracy equivalence. No tolerance or precision setting was relaxed.
+- CPU regression suite: 156 passed, 7 GPU-only skips. New checks cover
+  noisy/noiseless output, gradient and RNG parity with/without checkpointing
+  and N=1/2; zero-noise skip/replay; rebuilding after weight updates; DTC-jitter
+  fallback; curve-cache invalidation; and additive/multiplicative mismatch
+  cleanup before checkpointed backward. Existing TC/toggle/checkpoint/head
+  regressions, syntax checks and `git diff --check` pass.
+
+Results and raw per-process records:
+`artifacts/s2_pulse_ft_cache/summary.json`, `*_time*/result.json`,
+`baseline_parity_run1/`, `optimized_parity/`, and `*_production*/`.
+These diagnostic artifacts are local and Git-ignored. The existing
+`diagnostic_scripts/benchmark_toggle_input_correction.py` was extended, not
+replaced by another test script. Its `--s2-pulse-ft-cache` mode accepts
+`--source-root`, `--ft-args`, `--batch-cache`, `--batch-size`,
+`--memory-fraction`, `--output` and `--phase {parity,parity-production,benchmark}`;
+each worker records its complete resolved command. Keep this prototype
+isolated pending a decision on the production-gradient difference.
+
 ## Scope and experimental setup
 
 The new S2 DTC model updates y and z simultaneously while retaining the

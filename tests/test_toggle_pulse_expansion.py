@@ -28,6 +28,131 @@ def s2_block(cls=None, physical=False, method="rk2", **kwargs):
     return block
 
 
+@pytest.mark.parametrize('checkpoint', [False, True])
+@pytest.mark.parametrize('noise', [False, True])
+@pytest.mark.parametrize('substeps', [1, 2])
+def test_s2_pulse_forward_cache_preserves_outputs_gradients_and_rng(checkpoint, noise, substeps):
+    from ode_pc import S2DTCPulseFFFB
+
+    class Uncached(dict):
+        def get(self, key, default=None):
+            return None
+
+        def __setitem__(self, key, value):
+            pass
+
+    results = []
+    for cached in (False, True):
+        block = s2_block(S2DTCPulseFFFB, physical=True,
+                         s2_dtc_substeps=substeps,
+                         checkpoint_ode_rhs_training=checkpoint,
+                         enable_summing_current_noise=noise, summing_noise_seed=17,
+                         enable_coupler_noise=noise, coupler_noise_seed=18,
+                         enable_spin_variation=noise, spin_variation_seed=19)
+        if not cached:
+            # Exercise the original uncached slice/noise path without changing
+            # the ideal DTC waveform or any Gaussian draw.
+            block.enable_dtc_nonideality = True
+            block._sample_dtc_window = lambda *args: None
+            block._s2_nonlinear_R_metadata = Uncached()
+        x = torch.full((2, 2, 3, 3), .03, requires_grad=True)
+        with patch.object(block, 'get_pulse_matrix', wraps=block.get_pulse_matrix) as masks:
+            with patch.object(block, '_active_coupler_count', wraps=block._active_coupler_count) as counts:
+                out = block(x)
+                out.square().sum().backward()
+        assert masks.call_count == (30 if cached else 150)
+        assert counts.call_count == ((30 if cached else 150) if noise else 0)
+        grads = [m.parametrizations.weight.original.grad.clone()
+                 for m in (block.FFconv, block.FBconv)]
+        rng = {key: generator.get_state() for key, generator in {
+            **{('sum', k): v for k, v in block._summing_noise_generators.items()},
+            **{('coupler', k): v for k, v in block._coupler_noise_generators.items()},
+        }.items()}
+        results.append((out.detach(), x.grad.clone(), grads, rng, torch.get_rng_state()))
+    torch.testing.assert_close(results[0][0], results[1][0], atol=0, rtol=0)
+    for a, b in zip([results[0][1], *results[0][2]], [results[1][1], *results[1][2]]):
+        torch.testing.assert_close(a, b, atol=1e-7, rtol=1e-5)
+    assert results[0][3].keys() == results[1][3].keys()
+    for key in results[0][3]:
+        assert torch.equal(results[0][3][key], results[1][3][key])
+    assert torch.equal(results[0][4], results[1][4])
+
+
+@pytest.mark.parametrize('mismatch_type', ['mul', 'add'])
+def test_s2_pulse_cached_mask_gradients_survive_wrapper_cleanup(mismatch_type):
+    from ode_pc import S2DTCPulseFFFB
+    results = []
+    for checkpoint in (False, True):
+        block = s2_block(S2DTCPulseFFFB, physical=True,
+                         checkpoint_ode_rhs_training=checkpoint)
+        block.begin_training_pulse_mismatch(.1, mismatch_type)
+        x = torch.full((1, 2, 3, 3), .02)
+        out = block(x)
+        block.end_training_pulse_mismatch()
+        out.square().sum().backward()
+        results.append((out.detach(), [m.parametrizations.weight.original.grad.clone()
+                                      for m in (block.FFconv, block.FBconv)]))
+    torch.testing.assert_close(results[0][0], results[1][0], atol=0, rtol=0)
+    for a, b in zip(results[0][1], results[1][1]):
+        torch.testing.assert_close(a, b, atol=1e-7, rtol=1e-5)
+
+
+def test_s2_noise_enabled_masks_preserve_zero_skips_and_replay():
+    from tc_nonidealities import TCNoiseLifecycle
+    coefficients = [(torch.zeros(2), torch.ones(2)), (torch.zeros(2), torch.zeros(2))]
+    outputs = []
+    for active in (None, [[False, True], [False, False]]):
+        torch.manual_seed(23)
+        context = TCNoiseLifecycle(coefficients, {(i, s): None for i in range(2)
+                                   for s in ('sum', 'coupler')}, active_sources=active)
+        with patch('torch.count_nonzero', wraps=torch.count_nonzero) as checks:
+            values = [context._sample(i, torch.zeros(2), coefficients[i]) for i in range(2)]
+            repeated = context._sample(0, torch.zeros(2), coefficients[0])
+        assert repeated is values[0]
+        assert checks.call_count == (4 if active is None else 0)
+        outputs.append((values, torch.get_rng_state()))
+    for a, b in zip(outputs[0][0], outputs[1][0]):
+        assert torch.equal(a, b)
+    assert torch.equal(outputs[0][1], outputs[1][1])
+
+
+def test_s2_pulse_cache_rebuilds_after_weight_update_and_bypasses_dtc_jitter():
+    from ode_pc import S2DTCPulseFFFB
+    block = s2_block(S2DTCPulseFFFB, physical=True, enable_coupler_noise=True)
+    x = torch.full((1, 2, 3, 3), .03)
+    with patch.object(block, 'get_pulse_matrix', wraps=block.get_pulse_matrix) as masks:
+        first = block(x).detach()
+        with torch.no_grad():
+            for m in (block.FFconv, block.FBconv):
+                m.parametrizations.weight.original.neg_()
+        second = block(x).detach()
+    assert masks.call_count == 60
+    assert not torch.equal(first, second)
+    block.enable_dtc_nonideality = True
+    with patch.object(block, 'get_pulse_matrix', wraps=block.get_pulse_matrix) as masks:
+        with patch.object(block, '_sample_dtc_window', wraps=block._sample_dtc_window) as windows:
+            assert torch.isfinite(block(x)).all()
+    assert masks.call_count == 150
+    assert windows.call_count == 10
+
+
+def test_s2_nonlinear_R_metadata_is_cached_per_curve_and_reset_per_forward():
+    block = s2_block(physical=True)
+    block._nonlinear_R_training_pkg = dict(
+        lengths=torch.tensor([3, 3]), v_grid=torch.tensor([[-1., 0., 1.]] * 2),
+        R_left=torch.full((2, 2), 5e4), R_slope=torch.zeros(2, 2), R=5e4)
+    block._nonlinear_R_training_curve_indices.update(FFconv=0, FBconv=1)
+    x = torch.full((1, 2, 3, 3), .02)
+    for _ in range(3):
+        assert torch.equal(block._averaged_nonlinear_R_source(block.FBconv, x), x)
+    assert len(block._s2_nonlinear_R_metadata) == 1
+    assert all(key[1] == 1 for key in block._s2_nonlinear_R_metadata)
+    block._s2_nonlinear_R_metadata[('stale',)] = None
+    block(x)
+    assert ('stale',) not in block._s2_nonlinear_R_metadata
+    assert len(block._s2_nonlinear_R_metadata) == 2
+
+
 def test_s2_dtc_all_initializations_and_no_reset():
     x = torch.rand(2, 2, 3, 3)
     for yi in ("x", "0"):

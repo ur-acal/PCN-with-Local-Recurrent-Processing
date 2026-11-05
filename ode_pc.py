@@ -1170,13 +1170,23 @@ class ToggleAveragedPhysicalFFFB(ToggleBaseFFFB):
             if corrected is not None:
                 return corrected
         # Literal original arithmetic: OFF path and every unsupported fallback.
-        length = int(package["lengths"][curve_index].item())
-        grid = package["v_grid"][curve_index, :length].to(
-            device=source.device, dtype=source.dtype)
-        left = package["R_left"][curve_index, :length - 1].to(
-            device=source.device, dtype=source.dtype)
-        slope = package["R_slope"][curve_index, :length - 1].to(
-            device=source.device, dtype=source.dtype)
+        # Only S2 installs this forward-local cache. Legacy toggle/TC retain
+        # their original lookup path. The sampled curve never changes mid-solve.
+        cache = getattr(self, "_s2_nonlinear_R_metadata", None)
+        key = (id(package), curve_index, source.device, source.dtype)
+        metadata = None if cache is None else cache.get(key)
+        if metadata is None:
+            length = int(package["lengths"][curve_index].item())
+            grid = package["v_grid"][curve_index, :length].to(
+                device=source.device, dtype=source.dtype)
+            left = package["R_left"][curve_index, :length - 1].to(
+                device=source.device, dtype=source.dtype)
+            slope = package["R_slope"][curve_index, :length - 1].to(
+                device=source.device, dtype=source.dtype)
+            metadata = (length, grid, left, slope)
+            if cache is not None:
+                cache[key] = metadata
+        length, grid, left, slope = metadata
 
         query = source
         proj_fn = package.get("proj_fn")
@@ -2616,6 +2626,7 @@ class _S2DTCMixin:
         return super()._apply_averaged_module(module, source)
 
     def _init_s2_dtc(self, y_init_with, z_init_with, s2_dtc_substeps, kwargs):
+        self._s2_nonlinear_R_metadata = {}
         self.s2_dtc_ordering_pairs = int(kwargs.get("s2_dtc_ordering_pairs") or 0)
         if self.s2_dtc_ordering_pairs not in {0, 1, 2, 4, 7}:
             raise ValueError("s2_dtc_ordering_pairs must be 0, 1, 2, 4 or 7.")
@@ -2731,7 +2742,44 @@ class _S2DTCMixin:
         return y, z
 
 
-    def _s2_dtc_interval(self, state, duration, pulse_weights=None, counts=None, ordering_weights=None):
+    def _s2_dtc_noise_data(self, state, duration, counts):
+        """Prepare immutable diffusion data; no Gaussian draws occur here."""
+        physical = getattr(self, "physical", False)
+        duration = torch.as_tensor(duration, device=state[0].device, dtype=state[0].dtype)
+        exposures = ((duration / self.s_ff, duration / self.s_fb)
+                     if physical else (duration, duration))
+        coefficients = []
+        generators = {}
+        for i, (stage, value) in enumerate(zip(("y", "z"), state)):
+            summing = torch.zeros_like(value)
+            coupler = torch.zeros_like(value)
+            if physical:
+                if self.enable_summing_current_noise:
+                    summing = torch.full_like(value, self.summing_current_p / self.C)
+                if self.enable_coupler_noise:
+                    coupler = counts[i].clamp_min(0).sqrt() * self.coupler_noise_p / self.C
+                summing = summing * exposures[i].sqrt()
+                coupler = coupler * exposures[i].sqrt()
+            coefficients.append((summing, coupler))
+            generators[(i, "sum")] = self._summing_noise_generator(value)
+            generators[(i, "coupler")] = self._coupler_noise_generator(value)
+        return coefficients, generators, None
+
+    def _s2_dtc_pulse_slice(self, modules, state, k, windows):
+        weights = [self.get_pulse_matrix(module, k, self.q_hi, dtc_window=window)
+                   for module, window in zip(modules, windows)]
+        counts = None
+        if self.enable_coupler_noise:
+            counts = []
+            for i, (module, source) in enumerate(zip(modules, (state[1], state[0]))):
+                _, clean = self._clean_weight(module)
+                mask = (self._active_pulse_mask(module, k) if windows[i] is None else
+                        self._dtc_slice_duty(module, clean, k, windows[i]))
+                counts.append(self._active_coupler_count(module, source, mask, state[i]))
+        return weights, counts
+
+    def _s2_dtc_interval(self, state, duration, pulse_weights=None, counts=None,
+                         ordering_weights=None, noise_data=None):
         """Joint integration; duration is seconds physically, otherwise t/(RC).
 
         A common frame uses branch exposure 1/s instead of toggle's separate T/s
@@ -2780,24 +2828,12 @@ class _S2DTCMixin:
                 derivatives.append(exposures[i] * current)
             return tuple(derivatives)
 
-        coefficients = []
-        generators = {}
-        for i, (stage, value) in enumerate(zip(stages, state)):
-            summing = torch.zeros_like(value)
-            coupler = torch.zeros_like(value)
-            if physical:
-                if self.enable_summing_current_noise:
-                    summing = torch.full_like(value, self.summing_current_p / self.C)
-                if self.enable_coupler_noise:
-                    coupler = counts[i].clamp_min(0).sqrt() * self.coupler_noise_p / self.C
-                summing = summing * exposures[i].sqrt()
-                coupler = coupler * exposures[i].sqrt()
-            coefficients.append((summing, coupler))
-            generators[(i, "sum")] = self._summing_noise_generator(value)
-            generators[(i, "coupler")] = self._coupler_noise_generator(value)
+        if noise_data is None:
+            noise_data = self._s2_dtc_noise_data(state, duration, counts)
+        coefficients, generators, active_sources = noise_data
 
         from tc_nonidealities import TCNoiseLifecycle
-        context = TCNoiseLifecycle(coefficients, generators)
+        context = TCNoiseLifecycle(coefficients, generators, active_sources=active_sources)
         if self.method in {"euler", "rk2"}:
             derivative_fn = rhs
             if self.checkpoint_ode_rhs_training and torch.is_grad_enabled():
@@ -2845,6 +2881,7 @@ class _S2DTCMixin:
 
 
     def _s2_dtc_forward(self, x, pulse=False):
+        self._s2_nonlinear_R_metadata.clear()
         self.reset_slow_current_noise()
         if self.training:
             self.reset_spin_variation()
@@ -2883,6 +2920,25 @@ class _S2DTCMixin:
                 if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
                     module(source)
             modules = (self.FFconv, self.FBconv)
+        pulse_slices = None
+        if (pulse and not self.enable_dtc_nonideality and
+                all(isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)) for module in modules)):
+            # Dense ideal-DTC masks/counts depend on weights and geometry, not
+            # state values. Reuse their autograd graphs within this forward only.
+            # DTC variation/jitter and expanded evaluation retain the old path.
+            pulse_slices = [self._s2_dtc_pulse_slice(modules, state, k, (None, None))
+                            for k in range(self.q_hi)]
+            noise_data = [self._s2_dtc_noise_data(state, frame_time / self.q_hi, counts)
+                          for _, counts in pulse_slices]
+            # One batched device-to-host copy replaces per-interval scalar
+            # synchronization. Check actual coefficients to preserve zero-noise
+            # skips and thus the precise Gaussian draw order, including empty slices.
+            active = torch.stack([torch.count_nonzero(coefficient) != 0
+                                  for coefficients, _, _ in noise_data
+                                  for branch in coefficients for coefficient in branch])
+            active = active.reshape(self.q_hi, 2, 2).tolist()
+            noise_data = [(coefficients, generators, enabled)
+                          for (coefficients, generators, _), enabled in zip(noise_data, active)]
         for _ in range(self.toggle_n_cycles or 5):
             if pulse:
                 windows = [self._sample_dtc_window(module, stage)
@@ -2893,22 +2949,18 @@ class _S2DTCMixin:
             for k in range(slices):
                 weights = None
                 counts = None
+                interval_noise = None
                 if pulse:
-                    weights = [self.get_pulse_matrix(module, k, slices, dtc_window=window)
-                               for module, window in zip(modules, windows)]
-                if physical and self.enable_coupler_noise:
-                    counts = []
-                    for i, (module, source) in enumerate(zip(modules, (state[1], state[0]))):
-                        if pulse:
-                            _, clean = self._clean_weight(module)
-                            mask = (self._active_pulse_mask(module, k) if windows[i] is None else
-                                    self._dtc_slice_duty(module, clean, k, windows[i]))
-                            count = self._active_coupler_count(module, source, mask, state[i])
-                        else:
-                            count = self._averaged_coupler_level_sum(module, source, state[i]) / self.q_hi
-                        counts.append(count)
+                    if pulse_slices is None:
+                        weights, counts = self._s2_dtc_pulse_slice(modules, state, k, windows)
+                    else:
+                        weights, counts = pulse_slices[k]
+                        interval_noise = noise_data[k]
+                elif physical and self.enable_coupler_noise:
+                    counts = [self._averaged_coupler_level_sum(module, source, state[i]) / self.q_hi
+                              for i, (module, source) in enumerate(zip(modules, (state[1], state[0])))]
                 state = self._s2_dtc_interval(state, frame_time / slices, weights, counts,
-                                              ordering_weights=ordering_weights)
+                                              ordering_weights=ordering_weights, noise_data=interval_noise)
         self._last_s2_dtc_z = state[1]
         return self._finish_forward(state[0])
 
