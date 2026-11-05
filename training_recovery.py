@@ -108,6 +108,10 @@ def restore_latest(trainer):
     # Recovery is continuation, not conversion into another physical stage.
     current = getattr(trainer, 'recovery_config', {})
     saved_config = recovery['config']
+    saved_s2 = checkpoint.get('init_args', {}).get('s2_dtc')
+    current_s2 = getattr(trainer.model, 'init_args', {}).get('s2_dtc')
+    if saved_s2 != current_s2:
+        raise ValueError('Full recovery requires unchanged S2 DTC dynamics and initialization')
     if current.get('tc_nonidealities', False) or current.get('tc_feedforward', False):
         if current.get('tc_curve_top_n', 0) != saved_config.get('tc_curve_top_n', 0):
             raise ValueError('Full recovery requires unchanged tc_curve_top_n')

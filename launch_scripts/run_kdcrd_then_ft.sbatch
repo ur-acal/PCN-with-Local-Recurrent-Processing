@@ -375,7 +375,13 @@ case "${TOGGLE_MODE}" in
     FT_ODE_BLOCK="TogglePulseBlkXInitFFFB"
     INF_ODE_BLOCK="TogglePulseBlkXInitFFFB"
     ;;
-  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit/pulse_odexinit, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+  s2_dtc|s2_dtc_pulse)
+    TRAIN_ODE_BLOCK="S2DTCFFFB"
+    FT_ODE_BLOCK="S2DTCFFFB"
+    [[ "${TOGGLE_MODE}" == s2_dtc_pulse ]] && FT_ODE_BLOCK="S2DTCPulseFFFB"
+    INF_ODE_BLOCK="S2DTCPulseFFFB"
+    ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit/pulse_odexinit/s2_dtc/s2_dtc_pulse, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
 esac
 if [[ "${TOGGLE_MODE}" != "none" ]]; then
   TOGGLE_ARGS=(
@@ -387,6 +393,37 @@ if [[ "${TOGGLE_MODE}" != "none" ]]; then
     --toggle_y_time "${TOGGLE_Y_TIME}"
     --z_over_y_time "${Z_OVER_Y_TIME}"
   )
+fi
+S2_DTC_ARGS=()
+S2_DTC_EVAL_ARGS=()
+TOGGLE_FT_ARGS=("${TOGGLE_ARGS[@]}")
+TOGGLE_EVAL_ARGS=("${TOGGLE_ARGS[@]}")
+if [[ "${TOGGLE_MODE}" == s2_dtc* ]]; then
+  [[ -n "${S2_Y_INIT_WITH:-}" ]] && S2_DTC_ARGS+=(--y_init_with "${S2_Y_INIT_WITH}")
+  [[ -n "${S2_Z_INIT_WITH:-}" ]] && S2_DTC_ARGS+=(--z_init_with "${S2_Z_INIT_WITH}")
+  S2_DTC_EVAL_ARGS=(--dtc_dynamics s2 --s2_dtc_method "${S2_DTC_EVAL_METHOD:-${S2_DTC_METHOD:-rk2}}"
+                   "${S2_DTC_ARGS[@]}" --s2_dtc_substeps "${S2_DTC_EVAL_SUBSTEPS:-2}")
+  TOGGLE_EVAL_ARGS+=("${S2_DTC_ARGS[@]}" --s2_dtc_substeps "${S2_DTC_EVAL_SUBSTEPS:-2}")
+  s2_ft_substeps="${S2_DTC_SUBSTEPS:-1}"
+  [[ "${TOGGLE_MODE}" == s2_dtc_pulse ]] && s2_ft_substeps="${S2_DTC_SUBSTEPS:-2}"
+  if [[ "${S2_DTC_ORDERING_PAIRS:-0}" != 0 ]]; then
+    if [[ "${TOGGLE_MODE}" != s2_dtc || "${S2_DTC_METHOD:-rk2}" != rk2 || "${S2_DTC_FT_SUBSTEPS:-${s2_ft_substeps}}" != 1 ]]; then
+      echo 'ERROR: ordering correction requires s2_dtc, RK2, and one FT step per frame.' >&2
+      exit 1
+    fi
+    case "${S2_DTC_ORDERING_PAIRS}" in
+      1|2|4|7) ;;
+      *)
+        echo 'ERROR: ordering pairs must be 0, 1, 2, 4 or 7.' >&2
+        exit 1
+        ;;
+    esac
+  fi
+  TOGGLE_FT_ARGS+=("${S2_DTC_ARGS[@]}" --s2_dtc_substeps "${S2_DTC_FT_SUBSTEPS:-${s2_ft_substeps}}")
+  # FT only: pretraining remains unitless; evaluation resolves real pulses.
+  TOGGLE_FT_ARGS+=(--s2_dtc_ordering_pairs "${S2_DTC_ORDERING_PAIRS:-0}")
+  S2_DTC_ARGS+=(--s2_dtc_substeps "${S2_DTC_SUBSTEPS:-1}")
+  TOGGLE_ARGS+=("${S2_DTC_ARGS[@]}")
 fi
 echo "Toggle mode=${TOGGLE_MODE}: train=${TRAIN_ODE_BLOCK}, ft=${FT_ODE_BLOCK}, inference=${INF_ODE_BLOCK}"
 echo "Toggle timing=${TOGGLE_TIMING_MODE}: T_y=${TOGGLE_Y_TIME}s, T_z/T_y=${Z_OVER_Y_TIME}, scale_train_recipe=${SCALE_TRAIN_RECIPE}"
@@ -484,6 +521,7 @@ run_one_combo () {
   if [[ "${SWITCH_INF}" == "true" ]]; then
     train_solver="euler"
   fi
+  [[ "${TOGGLE_MODE}" == s2_dtc* ]] && train_solver="${S2_DTC_METHOD:-rk2}"
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
@@ -560,6 +598,7 @@ run_one_combo () {
 # ------------------------ EVAL ONE MODEL ------------------------
 MODEL_DIR="${FT_OUTPUT_SAVE_PATH}"
 METHOD="dopri5"
+[[ "${TOGGLE_MODE}" == s2_dtc* ]] && METHOD="${S2_DTC_EVAL_METHOD:-${S2_DTC_METHOD:-rk2}}"
 TOL="1e-6"
 n_bits=5
 ENOB="${ENOB:-8}"
@@ -625,6 +664,7 @@ eval_one_combo_model() {
     source ./launch_scripts/rhs_current_args.sh
     OMP_NUM_THREADS=${THREADS_PER_PROC} \
     python -u scripts/run_toggle_nonideality_ablation.py \
+      "${S2_DTC_EVAL_ARGS[@]}" \
       "${RHS_CURRENT_ARGS[@]}" \
       "${FINAL_HEAD_ARGS[@]}" \
       --full_45_corner_test true \
@@ -710,6 +750,7 @@ eval_one_combo_model() {
   elif [[ "${TOGGLE_MODE}" != "none" ]]; then
     wrapper="ToggleQATTester1State"
   fi
+  [[ "${TOGGLE_MODE}" == s2_dtc* ]] && wrapper="S2DTCQATTester2State"
 
   test_expanded="true"
   if [[ "${SWITCH_INF}" == "true" && "${TOGGLE_MODE}" == "none" ]]; then
@@ -751,7 +792,7 @@ eval_one_combo_model() {
     --fold_scalar     "${fold_scalar}" \
     --tie_cap         "false" \
     --one_over_q      "${ONE_OVER_Q}" \
-    "${TOGGLE_ARGS[@]}" \
+    "${TOGGLE_EVAL_ARGS[@]}" \
     "${MEASURED_ACTIVATION_ARGS[@]}" \
     "${FT_MEASURED_POOLING_ARGS[@]}" \
     "${FT_SPIN_VARIATION_ARGS[@]}" \
@@ -801,6 +842,7 @@ finetune_one_combo_model() {
   elif [[ "${TOGGLE_MODE}" != "none" ]]; then
     qat_wrapper="ToggleQATWrapper1State"
   fi
+  [[ "${TOGGLE_MODE}" == s2_dtc* ]] && qat_wrapper="S2DTCQATWrapper2State"
 
   local nl="${MISMATCH_LEVEL}"
   local nt="mul"
@@ -809,6 +851,7 @@ finetune_one_combo_model() {
   if [[ "${SWITCH_INF}" == "true" ]]; then
     train_solver="euler"
   fi
+  [[ "${TOGGLE_MODE}" == s2_dtc* ]] && train_solver="${S2_DTC_METHOD:-rk2}"
 
   OMP_NUM_THREADS=${THREADS_PER_PROC} \
   python -u train_ode_cifar.py \
@@ -862,7 +905,7 @@ finetune_one_combo_model() {
     --fold_scalar   "${fold_scalar}" \
     --tie_cap       "false" \
     --one_over_q    "${ONE_OVER_Q}" \
-    "${TOGGLE_ARGS[@]}" \
+    "${TOGGLE_FT_ARGS[@]}" \
     "${MEASURED_ACTIVATION_ARGS[@]}" \
     "${FT_MEASURED_POOLING_ARGS[@]}" \
     "${FT_CORNER_COUPLED_SAMPLING_ARGS[@]}" \
@@ -1030,7 +1073,7 @@ for i in "${!COMB_TAGS[@]}"; do
 
   if [[ -n "$post" ]]; then
     post_log="${EVAL_BASE}/${comb_tag}/post_ft/${post}_method_${METHOD}_tol_${TOL}/job.log"
-    printf '---------- %s (post-finetune) ----------\n' "$post" >>"${MASTER_LOG}"
+    printf -- '---------- %s (post-finetune) ----------\n' "$post" >>"${MASTER_LOG}"
     if [[ -f "$post_log" ]]; then
       cat "$post_log" >> "${MASTER_LOG}"
     else

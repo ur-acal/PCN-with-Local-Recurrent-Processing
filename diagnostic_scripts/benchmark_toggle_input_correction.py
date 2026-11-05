@@ -420,4 +420,663 @@ def main():
     print('COMPLETE',out/'summary.json',flush=True)
 
 
-if __name__=='__main__':main()
+def s2_build_model(o, dynamics, scene, representation):
+    """Six PC blocks: expansion + one repeat per stage; pool before expansion."""
+    import torch
+    from pc_model import PCNetNoBatchNorm
+    from pc_conv import PCConvReLU6
+    from ode_pc import (S2DTCFFFB, S2DTCPulseFFFB, S2DTCWrapper2State,
+                        S2DTCQATWrapper2State, make_ode_block, wrap_ode_block)
+    from inference_utils import replace_transpose_conv
+    from validation import Validator
+    torch.manual_seed(1907)
+    model = PCNetNoBatchNorm(inp_channels=[4, 24, 24, 48, 48, 96],
+        out_channels=[24, 24, 48, 48, 96, 96], max_pool=[0, 1, 0, 1, 0, 0],
+        num_classes=100, pc_conv_layer=PCConvReLU6, first_bn=False, avg_pooling=True,
+        dropout=0, bypass=False, tie_weights=False, linear_bias=False,
+        measured_activation_scope='all', final_head_type='old_ideal')
+    # Match the fixed-timing recipe's weight compensation relative to 1.75.
+    with torch.no_grad():
+        for block in model.PcConvs:
+            for conv in (block.FFconv, block.FBconv):
+                conv.weight.mul_(7 / 8)
+    initial_hash = digest(model.state_dict())
+    replace_transpose_conv(model)
+    model.device = torch.device('cuda')
+    model.cuda()
+    cls = S2DTCFFFB if dynamics == 'average' else S2DTCPulseFFFB
+    make_ode_block(model, ode_block=cls, method='rk2', t_end=1.75, n_steps=5,
+        tol=1e-6, toggle_n_cycles=5, toggle_timing_mode='fixed', toggle_y_time=1e-8,
+        z_over_y_time=1, toggle_timing_R=5e4, toggle_timing_C=5e-13,
+        y_init_with='x', z_init_with='0', s2_dtc_substeps=1,
+        s2_dtc_ordering_pairs=o.ordering_pairs,
+        checkpoint_ode_rhs_training=o.checkpoint)
+    measured = scene in ('measured', 'nonlinear')
+    nonlinear = scene == 'nonlinear'
+    training = o.s2_worker == 'benchmark' and o.train_step
+    wrapper = S2DTCQATWrapper2State if training else S2DTCWrapper2State
+    model, wrappers = wrap_ode_block(model, ode_wrapper=wrapper,
+        R=5e4, C=5e-13, v_dd=.5, one_over_q=5, w_bits=5,
+        weight_quant_factor_bits=1, thermal_noise=False, enob=None,
+        enable_measured_activation=measured,
+        activation_curve_path=str(ROOT/'hardware_data/mc_45_corners/0906_RELU_Voltage/fs_25_2.csv'),
+        activation_corner='MC18', activation_interpolation='piecewise_linear',
+        activation_curve_sharing='per_spin', activation_curve_seed=4096,
+        activation_normalize_positive_endpoint=False, fuse_measured_activation=False,
+        nonlinear_R=nonlinear,
+        nonlinear_R_table=str(ROOT/'hardware_data/mc_45_corners/coupler_full_range/fs_25_2.csv'),
+        nonlinear_R_train_mode='exact_curve' if nonlinear and representation == 'dense' else 'none',
+        nonlinear_R_curve_sharing='shared' if representation == 'dense' else 'per_coupler',
+        nonlinear_R_mc_quantity='conductance', nonlinear_R_curve_sampling='empirical_with_replacement',
+        nonlinear_R_curve_seed=4096)
+    model.eval()
+    if scene == 'ideal':
+        from types import MethodType
+        for block in model.PcConvs:
+            block.project_state = MethodType(lambda self, state: state, block)
+            block.act_fn = torch.nn.ReLU()
+    inputs = torch.load(o.batch, map_location='cpu', weights_only=False)[0]
+    assert inputs.shape[1:] == (4, 16, 16), inputs.shape
+    validator = None
+    if representation == 'expanded':
+        assert not training, 'Expanded training is outside the supported production path'
+        directory = Path(o.output)/'cache'/dynamics/scene
+        directory.mkdir(parents=True, exist_ok=True)
+        validator = Validator(model, str(directory), 'cuda',
+            [(inputs[:2], torch.zeros(2, dtype=torch.long))], str(directory), wrapper=wrappers)
+    return model, inputs, validator, initial_hash
+
+
+def s2_assignments(model):
+    """Hash actual sampled identities, not just their RNG seeds."""
+    assignments = {}
+    for name, module in model.named_modules():
+        for attr in ('_nonlinear_R_training_curve_indices', '_curve_assignments',
+                     'nonlinear_R_curve_assignment', '_sampled_curve_indices', 'active_corner'):
+            if hasattr(module, attr):
+                assignments[name + '.' + attr] = getattr(module, attr)
+    return digest(assignments)
+
+
+def s2_record(model, x, dynamics):
+    import torch
+    from types import MethodType
+    traces, hooks, originals = {}, [], []
+    for i, block in enumerate(model.PcConvs):
+        original = block._s2_dtc_interval
+        originals.append((block, original))
+        counter = [0]
+        def interval(self, *a, _original=original, _counter=counter, _i=i, **kw):
+            state = _original(*a, **kw)
+            _counter[0] += 1
+            slices = 15 if dynamics == 'pulse' else 1
+            if _counter[0] % slices == 0:
+                frame = _counter[0] // slices
+                for label, value in zip(('y', 'z'), state):
+                    traces[f'L{_i+1}/frame{frame}/{label}'] = value.detach().cpu().clone()
+            return state
+        block._s2_dtc_interval = MethodType(interval, block)
+        def capture(module, inputs, output, index=i):
+            traces[f'L{index+1}/output'] = output.detach().cpu().clone()
+        hooks.append(block.register_forward_hook(capture))
+    try:
+        with torch.no_grad():
+            traces['logits'] = model(x).detach().cpu()
+        assert all(torch.isfinite(t).all() for t in traces.values()), 'Nonfinite trajectory'
+        return traces
+    finally:
+        for block, original in originals:
+            block._s2_dtc_interval = original
+        for hook in hooks:
+            hook.remove()
+
+
+def s2_set_solver(model, method, substeps, tol):
+    for block in model.PcConvs:
+        block.method, block.s2_dtc_substeps = method, substeps
+        block.option_aca.update(method=method, rtol=tol, atol=tol)
+
+
+def s2_error(actual, reference):
+    import torch
+    result = {}
+    for key in reference:
+        a, b = actual[key].double(), reference[key].double()
+        diff = a - b
+        result[key] = dict(relative_l2=float(diff.norm()/b.norm().clamp_min(1e-30)),
+                           absolute_rms=float(diff.square().mean().sqrt()),
+                           max_abs=float(diff.abs().max()))
+    a = torch.cat([v.flatten().double() for k, v in actual.items() if '/frame' in k])
+    b = torch.cat([v.flatten().double() for k, v in reference.items() if '/frame' in k])
+    result['all_frames'] = dict(relative_l2=float((a-b).norm()/b.norm().clamp_min(1e-30)),
+                               absolute_rms=float((a-b).square().mean().sqrt()))
+    result['prediction_disagreements'] = int((actual['logits'].argmax(1) != reference['logits'].argmax(1)).sum())
+    return result
+
+
+def s2_worker(o):
+    import torch
+    import gc
+    torch.set_num_threads(4)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    model, inputs, validator, initial_hash = s2_build_model(o, o.dynamics, o.scene, o.representation)
+    out = Path(o.output)
+    out.mkdir(parents=True, exist_ok=True)
+    prefix = f'{o.representation}_{o.scene}_{o.dynamics}'
+    if o.ordering_pairs:
+        prefix += f'_pairs{o.ordering_pairs}'
+    if o.s2_worker == 'numerical':
+        x = inputs[:2].cuda()
+        # Materialize curve assignments once and retain them for all solvers.
+        with torch.no_grad():
+            model(x)
+        assignments = s2_assignments(model)
+        configs = [('dopri5', 1, t) for t in (1e-4, 1e-6)]
+        configs += [(m, n, 1e-6) for m in ('euler', 'rk2') for n in (1, 2, 4, 8)]
+        if o.ordering_study:
+            configs = [('rk2', 1, 1e-6)]
+            if o.dynamics == 'pulse':
+                configs.insert(0, ('dopri5', 1, 1e-6))
+        rows = []
+        for method, n, tol in configs:
+            s2_set_solver(model, method, n, tol)
+            torch.cuda.synchronize()
+            start = time.perf_counter()
+            trace = s2_record(model, x, o.dynamics)
+            torch.cuda.synchronize()
+            elapsed = time.perf_counter()-start
+            assert s2_assignments(model) == assignments, 'Curve assignments changed between solvers'
+            name = f'{prefix}_{method}_{n}_{tol:g}'
+            torch.save(trace, out/(name+'.pt'))
+            row = dict(name=name, method=method, substeps=n, tol=tol, seconds=elapsed,
+                assignments=assignments, initial_hash=initial_hash, batch_hash=digest(x))
+            rows.append(row)
+            write(out/(prefix+'.json'), rows)
+            print('NUMERICAL_PASS', name, elapsed, flush=True)
+    else:
+        s2_set_solver(model, o.method, o.substeps, 1e-6)
+        if o.train_step:
+            model.train()
+        attempts = []
+        # The parent retries smaller sizes in fresh processes after OOM. CUDA
+        # libraries and partial autograd graphs may retain failed allocations.
+        for bs in (o.batch_size,):
+            try:
+                x = inputs[:bs].cuda()
+                assert len(x) == bs
+                torch.cuda.reset_peak_memory_stats()
+                times = []
+                for iteration in range(3):
+                    model.zero_grad(set_to_none=True)
+                    torch.cuda.synchronize()
+                    start = time.perf_counter()
+                    with torch.set_grad_enabled(o.train_step):
+                        logits = model(x)
+                        if o.train_step:
+                            logits.square().mean().backward()
+                    torch.cuda.synchronize()
+                    elapsed = time.perf_counter()-start
+                    if iteration:
+                        times.append(elapsed)
+                    del logits
+                result = dict(status='ok', batch_size=bs, median_seconds=statistics.median(times),
+                    peak_allocated_bytes=torch.cuda.max_memory_allocated(),
+                    peak_reserved_bytes=torch.cuda.max_memory_reserved(), attempts=attempts,
+                    dynamics=o.dynamics, scene=o.scene, representation=o.representation,
+                    method=o.method, substeps=o.substeps, training=o.train_step,
+                    checkpoint=o.checkpoint, initial_hash=initial_hash)
+                break
+            except RuntimeError as exc:
+                if not isinstance(exc, torch.cuda.OutOfMemoryError) and 'CUBLAS_STATUS_ALLOC_FAILED' not in str(exc):
+                    raise
+                attempts.append(dict(batch_size=bs, status='oom', error=str(exc)))
+                model.zero_grad(set_to_none=True)
+                if 'logits' in locals():
+                    del logits
+                gc.collect()
+                torch.cuda.empty_cache()
+        else:
+            result = dict(status='oom', attempts=attempts)
+        tag = f'{prefix}_{o.method}_{o.substeps}_train{o.train_step}_checkpoint{o.checkpoint}'
+        write(out/('benchmark_'+tag+'.json'), result)
+        print('BENCHMARK', tag, result, flush=True)
+    if validator is not None:
+        validator.close_curve_stager()
+
+
+def s2_report(out):
+    import torch
+    def setting(row, dynamics):
+        if row['method'] == 'dopri5':
+            return f"dopri5 tol={row['tol']:g}"
+        steps = (75 if dynamics == 'pulse' else 5) * row['substeps']
+        return f"{row['method']}, {steps} total steps"
+
+    comparisons = [
+        ('Pulse Euler/RK2 with \\(75N\\) steps versus pulse Dopri5', 'pulse', 'pulse'),
+        ('**Averaged five-step Euler/RK2 versus pulse reference**', 'average', 'pulse'),
+        ('Averaged five-step Euler/RK2 versus accurately integrated averaged ODE', 'average', 'average'),
+        ('Accurately integrated averaged ODE versus pulse reference', 'average_ref', 'pulse')]
+    records = []
+    lines = ['# S2 DTC fixed-batch numerical diagnostics', '',
+        'Random initialization (seed 1907), not a trained checkpoint. Six PC blocks: '
+        '24→48→96, stage repeats 1:1:1, pool before expansion; one fixed two-image '
+        'CiFAIR-100 batch. Five simultaneous 10 ns frames. Ideal final linear head '
+        'and pooling isolate recurrent dynamics. No noise or DTC nonidealities. '
+        'Dopri5 1e-6 is a provisional reference, not proof of convergence.', '',
+        'Dense nonlinear-R uses fixed per-tensor curves; expanded uses fixed per-coupler curves. '
+        'Measured ReLU uses fixed per-spin assignments from 0906 FS_V2_T1. '
+        'Assignments are hashed and checked across solvers and average/pulse within each representation.', '',
+        'Scenarios are cumulative: ideal (no state clipping), clipped, clipped + measured ReLU, '
+        'and clipped + measured ReLU + nonlinear-R. Spin variation is disabled. '
+        'Enabling clipping does not guarantee this batch reaches the rails.', '',
+        'Relative L2 = norm(actual − reference) / norm(reference); values below are ratios, '
+        'not percentages or accuracy drops. State error concatenates y/z at all five frame '
+        'boundaries in every layer. comparisons.json also contains each layer/frame error, '
+        'absolute RMS errors, and logit errors. Refining the averaged solver reduces its '
+        'integration error, not necessarily its discrepancy from pulse dynamics.', '']
+    for rep in ('dense', 'expanded'):
+        for scene in ('ideal', 'clipped', 'measured', 'nonlinear'):
+            rows = {d: json.loads((out/f'{rep}_{scene}_{d}.json').read_text()) for d in ('pulse', 'average')}
+            assert rows['pulse'][0]['initial_hash'] == rows['average'][0]['initial_hash']
+            assert rows['pulse'][0]['batch_hash'] == rows['average'][0]['batch_hash']
+            assert rows['pulse'][0]['assignments'] == rows['average'][0]['assignments'], (rep, scene)
+            def load(row):
+                return torch.load(out/(row['name']+'.pt'), map_location='cpu', weights_only=False)
+            refs = {d: load(rows[d][1]) for d in rows}
+            lines += ['', f'## {rep}: {scene}', '',
+                      '| Comparison | Setting | State relative L2 | Logit relative L2 |',
+                      '|---|---|---:|---:|']
+            for title, source, target in comparisons:
+                selected = ([rows['average'][1]] if source == 'average_ref' else
+                            [r for r in rows[source] if r['method'] != 'dopri5' and
+                             (source == 'pulse' or r['substeps'] == 1)])
+                for row in selected:
+                    metrics = s2_error(load(row), refs[target])
+                    records.append(dict(representation=rep, scene=scene, comparison=title,
+                                        source=row['name'], reference=target, metrics=metrics))
+                    lines.append(f"| {title} | {setting(row, source)} | "
+                                 f"{metrics['all_frames']['relative_l2']:.6g} | {metrics['logits']['relative_l2']:.6g} |")
+            lines += ['', '### Supplement: averaged refinement and reference checks', '',
+                      '| Setting | Reference | State relative L2 | Logit relative L2 |',
+                      '|---|---|---:|---:|']
+            for source in rows:
+                for row in rows[source]:
+                    if row['method'] == 'dopri5' and row['tol'] == 1e-4:
+                        targets = [source]
+                    elif source == 'average' and row['method'] != 'dopri5' and row['substeps'] > 1:
+                        targets = ['average', 'pulse']
+                    else:
+                        continue
+                    for target in targets:
+                        metrics = s2_error(load(row), refs[target])
+                        records.append(dict(representation=rep, scene=scene, comparison='supplement',
+                                            source=row['name'], reference=target, metrics=metrics))
+                        lines.append(f"| {source} {setting(row, source)} | {target} | "
+                                     f"{metrics['all_frames']['relative_l2']:.6g} | {metrics['logits']['relative_l2']:.6g} |")
+    write(out/'comparisons.json', records)
+    lines += ['', '## Runtime and memory', '',
+              'RTX 4090; one warmup and two measured iterations, median wall time with CUDA '
+              'synchronization. Training means model forward/backward only: no teacher, '
+              'optimizer step, or data-loading overhead. Each configuration starts at batch 128; '
+              'OOM retries halve the batch in fresh processes. The reported batch is the largest '
+              'successful tested size, not an exact capacity limit.', '',
+              'Batch-128 benchmarks cover five-step averaged RK2, pulse RK2 with two substeps '
+              'per slice (150 total), and pulse Dopri5 at 1e-6. Dense RK2 additionally tests '
+              'forward/backward with and without RHS checkpointing. Expanded benchmarks are '
+              'evaluation-only. Other Euler/RK2 resolutions are covered by the two-image '
+              'numerical runs, not batch-128 memory benchmarks.', '',
+              '| Configuration | Batch | Seconds | Allocated GiB | Reserved GiB |',
+              '|---|---:|---:|---:|---:|']
+    for path in sorted(out.glob('benchmark_*.json')):
+        r = json.loads(path.read_text())
+        if r['status'] == 'ok':
+            lines.append(f"| {path.stem} | {r['batch_size']} | {r['median_seconds']:.4f} | "
+                         f"{r['peak_allocated_bytes']/2**30:.3f} | {r['peak_reserved_bytes']/2**30:.3f} |")
+        else:
+            lines.append(f'| {path.stem} | OOM | — | — | — |')
+    (out/'summary.md').write_text('\n'.join(lines)+'\n')
+
+
+def s2_ordering_report(out):
+    """Every candidate compared to the same pulse Dopri5, never to one another."""
+    import torch
+    rows = []
+    lines = ['# RK2 ordering-correction study', '',
+        'Dense 24→48→96, 1:1:1 repeats, fixed input batch and initialization. '
+        'Five 10 ns frames; R=50 kΩ, C=500 fF, VDD=0.5 V, q=0.1. '
+        'Cumulative deterministic scenarios; no noise, spin variation or DTC variation. '
+        '0906 per-spin ReLU and full-range per-tensor coupler curves use FS_V2_T1. '
+        'The reference for every accuracy row is pulse Dopri5 (atol=rtol=1e-6). '
+        'Errors are logit relative L2 percentages, not classification accuracy. '
+        'Timing is synchronized forward or forward/backward, excluding optimizer and teacher; '
+        'one warmup, median of two measured iterations. Batch starts at 128 and halves after OOM.', '',
+        '| Scenario | Method | Logit error (%) | State error (%) | Eval s / batch | F+B s / batch | F+B checkpoint s / batch |',
+        '|---|---|---:|---:|---|---|---|']
+    for scene in ('ideal', 'clipped', 'measured', 'nonlinear'):
+        refrow = json.loads((out/f'dense_{scene}_pulse.json').read_text())[0]
+        reference = torch.load(out/(refrow['name']+'.pt'), weights_only=False)
+        for dynamics, pairs in [('pulse', 0)] + [('average', r) for r in (0, 1, 2, 4, 7)]:
+            prefix = f'dense_{scene}_{dynamics}' + (f'_pairs{pairs}' if pairs else '')
+            record = json.loads((out/(prefix+'.json')).read_text())[-1]
+            for key in ('assignments', 'initial_hash', 'batch_hash'):
+                assert record[key] == refrow[key], (scene, prefix, key)
+            actual = torch.load(out/(record['name']+'.pt'), weights_only=False)
+            errors = s2_error(actual, reference)
+            times, benchmarks = [], []
+            for train, cp in ((False, False), (True, False), (True, True)):
+                path = out/f'benchmark_{prefix}_rk2_1_train{train}_checkpoint{cp}.json'
+                b = json.loads(path.read_text()) if path.exists() else {'status': 'not_run'}
+                benchmarks.append(b)
+                times.append(f"{b['median_seconds']:.4f} / {b['batch_size']}" if b['status']=='ok' else b['status'])
+            label = 'Pulse RK2 N=1' if dynamics == 'pulse' else ('Averaged RK2' if not pairs else f'RK2 + {pairs} pairs')
+            lines.append(f"| {scene} | {label} | {100*errors['logits']['relative_l2']:.5f} | "
+                         f"{100*errors['all_frames']['relative_l2']:.5f} | " + ' | '.join(times) + ' |')
+            rows.append(dict(scene=scene, method=label, pairs=pairs, metrics=errors, benchmarks=benchmarks))
+    write(out/'ordering_results.json', rows)
+    (out/'ordering_summary.md').write_text('\n'.join(lines)+'\n')
+
+
+def s2_pretrained_model(path, dynamics, pairs, substeps, device):
+    """Pinned 1022/cascode PT recipe, but ideal hardware apart from PC clipping.
+
+    Keep the fixed measured activation as the common activation definition.
+    Use the production loader and physical quantizing wrapper; do not repeat
+    PT's initialization compensation on already trained weights.
+    """
+    import torch
+    from inference_utils import load_and_prepare_model
+    from ode_pc import S2DTCFFFB, S2DTCPulseFFFB, S2DTCWrapper2State
+    cls = S2DTCFFFB if dynamics == 'average' else S2DTCPulseFFFB
+    flags = dict(enable_spin_variation=False, enable_summing_current_noise=False,
+                 enable_coupler_noise=False, enable_slow_summing_current=False,
+                 enable_slow_coupler_noise=False, enable_dtc_nonideality=False)
+    # The production inference loader performs in-place weight quantization.
+    with torch.no_grad():
+        model = load_and_prepare_model(str(path), device, pc_conv_layer=None,
+            conv_only=True, fuse_bn=False, noise_level=0.0,
+            final_head_config=dict(final_head_quantize=False, final_head_clamp=False,
+                                   final_adc_noise_lsb=0.0),
+            ode_params=dict(ode_block=cls, method='rk2', t_end=1.75, n_steps=5,
+                tol=1e-6, toggle_n_cycles=5, toggle_timing_mode='fixed',
+                toggle_y_time=1e-8, z_over_y_time=1, toggle_timing_R=67e3,
+                toggle_timing_C=500e-15, y_init_with='x', z_init_with='0',
+                s2_dtc_substeps=substeps, s2_dtc_ordering_pairs=pairs, **flags),
+            ode_wrapper_params=dict(ode_wrapper=S2DTCWrapper2State,
+                R=67e3, C=500e-15, v_dd=0.6, one_over_q=6, w_bits=5,
+                weight_quant_factor_bits=1, thermal_noise=False, enob=None,
+                nonlinear_R=False, nonlinear_R_train_mode='none',
+                enable_measured_activation=True,
+                activation_curve_path=str(ROOT/'hardware_data/mc_45_corners/1022_RELU_Voltage/tt_25_1.csv'),
+                activation_corner='MC18', activation_interpolation='piecewise_linear',
+                activation_curve_sharing='per_model',
+                activation_normalize_positive_endpoint=False, fuse_measured_activation=False,
+                **flags))
+    model.eval()
+    assert model.measured_activation_scope == 'all'
+    assert model.final_head_type == 'digital'
+    signature = {}
+    for i, block in enumerate(model.PcConvs):
+        assert type(block) is cls and block.physical
+        assert block.s2_dtc_substeps == substeps and block.toggle_n_cycles == 5
+        for key in flags:
+            assert not getattr(block, key, False), (i, key)
+        assert not getattr(block, '_nonlinear_R_training_pkg', None)
+        for key in ('FFconv', 'FBconv'):
+            w = getattr(block, key).weight.detach().cpu()
+            levels = w * 15 if dynamics == 'average' else w
+            assert torch.allclose(levels, levels.round(), atol=2e-6, rtol=0)
+            signature[f'{i}/{key}'] = levels.round().to(torch.int32)
+        for key in ('s_ff', 's_fb', 'R', 'C', 'v_dd', 'toggle_y_time'):
+            signature[f'{i}/{key}'] = torch.as_tensor(getattr(block, key)).cpu()
+    signature['classifier'] = model.linear.weight.detach().cpu()
+    signature['q'] = model.state_q
+    # Check actual fixed curves, including the final activation, not just flags.
+    sites = {name: mod for name, mod in model.named_modules()
+             if hasattr(mod, 'active_corner')}
+    assert len(sites) == model.num_layers + 1, list(sites)
+    for name, mod in sites.items():
+        assert mod.active_corner == 'MC18', (name, mod.active_corner)
+        signature[f'activation/{name}'] = mod.state_dict()
+    from measured_pooling import GlobalAvgPool2d, MeasuredAvgPool2d
+    assert isinstance(model.global_avg_pool2d, GlobalAvgPool2d)
+    assert not any(isinstance(mod, MeasuredAvgPool2d) for mod in model.modules())
+    assert model.linear.head_config['final_head_quantize'] is False
+    assert model.linear.head_config['final_head_clamp'] is False
+    assert model.linear.head_config['final_adc_noise_lsb'] == 0
+    return model, digest(signature)
+
+
+def s2_pretrained_diagnostic():
+    """One cached test batch, four dense physical methods, no training writes."""
+    import gc
+    import numpy as np
+    import torch
+    from inference_utils import get_test_data
+    from pc_model import logits_for_loss
+    from launch_scripts.find_tc_pretrain import find_pretrain
+    p = argparse.ArgumentParser()
+    p.add_argument('--s2-pretrained', action='store_true')
+    p.add_argument('--pretrain-root', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--batch-size', type=int, default=128,
+                   help='Number of fixed test images, not a full dataset sweep.')
+    p.add_argument('--microbatch-size', type=int, default=16)
+    p.add_argument('--gpu-memory-fraction', type=float, default=0.2,
+                   help='Cap this diagnostic CUDA allocator; leave room for concurrent FT.')
+    o = p.parse_args()
+    if min(o.batch_size, o.microbatch_size) < 1:
+        p.error('Batch sizes must be positive')
+    if not 0 < o.gpu_memory_fraction <= 1:
+        p.error('GPU memory fraction must be in (0, 1]')
+    out = Path(o.output).resolve()
+    # Production discovery rejects incomplete, ambiguous or mismatched models.
+    path = find_pretrain(o.pretrain_root,
+        inp=[4, 24, 24, 24, 24, 24, 48, 48, 48, 48, 48, 48, 96, 96, 96, 96],
+        out=[24, 24, 24, 24, 24, 48, 48, 48, 48, 48, 48, 96, 96, 96, 96, 96],
+        pool=[0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        task='cifar100', img_type='CiFAIR', block='S2DTCFFFB', bits=12,
+        center=False, selection='last')
+    saved = torch.load(path, map_location='cpu', weights_only=False)
+    assert saved['init_args']['s2_dtc']['method'] == 'rk2'
+    assert saved['init_args']['s2_dtc']['s2_dtc_substeps'] == 1
+    # Completed PT checkpoints retain constructor metadata here; unlike interim
+    # recovery checkpoints, they need not duplicate these fields at top level.
+    model_args = saved['init_args']['model_args']
+    assert model_args['measured_activation_scope'] == 'all'
+    assert model_args['final_head_type'] == 'digital'
+    assert saved.get('measured_activation_scope', 'all') == 'all'
+    assert saved.get('final_head', {'type': 'digital'})['type'] == 'digital'
+    del saved
+    out.mkdir(parents=True, exist_ok=False)
+    torch.cuda.set_per_process_memory_fraction(o.gpu_memory_fraction)
+    torch.set_num_threads(4)
+    torch.manual_seed(4096)
+    np.random.seed(4096)
+    random.seed(4096)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    os.environ['DATALOADER_NUM_WORKERS'] = '0'
+    loader = get_test_data(test_bs=o.batch_size, img_type='CiFAIR', task='cifar100',
+                           shuffle=False, input_quant_bits=12, center_student_input=False)
+    batch = next(iter(loader))
+    inputs, labels = batch[0].cpu(), batch[1].cpu()
+    assert len(inputs) == o.batch_size and inputs.shape[1:] == (4, 16, 16)
+    del loader, batch
+    torch.save((inputs, labels), out/'fixed_test_batch.pt')
+    curve = ROOT/'hardware_data/mc_45_corners/1022_RELU_Voltage/tt_25_1.csv'
+    metadata = dict(checkpoint=str(path), checkpoint_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        batch_hash=digest((inputs, labels)), test_images=len(inputs),
+        microbatch_size=o.microbatch_size, gpu_memory_fraction=o.gpu_memory_fraction,
+        curve=str(curve),
+        curve_sha256=hashlib.sha256(curve.read_bytes()).hexdigest(),
+        reference='pulse_rk2_n8', representation='dense',
+        settings=dict(R=67e3, C=500e-15, VDD=.6, one_over_q=6, frames=5,
+            frame_seconds=1e-8, weight_bits=5, weight_quant_factor_bits=1,
+            activation='fixed MC18, all sites', clipping=True,
+            noise=False, variation=False, nonlinear_R=False, measured_pooling=False,
+            head_quantization=False, head_clipping=False, head_noise=False),
+        note='Inputs are cached once from the production test loader, including its input preprocessing. '
+             'No resampling between methods. Logits restored to model units; no FT/optimizer updates.')
+    write(out/'configuration.json', metadata)
+    variants = [('pulse_rk2_n8', 'pulse', 0, 8), ('averaged_rk2', 'average', 0, 1),
+                ('averaged_rk2_pairs4', 'average', 4, 1), ('pulse_rk2_n1', 'pulse', 0, 1)]
+    rows, reference, common_signature = [], None, None
+    for name, dynamics, pairs, substeps in variants:
+        print('START', name, flush=True)
+        model, signature = s2_pretrained_model(path, dynamics, pairs, substeps, 'cuda')
+        if common_signature is None:
+            common_signature = signature
+        assert signature == common_signature, 'Quantized levels/scales/fixed activations differ'
+        parts = []
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        with torch.no_grad():
+            for offset in range(0, len(inputs), o.microbatch_size):
+                raw = model(inputs[offset:offset+o.microbatch_size].cuda())
+                parts.append(logits_for_loss(raw, model).cpu())
+                print(name, min(offset+o.microbatch_size, len(inputs)), '/', len(inputs),
+                      'elapsed_seconds=', round(time.perf_counter()-start, 2), flush=True)
+        torch.cuda.synchronize()
+        logits = torch.cat(parts)
+        assert torch.isfinite(logits).all(), name
+        if reference is None:
+            reference = logits
+        delta = logits.double() - reference.double()
+        flips = int((logits.argmax(1) != reference.argmax(1)).sum())
+        row = dict(method=name, logit_relative_l2_percent=float(100*delta.norm()/reference.double().norm().clamp_min(1e-30)),
+            prediction_flips=flips, flip_percent=100*flips/len(inputs),
+            accuracy_percent=float(100*(logits.argmax(1) == labels).double().mean()),
+            seconds=time.perf_counter()-start,
+            peak_cuda_allocated_mib=torch.cuda.max_memory_allocated()/2**20,
+            common_hardware_hash=signature)
+        rows.append(row)
+        torch.save(dict(logits=logits, labels=labels), out/(name+'.pt'))
+        write(out/'results.json', rows)
+        print('RESULT', row, flush=True)
+        del model, parts, raw
+        gc.collect()
+        torch.cuda.empty_cache()
+    lines = ['# S2 pretrained deterministic dynamics comparison', '',
+        f'Checkpoint: `{path}`', '',
+        f'{len(inputs)} fixed CiFAIR-100 test images; microbatch {o.microbatch_size}; dense convolutions.',
+        'Common reference: pulse RK2 N=8 (600 steps over five 10 ns frames).',
+        'Identical quantized weights, scales, fixed 1022 TT MC18 activation and state clipping.',
+        'Noise, variation, nonlinear-R, measured pooling and head nonidealities disabled.',
+        'Relative logit L2 = 100 ||logits - reference|| / ||reference||, after model-unit restoration.', '',
+        '| Method | Logit error (%) | Prediction flips | Flip rate (%) | Accuracy (%) | Seconds |',
+        '|---|---:|---:|---:|---:|---:|']
+    for row in rows:
+        lines.append(f"| {row['method']} | {row['logit_relative_l2_percent']:.6f} | "
+            f"{row['prediction_flips']} / {len(inputs)} | {row['flip_percent']:.4f} | "
+            f"{row['accuracy_percent']:.4f} | {row['seconds']:.2f} |")
+    lines += ['', 'This is a one-batch diagnostic, not full-test or corner accuracy. '
+              'N=8 is a numerical reference, not an analytic solution. No FT was launched.', '']
+    (out/'summary.md').write_text('\n'.join(lines))
+    print('COMPLETE', out/'summary.md', flush=True)
+
+
+def s2_main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--s2-dtc', action='store_true')
+    p.add_argument('--ordering-study', action='store_true', help='Dense RK2 ordering correction study only.')
+    p.add_argument('--ordering-pairs', type=int, choices=(0, 1, 2, 4, 7), default=0)
+    p.add_argument('--s2-worker', choices=('numerical', 'benchmark'))
+    p.add_argument('--output', required=True)
+    p.add_argument('--batch', required=True)
+    p.add_argument('--dynamics', choices=('average', 'pulse'), default='average')
+    p.add_argument('--scene', choices=('ideal', 'clipped', 'measured', 'nonlinear'), default='ideal')
+    p.add_argument('--representation', choices=('dense', 'expanded'), default='dense')
+    p.add_argument('--method', default='rk2')
+    p.add_argument('--substeps', type=int, default=1)
+    p.add_argument('--batch-size', type=int, default=128)
+    p.add_argument('--start-worker', type=int, default=0,
+                   help='Resume completed diagnostic cases without rerunning them.')
+    p.add_argument('--train-step', action='store_true')
+    p.add_argument('--checkpoint', action='store_true')
+    p.add_argument('--report-only', action='store_true')
+    o = p.parse_args()
+    if o.s2_worker:
+        return s2_worker(o)
+    out = Path(o.output).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    if o.report_only:
+        return s2_ordering_report(out) if o.ordering_study else s2_report(out)
+    commands = []
+    base = [sys.executable, '-u', str(Path(__file__).resolve()), '--s2-dtc',
+            '--output', str(out), '--batch', str(Path(o.batch).resolve())]
+    for rep in ('dense', 'expanded'):
+        for scene in ('ideal', 'clipped', 'measured', 'nonlinear'):
+            for dynamics in ('average', 'pulse'):
+                common = ['--representation', rep, '--scene', scene, '--dynamics', dynamics]
+                commands.append(base + ['--s2-worker', 'numerical'] + common)
+                n = '1' if dynamics == 'average' else '2'
+                commands.append(base + ['--s2-worker', 'benchmark', '--substeps', n] + common)
+                if rep == 'dense':
+                    for checkpoint in (False, True):
+                        commands.append(base + ['--s2-worker', 'benchmark', '--substeps', n,
+                            '--train-step'] + (['--checkpoint'] if checkpoint else []) + common)
+            commands.append(base + ['--s2-worker', 'benchmark', '--method', 'dopri5',
+                '--representation', rep, '--scene', scene, '--dynamics', 'pulse'])
+    # Finish all correctness/numerical comparisons before memory-intensive benchmarks.
+    if o.ordering_study:
+        commands = []
+        for scene in ('ideal', 'clipped', 'measured', 'nonlinear'):
+            for dynamics, pairs in [('pulse', 0)] + [('average', r) for r in (0, 1, 2, 4, 7)]:
+                common = ['--ordering-study', '--representation', 'dense', '--scene', scene,
+                          '--dynamics', dynamics, '--ordering-pairs', str(pairs)]
+                commands.append(base + ['--s2-worker', 'numerical'] + common)
+                for flags in ([], ['--train-step'], ['--train-step', '--checkpoint']):
+                    commands.append(base + ['--s2-worker', 'benchmark', '--substeps', '1'] + common + flags)
+    commands.sort(key=lambda c: c[c.index('--s2-worker')+1] != 'numerical')
+    write(out/'commands.json', commands)
+    for i, command in enumerate(commands):
+        if i < o.start_worker:
+            continue
+        print('START', i, command, flush=True)
+        benchmark = command[command.index('--s2-worker')+1] == 'benchmark'
+        attempts = []
+        for bs in ((128, 64, 32, 16, 8, 4, 2, 1) if benchmark else (128,)):
+            current = command + ['--batch-size', str(bs)]
+            log_path = out/f'worker_{i:03d}_bs{bs}.log'
+            with log_path.open('w') as log:
+                result = subprocess.run(current, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+            if result.returncode:
+                raise RuntimeError(f'Worker {i} failed; see {log_path}')
+            if not benchmark:
+                break
+            def value(key, default):
+                return command[command.index(key)+1] if key in command else default
+            pairs = int(value('--ordering-pairs', '0'))
+            suffix = f'_pairs{pairs}' if pairs else ''
+            tag = (f"{value('--representation','dense')}_{value('--scene','ideal')}_"
+                   f"{value('--dynamics','average')}{suffix}_{value('--method','rk2')}_"
+                   f"{value('--substeps','1')}_train{'--train-step' in command}_"
+                   f"checkpoint{'--checkpoint' in command}")
+            path = out/('benchmark_'+tag+'.json')
+            measured = json.loads(path.read_text())
+            attempts.extend(measured.get('attempts', []))
+            measured['attempts'] = attempts
+            write(path, measured)
+            if measured['status'] == 'ok':
+                break
+        print('FINISHED', i, flush=True)
+    if o.ordering_study:
+        s2_ordering_report(out)
+    else:
+        s2_report(out)
+
+
+if __name__=='__main__':
+    if '--s2-pretrained' in sys.argv:
+        s2_pretrained_diagnostic()
+    elif '--s2-dtc' in sys.argv:
+        s2_main()
+    else:
+        main()

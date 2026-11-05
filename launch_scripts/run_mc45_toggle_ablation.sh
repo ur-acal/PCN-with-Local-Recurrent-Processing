@@ -55,6 +55,18 @@ Z_OVER_Y_TIME="${Z_OVER_Y_TIME:-3}"
 V_DD="${V_DD:-0.1}"
 ONE_OVER_Q="${ONE_OVER_Q:-1}"
 
+# Opt-in joint-state dynamics; legacy MC45 commands retain toggle behavior.
+S2_DTC_ARGS=()
+if [[ "${DTC_DYNAMICS:-toggle}" == s2 ]]; then
+  S2_DTC_ARGS=(--dtc_dynamics s2 --s2_dtc_method "${S2_DTC_EVAL_METHOD:-${S2_DTC_METHOD:-rk2}}"
+               --s2_dtc_substeps "${S2_DTC_EVAL_SUBSTEPS:-2}")
+  [[ -n "${S2_Y_INIT_WITH:-}" ]] && S2_DTC_ARGS+=(--y_init_with "${S2_Y_INIT_WITH}")
+  [[ -n "${S2_Z_INIT_WITH:-}" ]] && S2_DTC_ARGS+=(--z_init_with "${S2_Z_INIT_WITH}")
+elif [[ "${DTC_DYNAMICS:-toggle}" != toggle ]]; then
+  echo "ERROR: DTC_DYNAMICS must be toggle or s2" >&2
+  exit 2
+fi
+
 INPUT_PREPROCESS_ARGS=()
 if [[ -n "${INPUT_QUANT_BITS+x}" ]]; then
   INPUT_PREPROCESS_ARGS+=(--input_quant_bits "${INPUT_QUANT_BITS}")
@@ -199,6 +211,7 @@ mkdir -p "${OUTPUT_DIR}"
 } | tee "${OUTPUT_DIR}/run_config.txt"
 
 python scripts/run_toggle_nonideality_ablation.py \
+  "${S2_DTC_ARGS[@]}" \
   --full_45_corner_test true \
   --mc_45_corner_dir "${MC_45_CORNER_DIR}" \
   --mc_spin_variation_source "${MC_SPIN_VARIATION_SOURCE}" \

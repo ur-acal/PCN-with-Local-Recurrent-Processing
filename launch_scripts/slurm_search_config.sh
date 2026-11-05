@@ -210,7 +210,8 @@ case "${TOGGLE_MODE}" in
   persistent) ODE_BLOCK="ToggleKeepZ" ;;
   odexinit) ODE_BLOCK="ToggleODEXInitFFFB" ;;
   pulse_odexinit) ODE_BLOCK="ToggleODEXInitFFFB" ;;
-  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit/pulse_odexinit, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
+  s2_dtc|s2_dtc_pulse) ODE_BLOCK="S2DTCFFFB" ;;
+  *) echo "ERROR: TOGGLE_MODE must be none/reset/persistent/odexinit/pulse_odexinit/s2_dtc/s2_dtc_pulse, got '${TOGGLE_MODE}'" >&2; exit 2 ;;
 esac
 
 # 2. SWITCH_INF mode. This is for the time-interleaved model.
@@ -762,6 +763,12 @@ submit_chunk() {
   sbatch_exports+=",TOGGLE_FAST_PATH=${TOGGLE_FAST_PATH},TOGGLE_ONE_OVER_Q=${TOGGLE_ONE_OVER_Q}"
   sbatch_exports+=",ODEXINIT_SCALING_MODE=${ODEXINIT_SCALING_MODE}"
   sbatch_exports+=",TOGGLE_TIMING_MODE=${TOGGLE_TIMING_MODE},TOGGLE_Y_TIME=${TOGGLE_Y_TIME}"
+  local s2_key
+  for s2_key in S2_DTC_METHOD S2_DTC_EVAL_METHOD S2_DTC_SUBSTEPS S2_DTC_FT_SUBSTEPS S2_DTC_EVAL_SUBSTEPS S2_Y_INIT_WITH S2_Z_INIT_WITH S2_DTC_ORDERING_PAIRS; do
+    if [[ -n "${!s2_key:-}" ]]; then
+      sbatch_exports+=",${s2_key}=${!s2_key}"
+    fi
+  done
   sbatch_exports+=",Z_OVER_Y_TIME=${Z_OVER_Y_TIME},SCALE_TRAIN_RECIPE=${SCALE_TRAIN_RECIPE}"
   sbatch_exports+=",R_VAL=${R_VAL},R_MAX=${R_MAX},C_VAL=${C_VAL},V_DD=${V_DD},MISMATCH_LEVEL=${MISMATCH_LEVEL}"
   sbatch_exports+=",ENABLE_MEASURED_ACTIVATION=${ENABLE_MEASURED_ACTIVATION}"

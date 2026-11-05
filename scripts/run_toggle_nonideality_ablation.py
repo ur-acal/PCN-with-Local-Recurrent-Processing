@@ -173,6 +173,11 @@ def parse_args():
     parser.add_argument("--max_eval_batches", type=int, default=0)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--toggle_level", type=int, choices=(2, 3), default=3)
+    parser.add_argument("--dtc_dynamics", choices=("toggle", "s2"), default="toggle")
+    parser.add_argument("--s2_dtc_method", choices=("euler", "rk2", "dopri5"), default="rk2")
+    parser.add_argument("--s2_dtc_substeps", type=int, default=None)
+    parser.add_argument("--y_init_with", choices=("x", "0"), default=None)
+    parser.add_argument("--z_init_with", choices=("x", "0"), default=None)
     parser.add_argument("--toggle_n_cycles", type=int, default=5)
     parser.add_argument("--toggle_time_split", type=float, default=0.5)
     parser.add_argument("--toggle_fast_path", type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=True)
@@ -295,6 +300,13 @@ def build_command(args, case_name):
         if "QAT" in args.model_name and "full_param" not in args.ckpt
         else "ToggleWrapper1State"
     )
+    s2 = getattr(args, "dtc_dynamics", "toggle") == "s2"
+    if "S2DTC" in args.model_name and not s2:
+        raise ValueError("S2 DTC checkpoints require --dtc_dynamics s2 (DTC_DYNAMICS=s2 in MC45).")
+    if s2:
+        ode_block = "S2DTCFFFB" if args.toggle_level == 2 else "S2DTCPulseFFFB"
+        ode_wrapper = ("S2DTCQATTester2State" if "QAT" in args.model_name and
+                       "full_param" not in args.ckpt else "S2DTCWrapper2State")
     command = [
         sys.executable, "-u", "ode_inference.py",
         "--model_name", args.model_name,
@@ -307,7 +319,7 @@ def build_command(args, case_name):
         "--pc_conv", "PCConvReLU6Noisy",
         "--ode_block", ode_block,
         "--ode_wrapper", ode_wrapper,
-        "--method", "dopri5",
+        "--method", args.s2_dtc_method if s2 else "dopri5",
         "--tol", "1e-6",
         "--n_steps", "100",
         "--ts_scale", "1",
@@ -427,6 +439,11 @@ def build_command(args, case_name):
                         '--rhs_current_bound_percentile', str(args.rhs_current_bound_percentile)])
         if args.rhs_current_audit_path:
             command.extend(['--rhs_current_audit_path', args.rhs_current_audit_path])
+    if s2:
+        for key in ("y_init_with", "z_init_with", "s2_dtc_substeps"):
+            value = getattr(args, key, None)
+            if value is not None:
+                command.extend(["--" + key, str(value)])
     return command
 
 

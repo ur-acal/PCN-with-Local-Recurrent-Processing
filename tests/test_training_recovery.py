@@ -132,6 +132,23 @@ def test_recovery_preserves_matching_corner_coupling(tmp_path, saved, current):
     assert restore_latest(resumed)[0] == 1
 
 
+def test_s2_dtc_recovery_requires_matching_initialization_and_solver(tmp_path):
+    trainer = make_trainer(tmp_path)
+    settings = dict(y_init_with='x', z_init_with='0', s2_dtc_substeps=1,
+                    ode_block='S2DTCFFFB', method='rk2', weight_encoding='normalized')
+    trainer.model.init_args = {'s2_dtc': settings}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    resumed.recovery_checkpoint = latest_path(trainer)
+    for key, value in (('y_init_with', '0'), ('z_init_with', 'x'),
+                       ('s2_dtc_substeps', 2), ('method', 'euler'), ('s2_dtc_ordering_pairs', 2)):
+        resumed.model.init_args = {'s2_dtc': dict(settings, **{key: value})}
+        with pytest.raises(ValueError, match='unchanged S2 DTC'):
+            restore_latest(resumed)
+    resumed.model.init_args = {'s2_dtc': settings.copy()}
+    assert restore_latest(resumed)[0] == 1
+
+
 @pytest.mark.parametrize('config,expected', [
     ({}, None),
     ({'tc_nonidealities': True}, 1e-6),

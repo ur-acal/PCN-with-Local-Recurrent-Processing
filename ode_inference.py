@@ -154,6 +154,10 @@ def parse_args():
     parser.add_argument("--toggle_timing_mode", choices=("derived", "fixed"),
                         default="derived")
     parser.add_argument("--toggle_y_time", type=float, default=5e-9)
+    parser.add_argument("--y_init_with", choices=("x", "0"), default=None)
+    parser.add_argument("--z_init_with", choices=("x", "0"), default=None)
+    parser.add_argument("--s2_dtc_substeps", type=int, default=None)
+    parser.add_argument("--s2_dtc_ordering_pairs", type=int, choices=(0, 1, 2, 4, 7), default=None)
     parser.add_argument("--z_over_y_time", type=float, default=3.0)
     parser.add_argument("--odexinit_scaling_mode", choices=("approx", "direct"),
                         default="approx",
@@ -469,6 +473,9 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
                   "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
                   "toggle_fast_path": args.toggle_fast_path,
+                  "y_init_with": args.y_init_with, "z_init_with": args.z_init_with,
+                  "s2_dtc_substeps": args.s2_dtc_substeps,
+                  "s2_dtc_ordering_pairs": args.s2_dtc_ordering_pairs,
                   "odexinit_scaling_mode": args.odexinit_scaling_mode,
                   "toggle_timing_mode": args.toggle_timing_mode,
                   "toggle_y_time": args.toggle_y_time,
@@ -614,6 +621,9 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                   "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
                   "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
                   "toggle_fast_path": args.toggle_fast_path,
+                  "y_init_with": args.y_init_with, "z_init_with": args.z_init_with,
+                  "s2_dtc_substeps": args.s2_dtc_substeps,
+                  "s2_dtc_ordering_pairs": args.s2_dtc_ordering_pairs,
                   "odexinit_scaling_mode": args.odexinit_scaling_mode,
                   "toggle_timing_mode": args.toggle_timing_mode,
                   "toggle_y_time": args.toggle_y_time,
@@ -882,6 +892,9 @@ def run_ode_inference(linear_study=None):
                       "patch_pad": args.patch_pad, "fold_scalar": args.fold_scalar,
                       "toggle_n_cycles": args.toggle_n_cycles, "toggle_time_split": args.toggle_time_split,
                       "toggle_fast_path": args.toggle_fast_path,
+                      "y_init_with": args.y_init_with, "z_init_with": args.z_init_with,
+                      "s2_dtc_substeps": args.s2_dtc_substeps,
+                      "s2_dtc_ordering_pairs": args.s2_dtc_ordering_pairs,
                       "odexinit_scaling_mode": args.odexinit_scaling_mode,
                       "toggle_timing_mode": args.toggle_timing_mode,
                       "toggle_y_time": args.toggle_y_time,

@@ -2604,6 +2604,354 @@ class SelfCUAbsSumFFFBNoisy(SelfCUAbsSumFFFBFixNoise):
 ####################################################################################
 
 
+class _S2DTCMixin:
+    """New joint-state logic shared by averaged and pulse S2 DTC blocks."""
+
+    def _apply_averaged_module(self, module, source):
+        if hasattr(module, 'forward_pulse'):
+            # The averaged PWM matrix contains signed duty fractions. Use the
+            # same physical coupler curves as pulse evaluation, not MVMConv's
+            # legacy resistance-code implementation of ordinary forward().
+            return module.forward_pulse(source, module.mat, nominal_R=self.R)
+        return super()._apply_averaged_module(module, source)
+
+    def _init_s2_dtc(self, y_init_with, z_init_with, s2_dtc_substeps, kwargs):
+        self.s2_dtc_ordering_pairs = int(kwargs.get("s2_dtc_ordering_pairs") or 0)
+        if self.s2_dtc_ordering_pairs not in {0, 1, 2, 4, 7}:
+            raise ValueError("s2_dtc_ordering_pairs must be 0, 1, 2, 4 or 7.")
+        self.y_init_with = y_init_with or "x"
+        self.z_init_with = z_init_with or "0"
+        self.s2_dtc_substeps = 1 if s2_dtc_substeps is None else int(s2_dtc_substeps)
+        if self.y_init_with not in {"x", "0"} or self.z_init_with not in {"x", "0"}:
+            raise ValueError("S2 DTC initialization must be x or 0.")
+        if self.s2_dtc_substeps < 1:
+            raise ValueError("s2_dtc_substeps must be positive.")
+        if self.toggle_timing_mode != "fixed" or self.z_over_y_time != 1:
+            raise ValueError("S2 DTC requires fixed timing and z_over_y_time=1 (one shared frame).")
+        _configure_unitless_measured_pullback(self, kwargs, required_mode="direct")
+
+    @staticmethod
+    def _s2_ordering_modes(m):
+        """S[k,j]=sign(k-j)/(2*m*m), largest real skew pairs first."""
+        indices = torch.arange(m, dtype=torch.float64)
+        matrix = (indices[:, None] - indices[None, :]).sign() / (2 * m * m)
+        values, vectors = torch.linalg.eigh(1j * matrix)
+        keep = values > 1e-12
+        values, vectors = values[keep].flip(0), vectors[:, keep].flip(1)
+        a = math.sqrt(2) * vectors.real.T
+        b = -math.sqrt(2) * vectors.imag.T
+        return values, a, b
+
+    def _s2_ordering_weights(self):
+        """Collapse temporal masks, not hardware curves, into dense kernels.
+
+        Use the existing pulse mask's QAT boundary subgradient. Negative mode
+        coefficients are temporal algebra, NOT new physical coupler polarities.
+        """
+        if not hasattr(self, '_s2_ordering_basis'):
+            self._s2_ordering_basis = self._s2_ordering_modes(self.q_hi)
+        ref = self.FFconv.weight
+        sigma, a, b = (t.to(ref)[:self.s2_dtc_ordering_pairs]
+                       for t in self._s2_ordering_basis)
+        kernels = []
+        for key, module in (("FFconv", self.FFconv), ("FBconv", self.FBconv)):
+            levels = module.weight * self.q_hi
+            masks = torch.stack([PulseLevelMaskImpl.apply(levels, k, self.q_hi)
+                                 for k in range(self.q_hi)])
+            mismatch = self._training_pulse_mismatch
+            if mismatch is not None:
+                if mismatch['type'] == 'mul':
+                    masks = masks * mismatch[key]
+                else:
+                    masks = masks + masks.abs() * mismatch[key]
+            kernels.append(tuple(torch.einsum('rk,k...->r...', basis, masks)
+                                 for basis in (a, b)))
+        return sigma, kernels
+
+    def _s2_ordering_correction(self, state, duration, weights):
+        """H²*C via pointwise slopes and convolutions, without 105 pair JVPs.
+
+        f_k=(A_k h(z), B_k g(y)); Df_k v therefore needs only the
+        pointwise h'/g' and two convolutions. Autograd retains the slope graph
+        during training (including nonlinear-R curvature). No noise is drawn.
+        """
+        training_graph = torch.is_grad_enabled()
+        with torch.enable_grad():
+            y, z = (v if v.requires_grad else v.detach().requires_grad_(True) for v in state)
+            # Fused kernels are once_differentiable. Only this local slope
+            # calculation needs higher derivatives; retain existing backends
+            # for the ordinary RK2 updates and restore flags even on failure.
+            fused_r = getattr(self, '_fuse_toggle_nonlinear_R_input', False)
+            fused_act = getattr(self.act_fn, 'fuse_measured_activation', None)
+            try:
+                self._fuse_toggle_nonlinear_R_input = False
+                if fused_act is not None:
+                    self.act_fn.fuse_measured_activation = False
+                hy = self._averaged_nonlinear_R_source(self.FBconv, self.project_state(y))
+                hz = self._averaged_nonlinear_R_source(self.FFconv, self.act_fn(self.project_state(z)))
+            finally:
+                self._fuse_toggle_nonlinear_R_input = fused_r
+                if fused_act is not None:
+                    self.act_fn.fuse_measured_activation = fused_act
+            dy = torch.autograd.grad(hy.sum(), y, create_graph=training_graph, retain_graph=True)[0]
+            dz = torch.autograd.grad(hz.sum(), z, create_graph=training_graph, retain_graph=True)[0]
+        if not training_graph:
+            hy, hz, dy, dz = (v.detach() for v in (hy, hz, dy, dz))
+
+        def conv(module, source, kernel, stage, scale):
+            if isinstance(module, nn.Conv2d):
+                current = F.conv2d(source, kernel, None, module.stride, module.padding,
+                                   module.dilation, module.groups)
+            else:
+                current = F.conv_transpose2d(source, kernel, None, module.stride, module.padding,
+                                             module.output_padding, module.groups, module.dilation)
+            return self._apply_spin_variation(stage, current) * (duration / (scale * self.R * self.C))
+
+        def field(kf, kb, sources):
+            return (conv(self.FFconv, sources[0], kf, 'y', self.s_ff),
+                    conv(self.FBconv, sources[1], kb, 'z', self.s_fb))
+
+        sigma, ((af, bf), (ab, bb)) = weights
+        correction = tuple(torch.zeros_like(v) for v in state)
+        for r in range(len(sigma)):
+            ga = field(af[r], ab[r], (hz, hy))
+            gb = field(bf[r], bb[r], (hz, hy))
+            dagb = field(af[r], ab[r], (dz * gb[1], dy * gb[0]))
+            dbga = field(bf[r], bb[r], (dz * ga[1], dy * ga[0]))
+            correction = tuple(c + sigma[r] * (a - b)
+                               for c, a, b in zip(correction, dagb, dbga))
+        return correction
+
+
+    def _s2_dtc_initial_state(self, x):
+        y = ODEBlockXInit.init_y(self, x)
+        if self.y_init_with == "0":
+            y = torch.zeros_like(y)
+        z = x if self.z_init_with == "x" else torch.zeros_like(x)
+        return y, z
+
+
+    def _s2_dtc_interval(self, state, duration, pulse_weights=None, counts=None, ordering_weights=None):
+        """Joint integration; duration is seconds physically, otherwise t/(RC).
+
+        A common frame uses branch exposure 1/s instead of toggle's separate T/s
+        clocks. Drift scales by 1/s, diffusion by 1/sqrt(s). This explicitly
+        preserves the branch charge/noise budgets of the fixed-timing recipe.
+        DTC fractional edge overlaps remain slice-averaged, as in toggle.
+        """
+        physical = getattr(self, "physical", False)
+        duration = state[0].new_tensor(duration)
+        modules = (self.FFconv, self.FBconv)
+        stages = ("y", "z")
+        if physical:
+            scales = (self.s_ff, self.s_fb)
+            exposures = tuple(duration / s for s in scales)
+        else:
+            exposures = (duration, duration)
+        pullback = None if physical else self._unitless_measured_pullback.scale_for_solve(self)
+        # The QAT wrapper clears this after forward, before checkpoint backward.
+        # Recomputed RHS calls must retain this interval's hardware realization.
+        training_mismatch = self._training_pulse_mismatch
+
+        def rhs(t, yz):
+            if physical:
+                yz = tuple(self.project_state(value) for value in yz)
+            y, z = yz
+            h = (self.act_fn(z) if pullback is None else
+                 self._unitless_measured_pullback.apply(self, z, pullback))
+            sources = (h, y)
+            derivatives = []
+            for i, (module, source, stage) in enumerate(zip(modules, sources, stages)):
+                if pulse_weights is None:
+                    previous_mismatch = self._training_pulse_mismatch
+                    try:
+                        self._training_pulse_mismatch = training_mismatch
+                        current = self._apply_averaged_module(module, source)
+                    finally:
+                        self._training_pulse_mismatch = previous_mismatch
+                else:
+                    current = self._apply_pulse_module(module, source, pulse_weights[i])
+                if physical:
+                    current = self._apply_spin_variation(stage, current)
+                    current = current / (self.R * self.C)
+                    slow = self._slow_stage_current(yz[i], stage, module, source)
+                    if slow is not None:
+                        current = current + slow / self.C
+                derivatives.append(exposures[i] * current)
+            return tuple(derivatives)
+
+        coefficients = []
+        generators = {}
+        for i, (stage, value) in enumerate(zip(stages, state)):
+            summing = torch.zeros_like(value)
+            coupler = torch.zeros_like(value)
+            if physical:
+                if self.enable_summing_current_noise:
+                    summing = torch.full_like(value, self.summing_current_p / self.C)
+                if self.enable_coupler_noise:
+                    coupler = counts[i].clamp_min(0).sqrt() * self.coupler_noise_p / self.C
+                summing = summing * exposures[i].sqrt()
+                coupler = coupler * exposures[i].sqrt()
+            coefficients.append((summing, coupler))
+            generators[(i, "sum")] = self._summing_noise_generator(value)
+            generators[(i, "coupler")] = self._coupler_noise_generator(value)
+
+        from tc_nonidealities import TCNoiseLifecycle
+        context = TCNoiseLifecycle(coefficients, generators)
+        if self.method in {"euler", "rk2"}:
+            derivative_fn = rhs
+            if self.checkpoint_ode_rhs_training and torch.is_grad_enabled():
+                from TorchDiffEqPack.odesolver.base import RHSCheckpointWrapper
+                derivative_fn = RHSCheckpointWrapper(_FuncWrapper(rhs), context)
+            step = 1.0 / self.s2_dtc_substeps
+            for _ in range(self.s2_dtc_substeps):
+                correction = None
+                if ordering_weights is not None:
+                    def correct(y, z):
+                        return self._s2_ordering_correction((y, z), duration, ordering_weights)
+                    if self.checkpoint_ode_rhs_training and torch.is_grad_enabled():
+                        from torch.utils.checkpoint import checkpoint
+                        correction = checkpoint(correct, *state, use_reentrant=False)
+                    else:
+                        correction = correct(*state)
+                k1 = derivative_fn(None, state)
+                if self.method == "rk2":
+                    midpoint = tuple(v + 0.5 * step * k for v, k in zip(state, k1))
+                    derivative = derivative_fn(None, midpoint)
+                else:
+                    derivative = k1
+                state = tuple(v + step * k for v, k in zip(state, derivative))
+                if correction is not None:
+                    state = tuple(v + c for v, c in zip(state, correction))
+                if physical:
+                    state = tuple(v + math.sqrt(step) * context._sample(i, v, coefficients[i])
+                                  for i, v in enumerate(state))
+                    state = tuple(self.project_state(v) for v in state)
+                    context.accepted()
+            return state
+        if not is_adaptive(self.method):
+            raise ValueError("S2 DTC supports euler, rk2 or an adaptive solver.")
+        func = _FuncWrapper(rhs)
+        func.tc_context = context
+        options = dict(self.option_aca, t0=0., t1=1., t_eval=[0., 1.], h=None,
+                       eps=tuple((a.square() + b.square()).sqrt() for a, b in coefficients),
+                       noise_type="addi", end_point_mode=True)
+        if physical:
+            options["proj_fn"] = self.project_state
+        result = aca_ode_solve(func, state, options)
+        # With a noise context and end_point_mode, the solver returns the state
+        # tuple directly, not a trajectory with a leading time dimension.
+        return result
+
+
+    def _s2_dtc_forward(self, x, pulse=False):
+        self.reset_slow_current_noise()
+        if self.training:
+            self.reset_spin_variation()
+            self.reset_nonlinear_R_variation()
+        state = self._s2_dtc_initial_state(x)
+        if self.return_init:
+            return state[0]
+        physical = getattr(self, "physical", False)
+        if pulse and not physical:
+            raise ValueError("S2DTCPulseFFFB requires a physical wrapper; pretrain with S2DTCFFFB.")
+        if not physical and (self.enable_summing_current_noise or self.enable_coupler_noise
+                             or self.enable_spin_variation or self.enable_slow_summing_current
+                             or self.enable_slow_coupler_noise):
+            raise ValueError("S2 DTC hardware nonidealities require physical=True.")
+        if getattr(self, "_rhs_current_limits", None):
+            raise ValueError("Constant-RHS current clamps do not support joint S2 DTC dynamics.")
+        frame_time = self.toggle_y_time
+        if not physical:
+            frame_time /= self.toggle_timing_R * self.toggle_timing_C
+        modules = (self.FFconv, self.FBconv)
+        ordering_weights = None
+        if self.s2_dtc_ordering_pairs and physical:
+            if pulse or self.method != 'rk2' or self.s2_dtc_substeps != 1:
+                raise ValueError('Ordering correction requires averaged RK2 with one step per frame.')
+            if self.q_hi != 15:
+                raise ValueError('Ordering correction currently requires 15 PWM slices (5-bit weights).')
+            if self.enable_slow_summing_current or self.enable_slow_coupler_noise:
+                raise ValueError('Ordering correction does not support slow-current noise.')
+            if any(not isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)) or m.bias is not None
+                   for m in modules):
+                raise ValueError('Ordering correction supports bias-free dense convolution only.')
+            ordering_weights = self._s2_ordering_weights()
+        # Functional pulse convolutions bypass Validator hooks; expand both first.
+        if pulse and getattr(self, "_pulse_unrolling", False):
+            for module, source in zip(modules, (state[1], state[0])):
+                if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
+                    module(source)
+            modules = (self.FFconv, self.FBconv)
+        for _ in range(self.toggle_n_cycles or 5):
+            if pulse:
+                windows = [self._sample_dtc_window(module, stage)
+                           for module, stage in zip(modules, ("y", "z"))]
+                slices = self.q_hi
+            else:
+                slices = 1
+            for k in range(slices):
+                weights = None
+                counts = None
+                if pulse:
+                    weights = [self.get_pulse_matrix(module, k, slices, dtc_window=window)
+                               for module, window in zip(modules, windows)]
+                if physical and self.enable_coupler_noise:
+                    counts = []
+                    for i, (module, source) in enumerate(zip(modules, (state[1], state[0]))):
+                        if pulse:
+                            _, clean = self._clean_weight(module)
+                            mask = (self._active_pulse_mask(module, k) if windows[i] is None else
+                                    self._dtc_slice_duty(module, clean, k, windows[i]))
+                            count = self._active_coupler_count(module, source, mask, state[i])
+                        else:
+                            count = self._averaged_coupler_level_sum(module, source, state[i]) / self.q_hi
+                        counts.append(count)
+                state = self._s2_dtc_interval(state, frame_time / slices, weights, counts,
+                                              ordering_weights=ordering_weights)
+        self._last_s2_dtc_z = state[1]
+        return self._finish_forward(state[0])
+
+
+class S2DTCFFFB(_S2DTCMixin, ToggleAveragedPhysicalFFFB):
+    """Joint S2 dynamics with fixed DTC-frame timing, averaged over pulses."""
+    reset_z = False
+    s2_dtc = True
+
+    def __init__(self, y_init_with=None, z_init_with=None, s2_dtc_substeps=None, **kwargs):
+        super().__init__(**kwargs)
+        self._init_s2_dtc(y_init_with, z_init_with, s2_dtc_substeps, kwargs)
+
+    def forward(self, x, layer_idx=None):
+        return self._s2_dtc_forward(x)
+
+
+class S2DTCPulseFFFB(_S2DTCMixin, TogglePulseBlk):
+    """Joint, persistent y/z integration with trainable integer PWM masks."""
+    reset_z = False
+    s2_dtc = True
+
+    def __init__(self, y_init_with=None, z_init_with=None, s2_dtc_substeps=None, **kwargs):
+        super().__init__(**kwargs)
+        self._init_s2_dtc(y_init_with, z_init_with, s2_dtc_substeps, kwargs)
+
+    def forward(self, x, layer_idx=None):
+        return self._s2_dtc_forward(x, pulse=True)
+
+    def _apply_pulse_module(self, module, x, pulse_weight):
+        if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
+            if getattr(self, "_nonlinear_R_training_pkg", None) is not None:
+                x = self._averaged_nonlinear_R_source(module, x)
+            else:
+                x = self._pulse_nonlinear_source(x)
+            if isinstance(module, nn.Conv2d):
+                return F.conv2d(x, pulse_weight, None, module.stride, module.padding,
+                                module.dilation, module.groups)
+            return F.conv_transpose2d(x, pulse_weight, None, module.stride, module.padding,
+                                      module.output_padding, module.groups, module.dilation)
+        return super()._apply_pulse_module(module, x, pulse_weight)
+
+
 class ODEBlockPCMinusY(ODEBlockPC):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -4047,7 +4395,8 @@ class WrapQuantizeW(ODEWrapperRC):
                 raise TypeError(
                     "Level-2 nonlinear-R training requires "
                     "ToggleAveragedPhysicalFFFB or a derived Level-2 block.")
-            if isinstance(self.ode_block, TogglePulseFFFB):
+            if (isinstance(self.ode_block, TogglePulseFFFB) and
+                    not getattr(self.ode_block, "s2_dtc", False)):
                 raise TypeError(
                     "nonlinear_R_train_mode is for non-expanded Level-2 blocks.")
             if self.nonlinear_R_curve_sharing != "shared":
@@ -4858,6 +5207,51 @@ class TogglePulseQATWrapper1State(ToggleQATWrapper1State):
         super().__init__(qat_cls=PulseSymQuantizeWeight, **kwargs)
 
 
+class S2DTCWrapper2State(ToggleWrapper1State):
+    """Fixed-frame S2 wrapper: no legacy RC/time patching."""
+    def __init__(self, **kwargs):
+        self.s2_pulse = isinstance(kwargs["ode_block"], S2DTCPulseFFFB)
+        q_hi = (1 << (int(kwargs.get("w_bits", 8)) - 1)) - 1
+        kwargs["R_max"] = float(kwargs.get("R", 1e5)) * q_hi
+        super().__init__(**kwargs)
+
+    def cal_quant_factor_and_set(self, q_hi, p, weight_quant_factor_bits=None):
+        quantizer = TogglePulseWrapper1State if self.s2_pulse else WrapQuantizeW
+        return quantizer.cal_quant_factor_and_set(q_hi, p, weight_quant_factor_bits)
+
+
+class S2DTCQATWrapper2State(ToggleQATWrapper1State):
+    def __init__(self, **kwargs):
+        pulse = isinstance(kwargs["ode_block"], S2DTCPulseFFFB)
+        q_hi = (1 << (int(kwargs.get("w_bits", 8)) - 1)) - 1
+        kwargs["R_max"] = float(kwargs.get("R", 1e5)) * q_hi
+        # The trainer supplies its generic quantizer too; the state encoding
+        # here determines which quantizer is required for averaged/pulse S2.
+        kwargs["qat_cls"] = PulseSymQuantizeWeight if pulse else SymQuantizeWeight
+        super().__init__(**kwargs)
+
+
+class S2DTCQATTester2State(S2DTCWrapper2State):
+    def __init__(self, **kwargs):
+        block = kwargs["ode_block"]
+        source = getattr(block, "s2_dtc_source_encoding", "normalized")
+        target = "integer_level" if isinstance(block, S2DTCPulseFFFB) else "normalized"
+        if source != target:
+            q_hi = (1 << (int(kwargs.get("w_bits", 8)) - 1)) - 1
+            factor = q_hi if target == "integer_level" else 1.0 / q_hi
+            with torch.no_grad():
+                seen = set()
+                for module in (block.FFconv, block.FBconv):
+                    if id(module.weight) not in seen:
+                        module.weight.mul_(factor)
+                        seen.add(id(module.weight))
+            # Pulse lookup uses the two original convolution weight snapshots.
+            block.clean_params["FFconv"] = block.FFconv.weight.detach().clone()
+            block.clean_params["FBconv"] = block.FBconv.weight.detach().clone()
+        kwargs.update(patch=True, quantize=False)
+        super().__init__(**kwargs)
+
+
 class ODEWrapper1StateWithX(ODEWrapper1State):
     def _patch_forward(self):
         # scale the forward method
@@ -5011,6 +5405,27 @@ class QATWrapper1StateWithX(ODEWrapper1StateWithX):
 
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
                    return_init=False, n_steps=None, **kwargs):
+    saved_s2 = getattr(pc_net, "s2_dtc_checkpoint_config", {})
+    if kwargs.get('s2_dtc_ordering_pairs') and not getattr(ode_block, 's2_dtc', False):
+        raise ValueError('Ordering correction is supported only by S2 DTC blocks.')
+    if getattr(ode_block, "s2_dtc", False):
+        if kwargs.get('s2_dtc_ordering_pairs') is None:
+            # Pulse evaluation uses the actual pulse schedule, never a correction
+            # inherited from the averaged FT checkpoint.
+            kwargs['s2_dtc_ordering_pairs'] = (0 if issubclass(ode_block, S2DTCPulseFFFB)
+                                              else saved_s2.get('s2_dtc_ordering_pairs', 0))
+        for key, default in (("y_init_with", "x"), ("z_init_with", "0"),
+                             ("s2_dtc_substeps", 1)):
+            if kwargs.get(key) is None:
+                kwargs[key] = saved_s2.get(key, default)
+        pc_net.init_args["s2_dtc"] = {
+            **{key: kwargs[key] for key in ("y_init_with", "z_init_with", "s2_dtc_substeps")},
+            "ode_block": ode_block.__name__, "method": method,
+            "weight_encoding": ("integer_level" if issubclass(ode_block, S2DTCPulseFFFB)
+                                else "normalized"),
+        }
+        if kwargs['s2_dtc_ordering_pairs']:
+            pc_net.init_args['s2_dtc']['s2_dtc_ordering_pairs'] = kwargs['s2_dtc_ordering_pairs']
     from checkpoint_memory_profiler import (
         checkpoint_layer_count,
         parse_checkpoint_ode_rhs_portion,
@@ -5038,6 +5453,8 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
             pc_conv=pc_net.PcConvs[i], noise_level=noise_level, method=method, t_end=t_end, t_step=t_step, tol=tol,
             return_init=return_init[i] if isinstance(return_init, list) else False,
             **ode_kwargs)
+        if getattr(ode_block, "s2_dtc", False):
+            pc_net.PcConvs[i].s2_dtc_source_encoding = saved_s2.get("weight_encoding", "normalized")
     pc_net.checkpoint_ode_rhs_requested_portion = checkpoint_portion
     pc_net.checkpoint_ode_rhs_selected_layers = (
         checkpoint_count if checkpoint_requested else 0)
@@ -5114,6 +5531,8 @@ def wrap_ode_block(pc_net: PCNet, ode_wrapper=ODEWrapperRC, calib_path=None, R=1
 
 
 ODEBLOCK_CLASSES = {
+    "S2DTCFFFB": S2DTCFFFB,
+    "S2DTCPulseFFFB": S2DTCPulseFFFB,
     "ODEBlockPC": ODEBlockPC,
     "ODEBlockFFFB": ODEBlockFFFB,
     "ODEBlockXInit": ODEBlockXInit,
@@ -5185,6 +5604,9 @@ ODEBLOCK_CLASSES = {
 }
 
 ODEWrapper_CLASSES = {
+    "S2DTCWrapper2State": S2DTCWrapper2State,
+    "S2DTCQATWrapper2State": S2DTCQATWrapper2State,
+    "S2DTCQATTester2State": S2DTCQATTester2State,
     "ODEWrapperRC": ODEWrapperRC,
     "WrapQuantizeW": WrapQuantizeW,
     "WrapQuantizeWXInit": WrapQuantizeWXInit,

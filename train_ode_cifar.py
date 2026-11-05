@@ -76,6 +76,8 @@ def fixed_timing_recipe_scales(args):
     fb_scale = (float(args.toggle_y_time) *
                 float(args.z_over_y_time)) / reference_rc
     ff_scale = float(args.toggle_y_time) / (reference_rc * reference_cycle_t)
+    if args.ode_block in {"S2DTCFFFB", "S2DTCPulseFFFB"}:
+        fb_scale = ff_scale
     return ff_scale, fb_scale
 
 
@@ -304,6 +306,12 @@ def get_args():
                    default=None, help="Number of staged toggle cycles. Defaults to the layer n_steps/cls value.")
     p.add_argument("--toggle_time_split", type=float, default=0.5,
                    help="Fraction of each t_end/N_cycles toggle cycle used by the z-stage.")
+    p.add_argument("--y_init_with", choices=("x", "0"), default=None)
+    p.add_argument("--z_init_with", choices=("x", "0"), default=None)
+    p.add_argument("--s2_dtc_substeps", type=int, default=None,
+                   help="Fixed solver substeps per averaged frame or PWM slice; S2 DTC only.")
+    p.add_argument("--s2_dtc_ordering_pairs", type=int, choices=(0, 1, 2, 4, 7), default=None,
+                   help="Physical averaged RK2 ordering pairs; 0 disables, 7 retains all. No effect in unitless pretraining.")
     p.add_argument("--toggle_fast_path", type=str2bool, default=True,
                    help="Use direct constant-RHS updates inside Level 3 pulse slices.")
     p.add_argument("--toggle_timing_mode", choices=("derived", "fixed"),
@@ -1113,6 +1121,8 @@ def main():
                           "patch_node", "patch_stride",
                           "patch_cycle", "patch_pad", "fold_scalar", "n_iters",
                           "toggle_n_cycles", "toggle_time_split", "toggle_fast_path",
+                          "y_init_with", "z_init_with", "s2_dtc_substeps",
+                          "s2_dtc_ordering_pairs",
                           "toggle_timing_mode", "toggle_y_time", "z_over_y_time",
                           "odexinit_scaling_mode",
                           "enable_spin_variation", "sigma_spin", "spin_variation_seed",
@@ -1127,10 +1137,11 @@ def main():
     ode_block = ODEBLOCK_CLASSES[args.ode_block]
     ff_train_scale, fb_train_scale = fixed_timing_recipe_scales(args)
     if args.toggle_timing_mode == "fixed":
-        if ode_block is not ODEBLOCK_CLASSES["ToggleODEXInitFFFB"]:
+        if (ode_block is not ODEBLOCK_CLASSES["ToggleODEXInitFFFB"] and
+                not getattr(ode_block, "s2_dtc", False)):
             raise ValueError(
                 "--toggle_timing_mode fixed requires "
-                "--ode_block ToggleODEXInitFFFB.")
+                "--ode_block ToggleODEXInitFFFB, S2DTCFFFB or S2DTCPulseFFFB.")
         ode_kwargs.update(
             toggle_timing_R=args.R, toggle_timing_C=args.C)
         logging.warning(
@@ -1169,6 +1180,8 @@ def main():
             ODEBLOCK_CLASSES["ToggleODEXInitFFFB"]: {"approx", "direct"},
             ODEBLOCK_CLASSES["ODEXInitFFFB"]: {"approx"},
             ODEBLOCK_CLASSES["S2NoisyIYAsXZAs0"]: {"direct"},
+            ODEBLOCK_CLASSES["S2DTCFFFB"]: {"direct"},
+            ODEBLOCK_CLASSES["S2DTCPulseFFFB"]: {"direct"},
         }
         supported_modes = supported_pullback_modes.get(ode_block)
         if supported_modes is None:

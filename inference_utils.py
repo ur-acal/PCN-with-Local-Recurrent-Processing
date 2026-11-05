@@ -358,6 +358,7 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
         init_kwargs["measured_activation_scope"] = "pc_only"
 
     net_ = model_struct(**init_kwargs)
+    net_.s2_dtc_checkpoint_config = dict(checkpoint_weight["init_args"].get("s2_dtc", {}))
     net_ = net_.to(device)
     if isinstance(quant_params, dict):
         quant_scheme = get_quant_model(net_, device=device, **quant_params)
