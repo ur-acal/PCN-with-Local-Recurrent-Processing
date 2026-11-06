@@ -135,6 +135,145 @@ eval_one_combo_model() { echo "CALL:eval:$2"; }
         self.assertNotIn('CALL:eval',result.stdout)
 
 
+class QATContinuationTests(unittest.TestCase):
+    """Run the real continuation/worker shells, mocking only stage commands."""
+
+    def run_continuation(self, directory, **overrides):
+        directory = Path(directory)
+        name = 'TIMMQAT5b_PCNetNoBatchNorm_S2DTCFFFB_C100_CiFAIR_1REP'
+        source = directory/'source'/name
+        source.mkdir(parents=True)
+        # Shell-routing fixture, not a numerical checkpoint.
+        for suffix in ('full_param_last', 'latest'):
+            (source/f'{name}_{suffix}_ckpt.pth').write_bytes(b'fixture')
+        bindir = directory/'bin'
+        bindir.mkdir()
+        (bindir/'activate').write_text('[[ "$1" == base ]] || return 44\n')
+        env = dict(PATH=str(bindir)+':'+os.environ['PATH'], HOME=os.environ['HOME'],
+            IS_SLURM='1', SLURM_JOB_ID='fixture', SLURM_CPUS_PER_TASK='16',
+            TRACE=str(directory), TOGGLE_MODE='s2_dtc_pulse', TC_NONIDEALITIES='false',
+            SWITCH_INF='false', VALIDATION_MODE='false', TASK='cifar100', IMG_TYPE='CiFAIR',
+            PRETRAIN_SAVE_PATH=str(source.parent), CONTINUATION_SOURCE_MODEL=name,
+            FT_OUTPUT_SAVE_PATH=str(directory/'output'), LOGDIR=str(directory/'logs'),
+            COMB_LIST='combo\t0\t4 24\t24 24\t0 0', FINAL_EVAL_ONLY='true',
+            FT_NUM_EPOCHS='20', FT_LEARNING_RATE='0.0001', WARMUP_FT='0',
+            NONLINEAR_R_TABLE='coupler_low_volt_cascode', R_VAL='67e3', C_VAL='500e-15',
+            V_DD='0.6', TOGGLE_ONE_OVER_Q='6', TOGGLE_TIMING_MODE='fixed',
+            TOGGLE_Y_TIME='10e-9', Z_OVER_Y_TIME='1', SCALE_TRAIN_RECIPE='1',
+            MC_RELU_MONTE_CARLO_SOURCE='1022_RELU_Voltage', MEASURED_ACTIVATION_SCOPE='all',
+            ACTIVATION_CORNER_MODE='random_per_forward', ACTIVATION_RANDOM_CURVE_SHARING='per_spin',
+            FT_CORNER_COUPLED_SAMPLING='true', ENABLE_MEASURED_POOLING='true',
+            FINAL_HEAD_TYPE='digital', FINAL_ADC_NOISE_LSB='0.5', LINEAR_BIAS='false',
+            S2_DTC_METHOD='rk2', S2_DTC_SUBSTEPS='1', S2_DTC_FT_SUBSTEPS='1',
+            S2_DTC_ORDERING_PAIRS='0', S2_DTC_EVAL_METHOD='rk2', S2_DTC_EVAL_SUBSTEPS='8',
+            CHECKPOINT_ODE_RHS_TRAINING='true', CHECKPOINT_ODE_RHS_PORTION='1.0',
+            POST_FT_EVAL_CKPT='last', POST_FT_EVAL_CORNER_IDS='FS_V0_T0 FS_V2_T1',
+            POST_FT_EVAL_N_TRIALS='5')
+        env.update(overrides)
+        shell = r'''
+conda() { [[ "$1" == activate && "$2" == scanbase ]]; }
+python() {
+  [[ "$1" != -u ]] || shift
+  case "$1" in
+    train_ode_cifar.py)
+      printf '%s\0' "$@" > "$TRACE/ft.argv"
+      [[ "${FAIL_FT:-false}" != true ]] || return 42
+      echo '----- Train finished, Model Name: fixture_ft -----'
+      ;;
+    scripts/run_toggle_nonideality_ablation.py)
+      printf '%s\0' "$@" > "$TRACE/eval.argv"
+      ;;
+    shell_utils/pipeline_node_run_parse.py) ;;
+    *) echo "Unexpected Python stage: $1" >&2; return 43 ;;
+  esac
+}
+export -f conda python
+bash ./launch_scripts/run_cont_qat.sbatch
+'''
+        result = subprocess.run(['bash', '-c', shell], cwd=ROOT, env=env,
+                                text=True, capture_output=True, timeout=30)
+        def captured(stage):
+            path = directory/f'{stage}.argv'
+            return path.read_bytes().decode().split('\0')[:-1] if path.exists() else []
+        return result, captured('ft'), captured('eval'), env
+
+    def test_20_and_40_epoch_commands_and_eval_use_existing_worker(self):
+        from unittest.mock import patch
+        from train_ode_cifar import get_args
+        from scripts.run_toggle_nonideality_ablation import parse_args
+        for epochs in ('20', '40'):
+            with self.subTest(epochs=epochs), tempfile.TemporaryDirectory() as td:
+                result, ft, evaluation, env = self.run_continuation(td, FT_NUM_EPOCHS=epochs)
+                self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+                with patch.dict(os.environ, env), patch.object(sys, 'argv', ft):
+                    args = get_args()
+                self.assertEqual(args.model_name, env['CONTINUATION_SOURCE_MODEL'])
+                self.assertEqual(args.ckpt, 'full_param_last')
+                self.assertEqual(args.num_epochs, int(epochs))
+                self.assertEqual(args.learning_rate, .0001)
+                self.assertEqual(args.warmup_epoch, 0)
+                self.assertEqual(args.ode_block, 'S2DTCPulseFFFB')
+                self.assertEqual(args.method, 'rk2')
+                self.assertEqual(args.n_steps, 5)
+                self.assertEqual(args.s2_dtc_substeps, 1)
+                self.assertEqual(args.s2_dtc_ordering_pairs, 0)
+                self.assertTrue(args.checkpoint_ode_rhs_training)
+                self.assertEqual(args.checkpoint_ode_rhs_portion, 1.)
+                self.assertEqual(args.final_head_type, 'digital')
+                self.assertFalse(args.linear_bias)
+                self.assertEqual(args.measured_activation_scope, 'all')
+                self.assertEqual(args.activation_random_curve_sharing, 'per_spin')
+                self.assertTrue(args.ft_corner_coupled_sampling)
+                with patch.object(sys, 'argv', evaluation):
+                    args = parse_args()
+                self.assertEqual(args.ckpt, 'last')
+                self.assertEqual(args.dtc_dynamics, 's2')
+                self.assertEqual(args.s2_dtc_method, 'rk2')
+                self.assertEqual(args.s2_dtc_substeps, 8)
+                self.assertEqual(args.corner_ids, ['FS_V0_T0', 'FS_V2_T1'])
+                self.assertEqual(args.n_trials, 5)
+
+    def test_latest_and_ft_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            result, ft, evaluation, _ = self.run_continuation(
+                td, mode='ft_only', CONTINUATION_SOURCE_SELECTION='latest')
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            self.assertEqual(ft[ft.index('--ckpt')+1], 'latest')
+            self.assertFalse(evaluation)
+
+    def test_invalid_source_or_mode_stops_before_python(self):
+        for change in (dict(mode='default'), dict(CONTINUATION_SOURCE_SELECTION='last'),
+                       dict(CONTINUATION_SOURCE_MODEL='missing_QAT'),
+                       dict(CONTINUATION_SOURCE_MODEL='../QAT'),
+                       dict(FT_OUTPUT_SAVE_PATH=''), dict(COMB_LIST='one\ntwo')):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as td:
+                result, ft, evaluation, _ = self.run_continuation(td, **change)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(ft)
+                self.assertFalse(evaluation)
+
+    def test_preserve_source_and_propagate_ft_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            result, ft, evaluation, _ = self.run_continuation(
+                td, FT_OUTPUT_SAVE_PATH=str(Path(td)/'source'))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(ft)
+            self.assertFalse(evaluation)
+        with tempfile.TemporaryDirectory() as td:
+            result, ft, evaluation, _ = self.run_continuation(td, FAIL_FT='true')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(ft)
+            self.assertFalse(evaluation)
+
+    def test_slurm_resources_match_existing_worker(self):
+        def directives(name):
+            return [line for line in (ROOT/'launch_scripts'/name).read_text().splitlines()
+                    if line.startswith('#SBATCH')]
+        # Ignore descriptive comments, not directive values.
+        original = [line.split(' #')[0].rstrip() for line in directives('run_kdcrd_then_ft.sbatch')]
+        self.assertEqual(directives('run_cont_qat.sbatch'), original)
+
+
 class CNNModeTests(unittest.TestCase):
     def test_modes_keep_identical_stage_arguments(self):
         harness=TCPipelineTests()

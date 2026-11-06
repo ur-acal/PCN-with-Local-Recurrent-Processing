@@ -832,6 +832,9 @@ finetune_one_combo_model() {
   if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
     ckpt="last"
   fi
+  if [[ -n "${CONTINUATION_SOURCE_MODEL:-}" ]]; then
+    ckpt="${CONTINUATION_SOURCE_SELECTION:?Missing QAT continuation checkpoint selection}"
+  fi
   local t_end="1.75"
   local qat_wrapper="QATWrapper1State"
   if [[ "$name" == *S2* || "$name" == *State2* ]]; then
@@ -981,11 +984,17 @@ for comb in "${COMBS[@]}"; do
     if [[ "${FINAL_EVAL_ONLY}" == true && "${VALIDATION_MODE}" != true ]]; then
       selection=last
     fi
-    mn="$(python launch_scripts/find_tc_pretrain.py --root "${PRETRAIN_SAVE_PATH}" \
-      --inp "$inp_str" --out "$out_str" --pool "$pool_str" \
-      --stride "${STRIDE[*]}" --kernel "${KERNEL[*]}" \
-      --task "$TASK" --img_type "$IMG_TYPE" --block "$TRAIN_ODE_BLOCK" --pcn "$PCN" \
-      --bits "$INPUT_QUANT_BITS" --center "$CENTER_STUDENT_INPUT" --selection "$selection")" || exit 2
+    if [[ -n "${CONTINUATION_SOURCE_MODEL:-}" ]]; then
+      # run_cont_qat.sbatch checks the explicit latent-QAT checkpoint; the
+      # ordinary finder intentionally accepts only completed pretraining.
+      mn="${CONTINUATION_SOURCE_MODEL}"
+    else
+      mn="$(python launch_scripts/find_tc_pretrain.py --root "${PRETRAIN_SAVE_PATH}" \
+        --inp "$inp_str" --out "$out_str" --pool "$pool_str" \
+        --stride "${STRIDE[*]}" --kernel "${KERNEL[*]}" \
+        --task "$TASK" --img_type "$IMG_TYPE" --block "$TRAIN_ODE_BLOCK" --pcn "$PCN" \
+        --bits "$INPUT_QUANT_BITS" --center "$CENTER_STUDENT_INPUT" --selection "$selection")" || exit 2
+    fi
   else
     mn="$(extract_model_name "${train_log}")"
   fi
