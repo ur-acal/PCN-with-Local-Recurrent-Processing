@@ -76,13 +76,14 @@ def fixed_timing_recipe_scales(args):
     fb_scale = (float(args.toggle_y_time) *
                 float(args.z_over_y_time)) / reference_rc
     ff_scale = float(args.toggle_y_time) / (reference_rc * reference_cycle_t)
-    if args.ode_block in {"S2DTCFFFB", "S2DTCPulseFFFB"}:
+    if (args.ode_block in {"S2DTCFFFB", "S2DTCPulseFFFB"} and
+            not getattr(args, "s2_fb_use_toggle_scale", False)):
         fb_scale = ff_scale
     return ff_scale, fb_scale
 
 
 def scale_toggle_initial_weights(model, ff_scale, fb_scale):
-    """Match the derived-timing initial function under fixed-time dynamics."""
+    """Apply the selected inverse recipe scales to initial FF/FB weights."""
     with torch.no_grad():
         for block in model.PcConvs:
             block.FFconv.weight.div_(ff_scale)
@@ -326,6 +327,11 @@ def get_args():
                    help="Rescale FF/FB initialization, learning rates, and weight decay "
                         "to compensate fixed-timing dynamics, optionally multiplying "
                         "the timing-derived recipe scales by a numerical factor.")
+    p.add_argument("--s2_fb_use_toggle_scale", type=str2bool,
+                   default=os.environ.get("S2_FB_USE_TOGGLE_SCALE", "false"),
+                   help="Use the toggle FB initialization/LR/weight-decay recipe "
+                        "for S2 DTC instead of matching its FF recipe. "
+                        "Does not change dynamics; false preserves existing behavior.")
     p.add_argument("--odexinit_scaling_mode", choices=("approx", "direct"),
                    default="approx",
                    help="Use legacy k-based or direct RC ODEXInit toggle timing.")
@@ -936,6 +942,8 @@ def _backfill_recovery_defaults(args):
         args.measured_activation_scope = None
     if not hasattr(args, "ft_corner_coupled_sampling"):
         args.ft_corner_coupled_sampling = False
+    if not hasattr(args, "s2_fb_use_toggle_scale"):
+        args.s2_fb_use_toggle_scale = False
 
 
 def main():
@@ -1146,9 +1154,10 @@ def main():
             toggle_timing_R=args.R, toggle_timing_C=args.C)
         logging.warning(
             "Fixed toggle timing: T_y=%g s, T_z=%g s, R=%g ohm, C=%g F; "
-            "relative FF/FB dynamics scales=%g/%g",
+            "relative FF/FB recipe scales=%g/%g; s2_fb_use_toggle_scale=%s",
             args.toggle_y_time, args.toggle_y_time * args.z_over_y_time,
-            args.R, args.C, ff_train_scale, fb_train_scale)
+            args.R, args.C, ff_train_scale, fb_train_scale,
+            args.s2_fb_use_toggle_scale)
     elif args.scale_train_recipe:
         raise ValueError(
             "--scale_train_recipe requires --toggle_timing_mode fixed.")

@@ -139,6 +139,8 @@ def restore_latest(trainer):
         raise ValueError('Full recovery requires unchanged resistance_floor_ohms; use an ordinary checkpoint for a new stage')
     if current.get('ft_corner_coupled_sampling', False) != recovery['config'].get('ft_corner_coupled_sampling', False):
         raise ValueError('Full recovery requires unchanged ft_corner_coupled_sampling; use an ordinary checkpoint for a new stage')
+    if current.get('s2_fb_use_toggle_scale', False) != saved_config.get('s2_fb_use_toggle_scale', False):
+        raise ValueError('Full recovery requires unchanged s2_fb_use_toggle_scale; use an ordinary checkpoint for a new recipe')
     for key in ('compute_time_fixed_std', 'compute_time_noise_std'):
         if current.get(key, 0.) != recovery['config'].get(key, 0.):
             raise ValueError(f'Full recovery requires unchanged {key}; use an ordinary checkpoint for a new stage')

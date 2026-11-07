@@ -329,6 +329,45 @@ def test_s2_dtc_fixed_timing_recipe_and_invalid_settings():
         s2_block(y_init_with='invalid')
 
 
+@pytest.mark.parametrize('block', ['S2DTCFFFB', 'S2DTCPulseFFFB', 'ToggleODEXInitFFFB'])
+@pytest.mark.parametrize('enabled', [False, True])
+def test_s2_fb_toggle_recipe_selection(block, enabled):
+    from types import SimpleNamespace
+    from train_ode_cifar import fixed_timing_recipe_scales
+    args = SimpleNamespace(toggle_timing_mode='fixed', toggle_n_cycles=5,
+                           t_end=1.75, R=67e3, C=500e-15, toggle_y_time=10e-9,
+                           z_over_y_time=1, ode_block=block,
+                           s2_fb_use_toggle_scale=enabled)
+    ff, fb = fixed_timing_recipe_scales(args)
+    expected_ff = 10e-9 / (67e3 * 500e-15 * .35)
+    expected_fb = 10e-9 / (67e3 * 500e-15)
+    assert ff == pytest.approx(expected_ff)
+    assert fb == pytest.approx(expected_fb if enabled or block == 'ToggleODEXInitFFFB' else expected_ff)
+
+
+def test_s2_fb_toggle_recipe_cli_and_environment(monkeypatch):
+    import sys
+    from train_ode_cifar import get_args, _backfill_recovery_defaults
+    from types import SimpleNamespace
+    monkeypatch.delenv('VALIDATION_MODE', raising=False)
+    monkeypatch.delenv('S2_FB_USE_TOGGLE_SCALE', raising=False)
+    monkeypatch.setattr(sys, 'argv', ['train_ode_cifar.py'])
+    assert get_args().s2_fb_use_toggle_scale is False
+    monkeypatch.setenv('S2_FB_USE_TOGGLE_SCALE', 'true')
+    assert get_args().s2_fb_use_toggle_scale is True
+    monkeypatch.setattr(sys, 'argv', ['train_ode_cifar.py', '--s2_fb_use_toggle_scale', 'false',
+                                     '--scale_train_recipe', '2'])
+    args = get_args()
+    assert args.s2_fb_use_toggle_scale is False and args.scale_train_recipe == 2.
+    monkeypatch.setattr(sys, 'argv', ['train_ode_cifar.py', '--s2_fb_use_toggle_scale', 'true',
+                                     '--scale_train_recipe', '2'])
+    args = get_args()
+    assert args.s2_fb_use_toggle_scale is True and args.scale_train_recipe == 2.
+    legacy = SimpleNamespace()
+    _backfill_recovery_defaults(legacy)
+    assert legacy.s2_fb_use_toggle_scale is False
+
+
 def test_s2_dtc_full_duty_pulses_match_averaged_on_identical_grid():
     from ode_pc import S2DTCPulseFFFB
     # Full-duty weights remove PWM switching. With identical integration grids,

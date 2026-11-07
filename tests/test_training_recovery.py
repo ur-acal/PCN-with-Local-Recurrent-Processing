@@ -132,6 +132,29 @@ def test_recovery_preserves_matching_corner_coupling(tmp_path, saved, current):
     assert restore_latest(resumed)[0] == 1
 
 
+@pytest.mark.parametrize('saved,current', [(True, False), (False, True), (None, True), (True, None)])
+def test_recovery_rejects_changed_s2_fb_recipe(tmp_path, saved, current):
+    trainer = make_trainer(tmp_path)
+    trainer.recovery_config = {} if saved is None else {'s2_fb_use_toggle_scale': saved}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    resumed.recovery_config = {} if current is None else {'s2_fb_use_toggle_scale': current}
+    resumed.recovery_checkpoint = latest_path(trainer)
+    with pytest.raises(ValueError, match='unchanged s2_fb_use_toggle_scale'):
+        restore_latest(resumed)
+
+
+@pytest.mark.parametrize('saved,current', [(True, True), (False, False), (None, False), (False, None)])
+def test_recovery_accepts_matching_s2_fb_recipe(tmp_path, saved, current):
+    trainer = make_trainer(tmp_path)
+    trainer.recovery_config = {} if saved is None else {'s2_fb_use_toggle_scale': saved}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    resumed.recovery_config = {} if current is None else {'s2_fb_use_toggle_scale': current}
+    resumed.recovery_checkpoint = latest_path(trainer)
+    assert restore_latest(resumed)[0] == 1
+
+
 def test_s2_dtc_recovery_requires_matching_initialization_and_solver(tmp_path):
     trainer = make_trainer(tmp_path)
     settings = dict(y_init_with='x', z_init_with='0', s2_dtc_substeps=1,
