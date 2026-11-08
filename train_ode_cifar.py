@@ -199,6 +199,9 @@ def get_args():
              "Random Erasing is disabled by default for PCN training.")
     p.add_argument("--timm_sched", type=str, default="multistep", choices=["multistep", "cosine"])
     p.add_argument("--batch_size",    type=int,   default=512)
+    p.add_argument("--grad_accum_steps", type=int,
+                   default=int(os.environ.get("GRAD_ACCUM_STEPS", "1")),
+                   help="Minibatches per optimizer update in the shared CIFAR timm trainer.")
     p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--optim",         type=str,   choices=["SGD", "Adam"], default="SGD",
                    help="optimizer")
@@ -538,6 +541,10 @@ def get_args():
     from tc_cli import add_tc_arguments, validate_tc
     add_tc_arguments(p)
     args = p.parse_args()
+    if args.grad_accum_steps < 1:
+        p.error("--grad_accum_steps must be positive")
+    if args.grad_accum_steps > 1 and not args.timm_trainer:
+        p.error("--grad_accum_steps > 1 requires --timm_trainer true")
     if args.validation_mode is None:
         if str2bool(os.environ.get("VALIDATION_MODE", "false")):
             p.error(
@@ -944,6 +951,8 @@ def _backfill_recovery_defaults(args):
         args.ft_corner_coupled_sampling = False
     if not hasattr(args, "s2_fb_use_toggle_scale"):
         args.s2_fb_use_toggle_scale = False
+    if not hasattr(args, "grad_accum_steps"):
+        args.grad_accum_steps = 1
 
 
 def main():
@@ -1414,6 +1423,7 @@ def main():
             model_name=model_name,
             save_path=args.output_save_path or args.save_path,
             batch_size=cfg["batch_size"],
+            grad_accum_steps=args.grad_accum_steps,
             num_workers=args.num_workers,
             optim_type="sgd",  # ignored by TrainerCiFarTimmStyle._get_optimizer
             weight_decay=cfg["weight_decay"],

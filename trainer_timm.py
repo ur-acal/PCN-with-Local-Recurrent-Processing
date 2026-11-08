@@ -149,12 +149,16 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         persistent_workers=False,
         bias_lr_multiplier=1.0,
         bias_weight_decay=None,
+        grad_accum_steps=1,
 
         is_timm_model=True,
         save_flattened_and_full_param=False,
 
         **kwargs,
     ):
+        self.grad_accum_steps = int(grad_accum_steps)
+        if self.grad_accum_steps < 1:
+            raise ValueError("grad_accum_steps must be positive")
         self.is_timm_model = is_timm_model
         self.save_flattened_and_full_param = bool(
             save_flattened_and_full_param)
@@ -254,6 +258,12 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             kwargs["loss_fn"] = nn.CrossEntropyLoss()
 
         super().__init__(*args, **kwargs)
+
+        if self.grad_accum_steps > 1:
+            logging.warning(
+                "Gradient accumulation: batch_size=%d, steps=%d, effective batch=%d",
+                self.batch_size, self.grad_accum_steps,
+                self.batch_size * self.grad_accum_steps)
 
         # Replace parent's torch scheduler/warmup with timm scheduler.
         self.warmup_scheduler = None
@@ -982,6 +992,24 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
         return train_loss_list, val_acc_list
 
+    def _backward_step_accum(self, loss, grad_params, is_update_step,
+                             accum_divisor=None):
+        """ImageNet accumulation pattern, without its AMP-specific machinery.
+
+        Callers clear gradients at the start of each accumulation window,
+        retaining the original per-minibatch behavior when steps=1.
+        """
+        if accum_divisor is None:
+            accum_divisor = self.grad_accum_steps
+        loss_for_backward = loss if accum_divisor == 1 else loss / accum_divisor
+        loss_for_backward.backward()
+        if not is_update_step:
+            return False
+        if self.max_norm is not None:
+            nn.utils.clip_grad_norm_(grad_params, max_norm=self.max_norm)
+        self.optimizer.step()
+        return True
+
     def train_one_epoch(self, epoch):
         """
         Same basic logic as parent train_one_epoch(), but:
@@ -992,6 +1020,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
         """
         self.model.train()
         running_loss, n_samples = 0.0, 0
+        num_batches = len(self.train_dataloader)
+        last_accum_steps = num_batches % self.grad_accum_steps or self.grad_accum_steps
 
         progress_bar = tqdm.tqdm(
             enumerate(self.train_dataloader),
@@ -1037,7 +1067,8 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             if self.mixup_fn is not None:
                 inputs, labels_for_ce = self.mixup_fn(inputs, labels)
 
-            self.optimizer.zero_grad()
+            if _i % self.grad_accum_steps == 0:
+                self.optimizer.zero_grad()
 
             outputs, student_feat = self._student_forward(inputs)
 
@@ -1066,15 +1097,13 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
             else:
                 loss = ce_loss
 
-            loss.backward()
-
-            if self.max_norm is not None:
-                nn.utils.clip_grad_norm_(
-                    list(self.model.parameters()),
-                    max_norm=self.max_norm,
-                )
-
-            self.optimizer.step()
+            is_update_step = (
+                (_i + 1) % self.grad_accum_steps == 0 or _i + 1 == num_batches)
+            accum_divisor = (last_accum_steps
+                             if _i >= num_batches - last_accum_steps
+                             else self.grad_accum_steps)
+            self._backward_step_accum(
+                loss, list(self.model.parameters()), is_update_step, accum_divisor)
 
             running_loss += loss.item() * inputs.size(0)
             avg_loss = running_loss / n_samples
@@ -1090,6 +1119,9 @@ class TrainerCiFarTimmStyle(TrainerCiFar):
 
             if self.mixup_fn is not None:
                 postfix["Mix"] = "on"
+
+            if self.grad_accum_steps > 1:
+                postfix["Accum"] = str(self.grad_accum_steps)
 
             progress_bar.set_postfix(postfix)
 
@@ -1580,6 +1612,8 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
             self._feature_kd_loss.train()
 
         running_loss, n_samples = 0.0, 0
+        num_batches = len(self.train_dataloader)
+        last_accum_steps = num_batches % self.grad_accum_steps or self.grad_accum_steps
 
         progress_bar = tqdm.tqdm(
             enumerate(self.train_dataloader),
@@ -1617,7 +1651,8 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
                 assert teacher_inputs is None
                 inputs, labels_for_ce = self.mixup_fn(inputs, labels)
 
-            self.optimizer.zero_grad()
+            if _i % self.grad_accum_steps == 0:
+                self.optimizer.zero_grad()
 
             teacher_logits, teacher_features = self.teacher_forward_for_distillation(
                 teacher_inputs if teacher_inputs is not None else inputs
@@ -1646,16 +1681,16 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
             loss = base_loss + self.feature_kd_beta * feature_kd_loss
 
-            loss.backward()
-
-            if self.max_norm is not None:
-                grad_params = list(self.model.parameters())
-                if self._feature_kd_loss is not None:
-                    grad_params += list(self._feature_kd_loss.trainable_parameters())
-
-                nn.utils.clip_grad_norm_(grad_params, max_norm=self.max_norm)
-
-            self.optimizer.step()
+            grad_params = list(self.model.parameters())
+            if self._feature_kd_loss is not None:
+                grad_params += list(self._feature_kd_loss.trainable_parameters())
+            is_update_step = (
+                (_i + 1) % self.grad_accum_steps == 0 or _i + 1 == num_batches)
+            accum_divisor = (last_accum_steps
+                             if _i >= num_batches - last_accum_steps
+                             else self.grad_accum_steps)
+            self._backward_step_accum(
+                loss, grad_params, is_update_step, accum_divisor)
 
             running_loss += loss.item() * inputs.size(0)
             avg_loss = running_loss / n_samples
@@ -1680,6 +1715,9 @@ class TrainerCiFarTimmStyleFeatureKD(TrainerCiFarTimmStyle):
 
             if self.mixup_fn is not None or self._paired_mixup_active:
                 postfix["Mix"] = "on"
+
+            if self.grad_accum_steps > 1:
+                postfix["Accum"] = str(self.grad_accum_steps)
 
             progress_bar.set_postfix(postfix)
 

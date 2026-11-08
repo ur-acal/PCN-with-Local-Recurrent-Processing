@@ -108,6 +108,8 @@ def restore_latest(trainer):
     # Recovery is continuation, not conversion into another physical stage.
     current = getattr(trainer, 'recovery_config', {})
     saved_config = recovery['config']
+    if current.get('grad_accum_steps', 1) != saved_config.get('grad_accum_steps', 1):
+        raise ValueError('Full recovery requires unchanged grad_accum_steps; use an ordinary checkpoint for a new recipe')
     saved_s2 = checkpoint.get('init_args', {}).get('s2_dtc')
     current_s2 = getattr(trainer.model, 'init_args', {}).get('s2_dtc')
     if saved_s2 != current_s2:
@@ -150,7 +152,7 @@ def restore_latest(trainer):
                 'tc_feedforward', 'tc_method', 'tc_tol', 'tc_step_size',
                 'tc_num_steps', 'one_shot_conv',
                 'toggle_timing_mode', 'toggle_y_time', 'z_over_y_time',
-                'scale_train_recipe', 'one_over_q', 'v_dd', 'num_epochs',
+                'scale_train_recipe', 'one_over_q', 'v_dd', 'num_epochs', 'batch_size',
                 'override', 'distill_method', 'input_quant_bits',
                 'center_student_input', 'normalize_student_input', '_teacher_preprocessing',
                 'timm_aug_level', 'final_eval_only',

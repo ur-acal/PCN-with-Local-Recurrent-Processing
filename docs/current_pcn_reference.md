@@ -689,6 +689,24 @@ each: FS_V0_T0 as the adverse corner and FS_V2_T1 as the average corner. Reporti
 both avoids using the previously pinned FS_V2_T1 result alone as an overly
 optimistic representation of corner robustness.
 
+### CIFAR gradient accumulation
+
+The shared CIFAR timm trainer supports `--grad_accum_steps` (default `1`) for
+ordinary/KD and feature-KD training, including SRRL, MGD and ReviewKD. This is
+independent of PCN dynamics: toggle, S2DTC and TC use the same training loops.
+The legacy non-timm trainer rejects accumulation greater than one.
+
+The existing pipeline worker accepts `PRETRAIN_BATCH_SIZE` and `FT_BATCH_SIZE`
+(defaults unchanged), plus `PRETRAIN_GRAD_ACCUM_STEPS` and `FT_GRAD_ACCUM_STEPS`
+(each defaults to `GRAD_ACCUM_STEPS`, otherwise `1`). For example,
+`FT_BATCH_SIZE=64 FT_GRAD_ACCUM_STEPS=2` gives 128 samples per optimizer update.
+Clipping/SGD run once per accumulation window; a shorter final window is
+normalized by its actual minibatch count. LR scheduling remains epoch-based.
+BatchNorm, dropout and hardware sampling remain per forward, so this is not
+identical to one batch-128 forward. Evaluation and its batch size are unchanged.
+Exact epoch recovery preserves the batch size and accumulation count; old
+recovery configurations without the new field retain accumulation `1`.
+
 ### Provisional severe corner-interaction diagnostic (2026-10-07)
 
 The previous rerun C36→72, 8:10 checkpoint showed a severe interaction between

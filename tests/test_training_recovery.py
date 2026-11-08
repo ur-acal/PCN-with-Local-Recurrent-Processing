@@ -84,6 +84,43 @@ def test_normal_checkpoint_branch_does_not_enable_full_recovery():
     assert trainer.recovery_checkpoint == '/tmp/source_latest_ckpt.pth'
 
 
+@pytest.mark.parametrize('saved,current', [(None, 1), (1, 1), (2, 2), (None, 2), (2, 1)])
+def test_recovery_requires_matching_accumulation(tmp_path, saved, current):
+    trainer = make_trainer(tmp_path)
+    trainer.recovery_config = {} if saved is None else {'grad_accum_steps': saved}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    resumed.recovery_config = {'grad_accum_steps': current}
+    resumed.recovery_checkpoint = latest_path(trainer)
+    if (saved or 1) != current:
+        with pytest.raises(ValueError, match='unchanged grad_accum_steps'):
+            restore_latest(resumed)
+    else:
+        assert restore_latest(resumed)[0] == 1
+
+
+def test_recovery_rejects_changed_microbatch_size(tmp_path):
+    trainer = make_trainer(tmp_path)
+    trainer.recovery_config = {'batch_size': 64}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    resumed.recovery_config = {'batch_size': 128}
+    resumed.recovery_checkpoint = latest_path(trainer)
+    with pytest.raises(ValueError, match='unchanged batch_size'):
+        restore_latest(resumed)
+
+
+def test_legacy_recovery_accumulation_default_ignores_environment(monkeypatch):
+    from train_ode_cifar import _backfill_recovery_defaults
+    monkeypatch.setenv('GRAD_ACCUM_STEPS', '2')
+    args = SimpleNamespace()
+    _backfill_recovery_defaults(args)
+    assert args.grad_accum_steps == 1
+    args.grad_accum_steps = 3
+    _backfill_recovery_defaults(args)
+    assert args.grad_accum_steps == 3
+
+
 def test_exact_recovery_preserves_saved_recipe_and_model_directory(tmp_path):
     from scripts.resume_local_ode_training import configure_exact_recovery
 

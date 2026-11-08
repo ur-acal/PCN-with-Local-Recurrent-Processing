@@ -91,6 +91,45 @@ def test_real_ft_command_receives_its_own_substeps(tmp_path):
             assert args[args.index('--ode_block')+1] == ('S2DTCFFFB' if mode == 's2_dtc' else 'S2DTCPulseFFFB')
 
 
+@pytest.mark.parametrize('mode', ['odexinit', 's2_dtc', 's2_dtc_pulse', 'none'])
+def test_ft_microbatch_and_accumulation_are_independent_of_dynamics(tmp_path, mode):
+    settings = dict(TOGGLE_MODE=mode, GRAD_ACCUM_STEPS='1',
+        _invocation='finetune_one_combo_model example TIMMPCNetNoBatchNorm_test "${FT_ODE_BLOCK}"')
+    default = resolve_eval(tmp_path, **settings)
+    assert default[default.index('--batch_size') + 1] == '128'
+    assert default[default.index('--grad_accum_steps') + 1] == '1'
+    args = resolve_eval(tmp_path, **settings, FT_BATCH_SIZE='64', FT_GRAD_ACCUM_STEPS='2')
+    assert args[args.index('--batch_size') + 1] == '64'
+    assert args[args.index('--grad_accum_steps') + 1] == '2'
+    # Launch arguments are accepted by the actual training parser.
+    from train_ode_cifar import get_args
+    from unittest.mock import patch
+    import sys
+    with patch.object(sys, 'argv', args[args.index('train_ode_cifar.py'):]):
+        parsed = get_args()
+    assert parsed.batch_size == 64 and parsed.grad_accum_steps == 2
+
+
+def test_pretraining_has_independent_microbatch_and_accumulation(tmp_path):
+    args = resolve_eval(tmp_path, TOGGLE_MODE='s2_dtc',
+        PRETRAIN_BATCH_SIZE='32', PRETRAIN_GRAD_ACCUM_STEPS='4',
+        FT_BATCH_SIZE='64', FT_GRAD_ACCUM_STEPS='2',
+        _invocation='run_one_combo "${COMBS[0]}" "${TRAIN_ODE_BLOCK}"')
+    assert args[args.index('--batch_size') + 1] == '32'
+    assert args[args.index('--grad_accum_steps') + 1] == '4'
+
+
+@pytest.mark.parametrize('steps,timm', [('0', 'true'), ('2', 'false')])
+def test_training_parser_rejects_invalid_or_unsupported_accumulation(steps, timm):
+    from train_ode_cifar import get_args
+    from unittest.mock import patch
+    import sys
+    with patch.object(sys, 'argv', ['train_ode_cifar.py', '--grad_accum_steps', steps,
+                                  '--timm_trainer', timm]):
+        with pytest.raises(SystemExit):
+            get_args()
+
+
 def test_ordering_pairs_forwarded_only_to_ft(tmp_path):
     settings = dict(TOGGLE_MODE='s2_dtc', S2_DTC_ORDERING_PAIRS='4')
     ft = resolve_eval(tmp_path, **settings,

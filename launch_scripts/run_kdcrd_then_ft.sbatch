@@ -281,7 +281,10 @@ if [[ "${CIRC_CONF}" == "NoCirc" ]]; then
 else
   IFS='|' read -r patch_node patch_stride patch_cycle patch_pad fold_scalar patch_bs <<< "${CIRC_CONF}"
 fi
-TRAIN_BATCH_SIZE="${patch_bs:-128}"
+TRAIN_BATCH_SIZE="${PRETRAIN_BATCH_SIZE:-${patch_bs:-128}}"
+FT_BATCH_SIZE="${FT_BATCH_SIZE:-128}"
+PRETRAIN_GRAD_ACCUM_STEPS="${PRETRAIN_GRAD_ACCUM_STEPS:-${GRAD_ACCUM_STEPS:-1}}"
+FT_GRAD_ACCUM_STEPS="${FT_GRAD_ACCUM_STEPS:-${GRAD_ACCUM_STEPS:-1}}"
 
 ##########################################################################
 # Newly added TIMM + distillation args
@@ -565,6 +568,7 @@ run_one_combo () {
     --tie_bp        "false" \
     --bypass        "false" \
     --batch_size    "${TRAIN_BATCH_SIZE}" \
+    --grad_accum_steps "${PRETRAIN_GRAD_ACCUM_STEPS}" \
     --method        "${train_solver}" \
     --n_steps        5 \
     --tol           "1e-4" \
@@ -888,7 +892,8 @@ finetune_one_combo_model() {
     --tie_weights   "false" \
     --tie_bp        "false" \
     --bypass        "false" \
-    --batch_size    128 \
+    --batch_size    "${FT_BATCH_SIZE}" \
+    --grad_accum_steps "${FT_GRAD_ACCUM_STEPS}" \
     --method        "${train_solver}" \
     --n_steps       5 \
     --tol           "${TOL}" \
