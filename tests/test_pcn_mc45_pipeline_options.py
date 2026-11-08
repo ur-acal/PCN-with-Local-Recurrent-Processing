@@ -46,6 +46,75 @@ def test_legacy_two_corner_defaults_unchanged(tmp_path):
     assert args[args.index('--expanded_w_dir')+1] == 'expanded_weights'
 
 
+@pytest.mark.parametrize('mode', ['odexinit', 's2_dtc', 's2_dtc_pulse'])
+def test_rgb_pipeline_evaluation_uses_explicit_input_and_batch(tmp_path, mode):
+    import sys
+    from unittest.mock import patch
+    from scripts.run_toggle_nonideality_ablation import parse_args, build_command
+    from ode_inference import parse_args as inference_args
+    argv = resolve_eval(tmp_path, TOGGLE_MODE=mode, IMG_TYPE='rgb',
+                        POST_FT_EVAL_BATCH_SIZE='16', POST_FT_EVAL_N_TRIALS='3')
+    with patch.object(sys, 'argv', argv[argv.index('scripts/run_toggle_nonideality_ablation.py'):]):
+        args = parse_args()
+    assert args.img_type == 'rgb' and args.task == 'cifar100'
+    assert args.test_bs == 16 and args.n_trials == 3
+    command = build_command(args, 'all_known')
+    with patch.object(sys, 'argv', command[2:]):
+        parsed = inference_args()
+    assert parsed.img_type == 'rgb' and parsed.task == 'cifar100'
+    assert parsed.test_bs == 16 and parsed.test_expanded
+    assert parsed.ode_block == ('TogglePulseODEXInitFFFB' if mode == 'odexinit'
+                                else 'S2DTCPulseFFFB')
+
+
+def test_standalone_corner_input_fallbacks_remain_legacy():
+    import sys
+    from unittest.mock import patch
+    from scripts.run_toggle_nonideality_ablation import parse_args, build_command
+    for model, task, img in [('TIMMQAT_C100_CiFAIR', 'cifar100', 'CiFAIR'),
+                             ('TIMMQAT_scanGFI', 'cifar10', 'scanGFI')]:
+        with patch.object(sys, 'argv', ['ablation', '--model_name', model]):
+            args = parse_args()
+        command = build_command(args, 'all_known')
+        assert command[command.index('--task')+1] == task
+        assert command[command.index('--img_type')+1] == img
+
+
+@pytest.mark.parametrize('skip', ['true', 'false'])
+def test_pretrain_and_ft_can_skip_only_post_ft_evaluation(tmp_path, skip):
+    env = dict(os.environ, IS_SLURM='0', TOGGLE_MODE='s2_dtc', TASK='cifar100',
+               IMG_TYPE='rgb', mode='default', SKIP_POST_FT_EVAL=skip,
+               LOGDIR=str(tmp_path/'logs'), OUTPUT_SAVE_PATH=str(tmp_path/'ckpt'),
+               COMB_LIST='example\t1\t3 24\t24 24\t0 0', TRACE=str(tmp_path/'stages'))
+    env.pop('CONTINUATION_SOURCE_MODEL', None)
+    env.pop('CONTINUATION_SOURCE_SELECTION', None)
+    shell = r'''
+python() {
+  [[ "$1" != -u ]] || shift
+  case "$1" in
+    train_ode_cifar.py)
+      if [[ " $* " == *' --model_name '* ]]; then
+        echo ft >> "$TRACE"
+        echo '----- Train finished, Model Name: fixture_ft -----'
+      else
+        echo pt >> "$TRACE"
+        echo '----- Train finished, Model Name: fixture_pt -----'
+      fi ;;
+    scripts/run_toggle_nonideality_ablation.py) echo eval >> "$TRACE" ;;
+    shell_utils/pipeline_node_run_parse.py) ;;
+    *) return 43 ;;
+  esac
+}
+export -f python
+bash launch_scripts/run_kdcrd_then_ft.sbatch
+'''
+    result = subprocess.run(['bash', '-c', shell], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path/'stages').read_text().splitlines() == (
+        ['pt', 'ft'] if skip == 'true' else ['pt', 'ft', 'eval'])
+
+
 def test_s2_dtc_pipeline_forwards_joint_solver_and_initialization(tmp_path):
     for mode in ('s2_dtc', 's2_dtc_pulse'):
         args = resolve_eval(tmp_path, TOGGLE_MODE=mode, S2_DTC_METHOD='rk2',
@@ -117,6 +186,22 @@ def test_pretraining_has_independent_microbatch_and_accumulation(tmp_path):
         _invocation='run_one_combo "${COMBS[0]}" "${TRAIN_ODE_BLOCK}"')
     assert args[args.index('--batch_size') + 1] == '32'
     assert args[args.index('--grad_accum_steps') + 1] == '4'
+
+
+def test_s2_rgb_pretraining_matches_tc_rgb_augmentation_selection(tmp_path):
+    import sys
+    from unittest.mock import patch
+    from train_ode_cifar import get_args
+    parsed = []
+    for mode, tc in [('s2_dtc', 'false'), ('none', 'true')]:
+        argv = resolve_eval(tmp_path, TOGGLE_MODE=mode, TC_NONIDEALITIES=tc,
+                            IMG_TYPE='rgb', TIMM_RE_PROB='0.0',
+                            _invocation='run_one_combo "${COMBS[0]}" "${TRAIN_ODE_BLOCK}"')
+        with patch.object(sys, 'argv', argv[argv.index('train_ode_cifar.py'):]):
+            parsed.append(get_args())
+    assert all(args.img_type == 'rgb' and args.timm_trainer for args in parsed)
+    assert [args.timm_aug_level for args in parsed] == ['none', 'none']
+    assert [args.timm_re_prob for args in parsed] == [0.0, 0.0]
 
 
 @pytest.mark.parametrize('steps,timm', [('0', 'true'), ('2', 'false')])

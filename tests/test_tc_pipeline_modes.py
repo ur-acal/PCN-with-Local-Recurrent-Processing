@@ -241,6 +241,34 @@ bash ./launch_scripts/run_cont_qat.sbatch
             self.assertEqual(ft[ft.index('--ckpt')+1], 'latest')
             self.assertFalse(evaluation)
 
+    def test_rgb_n4_continuation_batch_accumulation_and_three_corner_trials(self):
+        from unittest.mock import patch
+        from train_ode_cifar import get_args
+        from scripts.run_toggle_nonideality_ablation import parse_args, build_command
+        with tempfile.TemporaryDirectory() as td:
+            result, ft, evaluation, env = self.run_continuation(
+                td, IMG_TYPE='rgb', NORMALIZE_STUDENT_INPUT='false',
+                S2_DTC_FT_SUBSTEPS='4', FT_BATCH_SIZE='16',
+                FT_GRAD_ACCUM_STEPS='8', POST_FT_EVAL_BATCH_SIZE='16',
+                POST_FT_EVAL_N_TRIALS='3')
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            with patch.dict(os.environ, env), patch.object(sys, 'argv', ft):
+                args = get_args()
+            self.assertEqual(args.s2_dtc_substeps, 4)
+            self.assertEqual(args.batch_size, 16)
+            self.assertEqual(args.grad_accum_steps, 8)
+            self.assertEqual(args.img_type, 'rgb')
+            self.assertFalse(args.normalize_student_input)
+            self.assertEqual(args.ckpt, 'full_param_last')
+            with patch.object(sys, 'argv', evaluation):
+                args = parse_args()
+            self.assertEqual(args.n_trials, 3)
+            self.assertEqual(args.test_bs, 16)
+            self.assertEqual(args.s2_dtc_substeps, 8)
+            self.assertEqual(args.ckpt, 'last')
+            command = build_command(args, 'all_known')
+            self.assertEqual(command[command.index('--img_type')+1], 'rgb')
+
     def test_invalid_source_or_mode_stops_before_python(self):
         for change in (dict(mode='default'), dict(CONTINUATION_SOURCE_SELECTION='last'),
                        dict(CONTINUATION_SOURCE_MODEL='missing_QAT'),

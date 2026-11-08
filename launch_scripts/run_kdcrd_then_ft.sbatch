@@ -13,6 +13,8 @@ source ./launch_scripts/tc_nonideality_args.sh ft || exit 2
 source ./launch_scripts/normalize_validation_mode.sh || exit 2
 mode="${mode:-default}"
 case "$mode" in default|pretrain_only|ft_only|ft_and_eval|eval_only) ;; *) echo 'Invalid pipeline mode' >&2; exit 2 ;; esac
+SKIP_POST_FT_EVAL="${SKIP_POST_FT_EVAL:-false}"
+case "$SKIP_POST_FT_EVAL" in true|false) ;; *) echo 'SKIP_POST_FT_EVAL must be true or false.' >&2; exit 2 ;; esac
 if [[ "$mode" != default && "${TC_NONIDEALITIES:-false}" != true && "${TOGGLE_MODE:-none}" == none ]]; then
   echo 'Pipeline modes are supported only for TC nonidealities or toggle dynamics.' >&2
   exit 2
@@ -653,7 +655,7 @@ eval_one_combo_model() {
   # independent of FINAL_EVAL_ONLY, which controls validation during training.
   local ckpt="${POST_FT_EVAL_CKPT:-last}"
 
-  local test_bs=128
+  local test_bs="${POST_FT_EVAL_BATCH_SIZE:-128}"
 
   if [[ "${TOGGLE_MODE}" != "none" ]]; then
     local eval_corners="${POST_FT_EVAL_CORNER_IDS:-FS_V0_T0 FS_V2_T1}"
@@ -668,6 +670,8 @@ eval_one_combo_model() {
     source ./launch_scripts/rhs_current_args.sh
     OMP_NUM_THREADS=${THREADS_PER_PROC} \
     python -u scripts/run_toggle_nonideality_ablation.py \
+      --task "${TASK}" \
+      --img_type "${IMG_TYPE}" \
       "${S2_DTC_EVAL_ARGS[@]}" \
       "${RHS_CURRENT_ARGS[@]}" \
       "${FINAL_HEAD_ARGS[@]}" \
@@ -1040,7 +1044,8 @@ if (( ok )); then
   echo 'ERROR: fine-tuning failed; refusing to launch evaluation.' >&2
   exit 1
 fi
-if [[ "$mode" == ft_only ]]; then exit 0; fi
+# Keep final in-training validation/checkpoint saving; skip only PHASE 4.
+if [[ "$mode" == ft_only || "$SKIP_POST_FT_EVAL" == true ]]; then exit 0; fi
 
 ###############################################################################
 # Collect finetuned model names (one per combo)
