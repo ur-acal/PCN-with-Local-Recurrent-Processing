@@ -202,8 +202,9 @@ class PCNet(nn.Module):
         # Todo: How to handle the final linear layer?
         noise_level = self.noise_level
         if isinstance(self.noise_level, dict):
-            noise_level = torch.tensor(list(self.noise_level.values()), device=self.device, requires_grad=False).max()
-        noise_ = torch.randn_like(p, device=self.device, requires_grad=False) * noise_level
+            noise_level = torch.tensor(list(self.noise_level.values()), device=p.device, requires_grad=False).max()
+        # Module.to() moves parameters, not the cached self.device attribute.
+        noise_ = torch.randn_like(p, device=p.device, requires_grad=False) * noise_level
         p.mul_(1 + noise_)
 
     def add_noise(self, noise_to_bn=False, noise_to_linear=False):

@@ -113,6 +113,7 @@ class ComputeTimeTests(unittest.TestCase):
             torch.save(dict(training_recovery=dict(version=1, config={})), path)
             with self.assertRaisesRegex(ValueError, 'unchanged timing_noise_scope'):
                 restore_latest(SimpleNamespace(recovery_checkpoint=path,
+                    model=SimpleNamespace(init_args={}),
                     recovery_config=dict(timing_noise_scope='per_sample')))
 
     def test_options_do_not_accumulate_or_replace_unrelated_settings(self):
@@ -172,10 +173,12 @@ class ComputeTimeTests(unittest.TestCase):
             for key in saved:
                 current = dict(saved, **{key: 0.})
                 with self.assertRaisesRegex(ValueError, 'unchanged compute_time_'):
-                    restore_latest(SimpleNamespace(recovery_checkpoint=path, recovery_config=current))
+                    restore_latest(SimpleNamespace(recovery_checkpoint=path, recovery_config=current,
+                                                   model=SimpleNamespace(init_args={})))
             torch.save(dict(training_recovery=dict(version=1, config={})), path)
             with self.assertRaisesRegex(ValueError, 'unchanged compute_time_'):
-                restore_latest(SimpleNamespace(recovery_checkpoint=path, recovery_config=saved))
+                restore_latest(SimpleNamespace(recovery_checkpoint=path, recovery_config=saved,
+                                               model=SimpleNamespace(init_args={})))
 
     def test_pcn_one_and_two_state_qat_forward_backward_and_full_trajectory(self):
         for two in (False, True):

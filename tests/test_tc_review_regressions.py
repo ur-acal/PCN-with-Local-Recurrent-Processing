@@ -8,6 +8,241 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize('noise_level', [0., .1, {'FFconv': .05, 'FBconv': .1}])
+def test_parameter_noise_uses_actual_device_and_preserves_rng(noise_level):
+    import torch
+    from pc_model import PCNet
+    # A CPU parameter with a stale CUDA hint requires no CUDA allocation.
+    model = SimpleNamespace(noise_level=noise_level, device=torch.device('cuda'))
+    parameter = torch.ones(5)
+    level = max(noise_level.values()) if isinstance(noise_level, dict) else noise_level
+    torch.manual_seed(19)
+    expected = 1 + torch.randn_like(parameter) * level
+    expected_rng = torch.get_rng_state().clone()
+    torch.manual_seed(19)
+    PCNet._apply_noise(model, parameter)
+    torch.testing.assert_close(parameter, expected, rtol=0, atol=0)
+    assert torch.equal(torch.get_rng_state(), expected_rng)
+
+
+@pytest.mark.parametrize('zero_gradient', [True, False])
+def test_gradient_probe_reports_zero_and_nonzero_incoming_energy(monkeypatch, zero_gradient):
+    import torch
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'diagnostic_scripts'))
+    from probe_srrl_curve_gradients import GradientProbe, PiecewiseLinearActivation
+    curve = Path(__file__).resolve().parents[1] / 'hardware_data/mc_45_corners/1022_RELU_Voltage/tt_25_1.csv'
+    activation = PiecewiseLinearActivation(str(curve), v_dd=.6, corner='MC18',
+        normalize_positive_endpoint=False, fuse_measured_activation=False)
+    activation.set_coordinate_pullback_scale(.1)
+    model = torch.nn.Module()
+    model.final_activation = activation
+    probe = GradientProbe(model, {'0906': activation, '1022': activation})
+    x = torch.tensor([.1, .2], requires_grad=True)
+    (activation(x) * (0 if zero_gradient else 1)).sum().backward()
+    row = probe.finish()['final_activation']
+    normalized = ['rms_gain_0906', 'rms_gain_1022',
+        'negative_input_gradient_energy_fraction', 'upper_input_gradient_energy_fraction',
+        'gradient_energy_on_near_zero_slope_0906', 'gradient_energy_on_near_zero_slope_1022']
+    if zero_gradient:
+        assert row['incoming_gradient_energy'] == 0
+        assert row['transmitted_energy_0906'] == row['transmitted_energy_1022'] == 0
+        assert all(row[key] is None for key in normalized)
+    else:
+        assert row['incoming_gradient_energy'] == 2
+        assert all(row[key] is not None for key in normalized)
+        assert row['rms_gain_0906'] == row['rms_gain_1022']
+    assert row['near_zero_slope_fraction_0906'] == row['near_zero_slope_fraction_1022']
+    json.dumps(row, allow_nan=False)
+    assert not activation._forward_hooks
+
+
+@pytest.mark.parametrize('constant', [True, False])
+def test_feature_geometry_handles_collapsed_and_noncollapsed_features(monkeypatch, constant):
+    import torch
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'diagnostic_scripts'))
+    from probe_srrl_feature_geometry import geometry
+    x = torch.ones(4, 3) if constant else torch.tensor([[1., 0.], [-1., 0.]])
+    row = geometry(x)
+    assert row['dimensions'] == x.shape[1]
+    if constant:
+        assert row['variance'] == row['participation_rank'] == row['entropy_rank'] == 0
+        assert row['leading_variance_fraction'] is None
+    else:
+        assert row['variance'] == pytest.approx(1.)
+        assert row['participation_rank'] == row['entropy_rank'] == row['leading_variance_fraction'] == 1
+    json.dumps(row, allow_nan=False)
+
+
+@pytest.mark.parametrize('timing,rk2', [(False,False), (True,False), (True,True)])
+def test_selective_parent_runs_only_requested_reference_worker(tmp_path, monkeypatch, timing, rk2):
+    from diagnostic_scripts import benchmark_toggle_input_correction as diagnostic
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(diagnostic.subprocess, 'run', run)
+    def unexpected(*args):
+        pytest.fail('Selective mode must not build an ordinary-sweep report')
+    monkeypatch.setattr(diagnostic, 's2_report', unexpected)
+    argv = ['benchmark', '--s2-dtc', '--batch', str(tmp_path/'batch.pt'),
+        '--output', str(tmp_path/'out'), '--scene', 'nonlinear',
+        '--representation', 'dense', '--reset-z-per-cycle',
+        '--selective-reference', str(tmp_path/'reference')]
+    if timing:
+        argv.append('--selective-timing')
+    if rk2:
+        argv.append('--selective-timing-rk2')
+    monkeypatch.setattr(sys, 'argv', argv)
+    diagnostic.s2_main()
+    assert len(commands) == 1
+    command = commands[0]
+    for key, expected in (('--s2-worker', 'numerical'), ('--dynamics', 'pulse'),
+                          ('--scene', 'nonlinear'), ('--representation', 'dense'),
+                          ('--selective-reference', str(tmp_path/'reference'))):
+        assert command[command.index(key)+1] == expected
+    assert '--reset-z-per-cycle' in command
+    assert ('--selective-timing' in command) is timing
+    assert ('--selective-timing-rk2' in command) is rk2
+
+
+@pytest.mark.parametrize('options', [
+    ['--selective-timing'], ['--selective-timing-rk2'],
+    ['--selective-reference', 'ref', '--reset-study'],
+    ['--selective-reference', 'ref', '--s2-worker', 'benchmark']])
+def test_selective_options_reject_incompatible_modes_before_launch(tmp_path, monkeypatch, options):
+    from diagnostic_scripts import benchmark_toggle_input_correction as diagnostic
+    monkeypatch.setattr(sys, 'argv', ['benchmark', '--s2-dtc',
+        '--batch', str(tmp_path/'batch.pt'), '--output', str(tmp_path/'out'), *options])
+    with pytest.raises(SystemExit):
+        diagnostic.s2_main()
+    assert not (tmp_path/'out').exists()
+
+
+def test_slice_reference_identity_covers_transient_curves_and_hardware(tmp_path):
+    import torch
+    from torch import nn
+    from diagnostic_scripts.benchmark_toggle_input_correction import (
+        digest, s2_slice_reference_identity, s2_validate_slice_reference)
+    model = nn.Module()
+    block = nn.Linear(2,2)
+    block.R, block.toggle_y_time = 67e3, 1e-8
+    block._nonlinear_R_training_curve_indices = {'FFconv': 3, 'FBconv': 4}
+    block._nonlinear_R_training_pkg = dict(R=67e3, R_left=torch.ones(2,2))
+    model.PcConvs, model.linear = nn.ModuleList([block]), nn.Linear(2,2)
+    curve = tmp_path/'curves.csv'
+    curve.write_text('native curve content')
+    settings = dict(R=67e3, cycle_ns=10)
+    def config():
+        return dict(checkpoint_sha256='ckpt', batch_hash='batch',
+            model_hash=digest(model.state_dict()), microbatch=16, settings=settings.copy(),
+            hardware_identity=s2_slice_reference_identity(model, settings, {'coupler': curve}))
+    previous = config()
+    s2_validate_slice_reference(previous, config())
+    block._nonlinear_R_training_curve_indices['FBconv'] = 5
+    assert previous['model_hash'] == config()['model_hash']
+    with pytest.raises(ValueError, match='hardware_identity'):
+        s2_validate_slice_reference(previous, config())
+    block._nonlinear_R_training_curve_indices['FBconv'] = 4
+    for change, undo in (
+        (lambda: setattr(block, 'R', 68e3), lambda: setattr(block, 'R', 67e3)),
+        (lambda: block._nonlinear_R_training_pkg['R_left'].mul_(2),
+         lambda: block._nonlinear_R_training_pkg['R_left'].div_(2)),
+        (lambda: curve.write_text('changed native curves'),
+         lambda: curve.write_text('native curve content'))):
+        change()
+        with pytest.raises(ValueError, match='hardware_identity'):
+            s2_validate_slice_reference(previous, config())
+        undo()
+    missing = dict(previous)
+    del missing['hardware_identity']
+    with pytest.raises(ValueError, match='lacks hardware_identity'):
+        s2_validate_slice_reference(missing, config())
+    settings['cycle_ns'] = 20
+    with pytest.raises(ValueError, match='settings'):
+        s2_validate_slice_reference(previous, config())
+
+
+@pytest.mark.parametrize('saved,current', [(None, False), (False, False),
+                                         (True, True), (None, True), (True, False)])
+def test_s2_cached_reference_requires_matching_reset(saved, current):
+    from diagnostic_scripts.benchmark_toggle_input_correction import s2_validate_reference
+    row = dict(initial_hash='weights', batch_hash='images', assignments='curves')
+    if saved is not None:
+        row['reset_z_per_cycle'] = saved
+    if bool(saved) != current:
+        with pytest.raises(ValueError, match='reset_z_per_cycle'):
+            s2_validate_reference(row, 'weights', 'images', 'curves', current)
+    else:
+        s2_validate_reference(row, 'weights', 'images', 'curves', current)
+    with pytest.raises(ValueError, match='weights/batch/curve'):
+        s2_validate_reference(row, 'different', 'images', 'curves', current)
+
+
+@pytest.mark.parametrize('selection', ['latest', 'full_param_last'])
+def test_merge_training_suite_forwards_source_selection(tmp_path, monkeypatch, selection):
+    from diagnostic_scripts import benchmark_toggle_input_correction as diagnostic
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        output = Path(command[command.index('--output') + 1])
+        output.mkdir()
+        result = dict(initial_model_hash='model', initial_auxiliary_hash='aux',
+                      batch_hash='batch', median_seconds=1.)
+        (output/'result.json').write_text(json.dumps(result))
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(diagnostic.subprocess, 'run', run)
+    monkeypatch.setattr(sys, 'argv', ['benchmark_toggle_input_correction.py',
+        '--s2-pulse-ft-cache', '--merge-training-suite', '--source-root', str(tmp_path),
+        '--ft-args', str(tmp_path/'argv.json'), '--batch-cache', str(tmp_path/'batch.pt'),
+        '--output', str(tmp_path/'suite'), '--source-selection', selection])
+    diagnostic.s2_pulse_ft_cache_diagnostic()
+    assert len(commands) == 6
+    assert all(command[command.index('--source-selection') + 1] == selection
+               for command in commands)
+
+
+@pytest.mark.parametrize('divisor', [1, 2])
+def test_collapse_diagnostic_records_actual_accumulation_backward(tmp_path, monkeypatch, divisor):
+    import torch
+    from torch import nn
+    from diagnostic_scripts import replay_c10_cascode_pt_collapse as diagnostic
+    cls = diagnostic.TrainerCiFarTimmStyleFeatureKD
+    owner = cls.__new__(cls)
+    owner.model = nn.Linear(2, 2)
+    owner._feature_kd_loss = nn.Linear(2, 2)
+    params = list(owner.model.parameters()) + list(owner._feature_kd_loss.parameters())
+    owner.optimizer = torch.optim.SGD(params, lr=.01)
+    owner.grad_accum_steps, owner.max_norm = divisor, None
+    recorder = diagnostic.Recorder(tmp_path)
+    recorder.owner, recorder.active = owner, True
+    recorder.epoch, recorder.batch = 1, 1
+    # Restore every process-global hook installed by the real diagnostic.
+    for obj, name in ((cls, 'train_one_epoch'), (cls, '_unpack_train_batch'),
+                      (torch.Tensor, 'backward'), (diagnostic.trainer_base, 'save_latest'),
+                      (diagnostic.training_recovery, 'save_latest')):
+        monkeypatch.setattr(obj, name, getattr(obj, name))
+    diagnostic.install(recorder, 30)
+    def training_step(self):
+        outputs = self.model(torch.ones(1, 2))
+        student_features = [outputs]
+        ce_loss = outputs.square().mean()
+        recorder.stat = self._feature_kd_loss(student_features[-1]).square().mean()
+        recorder.pred = outputs.mean().square()
+        loss = ce_loss + recorder.stat + recorder.pred
+        expected = torch.autograd.grad(loss/divisor, params, retain_graph=True)
+        self._backward_step_accum(loss, params, False, divisor)
+        return expected, float(loss.detach())
+    try:
+        expected, objective = training_step(owner)
+        assert recorder.pending is not None
+        assert recorder.pending['objective'] == pytest.approx(objective)
+        assert set(recorder.pending['term_gradient_norms']) == {'ce', 'stat', 'pred'}
+        for param, grad in zip(params, expected):
+            torch.testing.assert_close(param.grad, grad)
+    finally:
+        recorder.rows.close()
+
+
 def toggle_results():
     names = ('logits', 'loss_logits', 'input_gradients', 'quantized_input_gradients',
              'model_gradients', 'auxiliary_gradients')

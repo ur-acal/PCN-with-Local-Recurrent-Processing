@@ -65,6 +65,8 @@ def test_rgb_pipeline_evaluation_uses_explicit_input_and_batch(tmp_path, mode):
     assert parsed.test_bs == 16 and parsed.test_expanded
     assert parsed.ode_block == ('TogglePulseODEXInitFFFB' if mode == 'odexinit'
                                 else 'S2DTCPulseFFFB')
+    if mode != 'odexinit':
+        assert parsed.s2_dtc_slice_policy == 'full'
 
 
 def test_standalone_corner_input_fallbacks_remain_legacy():

@@ -112,6 +112,12 @@ def restore_latest(trainer):
         raise ValueError('Full recovery requires unchanged grad_accum_steps; use an ordinary checkpoint for a new recipe')
     saved_s2 = checkpoint.get('init_args', {}).get('s2_dtc')
     current_s2 = getattr(trainer.model, 'init_args', {}).get('s2_dtc')
+    # Old S2 checkpoints predate the opt-in reset. Missing means false, not
+    # different dynamics. Copy before normalizing; preserve the saved metadata.
+    if saved_s2 is not None:
+        saved_s2 = {'s2_dtc_reset_z_per_cycle': False, **saved_s2}
+    if current_s2 is not None:
+        current_s2 = {'s2_dtc_reset_z_per_cycle': False, **current_s2}
     if saved_s2 != current_s2:
         raise ValueError('Full recovery requires unchanged S2 DTC dynamics and initialization')
     if current.get('tc_nonidealities', False) or current.get('tc_feedforward', False):

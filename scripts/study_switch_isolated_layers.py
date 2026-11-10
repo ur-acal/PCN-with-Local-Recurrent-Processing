@@ -10,10 +10,9 @@ import time
 import traceback
 
 import torch
-import study_switch_full_network_normsafe as recovery
+import study_switch_full_network as s
 from switch_study_r10k_model import build
 
-s = recovery.study
 ROOT = s.ROOT
 REF = ROOT/'results/switch_full_network_r10k_rmax150k_enobnone'
 OUT = ROOT/'results/switch_isolated_layers_r10k_rmax150k_enobnone_2b'
@@ -165,6 +164,9 @@ def report(status,failures,current=None):
 
 @torch.no_grad()
 def run_case(config,manifest,failures):
+    # Install the historical solver correction only when executing this study,
+    # never when importing its reporting helpers (including test collection).
+    import study_switch_full_network_normsafe
     global CACHE
     method,m,n,tol=config;name=s.case_id(config);folder=OUT/'cases'/name
     if (folder/'summary.json').exists():return

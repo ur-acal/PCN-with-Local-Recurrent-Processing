@@ -314,6 +314,19 @@ def get_args():
     p.add_argument("--z_init_with", choices=("x", "0"), default=None)
     p.add_argument("--s2_dtc_substeps", type=int, default=None,
                    help="Fixed solver substeps per averaged frame or PWM slice; S2 DTC only.")
+    p.add_argument('--s2_dtc_reset_z_per_cycle', type=str2bool,
+                   default=os.environ.get('S2_DTC_RESET_Z_PER_CYCLE'),
+                   help='Reset only z between complete S2 DTC cycles; omitted inherits checkpoint, otherwise false.')
+    p.add_argument('--s2_dtc_landing_slices', default=None,
+                   help='Experimental deterministic pulse Dopri5: none or comma-separated mandatory slices 1..15. Omit for legacy solves.')
+    p.add_argument('--s2_dtc_slice_policy', choices=('full', 'drop', 'merge'), default=None,
+                   help='Omitted inherits checkpoint policy; full explicitly selects full pulses.')
+    p.add_argument('--s2_dtc_keep_slices', default=None)
+    p.add_argument('--s2_dtc_random_k', type=int, default=None)
+    p.add_argument('--s2_dtc_slice_sampling', choices=('per_forward', 'per_cycle'), default=None,
+                   help='Share random pulse slices across cycles or resample for each cycle.')
+    p.add_argument('--s2_dtc_branch_sampling', choices=('shared', 'independent'), default=None,
+                   help='Share random slice selections between FF/FB or sample each branch independently.')
     p.add_argument("--s2_dtc_ordering_pairs", type=int, choices=(0, 1, 2, 4, 7), default=None,
                    help="Physical averaged RK2 ordering pairs; 0 disables, 7 retains all. No effect in unitless pretraining.")
     p.add_argument("--toggle_fast_path", type=str2bool, default=True,
@@ -1139,6 +1152,11 @@ def main():
                           "patch_cycle", "patch_pad", "fold_scalar", "n_iters",
                           "toggle_n_cycles", "toggle_time_split", "toggle_fast_path",
                           "y_init_with", "z_init_with", "s2_dtc_substeps",
+                          "s2_dtc_reset_z_per_cycle",
+                          "s2_dtc_landing_slices",
+                          "s2_dtc_slice_policy", "s2_dtc_keep_slices", "s2_dtc_random_k",
+                          "s2_dtc_slice_sampling",
+                          "s2_dtc_branch_sampling",
                           "s2_dtc_ordering_pairs",
                           "toggle_timing_mode", "toggle_y_time", "z_over_y_time",
                           "odexinit_scaling_mode",

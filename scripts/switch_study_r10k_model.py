@@ -2,13 +2,13 @@
 import json
 import math
 import os
+from pathlib import Path
 import sys
 
 import torch
 
-ROOT = "/home/rongzeng/_workspce_old/repos/pcn/collaboration/ScAN-PCN"
+ROOT = str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, ROOT)
-os.chdir(ROOT)
 
 from TorchDiffEqPack.odesolver import odesolve
 from inference_utils import get_test_data, load_and_prepare_model

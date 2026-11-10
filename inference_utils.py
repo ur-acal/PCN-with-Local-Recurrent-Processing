@@ -360,6 +360,9 @@ def load_and_prepare_model(model_path, device, model_struct=PCNet, pc_conv_layer
     net_ = model_struct(**init_kwargs)
     net_.s2_dtc_checkpoint_config = dict(checkpoint_weight["init_args"].get("s2_dtc", {}))
     net_ = net_.to(device)
+    # Physical wrappers also consult this non-buffer device hint. Keep it in
+    # sync with the explicit load target rather than the constructor's default.
+    net_.device = torch.device(device)
     if isinstance(quant_params, dict):
         quant_scheme = get_quant_model(net_, device=device, **quant_params)
         logging.warning("Converted to quantized model with quant scheme: {}".format(quant_scheme))

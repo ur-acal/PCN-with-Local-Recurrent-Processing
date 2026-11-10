@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 
 from diagnostic_config import MC45_ROOT, REPO_ROOT, V_DD, normalize_task
@@ -157,14 +158,24 @@ def style_axes():
 
 
 def draw_curves(curves, xlabel, ylabel, title, output_path, x_scale=1.0,
-                y_scale=1.0):
+                y_scale=1.0, curve_colors=None):
+    if curve_colors is not None and len(curve_colors) != len(curves):
+        raise ValueError("One color must be supplied for each curve")
     fig, ax = plt.subplots(figsize=(7.2, 4.8))
-    colors = plt.get_cmap("turbo")(np.linspace(0.02, 0.98, len(curves)))
+    colors = (plt.get_cmap("turbo")(np.linspace(0.02, 0.98, len(curves)))
+              if curve_colors is None else curve_colors)
     linewidth = 0.75 if len(curves) <= 100 else 0.25
     alpha = 0.82 if len(curves) <= 100 else 0.32
     for color, (x, y) in zip(colors, curves):
+        # Keep the selected 500 curves visible above the other 4000 curves.
+        zorder = 3 if curve_colors is not None and color == "blue" else 2
         ax.plot(x * x_scale, y * y_scale, color=color,
-                linewidth=linewidth, alpha=alpha)
+                linewidth=linewidth, alpha=alpha, zorder=zorder)
+    if curve_colors is not None:
+        ax.legend(handles=[
+            Line2D([], [], color="blue", label="V0_T0 (all processes)"),
+            Line2D([], [], color="red", label="All other corners"),
+        ])
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -224,8 +235,9 @@ def all_corner_ids():
 def plot_all(curve_type, output_dir, corner_means=False,
              relu_source="relu_monteCarlo", v_dd=V_DD,
              coupler_source="coupler_monte_v2", offset_mode="auto",
-             supply_voltages=None):
+             supply_voltages=None, highlight_v0_t0=False):
     curves = []
+    curve_colors = []
     for corner in all_corner_ids():
         path = (relu_path(corner, relu_source) if curve_type == "relu"
                 else nonlinear_r_path(corner, coupler_source))
@@ -239,6 +251,11 @@ def plot_all(curve_type, output_dir, corner_means=False,
             scale = v_dd / max(np.max(np.abs(curve[0])) for curve in loaded)
             loaded = [(x * scale, y * scale) for x, y in loaded]
         curves.extend(loaded)
+        curve_colors.extend([
+            "blue" if corner.endswith("_V0_T0") else "red"
+        ] * len(loaded))
+    draw_options = {"curve_colors": curve_colors} if highlight_v0_t0 else {}
+    suffix = "_v0_t0_blue_others_red" if highlight_v0_t0 else ""
     if curve_type == "relu":
         count_description = (
             "45 corner-mean curves" if corner_means
@@ -248,10 +265,11 @@ def plot_all(curve_type, output_dir, corner_means=False,
             if corner_means
             else "relu_all_45_corners_4500_curves_scaled_vdd_{}V.pdf"
         ).format(voltage_tag(v_dd))
+        filename = Path(filename).stem + suffix + ".pdf"
         draw_curves(
             curves, "Runtime input voltage (V)", "Runtime output (V)",
             "All 45 measured ReLU corners: {}".format(count_description),
-            output_dir / filename)
+            output_dir / filename, **draw_options)
     else:
         count_description = (
             "45 corner-mean gm Vin curves" if corner_means
@@ -260,10 +278,11 @@ def plot_all(curve_type, output_dir, corner_means=False,
             "coupler_all_45_corner_mean_gm_vs_vin_curves.pdf"
             if corner_means
             else "coupler_all_45_corners_4500_gm_vs_vin_curves.pdf")
+        filename = Path(filename).stem + suffix + ".pdf"
         draw_curves(
             curves, "Input voltage, Vin (V)", "Effective conductance, gm (µS)",
             "All 45 coupler corners: {}".format(count_description),
-            output_dir / filename, y_scale=1e6)
+            output_dir / filename, y_scale=1e6, **draw_options)
 
 
 def main():
@@ -291,6 +310,9 @@ def main():
         "--corner_means", action="store_true",
         help="Plot one Monte Carlo mean curve per corner instead of all curves.")
     parser.add_argument(
+        "--highlight_v0_t0", action="store_true",
+        help="Plot all processes' V0_T0 curves blue and other corners red; use new filenames.")
+    parser.add_argument(
         "--output_dir", default=str(REPO_ROOT / "results" / "diagnostic_hardware_curves"))
     args = parser.parse_args()
     if not np.isfinite(args.v_dd) or args.v_dd <= 0:
@@ -311,6 +333,8 @@ def main():
         selected_types = ["nonlinear_R", "relu"]
 
     corners = parse_corners(args.corners)
+    if args.highlight_v0_t0 and corners is not None:
+        parser.error("--highlight_v0_t0 plots all 45 corners and cannot use --corners")
     if args.corner_means and corners is not None:
         raise ValueError("--corner_means plots all 45 corners and cannot use --corners")
     if corners is None:
@@ -319,7 +343,8 @@ def main():
                 curve_type, output_dir, corner_means=args.corner_means,
                 relu_source=args.relu_source, v_dd=args.v_dd,
                 coupler_source=args.coupler_source, offset_mode=args.relu_offset_mode,
-                supply_voltages=args.relu_supply_voltages)
+                supply_voltages=args.relu_supply_voltages,
+                highlight_v0_t0=args.highlight_v0_t0)
         return
 
     for corner in sorted(corners, key=corner_sort_key):

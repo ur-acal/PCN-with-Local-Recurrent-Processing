@@ -23,7 +23,6 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'docs/switched_dynamics_diagnostic_snapshot'), str(ROOT)]
-from debug_strang_real_block import build, CKPT
 from inference_utils import get_test_data
 from ode_pc import ODEXInitFFFB
 from switch import (ODEXInitFFFBPixelSwitchEfficient as Jacobi,
@@ -39,6 +38,20 @@ SOURCE_FILES = ('switch.py', 'ode_pc.py', 'pc_model.py', 'inference_utils.py',
                 'TorchDiffEqPack/odesolver/base.py',
                 'TorchDiffEqPack/odesolver/ode_solver.py')
 _MODEL_CACHE = None
+
+
+def build(*args, **kwargs):
+    # Historical model assets are needed to run the study, not to import its
+    # reporting/error helpers. Keep the original builder; do not substitute one.
+    from debug_strang_real_block import build as historical_build
+    return historical_build(*args, **kwargs)
+
+
+def __getattr__(name):
+    if name == 'CKPT':
+        from debug_strang_real_block import CKPT
+        return CKPT
+    raise AttributeError(name)
 
 
 def atomic_json(path, value):
@@ -143,6 +156,7 @@ def capture_forward(net, wrappers, x, reference=None):
 
 @torch.no_grad()
 def prepare(n_batches):
+    from debug_strang_real_block import CKPT
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT/'data').mkdir(exist_ok=True)
     if not (OUT/'manifest.json').exists():

@@ -1,5 +1,6 @@
 import csv
 import json
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -26,6 +27,26 @@ class Block(nn.Module):
 
 
 class Tests(unittest.TestCase):
+    def test_import_does_not_change_checkout_or_patch_solver(self):
+        root = Path(__file__).resolve().parents[1]
+        code = '''
+import os, sys
+from pathlib import Path
+root = Path.cwd()
+sys.path.insert(0, str(root / 'scripts'))
+import TorchDiffEqPack.odesolver.adaptive_grid_solver as adaptive
+norm = adaptive.norm
+initial_step = adaptive.AdaptiveGridSolver.select_initial_step_scipy
+import study_switch_isolated_layers
+import switch_study_r10k_model
+assert Path.cwd() == root
+assert Path(switch_study_r10k_model.ROOT) == root
+assert adaptive.norm is norm
+assert adaptive.AdaptiveGridSolver.select_initial_step_scipy is initial_step
+'''
+        subprocess.run([sys.executable, '-c', code], cwd=root, check=True,
+                       capture_output=True, text=True)
+
     def test_each_layer_gets_its_own_reference_input(self):
         for layer,value,factor in [(0,1.,2.),(1,7.,3.)]:
             w=Wrapper();b=Block(w,factor)

@@ -130,6 +130,7 @@ class TCCNNRecipeTests(unittest.TestCase):
             torch.save(dict(training_recovery=dict(version=1, config=dict(
                 activation_random_curve_sharing='per_spin'))), checkpoint)
             trainer = SimpleNamespace(recovery_checkpoint=str(checkpoint),
+                                      model=SimpleNamespace(init_args={}),
                                       recovery_config=dict(activation_random_curve_sharing='per_layer'))
             with self.assertRaisesRegex(ValueError, 'unchanged activation_random_curve_sharing'):
                 restore_latest(trainer)

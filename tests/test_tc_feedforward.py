@@ -126,7 +126,8 @@ class TCFeedForwardTests(unittest.TestCase):
                 version=1, config=dict(tc_method='euler', tc_num_steps=10))), path)
             for config in (dict(tc_method='dopri5', tc_num_steps=10),
                            dict(tc_method='euler', tc_num_steps=20)):
-                trainer = SimpleNamespace(recovery_checkpoint=path, recovery_config=config)
+                trainer = SimpleNamespace(recovery_checkpoint=path, recovery_config=config,
+                                          model=SimpleNamespace(init_args={}))
                 with self.assertRaisesRegex(ValueError, 'Full recovery requires unchanged tc_'):
                     restore_latest(trainer)
 

@@ -224,6 +224,28 @@ class TCDisabledAuditTests(unittest.TestCase):
                '(ToggleODEXInitFFFB, TogglePulseODEXInitFFFB, TogglePulseBlkXInitFFFB)):')
         self.assertEqual(previous.count(old), 4, 'Pinned rail-bound branches changed')
         previous = previous.replace(old, new)
+        # The later reviewed S2-only metadata cache changes this shared helper,
+        # but leaves legacy lookup arithmetic intact. Pin exactly that method
+        # to the reviewed performance commit; keep auditing every other method
+        # against the original pre-TC baseline plus the explicit fixes above.
+        cache_revision = '2f3699e606e9e5b8fa14ebd51f345bed8a0b1acb'
+        cached = subprocess.check_output(
+            ['git', 'show', cache_revision + ':ode_pc.py'], cwd=ROOT, text=True)
+        current = (ROOT/'ode_pc.py').read_text()
+        def cache_method(tree):
+            cls = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+                       and n.name == 'ToggleAveragedPhysicalFFFB')
+            method = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
+                          and n.name == '_averaged_nonlinear_R_source')
+            return cls, method
+        _, reviewed = cache_method(ast.parse(cached))
+        _, actual = cache_method(ast.parse(current))
+        self.assertEqual(ast.dump(reviewed, include_attributes=False),
+                         ast.dump(actual, include_attributes=False))
+        tree = ast.parse(previous)
+        cls, original = cache_method(tree)
+        cls.body[cls.body.index(original)] = reviewed
+        previous = ast.unparse(tree)
         def classes(source):
             return {node.name:ast.dump(node,include_attributes=False)
                     for node in ast.parse(source).body

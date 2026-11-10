@@ -157,6 +157,16 @@ def parse_args():
     parser.add_argument("--y_init_with", choices=("x", "0"), default=None)
     parser.add_argument("--z_init_with", choices=("x", "0"), default=None)
     parser.add_argument("--s2_dtc_substeps", type=int, default=None)
+    parser.add_argument('--s2_dtc_reset_z_per_cycle', type=lambda v: v.lower() in ('yes', 'true', 't', '1'),
+                        default=None, help='Reset z between S2 cycles; omitted inherits checkpoint metadata.')
+    parser.add_argument('--s2_dtc_landing_slices', default=None,
+                        help='Experimental pulse Dopri5: none or comma-separated nominal landing slices 1..15.')
+    parser.add_argument('--s2_dtc_slice_policy', choices=('full', 'drop', 'merge'), default=None,
+                        help='Omitted inherits checkpoint policy; full explicitly selects full pulses.')
+    parser.add_argument('--s2_dtc_keep_slices', default=None)
+    parser.add_argument('--s2_dtc_random_k', type=int, default=None)
+    parser.add_argument('--s2_dtc_slice_sampling', choices=('per_forward', 'per_cycle'), default=None)
+    parser.add_argument('--s2_dtc_branch_sampling', choices=('shared', 'independent'), default=None)
     parser.add_argument("--s2_dtc_ordering_pairs", type=int, choices=(0, 1, 2, 4, 7), default=None)
     parser.add_argument("--z_over_y_time", type=float, default=3.0)
     parser.add_argument("--odexinit_scaling_mode", choices=("approx", "direct"),
@@ -475,6 +485,13 @@ def run_validation_data_gen(args, test_dataloader, ckpt_path, pc_conv, device):
                   "toggle_fast_path": args.toggle_fast_path,
                   "y_init_with": args.y_init_with, "z_init_with": args.z_init_with,
                   "s2_dtc_substeps": args.s2_dtc_substeps,
+                  "s2_dtc_reset_z_per_cycle": args.s2_dtc_reset_z_per_cycle,
+                  "s2_dtc_landing_slices": args.s2_dtc_landing_slices,
+                  "s2_dtc_slice_policy": args.s2_dtc_slice_policy,
+                  "s2_dtc_keep_slices": args.s2_dtc_keep_slices,
+                  "s2_dtc_random_k": args.s2_dtc_random_k,
+                  "s2_dtc_slice_sampling": args.s2_dtc_slice_sampling,
+                  "s2_dtc_branch_sampling": args.s2_dtc_branch_sampling,
                   "s2_dtc_ordering_pairs": args.s2_dtc_ordering_pairs,
                   "odexinit_scaling_mode": args.odexinit_scaling_mode,
                   "toggle_timing_mode": args.toggle_timing_mode,
@@ -623,6 +640,13 @@ def run_test_only(args, test_dataloader, ckpt_path, pc_conv, device, return_net=
                   "toggle_fast_path": args.toggle_fast_path,
                   "y_init_with": args.y_init_with, "z_init_with": args.z_init_with,
                   "s2_dtc_substeps": args.s2_dtc_substeps,
+                  "s2_dtc_reset_z_per_cycle": args.s2_dtc_reset_z_per_cycle,
+                  "s2_dtc_landing_slices": args.s2_dtc_landing_slices,
+                  "s2_dtc_slice_policy": args.s2_dtc_slice_policy,
+                  "s2_dtc_keep_slices": args.s2_dtc_keep_slices,
+                  "s2_dtc_random_k": args.s2_dtc_random_k,
+                  "s2_dtc_slice_sampling": args.s2_dtc_slice_sampling,
+                  "s2_dtc_branch_sampling": args.s2_dtc_branch_sampling,
                   "s2_dtc_ordering_pairs": args.s2_dtc_ordering_pairs,
                   "odexinit_scaling_mode": args.odexinit_scaling_mode,
                   "toggle_timing_mode": args.toggle_timing_mode,
@@ -894,6 +918,13 @@ def run_ode_inference(linear_study=None):
                       "toggle_fast_path": args.toggle_fast_path,
                       "y_init_with": args.y_init_with, "z_init_with": args.z_init_with,
                       "s2_dtc_substeps": args.s2_dtc_substeps,
+                      "s2_dtc_reset_z_per_cycle": args.s2_dtc_reset_z_per_cycle,
+                      "s2_dtc_landing_slices": args.s2_dtc_landing_slices,
+                      "s2_dtc_slice_policy": args.s2_dtc_slice_policy,
+                      "s2_dtc_keep_slices": args.s2_dtc_keep_slices,
+                      "s2_dtc_random_k": args.s2_dtc_random_k,
+                      "s2_dtc_slice_sampling": args.s2_dtc_slice_sampling,
+                      "s2_dtc_branch_sampling": args.s2_dtc_branch_sampling,
                       "s2_dtc_ordering_pairs": args.s2_dtc_ordering_pairs,
                       "odexinit_scaling_mode": args.odexinit_scaling_mode,
                       "toggle_timing_mode": args.toggle_timing_mode,

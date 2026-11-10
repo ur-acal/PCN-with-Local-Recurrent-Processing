@@ -28,6 +28,392 @@ def s2_block(cls=None, physical=False, method="rk2", **kwargs):
     return block
 
 
+@pytest.mark.parametrize('pulse,physical', [(False, False), (False, True), (True, True)])
+@pytest.mark.parametrize('substeps', [1, 2])
+def test_s2_cycle_reset_preserves_y_and_only_clears_boundary_z(pulse, physical, substeps):
+    from types import MethodType
+    from ode_pc import S2DTCPulseFFFB
+    block = s2_block(S2DTCPulseFFFB if pulse else None, physical=physical,
+                     s2_dtc_substeps=substeps, s2_dtc_reset_z_per_cycle=True)
+    starts, boundaries = [], []
+    original_interval = block._s2_dtc_interval
+    original_boundary = block._s2_dtc_cycle_boundary
+    def interval(self, state, *args, **kwargs):
+        starts.append(tuple(v.detach().clone() for v in state))
+        return original_interval(state, *args, **kwargs)
+    def boundary(self, state, cycle, cycles):
+        result = original_boundary(state, cycle, cycles)
+        assert result[0] is state[0]
+        if cycle < cycles - 1:
+            assert torch.count_nonzero(result[1]) == 0 and not result[1].requires_grad
+        else:
+            assert result is state
+        boundaries.append(cycle)
+        return result
+    block._s2_dtc_interval = MethodType(interval, block)
+    block._s2_dtc_cycle_boundary = MethodType(boundary, block)
+    x = torch.full((2, 2, 3, 3), .01, requires_grad=True)
+    out = block(x)
+    stride = 15 if pulse else 1
+    assert len(starts) == 5 * stride and boundaries == list(range(5))
+    for cycle in range(5):
+        assert torch.count_nonzero(starts[cycle * stride][1]) == 0
+    out.square().sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert all(torch.isfinite(p.grad).all() for p in block.parameters() if p.grad is not None)
+
+
+@pytest.mark.parametrize('policy', ['full', 'drop', 'merge'])
+def test_s2_cycle_reset_first_cycle_and_reduced_schedules(policy):
+    from ode_pc import S2DTCPulseFFFB
+    x = torch.full((1, 2, 3, 3), .02)
+    outputs = []
+    for reset in (False, True):
+        block = s2_block(S2DTCPulseFFFB, physical=True,
+                         s2_dtc_reset_z_per_cycle=reset, s2_dtc_slice_policy=policy,
+                         s2_dtc_keep_slices=tuple(range(1, 16)))
+        block.toggle_n_cycles = 1
+        outputs.append(block(x))
+    torch.testing.assert_close(outputs[0], outputs[1], rtol=0, atol=0)
+    block.toggle_n_cycles = 5
+    block(x)
+    assert block.s2_dtc_reset_z_per_cycle
+
+
+@pytest.mark.parametrize('landings', ['all', 'none'])
+def test_s2_cycle_reset_full_schedule_matches_slice_solver(landings):
+    from ode_pc import S2DTCPulseFFFB
+    block = s2_block(S2DTCPulseFFFB, physical=True, method='dopri5',
+                     s2_dtc_reset_z_per_cycle=True)
+    block.eval()
+    x = torch.full((1, 2, 3, 3), .01)
+    block.option_aca.update(atol=1e-7, rtol=1e-7)
+    with torch.no_grad():
+        expected = block(x)
+        block.s2_dtc_landing_slices = tuple(range(1, 16)) if landings == 'all' else ()
+        actual = block(x)
+    assert torch.isfinite(actual).all()
+    if landings == 'all':
+        torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-4)
+    assert len(block._last_s2_dtc_solver_stats['cycles']) == 5
+    for cycle in range(1, 6):
+        assert cycle / 5 in block._last_s2_dtc_solver_stats['times']
+
+
+def test_s2_cycle_reset_default_off_and_boundary_gradients():
+    x = torch.full((1, 2, 3, 3), .02)
+    default, explicit = s2_block(), s2_block(s2_dtc_reset_z_per_cycle=False)
+    assert default.s2_dtc_reset_z_per_cycle is False
+    torch.testing.assert_close(default(x), explicit(x), rtol=0, atol=0)
+    y = torch.ones(2, requires_grad=True)
+    z = torch.ones(2, requires_grad=True)
+    explicit.s2_dtc_reset_z_per_cycle = True
+    result = explicit._s2_dtc_cycle_boundary((y, z), 0, 5)
+    result[0].sum().backward()
+    torch.testing.assert_close(y.grad, torch.ones_like(y))
+    assert z.grad is None and not result[1].requires_grad
+
+
+@pytest.mark.parametrize('policy', ['average', 'full', 'drop', 'merge'])
+@pytest.mark.parametrize('reset', [False, True])
+def test_final_z_diagnostic_does_not_retain_unused_graph(policy, reset):
+    import gc
+    import weakref
+    from ode_pc import S2DTCPulseFFFB
+    block = s2_block(None if policy == 'average' else S2DTCPulseFFFB,
+                     physical=policy != 'average',
+                     s2_dtc_reset_z_per_cycle=reset,
+                     s2_dtc_slice_policy='full' if policy == 'average' else policy)
+    x = torch.full((2, 2, 3, 3), .02, requires_grad=True)
+    saved = []
+    def pack(tensor):
+        saved.append(weakref.ref(tensor))
+        return tensor
+    with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
+        result = block(x)
+    assert block._last_s2_dtc_z.grad_fn is None
+    assert not block._last_s2_dtc_z.requires_grad
+    result.square().mean().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    gc.collect()
+    alive = {id(t) for ref in saved if (t := ref()) is not None}
+    del block._last_s2_dtc_z
+    gc.collect()
+    assert alive == {id(t) for ref in saved if (t := ref()) is not None}
+
+
+def test_s2_cycle_reset_environment_and_cli_precedence(monkeypatch):
+    import sys
+    from train_ode_cifar import get_args
+    monkeypatch.setattr(sys, 'argv', ['train_ode_cifar.py'])
+    monkeypatch.delenv('S2_DTC_RESET_Z_PER_CYCLE', raising=False)
+    assert get_args().s2_dtc_reset_z_per_cycle is None
+    monkeypatch.setenv('S2_DTC_RESET_Z_PER_CYCLE', 'true')
+    assert get_args().s2_dtc_reset_z_per_cycle is True
+    monkeypatch.setenv('S2_DTC_RESET_Z_PER_CYCLE', 'false')
+    assert get_args().s2_dtc_reset_z_per_cycle is False
+    monkeypatch.setenv('S2_DTC_RESET_Z_PER_CYCLE', 'true')
+    monkeypatch.setattr(sys, 'argv', ['train_ode_cifar.py', '--s2_dtc_reset_z_per_cycle', 'false'])
+    assert get_args().s2_dtc_reset_z_per_cycle is False
+
+
+@pytest.mark.parametrize('slices', [(), (1,), (1, 2), (1, 2, 3), (1, 2, 3, 4), tuple(range(1, 16))])
+def test_selective_dopri5_lands_only_on_requested_boundaries(slices):
+    from TorchDiffEqPack.odesolver.adaptive_grid_solver import Dopri5
+    class RHS(nn.Module):
+        def forward(self, t, state):
+            return (torch.ones_like(state[0]),)
+    rhs = RHS()
+    state = (torch.zeros(1, dtype=torch.float64),)
+    solver = Dopri5(rhs, 0., state, t1=1., h=None, rtol=1e-6, atol=1e-6)
+    times = [(c + k/15)/5 for c in range(5) for k in slices]
+    result = solver.integrate_selective(state, times)
+    assert torch.allclose(result[0], torch.ones_like(result[0]), atol=1e-12)
+    accepted = solver.selective_stats['times']
+    for boundary in times:
+        assert boundary in accepted
+    if not slices:
+        assert any(int(a*75) != int(b*75) for a, b in zip([0.] + accepted, accepted))
+
+
+def test_full_schedule_all_landings_matches_slice_solver():
+    from ode_pc import S2DTCPulseFFFB
+    block = s2_block(S2DTCPulseFFFB, physical=True, method='dopri5')
+    block.eval()
+    x = torch.randn(2, 2, 4, 4) * .03
+    block.option_aca.update(atol=1e-7, rtol=1e-7)
+    with torch.no_grad():
+        expected = block(x)
+        block.s2_dtc_landing_slices = tuple(range(1, 16))
+        actual = block(x)
+    assert torch.allclose(actual, expected, atol=2e-5, rtol=2e-4)
+    assert block._last_s2_dtc_solver_stats['accepted'] >= 75
+
+
+def test_full_schedule_rejects_stochastic_current_noise():
+    from ode_pc import S2DTCPulseFFFB
+    block = s2_block(S2DTCPulseFFFB, physical=True, method='dopri5',
+                     s2_dtc_landing_slices='none', enable_coupler_noise=True)
+    with torch.no_grad(), pytest.raises(ValueError, match='deterministic'):
+        block(torch.zeros(1, 2, 4, 4))
+
+
+@pytest.mark.parametrize('policy', ['drop', 'merge'])
+def test_reduced_schedule_all_slices_matches_full_outputs_and_gradients(policy):
+    from ode_pc import S2DTCPulseFFFB
+    results = []
+    for active_policy in ('full', policy):
+        block = s2_block(S2DTCPulseFFFB, physical=True, method='rk2',
+                         s2_dtc_slice_policy=active_policy,
+                         s2_dtc_keep_slices=tuple(range(1,16)))
+        x = torch.full((2,2,4,4), .02, requires_grad=True)
+        y = block(x)
+        y.square().mean().backward()
+        results.append((y.detach(), x.grad, [p.grad for p in block.parameters() if p.grad is not None]))
+    torch.testing.assert_close(results[0][0],results[1][0],rtol=1e-6,atol=1e-8)
+    torch.testing.assert_close(results[0][1],results[1][1],rtol=1e-5,atol=1e-8)
+    for a,b in zip(results[0][2],results[1][2]):
+        torch.testing.assert_close(a,b,rtol=1e-5,atol=1e-8)
+
+
+def test_merged_schedule_preserves_integrated_masks_and_full_horizon():
+    from ode_pc import S2DTCPulseFFFB
+    from types import MethodType
+    block = s2_block(S2DTCPulseFFFB, physical=True, method='rk2',
+                     s2_dtc_slice_policy='merge', s2_dtc_keep_slices='1,2,3,4')
+    records = []
+    def interval(self,state,duration,weights,counts=None,**kwargs):
+        records.append((duration,weights))
+        return state
+    block._s2_dtc_interval = MethodType(interval,block)
+    block(torch.ones(1,2,4,4)*.02)
+    assert len(records)==25
+    assert abs(sum(t for t,_ in records)-50e-9)<1e-20
+    for branch,module in enumerate((block.FFconv,block.FBconv)):
+        expected = sum(block.get_pulse_matrix(module,k,15) for k in range(15))* (50e-9/15)
+        actual = sum(t*w[branch] for t,w in records)
+        torch.testing.assert_close(actual,expected,atol=1e-14,rtol=1e-6)
+
+
+def test_dynamic_random_slice_count_and_checkpointed_backward():
+    from ode_pc import S2DTCPulseFFFB
+    block = s2_block(S2DTCPulseFFFB, physical=True, method='rk2',
+                     s2_dtc_slice_policy='merge', checkpoint_ode_rhs_training=True)
+    x = torch.ones(1,2,4,4,requires_grad=True)*.02
+    for k in (0,2,4):
+        block.zero_grad()
+        y = block(x,pulse_slice_k=k)
+        chosen = block._last_s2_dtc_selected_slices
+        assert len(chosen)==4+k and set(range(1,5))<=set(chosen)
+        y.square().mean().backward(retain_graph=True)
+        assert chosen==block._last_s2_dtc_selected_slices
+        assert all(torch.isfinite(p.grad).all() for p in block.parameters() if p.grad is not None)
+    with pytest.raises(ValueError,match='random slice count'):
+        block(x,pulse_slice_k=12)
+
+
+def test_merging_all_slices_matches_five_step_averaged_rk2():
+    from ode_pc import S2DTCPulseFFFB
+    averaged = s2_block(physical=True,method='rk2')
+    merged = s2_block(S2DTCPulseFFFB,physical=True,method='rk2',
+                      s2_dtc_slice_policy='merge',s2_dtc_keep_slices=())
+    x = torch.ones(1,2,4,4)*.02
+    with torch.no_grad():
+        torch.testing.assert_close(averaged(x),merged(x),rtol=2e-5,atol=1e-7)
+
+
+def test_dropped_intervals_retain_summing_noise_exposure():
+    from ode_pc import S2DTCPulseFFFB
+    from types import MethodType
+    block = s2_block(S2DTCPulseFFFB,physical=True,method='rk2',
+                     s2_dtc_slice_policy='drop',enable_summing_current_noise=True)
+    records=[]
+    def interval(self,state,duration,weights,counts=None,**kwargs):
+        records.append((duration,[w.detach().clone() for w in weights]))
+        return state
+    block._s2_dtc_interval=MethodType(interval,block)
+    block(torch.ones(1,2,4,4)*.02)
+    assert len(records)==25
+    assert abs(sum(t for t,_ in records)-50e-9)<1e-20
+    for _,weights in records[4::5]:
+        assert all(torch.count_nonzero(w)==0 for w in weights)
+
+
+@pytest.mark.parametrize('policy', ['drop', 'merge'])
+def test_per_cycle_selection_and_checkpointed_gradients(policy):
+    from ode_pc import S2DTCPulseFFFB
+    results=[]
+    for checkpoint in (False,True):
+        block=s2_block(S2DTCPulseFFFB,physical=True,method='rk2',
+                       s2_dtc_slice_policy=policy,s2_dtc_random_k=2,
+                       s2_dtc_slice_sampling='per_cycle',
+                       checkpoint_ode_rhs_training=checkpoint)
+        x=torch.full((1,2,4,4),.02,requires_grad=True)
+        torch.manual_seed(935)
+        y=block(x)
+        schedules=block._last_s2_dtc_selected_slices_by_cycle
+        assert len(schedules)==5 and len(set(schedules))>1
+        assert all(len(s)==6 and {1,2,3,4}<=set(s) for s in schedules)
+        rng=torch.get_rng_state().clone()
+        y.square().mean().backward()
+        assert schedules==block._last_s2_dtc_selected_slices_by_cycle
+        torch.testing.assert_close(rng,torch.get_rng_state(),rtol=0,atol=0)
+        results.append((y.detach(),x.grad,[p.grad for p in block.parameters() if p.grad is not None]))
+    for a,b in zip(results[0][:2],results[1][:2]):
+        torch.testing.assert_close(a,b,rtol=1e-5,atol=1e-8)
+    for a,b in zip(results[0][2],results[1][2]):
+        torch.testing.assert_close(a,b,rtol=1e-5,atol=1e-8)
+
+
+@pytest.mark.parametrize('policy', ['drop','merge'])
+def test_per_cycle_zero_random_count_matches_shared_and_interval_count(policy):
+    from ode_pc import S2DTCPulseFFFB
+    from types import MethodType
+    results=[]
+    for sampling in ('per_forward','per_cycle'):
+        block=s2_block(S2DTCPulseFFFB,physical=True,method='rk2',
+                       s2_dtc_slice_policy=policy,s2_dtc_slice_sampling=sampling)
+        torch.manual_seed(935)
+        result=block(torch.ones(1,2,4,4)*.02)
+        results.append((result.detach(),torch.get_rng_state()))
+    for a,b in zip(results[0],results[1]):
+        torch.testing.assert_close(a,b,rtol=0,atol=0)
+    block=s2_block(S2DTCPulseFFFB,physical=True,method='rk2',
+                   s2_dtc_slice_policy=policy,s2_dtc_random_k=2,s2_dtc_slice_sampling='per_cycle')
+    durations=[]
+    def interval(self,state,duration,weights,counts=None,**kwargs):
+        durations.append(duration)
+        return state
+    block._s2_dtc_interval=MethodType(interval,block)
+    block(torch.ones(1,2,4,4)*.02)
+    if policy=='drop':
+        assert len(durations)==30
+    else:
+        assert abs(sum(durations)-50e-9)<1e-20
+
+
+@pytest.mark.parametrize('policy', ['drop', 'merge'])
+@pytest.mark.parametrize('sampling', ['per_forward', 'per_cycle'])
+@pytest.mark.parametrize('checkpoint', [False, True])
+@pytest.mark.parametrize('noise', [False, True])
+def test_independent_branches_skip_only_zero_drift(policy, sampling, checkpoint, noise):
+    from ode_pc import S2DTCPulseFFFB
+    from types import MethodType
+    results = []
+    for skip in (False, True):
+        block = s2_block(S2DTCPulseFFFB, physical=True, method='rk2',
+                         s2_dtc_slice_policy=policy, s2_dtc_random_k=2,
+                         s2_dtc_slice_sampling=sampling, s2_dtc_branch_sampling='independent',
+                         checkpoint_ode_rhs_training=checkpoint,
+                         enable_summing_current_noise=noise, summing_noise_seed=17,
+                         enable_coupler_noise=noise, coupler_noise_seed=18)
+        interval = block._s2_dtc_interval
+        if not skip:
+            def unoptimized(self, *args, **kwargs):
+                kwargs.pop('active_branches')
+                return interval(*args, **kwargs)
+            block._s2_dtc_interval = MethodType(unoptimized, block)
+        x = torch.full((1, 2, 4, 4), .02, requires_grad=True)
+        torch.manual_seed(935)
+        y = block(x)
+        schedules = block._last_s2_dtc_branch_slices_by_cycle
+        assert len(schedules) == 5 and any(ff != fb for ff, fb in schedules)
+        assert all(len(s) == 6 and {1,2,3,4} <= set(s) for pair in schedules for s in pair)
+        rng = torch.get_rng_state().clone()
+        y.square().mean().backward()
+        torch.testing.assert_close(rng, torch.get_rng_state(), rtol=0, atol=0)
+        results.append((y.detach(), x.grad, [p.grad for p in block.parameters() if p.grad is not None]))
+    for a, b in zip(results[0][:2], results[1][:2]):
+        torch.testing.assert_close(a, b, rtol=1e-5, atol=1e-8)
+    for a, b in zip(results[0][2], results[1][2]):
+        torch.testing.assert_close(a, b, rtol=1e-5, atol=1e-8)
+
+
+@pytest.mark.parametrize('policy', ['drop', 'merge'])
+def test_independent_branch_exposure_and_mask_preparation(policy):
+    from ode_pc import S2DTCPulseFFFB
+    from types import MethodType
+    block = s2_block(S2DTCPulseFFFB, physical=True, method='rk2',
+                     s2_dtc_slice_policy=policy, s2_dtc_random_k=2,
+                     s2_dtc_branch_sampling='independent')
+    records, calls = [], []
+    pulse = block.get_pulse_matrix
+    def prepare(self, module, k, *args, **kwargs):
+        calls.append((module, k))
+        return pulse(module, k, *args, **kwargs)
+    def interval(self, state, duration, weights, counts=None, **kwargs):
+        records.append((duration, weights, kwargs['active_branches']))
+        return state
+    block.get_pulse_matrix = MethodType(prepare, block)
+    block._s2_dtc_interval = MethodType(interval, block)
+    block(torch.full((1, 2, 4, 4), .02))
+    expected_calls = 12 if policy == 'drop' else 30
+    assert len(calls) == expected_calls
+    ff, fb = block._last_s2_dtc_branch_slices_by_cycle[0]
+    for branch, module in enumerate((block.FFconv, block.FBconv)):
+        chosen = (ff, fb)[branch] if policy == 'drop' else range(1, 16)
+        expected = sum(pulse(module, k-1, 15) for k in chosen) * (50e-9/15)
+        actual = sum(t * weights[branch] for t, weights, _ in records)
+        torch.testing.assert_close(actual, expected, atol=1e-14, rtol=1e-6)
+    if policy == 'drop':
+        assert sum(active[0] for _, _, active in records) == 30
+        assert sum(active[1] for _, _, active in records) == 30
+    else:
+        assert abs(sum(t for t, _, _ in records)-50e-9) < 1e-20
+
+
+def test_independent_drop_retains_same_active_convolution_budget():
+    from ode_pc import S2DTCPulseFFFB
+    for branches in ('shared', 'independent'):
+        block = s2_block(S2DTCPulseFFFB, physical=True, method='rk2',
+                         s2_dtc_slice_policy='drop', s2_dtc_random_k=2,
+                         s2_dtc_slice_sampling='per_cycle', s2_dtc_branch_sampling=branches)
+        with patch.object(block, '_apply_pulse_module', wraps=block._apply_pulse_module) as apply:
+            block(torch.full((1, 2, 4, 4), .02))
+        for module in (block.FFconv, block.FBconv):
+            assert sum(call.args[0] is module for call in apply.call_args_list) == 5 * 6 * 2
+
+
 @pytest.mark.parametrize('checkpoint', [False, True])
 @pytest.mark.parametrize('noise', [False, True])
 @pytest.mark.parametrize('substeps', [1, 2])
@@ -484,12 +870,14 @@ def test_s2_dtc_adaptive_joint_solve_smoke():
         assert torch.isfinite(b.FFconv.parametrizations.weight.original.grad).all()
 
 
-def test_s2_dtc_rhs_checkpointing_preserves_outputs_and_gradients():
+@pytest.mark.parametrize('reset', [False, True])
+def test_s2_dtc_rhs_checkpointing_preserves_outputs_and_gradients(reset):
     from ode_pc import S2DTCPulseFFFB
     for cls, physical in ((None, False), (None, True), (S2DTCPulseFFFB, True)):
         outputs, gradients = [], []
         for checkpoint in (False, True):
             b = s2_block(cls, physical=physical, checkpoint_ode_rhs_training=checkpoint,
+                         s2_dtc_reset_z_per_cycle=reset,
                          enable_summing_current_noise=physical, summing_noise_seed=7,
                          summing_current_p=1e-12)
             out = b(torch.full((2, 2, 3, 3), .03))
@@ -501,7 +889,8 @@ def test_s2_dtc_rhs_checkpointing_preserves_outputs_and_gradients():
             torch.testing.assert_close(a, b, rtol=1e-6, atol=1e-7)
 
 
-def test_s2_dtc_checkpoint_metadata_and_baked_weight_encoding(tmp_path):
+@pytest.mark.parametrize('reset', [False, True])
+def test_s2_dtc_checkpoint_metadata_and_baked_weight_encoding(tmp_path, reset):
     import copy
     import torch.nn.utils.parametrize as P
     from inference_utils import load_and_prepare_model
@@ -523,6 +912,7 @@ def test_s2_dtc_checkpoint_metadata_and_baked_weight_encoding(tmp_path):
         model.device = torch.device("cpu")
         model.cpu()
         make_ode_block(model, ode_block=source, y_init_with="0", z_init_with="x",
+                       s2_dtc_reset_z_per_cycle=reset,
                        s2_dtc_substeps=1 if pairs else 2, s2_dtc_ordering_pairs=pairs, **settings)
         wrap_ode_block(model, ode_wrapper=S2DTCQATWrapper2State,
                        qat_cls=SymQuantizeWeight, **hardware)
@@ -544,6 +934,15 @@ def test_s2_dtc_checkpoint_metadata_and_baked_weight_encoding(tmp_path):
                     ode_wrapper_params=dict(ode_wrapper=S2DTCQATTester2State, **hardware))
             loaded.eval()
             assert loaded.PcConvs[0].y_init_with == "0"
+            assert loaded.PcConvs[0].s2_dtc_reset_z_per_cycle is reset
+            if reset and source is target:
+                with torch.no_grad(), patch("torch.cuda.is_available", return_value=False):
+                    override = load_and_prepare_model(
+                        str(path), "cpu", pc_conv_layer=PCConvReLU6, fuse_bn=False,
+                        noise_level=0, ode_params=dict(ode_block=target,
+                            s2_dtc_reset_z_per_cycle=False, **settings),
+                        ode_wrapper_params=dict(ode_wrapper=S2DTCQATTester2State, **hardware))
+                assert override.PcConvs[0].s2_dtc_reset_z_per_cycle is False
             assert loaded.PcConvs[0].z_init_with == "x"
             assert loaded.PcConvs[0].s2_dtc_substeps == (1 if pairs else 2)
             assert loaded.PcConvs[0].s2_dtc_ordering_pairs == (0 if target is S2DTCPulseFFFB else pairs)
@@ -560,15 +959,92 @@ def test_s2_dtc_checkpoint_metadata_and_baked_weight_encoding(tmp_path):
                     torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-5)
 
 
-def test_s2_dtc_expansion_matches_dense(tmp_path):
+@pytest.mark.parametrize('policy', ['drop', 'merge'])
+@pytest.mark.parametrize('latent', [False, True])
+def test_reduced_checkpoint_inherits_policy_and_explicit_full_overrides(tmp_path, policy, latent):
+    import copy
+    import torch.nn.utils.parametrize as P
+    from inference_utils import load_and_prepare_model
+    from pc_model import PCNetNoBatchNorm
+    from ode_pc import (S2DTCFFFB, S2DTCPulseFFFB, S2DTCQATWrapper2State,
+                        S2DTCQATTester2State, make_ode_block, wrap_ode_block,
+                        SymQuantizeWeight)
+    settings = dict(method='rk2', t_end=1.75, n_steps=5,
+        toggle_timing_mode='fixed', toggle_y_time=1e-8, z_over_y_time=1,
+        toggle_timing_R=5e4, toggle_timing_C=5e-13)
+    hardware = dict(R=5e4, C=5e-13, v_dd=.5, one_over_q=5, w_bits=5,
+                    weight_quant_factor_bits=1, thermal_noise=False)
+    reduced = dict(s2_dtc_slice_policy=policy, s2_dtc_keep_slices='1,2,3',
+        s2_dtc_random_k=2, s2_dtc_slice_sampling='per_cycle',
+        s2_dtc_branch_sampling='independent')
+    model = PCNetNoBatchNorm(inp_channels=[2,4], out_channels=[4,4],
+        max_pool=[False,False], num_classes=3, pc_conv_layer=PCConvReLU6,
+        first_bn=False, avg_pooling=True, dropout=0, bypass=False, tie_weights=False)
+    model.device = torch.device('cpu')
+    model.cpu()
+    make_ode_block(model, ode_block=S2DTCPulseFFFB, **settings, **reduced)
+    wrap_ode_block(model, ode_wrapper=S2DTCQATWrapper2State,
+                   qat_cls=SymQuantizeWeight, **hardware)
+    model.eval()
+    x = torch.full((2,2,3,3), .02)
+    torch.manual_seed(123)
+    with torch.no_grad():
+        expected = model(x)
+    saved = copy.deepcopy(model)
+    if not latent:
+        for module in saved.modules():
+            if P.is_parametrized(module, 'weight'):
+                P.remove_parametrizations(module, 'weight', leave_parametrized=True)
+    path = tmp_path / ('model_full_param_last_ckpt.pth' if latent else 'model_last_ckpt.pth')
+    torch.save(dict(net=saved.state_dict(), init_args=saved.init_args,
+                    net_type='PCNetNoBatchNorm'), path)
+    def load(**overrides):
+        with torch.no_grad():
+            return load_and_prepare_model(str(path), 'cpu', pc_conv_layer=PCConvReLU6,
+                fuse_bn=False, noise_level=0,
+                ode_params=dict(ode_block=S2DTCPulseFFFB, **settings, **overrides),
+                ode_wrapper_params=dict(ode_wrapper=(S2DTCQATWrapper2State if latent
+                    else S2DTCQATTester2State), **hardware)).eval()
+    # Explicit None reproduces the omitted CLI values, not an override.
+    loaded = load(**{key: None for key in reduced})
+    assert loaded.device == torch.device('cpu')
+    assert all(parameter.device.type == 'cpu' for parameter in loaded.parameters())
+    for key, value in reduced.items():
+        assert loaded.init_args['s2_dtc'][key] == value
+    torch.manual_seed(123)
+    with torch.no_grad():
+        torch.testing.assert_close(loaded(x), expected, atol=1e-6, rtol=1e-5)
+    full = load(s2_dtc_slice_policy='full', s2_dtc_random_k=0)
+    assert all(b.s2_dtc_slice_policy == 'full' and b.s2_dtc_random_k == 0
+               for b in full.PcConvs)
+    with pytest.raises(ValueError, match='explicitly select full'):
+        fresh = PCNetNoBatchNorm(inp_channels=[2,4], out_channels=[4,4],
+            max_pool=[False,False], num_classes=3, pc_conv_layer=PCConvReLU6,
+            first_bn=False, avg_pooling=True, dropout=0, bypass=False, tie_weights=False)
+        fresh.s2_dtc_checkpoint_config = reduced
+        make_ode_block(fresh, ode_block=S2DTCFFFB, **settings)
+
+
+@pytest.mark.parametrize('selective,dtc', [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize('reset', [False, True])
+def test_s2_dtc_expansion_matches_dense(tmp_path, selective, dtc, reset):
     from ode_pc import S2DTCPulseFFFB, S2DTCWrapper2State
+    torch.set_num_threads(1)
+    torch.manual_seed(37)
     model = nn.Module()
     pc = PCConvReLU6(inp_chan=2, out_chan=2, bypass=False, layer_idx=0)
     replace_transpose_conv(pc)
     block = S2DTCPulseFFFB(
-        pc_conv=pc, method="rk2", t_end=1.75, t_step=.35, toggle_n_cycles=5,
+        pc_conv=pc, method="dopri5" if selective else "rk2", t_end=1.75, t_step=.35, toggle_n_cycles=5,
         toggle_timing_mode="fixed", toggle_y_time=1e-8, z_over_y_time=1,
-        toggle_timing_R=5e4, toggle_timing_C=5e-13)
+        toggle_timing_R=5e4, toggle_timing_C=5e-13,
+        s2_dtc_landing_slices='1,2,3,4' if selective else None,
+        s2_dtc_reset_z_per_cycle=reset,
+        enable_dtc_nonideality=dtc, dtc_width_variation_mean=.2 if dtc else 0.)
+    if selective:
+        # Compare operators at tight integration tolerance; loose adaptive
+        # grids can differ between sparse/dense reductions near pulse edges.
+        block.option_aca.update(atol=1e-8, rtol=1e-8)
     model.PcConvs = nn.ModuleList([block])
     model.forward = lambda x: model.PcConvs[0](x)
     model.wrappers = [S2DTCWrapper2State(
@@ -578,9 +1054,25 @@ def test_s2_dtc_expansion_matches_dense(tmp_path):
     x = torch.full((2, 2, 3, 3), .01)
     with torch.no_grad():
         before = model(x)
+        def probe_currents():
+            currents = []
+            for module, stage in zip((block.FFconv, block.FBconv), ('y', 'z')):
+                window = block._sample_dtc_window(module, stage)
+                for phase in (.1, 1.1, 1.3, 3.1, 3.3, 7.1, 7.3, 14.9):
+                    matrix = block._s2_dtc_instantaneous_matrix(module, phase, window)
+                    currents.append(block._apply_pulse_module(module, x, matrix))
+            return currents
+        if dtc:
+            dense_currents = probe_currents()
         expand(model, tmp_path)
         assert isinstance(block.FFconv, MVMConv) and isinstance(block.FBconv, MVMConv)
-        torch.testing.assert_close(model(x), before, atol=2e-6, rtol=2e-5)
+        if dtc:
+            # Isolate operators at identical times. Independently adaptive
+            # grids need not match across floating-point reduction orders.
+            for dense, expanded in zip(dense_currents, probe_currents()):
+                torch.testing.assert_close(dense, expanded, atol=2e-7, rtol=2e-6)
+        else:
+            torch.testing.assert_close(model(x), before, atol=2e-6, rtol=2e-5)
 
 
 class ToyPulseModel(nn.Module):

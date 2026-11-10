@@ -1324,3 +1324,156 @@ recovery mechanism for an already quantized/FT checkpoint.
 
 Hardware trials are repeated evaluations of fixed checkpoints, not independent
 training runs. Report both sources of variability separately in the paper.
+
+## Clean 96-run toggle matrix — 2026-10-29
+
+Planned, **not submitted**. Three hardware combinations × two datasets ×
+single/full-bank FT × four architectures × analog/digital head = **96 independent
+PT300 → FT → MC45 jobs**. Each job runs all 45 corners, ten trials per corner
+(43,200 evaluation trials overall). No BN-recalibration pass is requested.
+Each job pretrains independently; this command does not share checkpoints.
+
+| Hardware key | FT ReLU / evaluation ReLU | Full coupler family | VDD | Nominal R | PCN q inverse |
+|---|---|---|---:|---:|---:|
+| cur_v2 | `relu_current_0p2uA_finer.csv`, TT / `relu_monteCarlo`, per-spin | `coupler_monte_v2` | 0.1 V | 50 kΩ | 1 |
+| volt_v2 | `1022_RELU_Voltage` / same bank | `coupler_monte_v2` | 0.1 V | 50 kΩ | 1 |
+| volt_cas | `1022_RELU_Voltage` / same bank | `coupler_low_volt_cascode` | 0.6 V | 67 kΩ | 6 |
+
+PCN uses fixed 10 ns, five cycles, z:y=1. WRN uses fixed 50 ns, z:y=1,
+and selects q inverse using the actual FT hardware/head configuration before
+each FT. Both use IQ12, uncentered input, SRRL/OldNoTimm MatchDistill teacher,
+5-bit weights/QF1, no ENOB, scale recipe 1, measured pooling, fast current and
+coupler noise, spin variation, final-head ADC noise 0.5 LSB and no linear bias.
+PT and FT use final-only full validation (plus existing short health checks);
+FT loads last PT and MC45 loads last FT. FT DTC remains off; MC45 DTC is on.
+PCN C10: PT LR .005, FT LR .002/200 epochs, warmup 5 in both stages.
+PCN C100: PT LR .01, FT LR .005/140 epochs, warmup 0. WRN retains PT LR .1,
+FT LR .005/140 epochs, warmup 0 for both datasets. These optimization and
+timing differences are intentional, not an identical-recipe architecture ablation.
+
+All PT uses fixed measured TT ReLU with direct unitless pullback; this is a
+clean retraining study, not a replay of legacy ideal-ReLU pretraining. Single
+FT uses fixed TT activation and the representative coupler for MVM and pooling.
+Full-bank voltage-ReLU FT uses random-per-forward/per-spin activation and common
+corner coupling across MVM/pooling/ReLU. Current-ReLU FT stays fixed TT and
+uncoupled, matching the earlier current-ReLU recipe. Evaluation always uses
+the full corresponding coupler and ReLU corner banks, expanded Level 3.
+
+For v2 retain the previous TT representative **mcparamset 34**. Cascode uses
+TT representative **mcparamset 66** (zero-based 65), selected by minimum mean
+full-bank RMS log-resistance distance over 50 points spanning its common
+stored domain [-0.5995, 0.6] V; R(0)=59.373 kΩ. This is not the flattest-curve
+criterion or a closest-to-67-kΩ criterion. The existing v2 selection used its
+approximately [-0.096, 0.1] V domain. The cascode singleton keeps all 150
+native samples and repeats the selected curve twice without changing values.
+
+Run from a **fresh Bash login shell** in the remote repository after activating
+`scanbase`. Upload the cascode full bank and singleton CSV along with the code;
+all teacher paths below are relative to the checkout. This submits 96 jobs
+using the existing two Slurm launchers (PCN schedulers stay detached).
+Use a new date/tag if repeating a launch: same-date names are not unique.
+
+```bash
+# BEGIN CLEAN_TOGGLE_MATRIX
+mkdir -p logs/scheduler_slurm
+RUN_ID="$(date +%Y%m%d)"
+
+for hardware in cur_v2 volt_v2 volt_cas; do
+  for task in cifar10 cifar100; do
+    for arch in pcn96 pcn36 wrn27 wrn32; do
+      for bank_mode in single full; do
+        for head in analog digital; do
+          tag="M_${arch}_${task#cifar}_${hardware}_${bank_mode}_${head}_${RUN_ID}"
+          (
+            export REPO_ROOT="$PWD" TASK="$task" IMG_TYPE=CiFAIR \
+              EXP_PREFIX="$tag" DISTILL_METHOD=srrl ADAPT_PIL_TEACHER=false \
+              TEACHER_CKPT="./checkpoint/efficientnet_v2_l_${task}_CiFAIR_OldNoTimm_MatchDistill.pth" \
+              TIMM_RE_PROB=0.0 C_VAL=500e-15 TOGGLE_TIMING_MODE=fixed \
+              Z_OVER_Y_TIME=1 SCALE_TRAIN_RECIPE=1 INPUT_QUANT_BITS=12 \
+              CENTER_STUDENT_INPUT=false ENABLE_MEASURED_POOLING=true \
+              WEIGHT_QUANT_FACTOR_BITS=1 ENOB=none \
+              UNITLESS_MEASURED_PULLBACK_MODE=direct MEASURED_ACTIVATION_SCOPE=all \
+              PRETRAIN_ACTIVATION_CORNER_MODE=fixed ACTIVATION_CORNER_MODE=fixed \
+              ACTIVATION_RANDOM_CURVE_SHARING=per_spin FT_CORNER_COUPLED_SAMPLING=false \
+              FINAL_HEAD_TYPE="$head" FINAL_ADC_NOISE_LSB=0.5 LINEAR_BIAS=false \
+              FINAL_EVAL_ONLY=true FT_COUPLER_BANK_MODE="$bank_mode" \
+              POST_FT_EVAL_CORNER_IDS=all POST_FT_EVAL_N_TRIALS=10 \
+              N_TRIALS=10 CORNER_IDS="" JOBS=1 \
+              EXPANDED_WEIGHT_DIR="expanded_weights/${tag}"
+
+            case "$hardware" in
+              cur_v2|volt_v2)
+                family=coupler_monte_v2
+                singleton=coupler_monte_v2_tt_25_1_mc34_singleton.csv
+                export R_VAL=50e3 V_DD=0.1 TOGGLE_ONE_OVER_Q=1 ;;
+              volt_cas)
+                family=coupler_low_volt_cascode
+                singleton=coupler_low_volt_cascode_tt_representative_singleton.csv
+                export R_VAL=67e3 V_DD=0.6 TOGGLE_ONE_OVER_Q=6 ;;
+            esac
+            export MC_COUPLER_NONLINEAR_VARIATION_SOURCE="$family"
+            if [[ "$bank_mode" == single ]]; then
+              export NONLINEAR_R_TABLE="$singleton"
+            else
+              export NONLINEAR_R_TABLE="$family"
+            fi
+            if [[ "$hardware" == cur_v2 ]]; then
+              export MC_RELU_MONTE_CARLO_SOURCE=relu_monteCarlo \
+                ACTIVATION_CURVE_PATH=./hardware_data/relu_current_0p2uA_finer.csv \
+                ACTIVATION_CORNER=TT
+            else
+              export MC_RELU_MONTE_CARLO_SOURCE=1022_RELU_Voltage \
+                ACTIVATION_CURVE_PATH=./hardware_data/mc_45_corners/1022_RELU_Voltage \
+                ACTIVATION_CORNER=TT_25_1_MC18
+              if [[ "$bank_mode" == full ]]; then
+                export ACTIVATION_CORNER_MODE=random_per_forward \
+                  FT_CORNER_COUPLED_SAMPLING=true
+              fi
+            fi
+
+            if [[ "$arch" == pcn* ]]; then
+              export mode=default TOGGLE_MODE=odexinit TOGGLE_Y_TIME=10e-9 \
+                TOGGLE_N_CYCLES=5
+              if [[ "$arch" == pcn96 ]]; then
+                export SEARCH_ARCH=default PCN_CHAN_0_LIST=24 PCN_NUM_LAYERS_LIST=16 \
+                  NUM_COMB_PER_NUM_LAYER=2 COMB_SEL_SET=2
+              else
+                export SEARCH_ARCH=two_stage_fixed PCN_CHAN_0_LIST=36 \
+                  PCN_NUM_LAYERS_LIST=3:10 TWO_STAGE_POOL_POSITION=before_expansion \
+                  NUM_COMB_PER_NUM_LAYER=1 COMB_SEL_SET=1
+              fi
+              if [[ "$task" == cifar10 ]]; then
+                export PRETRAIN_LEARNING_RATE=0.005 FT_LEARNING_RATE=0.002 \
+                  FT_NUM_EPOCHS=200 WARMUP_PRETRAIN=5 WARMUP_FT=5
+              else
+                export PRETRAIN_LEARNING_RATE=0.01 FT_LEARNING_RATE=0.005 \
+                  FT_NUM_EPOCHS=140 WARMUP_PRETRAIN=0 WARMUP_FT=0
+              fi
+              source ./launch_scripts/slurm_search_config.sh
+            else
+              export mode=pretrain_ft_and_eval TOGGLE_Y_TIME=50e-9 \
+                PRETRAIN_LEARNING_RATE=0.1 PRETRAIN_NUM_EPOCHS=300 \
+                FT_LEARNING_RATE=0.005 FT_NUM_EPOCHS=140 \
+                WARMUP_PRETRAIN=0 WARMUP_FT=0 SELECT_ONE_OVER_Q=true \
+                RUN_BN_RECAL_EVAL=false W_BITS=5
+              if [[ "$arch" == wrn27 ]]; then
+                export MODEL_NAME=wrn_flexible_cifar_avgpool_shortcut \
+                  WRN_DEPTH=28 WRN_FIRST_STAGE_CHANNELS=27
+              else
+                export MODEL_NAME=wrn_28_2_cifar_avgpool_shortcut
+              fi
+              source ./launch_scripts/slurm_search_feedforward_config.sh
+            fi
+          ) > "logs/scheduler_slurm/${tag}.log" 2>&1 < /dev/null &
+        done
+      done
+    done
+  done
+done
+# END CLEAN_TOGGLE_MATRIX
+```
+
+The larger WRN retains stride-2 main-path downsampling plus AvgPool shortcuts,
+matching the narrow WRN's topology; it is not a new BN-free architecture.
+The C36 PCN uses 36/72 channels, stage depths 3/10 **excluding** the stem and
+expansion convolution (15 total convolutions), and pooling before expansion.

@@ -446,6 +446,9 @@ def build_command(args, case_name):
         if args.rhs_current_audit_path:
             command.extend(['--rhs_current_audit_path', args.rhs_current_audit_path])
     if s2:
+        # Final corner evaluation deliberately measures full pulses, including
+        # for checkpoints trained with a reduced drop/merge schedule.
+        command.extend(['--s2_dtc_slice_policy', 'full'])
         for key in ("y_init_with", "z_init_with", "s2_dtc_substeps"):
             value = getattr(args, key, None)
             if value is not None:

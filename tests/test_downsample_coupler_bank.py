@@ -15,7 +15,21 @@ def test_selection_preserves_native_endpoints_and_zero():
         select_rows([1.,2.,3.])
 
 
-def test_export_copies_strings_and_loads_as_paired_bank(tmp_path):
+def test_selection_retains_requested_boundary_rows():
+    grid = [(i-1199)/2000 for i in range(2400)]
+    default = select_rows(grid)
+    selected = select_rows(grid, keep_first_rows=3)
+    assert selected == [0, 1, 2, *default[3:]]
+    assert len(selected) == len(set(selected)) == 150
+    assert selected[-1] == 2399 and 1199 in selected
+    with pytest.raises(ValueError):
+        select_rows(grid, keep_first_rows=0)
+    with pytest.raises(ValueError):
+        select_rows(grid, points=3, keep_first_rows=3)
+
+
+@pytest.mark.parametrize('keep_first_rows', [1, 3])
+def test_export_copies_strings_and_loads_as_paired_bank(tmp_path, keep_first_rows):
     source = tmp_path/'source'
     source.mkdir()
     source_file = source/'tt_25_1.csv'
@@ -26,7 +40,8 @@ def test_export_copies_strings_and_loads_as_paired_bank(tmp_path):
             writer.writerow([f'{(i-1199)/2000:.8f}',*['0.000020000000000000']*100])
     before = source_file.read_bytes()
     output = tmp_path/'output'
-    manifest = export_bank(source,output)
+    manifest = export_bank(source,output, keep_first_rows=keep_first_rows)
+    assert manifest['selected_row_indices_zero_based'][:keep_first_rows] == list(range(keep_first_rows))
     assert source_file.read_bytes() == before
     with (output/source_file.name).open(newline='') as stream:
         rows = list(csv.reader(stream))

@@ -2627,6 +2627,33 @@ class _S2DTCMixin:
 
     def _init_s2_dtc(self, y_init_with, z_init_with, s2_dtc_substeps, kwargs):
         self._s2_nonlinear_R_metadata = {}
+        self.s2_dtc_reset_z_per_cycle = bool(kwargs.get('s2_dtc_reset_z_per_cycle', False))
+        self.s2_dtc_slice_policy = kwargs.get('s2_dtc_slice_policy') or 'full'
+        keep = kwargs.get('s2_dtc_keep_slices', '1,2,3,4')
+        if isinstance(keep, str):
+            keep = [int(k) for k in keep.split(',') if k]
+        self.s2_dtc_keep_slices = tuple(sorted(set(keep)))
+        self.s2_dtc_random_k = int(kwargs.get('s2_dtc_random_k') or 0)
+        self.s2_dtc_slice_sampling = kwargs.get('s2_dtc_slice_sampling') or 'per_forward'
+        self.s2_dtc_branch_sampling = kwargs.get('s2_dtc_branch_sampling') or 'shared'
+        if self.s2_dtc_branch_sampling not in {'shared', 'independent'}:
+            raise ValueError('Branch sampling must be shared or independent.')
+        if self.s2_dtc_slice_sampling not in {'per_forward', 'per_cycle'}:
+            raise ValueError('Slice sampling must be per_forward or per_cycle.')
+        if self.s2_dtc_slice_policy not in {'full', 'drop', 'merge'}:
+            raise ValueError('S2 slice policy must be full, drop or merge.')
+        if any(k < 1 or k > 15 for k in self.s2_dtc_keep_slices):
+            raise ValueError('Kept pulse slices must be in 1..15.')
+        if not 0 <= self.s2_dtc_random_k <= 15-len(self.s2_dtc_keep_slices):
+            raise ValueError('Invalid random slice count for the mandatory slices.')
+        # None retains the legacy slice-wise solver; an empty tuple selects
+        # a full-schedule solve with no mandatory pulse landings.
+        landing = kwargs.get('s2_dtc_landing_slices')
+        if isinstance(landing, str):
+            landing = [] if landing.lower() == 'none' else [int(k) for k in landing.split(',')]
+        self.s2_dtc_landing_slices = None if landing is None else tuple(sorted(set(landing)))
+        if landing is not None and any(k < 1 or k > 15 for k in landing):
+            raise ValueError('S2 DTC landing slices must be in 1..15.')
         self.s2_dtc_ordering_pairs = int(kwargs.get("s2_dtc_ordering_pairs") or 0)
         if self.s2_dtc_ordering_pairs not in {0, 1, 2, 4, 7}:
             raise ValueError("s2_dtc_ordering_pairs must be 0, 1, 2, 4 or 7.")
@@ -2779,7 +2806,7 @@ class _S2DTCMixin:
         return weights, counts
 
     def _s2_dtc_interval(self, state, duration, pulse_weights=None, counts=None,
-                         ordering_weights=None, noise_data=None):
+                         ordering_weights=None, noise_data=None, active_branches=(True, True)):
         """Joint integration; duration is seconds physically, otherwise t/(RC).
 
         A common frame uses branch exposure 1/s instead of toggle's separate T/s
@@ -2805,12 +2832,16 @@ class _S2DTCMixin:
             if physical:
                 yz = tuple(self.project_state(value) for value in yz)
             y, z = yz
-            h = (self.act_fn(z) if pullback is None else
-                 self._unitless_measured_pullback.apply(self, z, pullback))
+            h = z
+            if active_branches[0] or self.enable_slow_coupler_noise:
+                h = (self.act_fn(z) if pullback is None else
+                     self._unitless_measured_pullback.apply(self, z, pullback))
             sources = (h, y)
             derivatives = []
             for i, (module, source, stage) in enumerate(zip(modules, sources, stages)):
-                if pulse_weights is None:
+                if not active_branches[i]:
+                    current = torch.zeros_like(yz[i])
+                elif pulse_weights is None:
                     previous_mismatch = self._training_pulse_mismatch
                     try:
                         self._training_pulse_mismatch = training_mismatch
@@ -2880,7 +2911,7 @@ class _S2DTCMixin:
         return result
 
 
-    def _s2_dtc_forward(self, x, pulse=False):
+    def _s2_dtc_forward(self, x, pulse=False, pulse_slice_k=None):
         self._s2_nonlinear_R_metadata.clear()
         self.reset_slow_current_noise()
         if self.training:
@@ -2920,6 +2951,10 @@ class _S2DTCMixin:
                 if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
                     module(source)
             modules = (self.FFconv, self.FBconv)
+        if pulse and getattr(self, 's2_dtc_slice_policy', 'full') != 'full':
+            return self._s2_dtc_reduced_schedule(state, modules, pulse_slice_k)
+        if pulse and getattr(self, 's2_dtc_landing_slices', None) is not None:
+            return self._s2_dtc_full_schedule(state, modules)
         pulse_slices = None
         if (pulse and not self.enable_dtc_nonideality and
                 all(isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)) for module in modules)):
@@ -2939,7 +2974,8 @@ class _S2DTCMixin:
             active = active.reshape(self.q_hi, 2, 2).tolist()
             noise_data = [(coefficients, generators, enabled)
                           for (coefficients, generators, _), enabled in zip(noise_data, active)]
-        for _ in range(self.toggle_n_cycles or 5):
+        cycles = self.toggle_n_cycles or 5
+        for cycle in range(cycles):
             if pulse:
                 windows = [self._sample_dtc_window(module, stage)
                            for module, stage in zip(modules, ("y", "z"))]
@@ -2961,7 +2997,242 @@ class _S2DTCMixin:
                               for i, (module, source) in enumerate(zip(modules, (state[1], state[0])))]
                 state = self._s2_dtc_interval(state, frame_time / slices, weights, counts,
                                               ordering_weights=ordering_weights, noise_data=interval_noise)
-        self._last_s2_dtc_z = state[1]
+            state = self._s2_dtc_cycle_boundary(state, cycle, cycles)
+        # Diagnostic state only: do not retain the unused final-z autograd graph.
+        self._last_s2_dtc_z = state[1].detach()
+        return self._finish_forward(state[0])
+
+    def _s2_dtc_cycle_boundary(self, state, cycle, cycles):
+        """Discard only z between complete frames, never between solver steps."""
+        if self.s2_dtc_reset_z_per_cycle and cycle + 1 < cycles:
+            return state[0], torch.zeros_like(state[1])
+        return state
+
+    def _s2_dtc_reduced_schedule(self, state, modules, random_k=None):
+        """Resolve selected slices; drop or average each remaining run.
+
+        Sampling is forward-local, optionally independent across frames, outside any
+        checkpointed RHS. Merging preserves exposure, not pulse ordering.
+        """
+        if self.method not in {'euler', 'rk2'} or self.s2_dtc_landing_slices is not None:
+            raise ValueError('Reduced schedules require fixed Euler/RK2 without adaptive landings.')
+        if any(not isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)) for m in modules):
+            raise ValueError('Reduced pulse schedules currently support dense convolutions only.')
+        selected = set(self.s2_dtc_keep_slices)
+        available = [k for k in range(1, self.q_hi + 1) if k not in selected]
+        k = self.s2_dtc_random_k if random_k is None else int(random_k)
+        if k < 0 or k > len(available) or any(s > self.q_hi for s in selected):
+            raise ValueError('Invalid random slice count or mandatory slice index.')
+        cycles = self.toggle_n_cycles or 5
+        draws = cycles if self.s2_dtc_slice_sampling == 'per_cycle' and k else 1
+        schedules = []
+        for _ in range(draws):
+            chosen = set(selected)
+            if k:
+                chosen.update(available[i] for i in torch.randperm(len(available))[:k].tolist())
+            schedules.append(tuple(sorted(chosen)))
+        if draws == 1:
+            schedules *= cycles
+        fb_schedules = schedules
+        if getattr(self, 's2_dtc_branch_sampling', 'shared') == 'independent' and k:
+            fb_schedules = []
+            for _ in range(draws):
+                chosen = set(selected)
+                chosen.update(available[i] for i in torch.randperm(len(available))[:k].tolist())
+                fb_schedules.append(tuple(sorted(chosen)))
+            if draws == 1:
+                fb_schedules *= cycles
+        self._last_s2_dtc_selected_slices = schedules[0]
+        self._last_s2_dtc_selected_slices_by_cycle = tuple(schedules)
+        self._last_s2_dtc_branch_slices_by_cycle = tuple(zip(schedules, fb_schedules))
+        group_cache = {}
+        for chosen in schedules + fb_schedules:
+            if chosen in group_cache:
+                continue
+            groups = []
+            for i in range(1, self.q_hi + 1):
+                if i in chosen or not groups or groups[-1][-1] in chosen:
+                    groups.append([i])
+                else:
+                    groups[-1].append(i)
+            group_cache[chosen] = groups
+        frame_time = self.toggle_y_time
+        noisy = any((self.enable_summing_current_noise, self.enable_coupler_noise,
+                     self.enable_slow_summing_current, self.enable_slow_coupler_noise))
+        # Caches live only for this forward, so gradients and hardware draws
+        # never leak into the next batch. Drop prepares retained masks only.
+        pulse_cache, average_cache, noise_cache = {}, {}, {}
+        zero_weights = [torch.zeros_like(m.weight) for m in modules]
+        zero_counts = [torch.zeros_like(v) for v in state]
+        for cycle, (chosen_ff, chosen_fb) in enumerate(zip(schedules, fb_schedules)):
+            if self.enable_dtc_nonideality:
+                pulse_cache, average_cache, noise_cache = {}, {}, {}
+            windows = [self._sample_dtc_window(m, stage)
+                       for m, stage in zip(modules, ('y', 'z'))]
+            branch_groups = [group_cache[chosen_ff], group_cache[chosen_fb]]
+            boundaries = sorted({0, self.q_hi} | {
+                group[-1] for groups in branch_groups for group in groups})
+            for start, end in zip(boundaries, boundaries[1:]):
+                weights, counts, active = [], [], []
+                for branch, chosen in enumerate((chosen_ff, chosen_fb)):
+                    group = next(g for g in branch_groups[branch] if g[0] <= start + 1 <= g[-1])
+                    enabled = self.s2_dtc_slice_policy == 'merge' or start + 1 in chosen
+                    active.append(enabled)
+                    if not enabled:
+                        weights.append(zero_weights[branch])
+                        counts.append(zero_counts[branch])
+                        continue
+                    key = (branch, tuple(group))
+                    if key not in average_cache:
+                        for index in group:
+                            pulse_key = (branch, index)
+                            if pulse_key not in pulse_cache:
+                                module = modules[branch]
+                                weight = self.get_pulse_matrix(module, index-1, self.q_hi,
+                                                               dtc_window=windows[branch])
+                                count = None
+                                if self.enable_coupler_noise:
+                                    _, clean = self._clean_weight(module)
+                                    mask = (self._active_pulse_mask(module, index-1)
+                                            if windows[branch] is None else
+                                            self._dtc_slice_duty(module, clean, index-1, windows[branch]))
+                                    count = self._active_coupler_count(module, state[1-branch], mask, state[branch])
+                                pulse_cache[pulse_key] = weight, count
+                        values = [pulse_cache[(branch, index)] for index in group]
+                        # A singleton needs no tensor additions/divisions.
+                        weight = values[0][0] if len(group) == 1 else sum(v[0] for v in values) / len(group)
+                        count = None
+                        if self.enable_coupler_noise:
+                            count = values[0][1] if len(group) == 1 else sum(v[1] for v in values) / len(group)
+                        average_cache[key] = weight, count
+                    weight, count = average_cache[key]
+                    weights.append(weight)
+                    counts.append(count)
+                if not any(active) and not noisy:
+                    continue
+                duration = frame_time * (end-start) / self.q_hi
+                noise_key = (chosen_ff, chosen_fb, start, end)
+                if noise_key not in noise_cache:
+                    data = self._s2_dtc_noise_data(state, duration, counts)
+                    coefficients, generators, _ = data
+                    enabled = ([[False, False], [False, False]] if not noisy else
+                               torch.stack([torch.count_nonzero(c) != 0
+                                            for pair in coefficients for c in pair]).reshape(2, 2).tolist())
+                    noise_cache[noise_key] = coefficients, generators, enabled
+                state = self._s2_dtc_interval(state, duration,
+                                              weights, counts if self.enable_coupler_noise else None,
+                                              active_branches=tuple(active), noise_data=noise_cache[noise_key])
+            state = self._s2_dtc_cycle_boundary(state, cycle, cycles)
+        self._last_s2_dtc_z = state[1].detach()
+        return self._finish_forward(state[0])
+
+    def _s2_dtc_instantaneous_matrix(self, module, phase, window):
+        """Actual pulse mask at a frame-local phase in units of one PWM slice."""
+        key, clean = self._clean_weight(module)
+        noisy = (getattr(module, 'pulse_noisy_values', None)
+                 if hasattr(module, 'mat') else module.weight)
+        if noisy is None:
+            noisy = module.mat.values()
+        on = self._on_values(clean, noisy, key)
+        levels = (clean.abs() if self.pulse_weight_encoding == 'integer_level'
+                  else torch.round(clean.abs() * self.q_hi)).clamp(0, self.q_hi)
+        if window is None:
+            active = levels.double() > phase
+        else:
+            index = self._dtc_output_index(module, clean)
+            active = ((phase >= window['start_offset'][index].double()) &
+                      (phase < levels.double() + window['end_offset'][index].double()) & (levels > 0))
+        values = on * active.to(on.dtype)
+        if hasattr(module, 'mat'):
+            values = torch.sparse_csr_tensor(module.mat.crow_indices(),
+                module.mat.col_indices(), values, size=module.mat.shape,
+                device=values.device, dtype=values.dtype)
+        return values
+
+    def _s2_dtc_full_schedule(self, state, modules):
+        """One deterministic Dopri5 solve, with selected nominal landings."""
+        from TorchDiffEqPack.odesolver.adaptive_grid_solver import Dopri5
+        if self.method != 'dopri5' or self.s2_dtc_ordering_pairs:
+            raise ValueError('Full-schedule S2 requires Dopri5 without ordering correction.')
+        if any((self.enable_summing_current_noise, self.enable_coupler_noise,
+                self.enable_slow_summing_current, self.enable_slow_coupler_noise)):
+            raise ValueError('Full-schedule Dopri5 currently supports deterministic currents only.')
+        if torch.is_grad_enabled():
+            raise ValueError('Full-schedule Dopri5 is currently an evaluation diagnostic only.')
+        cycles = self.toggle_n_cycles or 5
+        horizon = cycles * self.toggle_y_time
+        windows = [[self._sample_dtc_window(module, stage)
+                    for module, stage in zip(modules, ('y', 'z'))]
+                   for _ in range(cycles)]
+        block = self
+
+        class ScheduleRHS(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.endpoint = None
+                self.calls = 0
+
+            def begin_trial(self, start, end):
+                self.endpoint = end
+
+            def forward(self, t, yz):
+                self.calls += 1
+                time = float(t)
+                # Incoming RK endpoint stages see the left limit. A new
+                # trial's initial stage sees the right limit at the same time.
+                left_limit = self.endpoint is not None and time >= self.endpoint
+                if left_limit:
+                    time = math.nextafter(self.endpoint, -math.inf)
+                position = min(max(time * cycles, 0.), math.nextafter(float(cycles), 0.))
+                cycle = int(position)
+                phase = (position - cycle) * block.q_hi
+                # Mask comparisons must not round the left limit back to an
+                # integer slice edge when the model uses float32 weights.
+                nearest = round(phase)
+                if abs(phase - nearest) < 1e-12:
+                    phase = math.nextafter(float(nearest), -math.inf) if left_limit else float(nearest)
+                y, z = tuple(block.project_state(v) for v in yz)
+                sources = (block.act_fn(z), y)
+                result = []
+                for i, (module, source, stage) in enumerate(zip(modules, sources, ('y', 'z'))):
+                    values = block._s2_dtc_instantaneous_matrix(module, phase, windows[cycle][i])
+                    current = block._apply_pulse_module(module, source, values)
+                    current = block._apply_spin_variation(stage, current)
+                    scale = block.s_ff if i == 0 else block.s_fb
+                    result.append(current * (horizon / (scale * block.R * block.C)))
+                return tuple(result)
+
+        rhs = ScheduleRHS()
+        landings = [(c + k / self.q_hi) / cycles for c in range(cycles)
+                    for k in self.s2_dtc_landing_slices]
+        if self.s2_dtc_reset_z_per_cycle:
+            # A reset is a state discontinuity: finish and restart the solver
+            # at each frame, even when pulse-slice landings are unrestricted.
+            stats = []
+            for cycle in range(cycles):
+                start, end = cycle / cycles, (cycle + 1) / cycles
+                rhs.endpoint = None
+                # Preserve nominal frame boundaries: the generic solver
+                # otherwise rounds Python endpoints to float32.
+                t0 = torch.tensor(start, dtype=torch.float64, device=state[0].device)
+                t1 = torch.tensor(end, dtype=torch.float64, device=state[0].device)
+                solver = Dopri5(rhs, t0, state, t1=t1, h=None,
+                                rtol=self.option_aca['rtol'], atol=self.option_aca['atol'])
+                selected = [t for t in landings if start < t <= end]
+                state = solver.integrate_selective(state, selected, project=self.project_state)
+                stats.append(solver.selective_stats)
+                state = self._s2_dtc_cycle_boundary(state, cycle, cycles)
+            self._last_s2_dtc_solver_stats = dict(
+                accepted=sum(s['accepted'] for s in stats), cycles=stats,
+                rejected=sum(s['rejected'] for s in stats),
+                times=[t for s in stats for t in s['times']])
+        else:
+            solver = Dopri5(rhs, 0., state, t1=1., h=None,
+                            rtol=self.option_aca['rtol'], atol=self.option_aca['atol'])
+            state = solver.integrate_selective(state, landings, project=self.project_state)
+            self._last_s2_dtc_solver_stats = solver.selective_stats
+        self._last_s2_dtc_solver_stats['rhs_evaluations'] = rhs.calls
+        self._last_s2_dtc_z = state[1].detach()
         return self._finish_forward(state[0])
 
 
@@ -2987,8 +3258,8 @@ class S2DTCPulseFFFB(_S2DTCMixin, TogglePulseBlk):
         super().__init__(**kwargs)
         self._init_s2_dtc(y_init_with, z_init_with, s2_dtc_substeps, kwargs)
 
-    def forward(self, x, layer_idx=None):
-        return self._s2_dtc_forward(x, pulse=True)
+    def forward(self, x, layer_idx=None, pulse_slice_k=None):
+        return self._s2_dtc_forward(x, pulse=True, pulse_slice_k=pulse_slice_k)
 
     def _apply_pulse_module(self, module, x, pulse_weight):
         if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d)):
@@ -5458,19 +5729,35 @@ class QATWrapper1StateWithX(ODEWrapper1StateWithX):
 def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=None, t_end=None, tol=1e-3, ts_scale=1,
                    return_init=False, n_steps=None, **kwargs):
     saved_s2 = getattr(pc_net, "s2_dtc_checkpoint_config", {})
+    if kwargs.get('s2_dtc_reset_z_per_cycle') and not getattr(ode_block, 's2_dtc', False):
+        raise ValueError('Cycle-boundary z resets require an S2 DTC block.')
+    if kwargs.get('s2_dtc_landing_slices') is not None and not issubclass(ode_block, S2DTCPulseFFFB):
+        raise ValueError('Selective landings require S2DTCPulseFFFB.')
+    if kwargs.get('s2_dtc_slice_policy') not in (None, 'full') and not issubclass(ode_block, S2DTCPulseFFFB):
+        raise ValueError('Reduced pulse schedules require S2DTCPulseFFFB.')
     if kwargs.get('s2_dtc_ordering_pairs') and not getattr(ode_block, 's2_dtc', False):
         raise ValueError('Ordering correction is supported only by S2 DTC blocks.')
     if getattr(ode_block, "s2_dtc", False):
+        if kwargs.get('s2_dtc_reset_z_per_cycle') is None:
+            kwargs['s2_dtc_reset_z_per_cycle'] = saved_s2.get('s2_dtc_reset_z_per_cycle', False)
         if kwargs.get('s2_dtc_ordering_pairs') is None:
             # Pulse evaluation uses the actual pulse schedule, never a correction
             # inherited from the averaged FT checkpoint.
             kwargs['s2_dtc_ordering_pairs'] = (0 if issubclass(ode_block, S2DTCPulseFFFB)
                                               else saved_s2.get('s2_dtc_ordering_pairs', 0))
         for key, default in (("y_init_with", "x"), ("z_init_with", "0"),
-                             ("s2_dtc_substeps", 1)):
+                             ("s2_dtc_substeps", 1),
+                             ('s2_dtc_slice_policy', 'full'),
+                             ('s2_dtc_keep_slices', '1,2,3,4'),
+                             ('s2_dtc_random_k', 0),
+                             ('s2_dtc_slice_sampling', 'per_forward'),
+                             ('s2_dtc_branch_sampling', 'shared')):
             if kwargs.get(key) is None:
                 kwargs[key] = saved_s2.get(key, default)
+        if kwargs['s2_dtc_slice_policy'] != 'full' and not issubclass(ode_block, S2DTCPulseFFFB):
+            raise ValueError('Reduced checkpoint requires S2DTCPulseFFFB; explicitly select full to change dynamics.')
         pc_net.init_args["s2_dtc"] = {
+            "s2_dtc_reset_z_per_cycle": kwargs['s2_dtc_reset_z_per_cycle'],
             **{key: kwargs[key] for key in ("y_init_with", "z_init_with", "s2_dtc_substeps")},
             "ode_block": ode_block.__name__, "method": method,
             "weight_encoding": ("integer_level" if issubclass(ode_block, S2DTCPulseFFFB)
@@ -5478,6 +5765,14 @@ def make_ode_block(pc_net: PCNet, ode_block=ODEBlockPC, noise_level=0.0, method=
         }
         if kwargs['s2_dtc_ordering_pairs']:
             pc_net.init_args['s2_dtc']['s2_dtc_ordering_pairs'] = kwargs['s2_dtc_ordering_pairs']
+        if kwargs.get('s2_dtc_slice_policy', 'full') != 'full':
+            pc_net.init_args['s2_dtc'].update({key: kwargs.get(key, default) for key, default in
+                (('s2_dtc_slice_policy', 'full'), ('s2_dtc_keep_slices', '1,2,3,4'),
+                 ('s2_dtc_random_k', 0))})
+            if kwargs.get('s2_dtc_slice_sampling', 'per_forward') != 'per_forward':
+                pc_net.init_args['s2_dtc']['s2_dtc_slice_sampling'] = kwargs['s2_dtc_slice_sampling']
+            if kwargs.get('s2_dtc_branch_sampling', 'shared') != 'shared':
+                pc_net.init_args['s2_dtc']['s2_dtc_branch_sampling'] = kwargs['s2_dtc_branch_sampling']
     from checkpoint_memory_profiler import (
         checkpoint_layer_count,
         parse_checkpoint_ode_rhs_portion,

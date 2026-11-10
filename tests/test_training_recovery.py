@@ -209,6 +209,34 @@ def test_s2_dtc_recovery_requires_matching_initialization_and_solver(tmp_path):
     assert restore_latest(resumed)[0] == 1
 
 
+@pytest.mark.parametrize('saved,current', [(None, False), (False, None),
+                                         (False, False), (True, True),
+                                         (None, True), (True, False)])
+def test_s2_recovery_normalizes_legacy_reset_default(tmp_path, saved, current):
+    trainer = make_trainer(tmp_path)
+    settings = dict(ode_block='S2DTCFFFB', method='rk2')
+    saved_settings = settings.copy()
+    if saved is not None:
+        saved_settings['s2_dtc_reset_z_per_cycle'] = saved
+    trainer.model.init_args = {'s2_dtc': saved_settings}
+    trainer.recovery_config = {}
+    save_latest(trainer, 1, dict.fromkeys(HISTORY, None))
+    resumed = make_trainer(tmp_path)
+    current_settings = settings.copy()
+    if current is not None:
+        current_settings['s2_dtc_reset_z_per_cycle'] = current
+    resumed.model.init_args = {'s2_dtc': current_settings}
+    resumed.recovery_config = {}
+    resumed.recovery_checkpoint = latest_path(trainer)
+    if bool(saved) != bool(current):
+        with pytest.raises(ValueError, match='unchanged S2 DTC'):
+            restore_latest(resumed)
+    else:
+        assert restore_latest(resumed)[0] == 1
+    assert ('s2_dtc_reset_z_per_cycle' in saved_settings) is (saved is not None)
+    assert ('s2_dtc_reset_z_per_cycle' in current_settings) is (current is not None)
+
+
 @pytest.mark.parametrize('config,expected', [
     ({}, None),
     ({'tc_nonidealities': True}, 1e-6),

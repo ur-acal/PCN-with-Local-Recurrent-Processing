@@ -266,6 +266,9 @@ pretrained model; verified checkpoint discovery rejects zero or multiple
 matches. Use a fresh `ft_root` for any mode that runs FT.
 
 ```bash
+# CiFAIR-10 / 1022 ReLU: see the lower-LR recipe note in the pinned toggle
+# command under "Main-model SLURM training" below. It is validated for toggle
+# only, NOT TC; applicability to TC remains untested.
 module swap slurm slurm/24.05.0.b1
 cd /scratch/rzeng7/repos/PCN-with-Local-Recurrent-Processing
 mkdir -p logs/scheduler_slurm logs/slurm_jobs
@@ -597,6 +600,24 @@ in both stages by setting `WARMUP_PRETRAIN=5` and `WARMUP_FT=5`.
 #   and random-per-forward per-spin measured ReLUs all use that corner.
 #   All ReLUs, including the final ReLU, use measured 0906 curves.
 #
+# CiFAIR-10 / 1022 ReLU recipe (2026-10-29; toggle only):
+#   When using MC_RELU_MONTE_CARLO_SOURCE=1022_RELU_Voltage, prefer the
+#   best-tested recipe: PRETRAIN_LEARNING_RATE=0.005 (300 PT epochs),
+#   FT_LEARNING_RATE=0.002, FT_NUM_EPOCHS=200,
+#   WARMUP_PRETRAIN=5, WARMUP_FT=5; retain the original SRRL loss weights.
+#   Sharp upper saturation is a suspected contributor to LR sensitivity,
+#   not a proven sole cause. This recommendation is specific to CiFAIR-10;
+#   it has not been validated for CiFAIR-100 or TC.
+#   Evidence: C24/48/96 analog-head toggle, coupler_full_range, VDD=0.5,
+#   one_over_q=5, fixed 10 ns, coupled sampling; last-checkpoint L3 eval,
+#   five trials/corner. FS_V0_T0 / FS_V2_T1 means:
+#     PT0.005 + FT0.005/140ep: 83.540% / 85.004%.
+#     PT0.005 + FT0.002/200ep: 84.644% / 86.324% (preferred).
+#     PT0.002 + FT0.002/200ep: 84.596% / 86.170%.
+#   PT last accuracy: 89.08% at LR0.005 versus 88.88% at LR0.002.
+#   The CiFAIR-100 / 0906 command below is unchanged; apply these overrides
+#   only to the intended CiFAIR-10 / 1022 experiment with separate run paths.
+#
 # Architecture alternatives:
 #
 # C36->72 two-stage, stage depths 8:10, pooling before expansion:
@@ -706,6 +727,41 @@ BatchNorm, dropout and hardware sampling remain per forward, so this is not
 identical to one batch-128 forward. Evaluation and its batch size are unchanged.
 Exact epoch recovery preserves the batch size and accumulation count; old
 recovery configurations without the new field retain accumulation `1`.
+
+### RGB S2DTC/toggle and staged pulse continuation
+
+Both dynamics support native RGB (`IMG_TYPE=rgb`, three input channels,
+32x32 images). In this branch `TASK=cifar100` uses the original CIFAR-100 RGB
+test set, not the packed CiFAIR sensor dataset. Keep the first COMB_LIST input
+channel at 3; the worker changes it to 4 only for non-RGB inputs.
+With `INPUT_QUANT_BITS=12`, set `NORMALIZE_STUDENT_INPUT=false`: quantization
+clamps to [0,1], so applying it after RGB mean/std normalization would clip
+the normalized signal. Select an RGB teacher explicitly; its checkpoint
+controls its own normalization independently. Native RGB pretraining uses
+the same RGB timm augmentation defaults as pinned TC RGB pretraining:
+`timm_aug_level=none` means baseline defaults, not disabled augmentation.
+Both paths use zero random erasing. `FT_TIMM_AUG_LEVEL=no_aug` preserves the
+existing weak-augmentation FT choice rather than switching to TC's `rgb_mid`.
+
+`mode=default SKIP_POST_FT_EVAL=true` runs ordinary PT then FT, including
+their final dense validation and checkpoint saves, but skips the separate
+expanded corner evaluation. The flag defaults to false. A dependent Slurm
+job can use the existing `run_cont_qat.sbatch` with the source FT's latent
+`full_param_last`, `TOGGLE_MODE=s2_dtc_pulse`, `S2_DTC_FT_SUBSTEPS=4`,
+`FT_NUM_EPOCHS=20`, `FT_LEARNING_RATE=0.0001`, and
+`SKIP_POST_FT_EVAL=false`. Set `POST_FT_EVAL_N_TRIALS=3` for three trials
+on each selected corner; `S2_DTC_EVAL_SUBSTEPS=8` retains the common pulse
+evaluation reference. `POST_FT_EVAL_CORNER_IDS=all` selects all 45 corners;
+otherwise the two pinned corners remain FS_V0_T0 and FS_V2_T1.
+
+The pipeline now explicitly forwards task/image type to the corner runner
+instead of inferring RGB from model-name tags. Standalone callers without
+these options keep the previous inference. `POST_FT_EVAL_BATCH_SIZE` adjusts
+only post-FT evaluation (default remains 128). For RGB N=4 on a 48-GiB GPU,
+batch 16, accumulation 8 and full RHS checkpointing are a conservative
+estimate, not a measured production fit; RGB has four times the spatial sites
+of packed RGGB. Lowering this batch requires increasing accumulation to retain
+the effective optimizer batch. These controls do not change the dynamics.
 
 ### Provisional severe corner-interaction diagnostic (2026-10-07)
 

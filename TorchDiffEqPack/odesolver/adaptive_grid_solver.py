@@ -546,6 +546,60 @@ class RK23(AdaptiveGridSolver):
             return out1, error
 
 class Dopri5(AdaptiveGridSolver):
+    def integrate_selective(self, y0, landing_times=(), project=None):
+        """Experimental forward-time solve with optional mandatory landings.
+
+        Unlike the legacy endpoint path, every step receives error control.
+        The RHS may implement begin_trial(start, end) for one-sided evaluation
+        at discontinuities. This method does not implement stochastic updates.
+        """
+        start, end = float(self.t0), float(self.t1)
+        if end <= start:
+            raise ValueError('Selective Dopri5 requires forward integration.')
+        boundaries = sorted(set(float(t) for t in landing_times))
+        if any(not start < t <= end for t in boundaries):
+            raise ValueError('Landing times must lie in (t0, t1].')
+        if not boundaries or boundaries[-1] != end:
+            boundaries.append(end)
+        y, t, index = y0, start, 0
+        with torch.no_grad():
+            f0 = self.func(t, y)
+            h = float(self.select_initial_step_scipy(t, y, f0))
+        stats = dict(accepted=0, rejected=0, rhs_evaluations=0, times=[])
+        trials = 0
+        rejected = False
+        while t < end:
+            boundary = boundaries[index]
+            step = min(h, boundary - t)
+            if not np.isfinite(step) or step <= 0 or t + step == t:
+                raise RuntimeError('Selective Dopri5 step underflow/nonfinite step.')
+            trials += 1
+            if trials > self.neval_max:
+                raise RuntimeError('Selective Dopri5 exceeded trial limit.')
+            trial_end = boundary if step == boundary - t else t + step
+            if hasattr(self.func, 'begin_trial'):
+                self.func.begin_trial(t, trial_end)
+            candidate, error = self.step(self.func, t, step, y)
+            stats['rhs_evaluations'] += 7
+            if not all(torch.isfinite(v).all() for v in candidate + error):
+                raise RuntimeError('Nonfinite selective Dopri5 state/error.')
+            with torch.no_grad():
+                h, accepted, rejected = self.adapt_stepsize(
+                    y, candidate, error, step, False, rejected)
+            if not accepted:
+                stats['rejected'] += 1
+                del candidate, error
+                continue
+            y = candidate if project is None else tuple(project(v) for v in candidate)
+            t = trial_end
+            stats['accepted'] += 1
+            stats['times'].append(t)
+            rejected = False
+            if t == boundary:
+                index += 1
+        self.selective_stats = stats
+        return y
+
     """
     Constants follow wikipedia, https://en.wikipedia.org/wiki/List_of_Runge%E2%80%93Kutta_methods#Kutta's_third-order_method
     Dormand-Prince's method

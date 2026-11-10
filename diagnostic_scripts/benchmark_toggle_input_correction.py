@@ -450,6 +450,7 @@ def s2_build_model(o, dynamics, scene, representation):
         z_over_y_time=1, toggle_timing_R=5e4, toggle_timing_C=5e-13,
         y_init_with='x', z_init_with='0', s2_dtc_substeps=1,
         s2_dtc_ordering_pairs=o.ordering_pairs,
+        s2_dtc_reset_z_per_cycle=getattr(o, 'reset_z_per_cycle', False),
         checkpoint_ode_rhs_training=o.checkpoint)
     measured = scene in ('measured', 'nonlinear')
     nonlinear = scene == 'nonlinear'
@@ -554,6 +555,17 @@ def s2_error(actual, reference):
     return result
 
 
+def s2_validate_reference(reference_row, initial_hash, batch_hash, assignments,
+                          reset_z_per_cycle):
+    """Reject cached outputs from different inputs, hardware or equations."""
+    if (reference_row['initial_hash'] != initial_hash or
+            reference_row['batch_hash'] != batch_hash or
+            reference_row['assignments'] != assignments):
+        raise ValueError('Saved reference weights/batch/curve assignments do not match.')
+    if reference_row.get('reset_z_per_cycle', False) != reset_z_per_cycle:
+        raise ValueError('Saved reference reset_z_per_cycle does not match.')
+
+
 def s2_worker(o):
     import torch
     import gc
@@ -574,24 +586,111 @@ def s2_worker(o):
         with torch.no_grad():
             model(x)
         assignments = s2_assignments(model)
+        if o.selective_reference:
+            if o.dynamics != 'pulse':
+                raise ValueError('Selective landing diagnostic requires pulse dynamics.')
+            reference_dir = Path(o.selective_reference)
+            reference_rows = json.loads((reference_dir / (prefix + '.json')).read_text())
+            reference_row = next(r for r in reference_rows
+                                 if r['method'] == 'dopri5' and r['tol'] == 1e-6)
+            s2_validate_reference(reference_row, initial_hash, digest(x), assignments,
+                                  o.reset_z_per_cycle)
+            reference = torch.load(reference_dir / (reference_row['name'] + '.pt'), weights_only=False)
+            if o.selective_timing:
+                # Time plain evaluation forwards for BOTH paths. s2_record
+                # copies intermediate frame states only for the legacy solver,
+                # so it is not a symmetric end-to-end timing harness.
+                configs = [None, (), (1,), (1, 2), (1, 2, 3), (1, 2, 3, 4)]
+                if o.selective_timing_rk2:
+                    configs = [None, 'rk2_n8', (1, 2, 3, 4)]
+                rows = []
+                for repeat in range(4):
+                    order = configs if repeat % 2 == 0 else list(reversed(configs))
+                    for slices in order:
+                        method, substeps = ('rk2', 8) if slices == 'rk2_n8' else ('dopri5', 1)
+                        s2_set_solver(model, method, substeps, 1e-6)
+                        for block in model.PcConvs:
+                            block.s2_dtc_landing_slices = None if method == 'rk2' else slices
+                        torch.cuda.synchronize()
+                        torch.cuda.reset_peak_memory_stats()
+                        start = time.perf_counter()
+                        with torch.no_grad():
+                            logits = model(x)
+                        torch.cuda.synchronize()
+                        elapsed = time.perf_counter() - start
+                        logits = logits.detach().cpu()
+                        if s2_assignments(model) != assignments:
+                            raise ValueError('Hardware assignments changed during timing.')
+                        row = dict(slices=slices, repeat=repeat, warmup=repeat == 0,
+                                   method=method, substeps=substeps,
+                                   seconds=elapsed, batch_size=len(x), tol=1e-6,
+                                   mode='eval_forward_no_grad_no_trace_hooks',
+                                   initial_hash=initial_hash, batch_hash=digest(x),
+                                   assignments=assignments,
+                                   logit_relative_l2=float((logits.double()-reference['logits'].double()).norm()/
+                                       reference['logits'].double().norm().clamp_min(1e-30)),
+                                   peak_allocated_bytes=torch.cuda.max_memory_allocated())
+                        rows.append(row)
+                        write(out / (prefix + '_selective_timing.json'), rows)
+                        print('SELECTIVE_TIMING', row, flush=True)
+                return
+            rows = []
+            for slices in ((), (1,), (1, 2), (1, 2, 3), (1, 2, 3, 4)):
+                for tol in (1e-4, 1e-6):
+                    s2_set_solver(model, 'dopri5', 1, tol)
+                    for block in model.PcConvs:
+                        block.s2_dtc_landing_slices = slices
+                    torch.cuda.reset_peak_memory_stats()
+                    torch.cuda.synchronize()
+                    start = time.perf_counter()
+                    actual = s2_record(model, x, 'pulse')
+                    torch.cuda.synchronize()
+                    row = dict(slices=slices, tol=tol, seconds=time.perf_counter()-start,
+                               errors={k: dict(relative_l2=float((v.double()-reference[k].double()).norm()/
+                                            reference[k].double().norm().clamp_min(1e-30)))
+                                       for k, v in actual.items()},
+                               prediction_flips=int((actual['logits'].argmax(1) != reference['logits'].argmax(1)).sum()),
+                               accuracy=float((actual['logits'].argmax(1) ==
+                                   torch.load(o.batch, weights_only=False)[1][:len(x)].cpu()).float().mean()),
+                               peak_allocated_bytes=torch.cuda.max_memory_allocated(),
+                               solvers=[b._last_s2_dtc_solver_stats for b in model.PcConvs])
+                    rows.append(row)
+                    write(out / (prefix + '_selective.json'), rows)
+                    print('SELECTIVE_PASS', slices, tol, row['errors'], row['seconds'], flush=True)
+            return
         configs = [('dopri5', 1, t) for t in (1e-4, 1e-6)]
         configs += [(m, n, 1e-6) for m in ('euler', 'rk2') for n in (1, 2, 4, 8)]
+        if o.reset_study and o.dynamics == 'average':
+            configs.append(('rk4', 1, 1e-6))
         if o.ordering_study:
             configs = [('rk2', 1, 1e-6)]
             if o.dynamics == 'pulse':
                 configs.insert(0, ('dopri5', 1, 1e-6))
         rows = []
         for method, n, tol in configs:
-            s2_set_solver(model, method, n, tol)
+            s2_set_solver(model, 'dopri5' if method == 'rk4' else method, n, tol)
             torch.cuda.synchronize()
             start = time.perf_counter()
-            trace = s2_record(model, x, o.dynamics)
+            if method == 'rk4':
+                # Diagnostic-only substitution at the existing solver boundary:
+                # unchanged physical RHS, midpoint projection and frame reset.
+                from unittest.mock import patch
+                from TorchDiffEqPack.odesolver.fixed_grid_solver import RK4
+                def rk4_solve(func, state, options):
+                    state, _ = RK4.step(None, func, 0., 1., state)
+                    project = options.get('proj_fn')
+                    return tuple(project(v) for v in state) if project else state
+                with patch('ode_pc.aca_ode_solve', rk4_solve):
+                    trace = s2_record(model, x, o.dynamics)
+            else:
+                trace = s2_record(model, x, o.dynamics)
             torch.cuda.synchronize()
             elapsed = time.perf_counter()-start
             assert s2_assignments(model) == assignments, 'Curve assignments changed between solvers'
             name = f'{prefix}_{method}_{n}_{tol:g}'
             torch.save(trace, out/(name+'.pt'))
             row = dict(name=name, method=method, substeps=n, tol=tol, seconds=elapsed,
+                reset_z_per_cycle=o.reset_z_per_cycle,
                 assignments=assignments, initial_hash=initial_hash, batch_hash=digest(x))
             rows.append(row)
             write(out/(prefix+'.json'), rows)
@@ -739,6 +838,95 @@ def s2_report(out):
         else:
             lines.append(f'| {path.stem} | OOM | — | — | — |')
     (out/'summary.md').write_text('\n'.join(lines)+'\n')
+
+
+def s2_reset_report(out):
+    """Three pinned comparison tables, with matching reset-enabled references."""
+    import torch
+    records = {}
+    def trajectory(rep, scene, dynamics, method, n=1, tol=1e-6):
+        key = (rep, scene, dynamics, method, n, tol)
+        if key not in records:
+            rows = json.loads((out/f'{rep}_{scene}_{dynamics}.json').read_text())
+            row = next(r for r in rows if (r['method'], r['substeps'], r['tol']) == (method, n, tol))
+            assert row['reset_z_per_cycle'] is True
+            records[key] = row, torch.load(out/(row['name']+'.pt'), map_location='cpu', weights_only=False)
+        return records[key]
+    def error(rep, scene, dynamics, method, n=1, target='pulse', tol=1e-6):
+        a, actual = trajectory(rep, scene, dynamics, method, n, tol)
+        b, reference = trajectory(rep, scene, target, 'dopri5')
+        for key in ('initial_hash', 'batch_hash', 'assignments'):
+            assert a[key] == b[key], key
+        return 100*s2_error(actual, reference)['logits']['relative_l2']
+    def timing(rep, scene, dynamics, n=1, train=False, cp=False):
+        tag = f'{rep}_{scene}_{dynamics}_rk2_{n}_train{train}_checkpoint{cp}'
+        r = json.loads((out/('benchmark_'+tag+'.json')).read_text())
+        if r['status'] != 'ok':
+            return 'OOM'
+        return f"{r['median_seconds']:.4f}" + (f" @ {r['batch_size']}" if train else '')
+    labels = dict(ideal='Ideal', clipped='+ Clipping', measured='+ Measured ReLU', nonlinear='+ Nonlinear-R')
+    lines = ['# Cycle-reset S2 DTC: toy-model comparison', '',
+        'Randomly initialized six-block C24→48→96, seed 1907; same cached two error images '
+        'and 128 timing images as the original persistent-z study. Five 10 ns cycles, '
+        'R=50 kΩ, C=500 fF, VDD=0.5 V, inverse-q=5, QF1, 5-bit weights. '
+        'Only z is zeroed between complete cycles, four resets per layer; y is retained. '
+        'No reset occurs between PWM slices or integration substeps. No trained checkpoint.', '',
+        'Errors are final-logit relative L2 percentages. References are freshly generated '
+        'reset-enabled slice-wise pulse Dopri5 at atol=rtol=1e-6. Dense and expanded each '
+        'use matching weights, scales and sampled curves within their comparisons. '
+        'Scenarios cumulatively add clipping, fixed per-spin 0906 FS_V2_T1 measured ReLU, '
+        'then full-range FS_V2_T1 nonlinear-R (dense per-tensor; expanded per-coupler). '
+        'Noise, spin and DTC variation are disabled. Pooling and final head are ideal.', '',
+        'Timings: strict FP32/TF32 off, one warmup and two measured forwards or '
+        'forward/backward passes, no teacher/optimizer/data-loading. Forward timings use '
+        'batch 128; training starts at 128 and halves after OOM in fresh processes. '
+        'Training cells report seconds @ batch. CP means RHS checkpointing.', '',
+        '## 1. Pulse RK2 versus pulse Dopri5', '',
+        '| Scenario | N | Final-logit relative L2 error dense / expanded (%) | Dense forward (s) | Dense training (s @ batch) | Dense training + CP (s @ batch) | Expanded forward (s) |',
+        '|---|---:|---:|---:|---:|---:|---:|']
+    numerical = []
+    for scene in ('ideal', 'clipped', 'nonlinear'):
+        for n in (1, 2, 4, 8):
+            errors = [error(rep, scene, 'pulse', 'rk2', n) for rep in ('dense', 'expanded')]
+            times = [timing('dense', scene, 'pulse', n), timing('dense', scene, 'pulse', n, True),
+                     timing('dense', scene, 'pulse', n, True, True), timing('expanded', scene, 'pulse', n)]
+            numerical.append(dict(table=1, scene=scene, substeps=n, logit_errors_percent=errors))
+            lines.append(f"| {labels[scene]} | {n} | {errors[0]:.4f} / {errors[1]:.4f} | " + ' | '.join(times) + ' |')
+    lines += ['', '## 2. Averaged five-step RK2 versus pulse reference', '',
+        '| Scenario | Method | Final-logit relative L2 error dense / expanded (%) | Dense forward (s) | Dense training (s @ batch) | Dense training + CP (s @ batch) | Expanded forward (s) |',
+        '|---|---|---:|---:|---:|---:|---:|']
+    for scene in labels:
+        errors = [error(rep, scene, 'average', 'rk2') for rep in ('dense', 'expanded')]
+        times = [timing('dense', scene, 'average'), timing('dense', scene, 'average', train=True),
+                 timing('dense', scene, 'average', train=True, cp=True), timing('expanded', scene, 'average')]
+        numerical.append(dict(table=2, scene=scene, logit_errors_percent=errors))
+        lines.append(f"| {labels[scene]} | RK2 | {errors[0]:.4f} / {errors[1]:.4f} | " + ' | '.join(times) + ' |')
+    lines += ['', '## 3. Averaged refinement: expanded, clipping + measured ReLU + nonlinear-R', '',
+        '| Averaged method | Error against accurate reset-averaged solution (%) | Error against reset-pulse reference (%) |',
+        '|---|---:|---:|']
+    for method, n in [('euler', 1), ('rk2', 1), ('rk2', 2), ('rk2', 4), ('rk2', 8), ('rk4', 1), ('dopri5', 1)]:
+        errors = [error('expanded', 'nonlinear', 'average', method, n, target=t) for t in ('average', 'pulse')]
+        numerical.append(dict(table=3, method=method, steps=5*n, logit_errors_percent=errors))
+        label = 'Accurate averaged, Dopri5 1e-6' if method == 'dopri5' else f'{method.upper()}, {5*n} steps'
+        lines.append(f'| {label} | {errors[0]:.6f} | {errors[1]:.6f} |')
+    reference_checks = []
+    baseline_checks = []
+    for rep in ('dense', 'expanded'):
+        for scene in labels:
+            for dynamics in ('average', 'pulse'):
+                reference_checks.append(dict(representation=rep, scene=scene, dynamics=dynamics,
+                    tol_1e4_vs_1e6_logit_error_percent=error(rep, scene, dynamics, 'dopri5', target=dynamics, tol=1e-4)))
+                original = ROOT/'artifacts/s2_dtc_validation_20261104/numerical'/f'{rep}_{scene}_{dynamics}.json'
+                if original.exists():
+                    old = json.loads(original.read_text())[0]
+                    new, _ = trajectory(rep, scene, dynamics, 'dopri5')
+                    checks = {k: old[k] == new[k] for k in ('initial_hash', 'batch_hash', 'assignments')}
+                    assert all(checks.values()), (rep, scene, dynamics, checks)
+                    baseline_checks.append(dict(representation=rep, scene=scene, dynamics=dynamics, **checks))
+    write(out/'results.json', dict(tables=numerical, reference_tolerance_checks=reference_checks,
+                                  original_study_identity_checks=baseline_checks))
+    (out/'summary.md').write_text('\n'.join(lines)+'\n')
+    print('RESET_STUDY_COMPLETE', out/'summary.md', flush=True)
 
 
 def s2_ordering_report(out):
@@ -982,28 +1170,356 @@ def s2_pretrained_diagnostic():
     print('COMPLETE', out/'summary.md', flush=True)
 
 
+def s2_slice_reference_identity(model, settings, curve_paths):
+    """Fingerprint actual transient assignments and physical hardware, not seeds."""
+    blocks = []
+    for block in model.PcConvs:
+        physical = {key: getattr(block, key, None) for key in (
+            'R', 'C', 'v_dd', 'beta_c', 'q', 's_ff', 's_fb',
+            'toggle_y_time', 'toggle_n_cycles',
+            's2_dtc_reset_z_per_cycle', 'pulse_weight_encoding',
+            'enable_spin_variation', 'enable_summing_current_noise',
+            'enable_coupler_noise', 'enable_slow_summing_current',
+            'enable_slow_coupler_noise', 'enable_dtc_nonideality')}
+        package = getattr(block, '_nonlinear_R_training_pkg', None)
+        if package is not None:
+            physical['nonlinear_bank'] = {key: package.get(key) for key in (
+                'R', 'v_grid', 'R_left', 'R_slope', 'lengths')}
+        blocks.append(physical)
+    hardware = dict(settings=settings, blocks=blocks, state_q=getattr(model, 'state_q', None),
+        head=getattr(model.linear, 'head_config', None),
+        curves={name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                for name, path in curve_paths.items()})
+    return dict(assignments_sha256=s2_assignments(model), hardware_sha256=digest(hardware))
+
+
+def s2_validate_slice_reference(previous, current):
+    for key in ('checkpoint_sha256', 'batch_hash', 'model_hash', 'microbatch',
+                'settings', 'hardware_identity'):
+        if key not in previous:
+            raise ValueError(f'Cached reference lacks {key}; verify/regenerate its identity before reuse.')
+        if previous[key] != current[key]:
+            raise ValueError(f'Cached reference {key} does not match this run.')
+
+
+def s2_slice_study():
+    """Matched trained-model pulse schedule study; no training/checkpoint writes."""
+    import numpy as np
+    import torch
+    from inference_utils import load_and_prepare_model
+    from ode_pc import S2DTCPulseFFFB, S2DTCQATTester2State
+    from pc_model import logits_for_loss
+    p = argparse.ArgumentParser()
+    p.add_argument('--s2-slice-study', action='store_true')
+    p.add_argument('--checkpoint', required=True)
+    p.add_argument('--batch', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--microbatch-size', type=int, default=16)
+    p.add_argument('--repeats', type=int, default=3)
+    p.add_argument('--cycle-sampling-study', action='store_true')
+    p.add_argument('--branch-sampling-study', action='store_true')
+    p.add_argument('--baseline-ode-file', help='Pre-optimization ode_pc.py snapshot for matched timing.')
+    p.add_argument('--reference-dir', help='Completed trained-model slice study supplying cached reference logits.')
+    o = p.parse_args()
+    out = Path(o.output)
+    out.mkdir(parents=True, exist_ok=False)
+    torch.set_num_threads(4)
+    torch.cuda.set_per_process_memory_fraction(.15)
+    torch.manual_seed(4096)
+    np.random.seed(4096)
+    random.seed(4096)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    inputs, labels = torch.load(o.batch, map_location='cpu', weights_only=False)
+    inputs, labels = inputs[:16], labels[:16]
+    assert inputs.shape == (16, 4, 16, 16)
+    from input_preprocessing import prepare_student_input
+    saved = torch.load(o.checkpoint, map_location='cpu', weights_only=False)
+    preprocessing = saved['student_preprocessing']
+    assert preprocessing['input_quant_bits'] == 12
+    assert not preprocessing['center_student_input']
+    inputs = prepare_student_input(inputs, bits=12, center=False)
+    torch.save((inputs, labels), out/'fixed_test_batch.pt')
+    flags = dict(enable_spin_variation=False, enable_summing_current_noise=False,
+                 enable_coupler_noise=False, enable_slow_summing_current=False,
+                 enable_slow_coupler_noise=False, enable_dtc_nonideality=False)
+    with torch.no_grad():
+        model = load_and_prepare_model(o.checkpoint, 'cuda', pc_conv_layer=None,
+            conv_only=True, fuse_bn=False, noise_level=0.,
+            final_head_config=dict(final_head_quantize=False, final_head_clamp=False,
+                                   final_adc_noise_lsb=0.),
+            ode_params=dict(ode_block=S2DTCPulseFFFB, method='rk2', t_end=1.75,
+                n_steps=5, tol=1e-6, toggle_n_cycles=5, toggle_timing_mode='fixed',
+                toggle_y_time=1e-8, z_over_y_time=1, toggle_timing_R=67e3,
+                toggle_timing_C=500e-15, s2_dtc_substeps=1, s2_dtc_ordering_pairs=0,
+                s2_dtc_slice_policy='full', **flags),
+            ode_wrapper_params=dict(ode_wrapper=S2DTCQATTester2State,
+                R=67e3, C=500e-15, v_dd=.6, one_over_q=6, w_bits=5,
+                weight_quant_factor_bits=2, thermal_noise=False, enob=None,
+                enable_measured_activation=True,
+                activation_curve_path=str(ROOT/'hardware_data/mc_45_corners/1022_RELU_Voltage/fs_25_2.csv'),
+                activation_corner='MC18', activation_interpolation='piecewise_linear',
+                activation_curve_sharing='per_model', fuse_measured_activation=False,
+                activation_normalize_positive_endpoint=False,
+                nonlinear_R=True, nonlinear_R_train_mode='exact_curve',
+                nonlinear_R_table=str(ROOT/'hardware_data/mc_45_corners/coupler_low_volt_cascode/fs_25_2.csv'),
+                nonlinear_R_curve_sharing='shared', nonlinear_R_mc_quantity='conductance',
+                nonlinear_R_curve_sampling='empirical_with_replacement', nonlinear_R_curve_seed=4096,
+                **flags))
+    model.eval()
+    assert saved['epoch'] == 140 and len(model.PcConvs) == 16
+    for i, block in enumerate(model.PcConvs):
+        for key in ('s_ff', 's_fb'):
+            torch.testing.assert_close(getattr(block, key).cpu(), saved['net'][f'PcConvs.{i}.{key}'], rtol=0, atol=0)
+        for module in (block.FFconv, block.FBconv):
+            torch.testing.assert_close(module.weight, module.weight.round(), rtol=0, atol=2e-6)
+    torch.testing.assert_close(model.linear.weight.cpu(), saved['net']['linear.weight'],rtol=0,atol=0)
+    del saved
+    microbatch = min(16, o.microbatch_size)
+    while True:
+        try:
+            with torch.no_grad():
+                model(inputs[:microbatch].cuda())
+            break
+        except torch.cuda.OutOfMemoryError:
+            if microbatch == 1:
+                raise
+            microbatch //= 2
+            torch.cuda.empty_cache()
+    assignments = s2_assignments(model)
+    initial_hash = digest(model.state_dict())
+    settings = dict(R=67e3,C=500e-15,VDD=.6,inverse_q=6,cycles=5,cycle_ns=10,
+        activation='1022 FS_V2_T1 MC18 all sites', nonlinear_R='cascode FS_V2_T1 shared/conv',
+        current_noise=False,spin_variation=False,dtc_variation=False,
+        measured_pooling=False,head_quantization=False,head_noise=False,
+        weight_encoding='baked QF2; no requantization; normalized->integer x15')
+    reference_config = dict(
+        checkpoint_sha256=hashlib.sha256(Path(o.checkpoint).read_bytes()).hexdigest(),
+        model_hash=initial_hash, batch_hash=digest((inputs,labels)), microbatch=microbatch,
+        settings=settings, hardware_identity=s2_slice_reference_identity(model, settings, dict(
+            relu=ROOT/'hardware_data/mc_45_corners/1022_RELU_Voltage/fs_25_2.csv',
+            coupler=ROOT/'hardware_data/mc_45_corners/coupler_low_volt_cascode/fs_25_2.csv')))
+    configs = [dict(name='slice_dopri5', method='dopri5', n=1, landing=None),
+               dict(name='pulse_rk2_n8', method='rk2', n=8, landing=None),
+               dict(name='pulse_rk2_n1', method='rk2', n=1, landing=None)]
+    for landing in ((), (1,), (1,2), (1,2,3), (1,2,3,4)):
+        configs.append(dict(name='selective_'+('_'.join(map(str,landing)) or 'none'),
+                            method='dopri5', n=1, landing=landing))
+    for policy in ('drop', 'merge'):
+        for label, keep, k in [('first4', (1,2,3,4), 0),
+                               ('alternating8', tuple(range(1,16,2)), 0),
+                               ('first4_random2', (1,2,3,4), 2),
+                               ('first4_random4', (1,2,3,4), 4),
+                               ('first4_random7', (1,2,3,4), 7)]:
+            configs.append(dict(name=policy+'_'+label, method='rk2', n=1,
+                                landing=None, policy=policy, keep=keep, k=k))
+    reference = None
+    if o.cycle_sampling_study or o.branch_sampling_study:
+        if not o.reference_dir:
+            p.error('Cycle sampling study requires --reference-dir.')
+        previous = Path(o.reference_dir)
+        previous_config = json.loads((previous/'configuration.json').read_text())
+        s2_validate_slice_reference(previous_config, reference_config)
+        reference = torch.load(previous/'slice_dopri5_repeat0.pt', map_location='cpu', weights_only=False)
+        configs = [dict(name='pulse_rk2_n8', method='rk2', n=8, landing=None),
+                   dict(name='pulse_rk2_n1', method='rk2', n=1, landing=None)]
+        for policy in ('drop','merge'):
+            configs.append(dict(name=policy+'_first4',method='rk2',n=1,landing=None,
+                                policy=policy,keep=(1,2,3,4),k=0))
+            for k in (2,4):
+                for sampling in ('per_forward','per_cycle'):
+                    configs.append(dict(name=f'{policy}_random{k}_{sampling}',method='rk2',n=1,
+                                        landing=None,policy=policy,keep=(1,2,3,4),k=k,sampling=sampling))
+    from ode_pc import _S2DTCMixin
+    optimized_reduced = _S2DTCMixin._s2_dtc_reduced_schedule
+    optimized_interval = _S2DTCMixin._s2_dtc_interval
+    baseline_methods = None
+    if o.branch_sampling_study:
+        if not o.baseline_ode_file:
+            p.error('Branch optimization study requires --baseline-ode-file.')
+        # Compile only the two pre-optimization methods; use the same live
+        # model, hardware realization, libraries and benchmark process.
+        import ast
+        import ode_pc
+        tree = ast.parse(Path(o.baseline_ode_file).read_text())
+        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == '_S2DTCMixin')
+        names = ('_s2_dtc_reduced_schedule', '_s2_dtc_interval')
+        functions = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in names]
+        namespace = dict(vars(ode_pc))
+        exec(compile(ast.Module(body=functions, type_ignores=[]), o.baseline_ode_file, 'exec'), namespace)
+        baseline_methods = [namespace[name] for name in names]
+        configs = [dict(name='pulse_rk2_n8',method='rk2',n=8,landing=None),
+                   dict(name='pulse_rk2_n1',method='rk2',n=1,landing=None)]
+        for policy in ('drop', 'merge'):
+            for count, k in ((4,0), (4,2), (4,4), (5,2), (6,2)):
+                for implementation, branches in (('baseline','shared'), ('optimized','shared'),
+                                                  ('optimized','independent')):
+                    if k == 0 and branches == 'independent':
+                        continue
+                    configs.append(dict(name=f'{policy}_keep{count}_random{k}_{implementation}_{branches}',
+                                        method='rk2',n=1,landing=None,policy=policy,
+                                        keep=tuple(range(1,count+1)),k=k,sampling='per_cycle',
+                                        branches=branches,implementation=implementation))
+    write(out/'configuration.json', dict(checkpoint=o.checkpoint, **reference_config,
+        student_preprocessing=preprocessing,
+        reference_dir=o.reference_dir,
+        baseline_ode_file=o.baseline_ode_file,
+        baseline_sha256=(hashlib.sha256(Path(o.baseline_ode_file).read_bytes()).hexdigest()
+                         if o.baseline_ode_file else None),
+        samples=16, repeats=o.repeats, configs=configs, representation='dense'))
+    rows = []
+    for repeat in range(o.repeats+1):
+        order = configs if repeat % 2 == 0 else list(reversed(configs))
+        for config in order:
+            if config.get('implementation') == 'baseline':
+                _S2DTCMixin._s2_dtc_reduced_schedule, _S2DTCMixin._s2_dtc_interval = baseline_methods
+            else:
+                _S2DTCMixin._s2_dtc_reduced_schedule = optimized_reduced
+                _S2DTCMixin._s2_dtc_interval = optimized_interval
+            seed = 8100 + max(0,repeat-1)
+            # Reset selection RNG per microbatch below: one realization across
+            # all sixteen images, identical between paired drop/merge methods.
+            s2_set_solver(model, config['method'], config['n'], 1e-6)
+            for block in model.PcConvs:
+                block.s2_dtc_landing_slices = config['landing']
+                block.s2_dtc_slice_policy = config.get('policy','full')
+                block.s2_dtc_keep_slices = config.get('keep',())
+                block.s2_dtc_random_k = config.get('k',0)
+                block.s2_dtc_slice_sampling = config.get('sampling','per_forward')
+                block.s2_dtc_branch_sampling = config.get('branches','shared')
+            parts, selections = [], []
+            torch.cuda.reset_peak_memory_stats()
+            elapsed = 0.
+            with torch.no_grad():
+                for offset in range(0,16,microbatch):
+                    torch.manual_seed(seed)
+                    batch = inputs[offset:offset+microbatch].cuda()
+                    torch.cuda.synchronize()
+                    start = time.perf_counter()
+                    logits = logits_for_loss(model(batch),model)
+                    torch.cuda.synchronize()
+                    elapsed += time.perf_counter()-start
+                    parts.append(logits.cpu())
+                    if config.get('policy'):
+                        selections.append([(b._last_s2_dtc_selected_slices_by_cycle
+                                            if config.get('implementation') == 'baseline' else
+                                            b._last_s2_dtc_branch_slices_by_cycle) for b in model.PcConvs])
+            logits = torch.cat(parts)
+            assert torch.isfinite(logits).all()
+            if reference is None:
+                reference = logits
+            assert s2_assignments(model) == assignments
+            assert digest(model.state_dict()) == initial_hash, 'Weights/buffers changed'
+            delta = logits.double()-reference.double()
+            row = dict(name=config['name'], repeat=repeat, warmup=repeat==0, seed=seed,
+                       seconds=elapsed, logit_relative_l2=float(delta.norm()/reference.double().norm()),
+                       prediction_flips=int((logits.argmax(1)!=reference.argmax(1)).sum()),
+                       accuracy=float((logits.argmax(1)==labels).float().mean()),
+                       peak_allocated_bytes=torch.cuda.max_memory_allocated(), selections=selections)
+            rows.append(row)
+            torch.save(logits,out/f"{config['name']}_repeat{repeat}.pt")
+            write(out/'results.json',rows)
+            print('SLICE_STUDY', {k:v for k,v in row.items() if k!='selections'},flush=True)
+    report = []
+    baseline = 'pulse_rk2_n1' if (o.cycle_sampling_study or o.branch_sampling_study) else 'slice_dopri5'
+    base = statistics.median(r['seconds'] for r in rows if r['name']==baseline and not r['warmup'])
+    for config in configs:
+        subset = [r for r in rows if r['name']==config['name'] and not r['warmup']]
+        report.append(dict(name=config['name'], median_seconds=statistics.median(r['seconds'] for r in subset),
+            speedup=base/statistics.median(r['seconds'] for r in subset),
+            error_mean_percent=100*statistics.mean(r['logit_relative_l2'] for r in subset),
+            error_std_percent=100*statistics.pstdev(r['logit_relative_l2'] for r in subset),
+            flips=[r['prediction_flips'] for r in subset], accuracy=[r['accuracy'] for r in subset]))
+    write(out/'summary.json',report)
+    print('SLICE_STUDY_FINISHED',out,flush=True)
+
+
 def s2_pulse_ft_cache_diagnostic():
     """Small-batch production pulse FT; compare worktrees without runtime flags.
 
     Reuse the actual FT argv, checkpoint, trainer, teacher and SRRL loss. Only
-    the batch size, pulse selection, full checkpointing and diagnostic outputs
+    the batch size, pulse selection, checkpoint policy and diagnostic outputs
     are overridden. No trained checkpoint is saved or live process modified.
     """
     p = argparse.ArgumentParser()
     p.add_argument('--s2-pulse-ft-cache', action='store_true')
+    p.add_argument('--source-selection', choices=('full_param_last', 'latest'))
     p.add_argument('--source-root', required=True)
     p.add_argument('--ft-args', required=True)
     p.add_argument('--output', required=True)
     p.add_argument('--batch-cache', required=True)
     p.add_argument('--batch-size', type=int, default=4)
+    p.add_argument('--substeps', type=int, default=1)
+    p.add_argument('--checkpoint-portion', type=float, default=1.0)
+    p.add_argument('--grad-accum-steps', type=int, default=1)
     p.add_argument('--memory-fraction', type=float, default=.2)
     p.add_argument('--phase', choices=('parity', 'parity-production', 'benchmark'), default='benchmark')
     p.add_argument('--warmups', type=int, default=2)
     p.add_argument('--steps', type=int, default=5)
+    p.add_argument('--merge-training-suite', action='store_true')
+    p.add_argument('--slice-policy', choices=('full', 'merge'), default='full')
+    p.add_argument('--keep-slices', default='1,2,3,4')
+    p.add_argument('--random-k', type=int, default=0)
+    p.add_argument('--branch-sampling', choices=('shared', 'independent'), default='shared')
+    p.add_argument('--stable-timing', action='store_true')
+    p.add_argument('--max-measured-steps', type=int, default=24)
+    p.add_argument('--checkpoint-root', help='Override the continuation source, preserving latent QAT weights.')
     o = p.parse_args()
+    if o.substeps < 1 or o.grad_accum_steps < 1:
+        p.error('Substeps and gradient accumulation must be positive.')
+    if o.phase != 'benchmark' and o.grad_accum_steps != 1:
+        p.error('Parity captures require grad-accum-steps=1.')
     o.ft_args = str(Path(o.ft_args).resolve())
     o.output = str(Path(o.output).resolve())
     o.batch_cache = str(Path(o.batch_cache).resolve())
+    if o.merge_training_suite:
+        output = Path(o.output)
+        output.mkdir(parents=True, exist_ok=False)
+        cases = [('full_N1_before', 'full', 4, 'shared'),
+                 ('merge14_random2_shared', 'merge', 4, 'shared'),
+                 ('merge15_random2_shared', 'merge', 5, 'shared'),
+                 ('merge14_random2_independent', 'merge', 4, 'independent'),
+                 ('merge15_random2_independent', 'merge', 5, 'independent'),
+                 ('full_N1_after', 'full', 4, 'shared')]
+        results = []
+        for name, policy, keep, sharing in cases:
+            command = [sys.executable, '-u', str(Path(__file__).resolve()),
+                       '--s2-pulse-ft-cache', '--source-root', o.source_root,
+                       '--ft-args', o.ft_args, '--output', str(output / name),
+                       '--batch-cache', o.batch_cache, '--batch-size', str(o.batch_size),
+                       '--substeps', '1', '--checkpoint-portion', str(o.checkpoint_portion),
+                       '--grad-accum-steps', str(o.grad_accum_steps),
+                       '--memory-fraction', str(o.memory_fraction), '--warmups', str(o.warmups),
+                       '--steps', str(o.steps), '--max-measured-steps', str(o.max_measured_steps),
+                       '--stable-timing', '--slice-policy', policy,
+                       '--keep-slices', ','.join(str(i) for i in range(1, keep + 1)),
+                       '--random-k', '2' if policy == 'merge' else '0',
+                       '--branch-sampling', sharing, '--phase', 'benchmark']
+            if o.source_selection is not None:
+                command.extend(['--source-selection', o.source_selection])
+            if o.checkpoint_root:
+                command.extend(['--checkpoint-root', o.checkpoint_root])
+            print('TRAIN_BENCHMARK_START', name, flush=True)
+            with (output / (name + '.log')).open('w') as stream:
+                completed = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT)
+            if completed.returncode:
+                write(output / 'failure.json', dict(case=name, returncode=completed.returncode))
+                raise RuntimeError(f'Benchmark {name} failed; inspect {output / (name + ".log")}')
+            result = json.loads((output / name / 'result.json').read_text())
+            result['case'] = name
+            results.append(result)
+            assert result['initial_model_hash'] == results[0]['initial_model_hash']
+            assert result['initial_auxiliary_hash'] == results[0]['initial_auxiliary_hash']
+            assert result['batch_hash'] == results[0]['batch_hash']
+            baseline = results[0]['median_seconds']
+            for row in results:
+                row['time_change_vs_full_N1_percent'] = 100 * (row['median_seconds'] / baseline - 1)
+                row['speedup_vs_full_N1'] = baseline / row['median_seconds']
+            write(output / 'summary.json', results)
+            print('TRAIN_BENCHMARK_FINISHED', name, result['median_seconds'], flush=True)
+        return
     global ROOT
     ROOT = Path(o.source_root).resolve()
     sys.path.insert(0, str(ROOT))
@@ -1017,6 +1533,10 @@ def s2_pulse_ft_cache_diagnostic():
     out = Path(o.output).resolve()
     out.mkdir(parents=True, exist_ok=False)
     argv = json.loads(Path(o.ft_args).read_text())
+    if isinstance(argv, dict):
+        argv = argv['argv']
+        if argv[0] == 'train_ode_cifar.py':
+            argv = argv[1:]
 
     def option(key, value):
         if key in argv:
@@ -1027,12 +1547,34 @@ def s2_pulse_ft_cache_diagnostic():
     for key, value in {
         '--batch_size': o.batch_size, '--num_workers': 0,
         '--ode_block': 'S2DTCPulseFFFB', '--s2_dtc_ordering_pairs': 0,
-        '--s2_dtc_substeps': 1, '--method': 'rk2',
-        '--checkpoint_ode_rhs_training': 'true', '--checkpoint_ode_rhs_portion': 1.0,
+        '--s2_dtc_substeps': o.substeps, '--method': 'rk2',
+        '--s2_dtc_slice_policy': o.slice_policy,
+        '--s2_dtc_keep_slices': o.keep_slices,
+        '--s2_dtc_random_k': o.random_k,
+        '--s2_dtc_slice_sampling': 'per_cycle',
+        '--s2_dtc_branch_sampling': o.branch_sampling,
+        '--grad_accum_steps': o.grad_accum_steps,
+        '--checkpoint_ode_rhs_training': 'true',
+        '--checkpoint_ode_rhs_portion': o.checkpoint_portion,
         '--fuse_toggle_nonlinear_R_input': 'false',
         '--output_save_path': out / 'initialization', '--mem_frac': o.memory_fraction,
     }.items():
         option(key, value)
+    if o.source_selection is not None:
+        option('--ckpt', o.source_selection)
+    if o.checkpoint_root:
+        checkpoint_root = Path(o.checkpoint_root).resolve()
+        matches = list(checkpoint_root.glob('*/*_full_param_last_ckpt.pth'))
+        if len(matches) != 1:
+            raise RuntimeError(f'Expected exactly one latent last checkpoint in {checkpoint_root}')
+        option('--save_path', checkpoint_root)
+        option('--model_name', matches[0].parent.name)
+        option('--ckpt', 'full_param_last')
+    if o.stable_timing:
+        random.seed(31337)
+        np.random.seed(31337)
+        torch.manual_seed(31337)
+        torch.cuda.manual_seed_all(31337)
     sys.argv = ['train_ode_cifar.py', *argv]
     write(out / 'command.json', dict(source_root=str(ROOT), argv=argv, options=vars(o)))
     training.evaluate_teacher = lambda *args, **kw: None
@@ -1041,9 +1583,14 @@ def s2_pulse_ft_cache_diagnostic():
         model = trainer.model
         blocks = list(model.PcConvs)
         assert len(blocks) == 16
-        assert all(type(b).__name__ == 'S2DTCPulseFFFB' and b.checkpoint_ode_rhs_training
-                   and b.method == 'rk2' and b.s2_dtc_substeps == 1
+        assert trainer.grad_accum_steps == o.grad_accum_steps
+        assert all(type(b).__name__ == 'S2DTCPulseFFFB'
+                   and b.method == 'rk2' and b.s2_dtc_substeps == o.substeps
                    and b.s2_dtc_ordering_pairs == 0 for b in blocks)
+        assert all(b.s2_dtc_slice_policy == o.slice_policy and
+                   b.s2_dtc_branch_sampling == o.branch_sampling and
+                   b.s2_dtc_slice_sampling == 'per_cycle' and
+                   b.s2_dtc_random_k == o.random_k for b in blocks)
         cache = Path(o.batch_cache).resolve()
         if cache.exists():
             batch = torch.load(cache, map_location='cpu', weights_only=False)
@@ -1053,19 +1600,25 @@ def s2_pulse_ft_cache_diagnostic():
             cache.parent.mkdir(parents=True, exist_ok=True)
             torch.save(batch, cache)
         assert batch[0].shape == (o.batch_size, 4, 16, 16)
-        trainer.train_dataloader = [batch]
+        trainer.train_dataloader = [batch] * o.grad_accum_steps
         metadata = dict(source_root=str(ROOT), gpu=torch.cuda.get_device_name(),
             batch_size=o.batch_size, batch_hash=digest(batch),
             initial_model_hash=digest(model.state_dict()),
             initial_auxiliary_hash=digest(trainer._feature_kd_loss.state_dict()),
-            checkpointed_layers=16, method='rk2', substeps=1, ordering_pairs=0,
+            checkpointed_layers=sum(bool(b.checkpoint_ode_rhs_training) for b in blocks),
+            checkpoint_portion=o.checkpoint_portion,
+            grad_accum_steps=o.grad_accum_steps,
+            method='rk2', substeps=o.substeps, ordering_pairs=0,
+            slice_policy=o.slice_policy, keep_slices=o.keep_slices,
+            random_k=o.random_k, cycle_sampling='per_cycle', branch_sampling=o.branch_sampling,
             model_layers=16, fuse_nonlinear_R_input=False,
             cudnn_benchmark=torch.backends.cudnn.benchmark,
             cudnn_deterministic=torch.backends.cudnn.deterministic,
             cudnn_allow_tf32=torch.backends.cudnn.allow_tf32,
             matmul_allow_tf32=torch.backends.cuda.matmul.allow_tf32,
             memory_fraction=o.memory_fraction,
-            timing_scope='Actual teacher, student, SRRL loss, backward and optimizer; cached batch, no loading/saving.')
+            timing_scope='One accumulation window: actual teacher, student, SRRL loss, '
+                         'backward and optimizer; cached batch, no loading/saving.')
         random.seed(31337)
         np.random.seed(31337)
         torch.manual_seed(31337)
@@ -1115,7 +1668,9 @@ def s2_pulse_ft_cache_diagnostic():
         rows = []
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
-        for step in range(o.warmups + o.steps):
+        stable = False
+        limit = o.max_measured_steps if o.stable_timing else o.steps
+        for step in range(o.warmups + limit):
             torch.cuda.synchronize()
             start = time.perf_counter()
             loss = trainer.train_one_epoch(0)
@@ -1123,8 +1678,22 @@ def s2_pulse_ft_cache_diagnostic():
             rows.append(dict(step=step, warmup=step < o.warmups,
                              seconds=time.perf_counter() - start, loss=float(loss)))
             print('S2_PULSE_FT_STEP', rows[-1], flush=True)
+            write(out / 'progress.json', dict(metadata=metadata, steps=rows))
+            measured_now = [r['seconds'] for r in rows if not r['warmup']]
+            if o.stable_timing and len(measured_now) >= max(8, o.steps):
+                recent = measured_now[-8:]
+                median_shift = abs(statistics.median(recent[:4]) / statistics.median(recent[4:]) - 1)
+                relative_spread = statistics.pstdev(recent) / statistics.mean(recent)
+                stable = median_shift <= .05 and relative_spread <= .10
+                if stable:
+                    break
         measured = [r['seconds'] for r in rows if not r['warmup']]
-        metadata.update(steps=rows, median_seconds=statistics.median(measured),
+        timing_window = measured[-8:] if o.stable_timing else measured
+        metadata.update(steps=rows, median_seconds=statistics.median(timing_window),
+            stable=stable if o.stable_timing else None,
+            stability_definition='Last eight measured steps: adjacent four-step median shift <=5%; CV <=10%.',
+            measurements=len(measured), reported_window=len(timing_window),
+            median_microbatch_seconds=statistics.median(measured) / o.grad_accum_steps,
             min_seconds=min(measured), max_seconds=max(measured),
             peak_allocated_bytes=torch.cuda.max_memory_allocated(),
             peak_reserved_bytes=torch.cuda.max_memory_reserved())
@@ -1138,7 +1707,15 @@ def s2_pulse_ft_cache_diagnostic():
 def s2_main():
     p = argparse.ArgumentParser()
     p.add_argument('--s2-dtc', action='store_true')
+    p.add_argument('--reset-z-per-cycle', action='store_true')
+    p.add_argument('--reset-study', action='store_true',
+                   help='Reproduce the three pinned toy-model tables with cycle-boundary resets.')
     p.add_argument('--ordering-study', action='store_true', help='Dense RK2 ordering correction study only.')
+    p.add_argument('--selective-reference', help='Reuse existing numerical output directory; run only selective Dopri5 cases.')
+    p.add_argument('--selective-timing', action='store_true',
+                   help='Benchmark reference and selective plain eval forwards together, with warmup and alternating order.')
+    p.add_argument('--selective-timing-rk2', action='store_true',
+                   help='With selective timing, compare slice-wise Dopri5, pulse RK2 N=8 and selective slices 1-4.')
     p.add_argument('--ordering-pairs', type=int, choices=(0, 1, 2, 4, 7), default=0)
     p.add_argument('--s2-worker', choices=('numerical', 'benchmark'))
     p.add_argument('--output', required=True)
@@ -1155,15 +1732,31 @@ def s2_main():
     p.add_argument('--checkpoint', action='store_true')
     p.add_argument('--report-only', action='store_true')
     o = p.parse_args()
+    if o.selective_timing and not o.selective_reference:
+        p.error('--selective-timing requires --selective-reference')
+    if o.selective_timing_rk2 and not o.selective_timing:
+        p.error('--selective-timing-rk2 requires --selective-timing')
+    if o.selective_reference and (o.reset_study or o.ordering_study or o.report_only):
+        p.error('Selective reference reuse cannot be combined with another study/report mode.')
+    if o.selective_reference and o.s2_worker not in (None, 'numerical'):
+        p.error('Selective reference reuse requires a numerical pulse worker.')
     if o.s2_worker:
         return s2_worker(o)
     out = Path(o.output).resolve()
     out.mkdir(parents=True, exist_ok=True)
     if o.report_only:
+        if o.reset_study:
+            return s2_reset_report(out)
         return s2_ordering_report(out) if o.ordering_study else s2_report(out)
     commands = []
     base = [sys.executable, '-u', str(Path(__file__).resolve()), '--s2-dtc',
             '--output', str(out), '--batch', str(Path(o.batch).resolve())]
+    if o.reset_z_per_cycle:
+        base.append('--reset-z-per-cycle')
+    if o.reset_study:
+        if not o.reset_z_per_cycle:
+            p.error('--reset-study requires --reset-z-per-cycle')
+        base.append('--reset-study')
     for rep in ('dense', 'expanded'):
         for scene in ('ideal', 'clipped', 'measured', 'nonlinear'):
             for dynamics in ('average', 'pulse'):
@@ -1178,6 +1771,21 @@ def s2_main():
             commands.append(base + ['--s2-worker', 'benchmark', '--method', 'dopri5',
                 '--representation', rep, '--scene', scene, '--dynamics', 'pulse'])
     # Finish all correctness/numerical comparisons before memory-intensive benchmarks.
+    if o.reset_study:
+        commands = []
+        for rep in ('dense', 'expanded'):
+            for scene in ('ideal', 'clipped', 'measured', 'nonlinear'):
+                common = ['--representation', rep, '--scene', scene]
+                for dynamics in ('average', 'pulse'):
+                    commands.append(base + ['--s2-worker', 'numerical', '--dynamics', dynamics] + common)
+                variants = [('average', 1)]
+                if scene != 'measured':
+                    variants += [('pulse', n) for n in (1, 2, 4, 8)]
+                for dynamics, n in variants:
+                    for flags in ([[], ['--train-step'], ['--train-step', '--checkpoint']]
+                                  if rep == 'dense' else [[]]):
+                        commands.append(base + ['--s2-worker', 'benchmark', '--dynamics', dynamics,
+                                                '--substeps', str(n)] + common + flags)
     if o.ordering_study:
         commands = []
         for scene in ('ideal', 'clipped', 'measured', 'nonlinear'):
@@ -1187,6 +1795,17 @@ def s2_main():
                 commands.append(base + ['--s2-worker', 'numerical'] + common)
                 for flags in ([], ['--train-step'], ['--train-step', '--checkpoint']):
                     commands.append(base + ['--s2-worker', 'benchmark', '--substeps', '1'] + common + flags)
+    if o.selective_reference:
+        # Reuse exactly the selected scene/representation, never launch the
+        # ordinary sweep or regenerate its Dopri5 references/timing benchmarks.
+        command = base + ['--s2-worker', 'numerical', '--dynamics', 'pulse',
+            '--scene', o.scene, '--representation', o.representation,
+            '--selective-reference', str(Path(o.selective_reference).resolve())]
+        if o.selective_timing:
+            command.append('--selective-timing')
+        if o.selective_timing_rk2:
+            command.append('--selective-timing-rk2')
+        commands = [command]
     commands.sort(key=lambda c: c[c.index('--s2-worker')+1] != 'numerical')
     write(out/'commands.json', commands)
     for i, command in enumerate(commands):
@@ -1220,14 +1839,20 @@ def s2_main():
             if measured['status'] == 'ok':
                 break
         print('FINISHED', i, flush=True)
-    if o.ordering_study:
+    if o.selective_reference:
+        print('SELECTIVE_COMPLETE', out, flush=True)
+    elif o.reset_study:
+        s2_reset_report(out)
+    elif o.ordering_study:
         s2_ordering_report(out)
     else:
         s2_report(out)
 
 
 if __name__=='__main__':
-    if '--s2-pulse-ft-cache' in sys.argv:
+    if '--s2-slice-study' in sys.argv:
+        s2_slice_study()
+    elif '--s2-pulse-ft-cache' in sys.argv:
         s2_pulse_ft_cache_diagnostic()
     elif '--s2-pretrained' in sys.argv:
         s2_pretrained_diagnostic()

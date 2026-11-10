@@ -2,7 +2,8 @@
 """Select native rows and export a shared-Vin coupler bank as paired X/Y CSVs.
 
 Numeric CSV fields are copied verbatim, never reformatted or interpolated.
-Both endpoints and the existing zero-voltage row are retained. A manifest
+Both endpoints and the existing zero-voltage row are retained. Optionally retain
+additional leading rows to preserve sharp boundary behavior. A manifest
 records row indices and source/output hashes; source files are read-only.
 """
 import argparse
@@ -16,9 +17,11 @@ import re
 import tempfile
 
 
-def select_rows(voltages, points=150):
+def select_rows(voltages, points=150, keep_first_rows=1):
     if points < 3 or points > len(voltages):
         raise ValueError("Point count must be between 3 and the original row count")
+    if not 1 <= keep_first_rows <= points:
+        raise ValueError("Leading row count must be between 1 and the point count")
     if not all(math.isfinite(x) for x in voltages) or any(
             a >= b for a, b in zip(voltages, voltages[1:])):
         raise ValueError("Source voltage grid must be finite and strictly increasing")
@@ -29,13 +32,20 @@ def select_rows(voltages, points=150):
     if zero not in selected:
         nearest = min(range(1, points-1), key=lambda i: abs(voltages[selected[i]]))
         selected[nearest] = zero
+    required = set(range(keep_first_rows)) | {0, zero, len(voltages)-1}
+    if len(required) > points:
+        raise ValueError("Point count cannot accommodate leading rows, zero and endpoints")
+    for row in sorted(required.difference(selected)):
+        nearest = min((i for i, value in enumerate(selected) if value not in required),
+                      key=lambda i: abs(selected[i]-row))
+        selected[nearest] = row
     selected.sort()
     assert len(set(selected)) == points
     assert selected[0] == 0 and selected[-1] == len(voltages)-1 and zero in selected
     return selected
 
 
-def export_bank(source, output, points=150):
+def export_bank(source, output, points=150, keep_first_rows=1):
     source, output = Path(source).resolve(), Path(output).resolve()
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite {output}")
@@ -47,6 +57,10 @@ def export_bank(source, output, points=150):
         selection='rounded uniform row indices, replacing the nearest interior selection with the existing zero row',
         numeric_fields='verbatim source strings; no interpolation, scaling, averaging or rounding',
         original_grid=None, selected_row_indices_zero_based=None, files=[])
+    if keep_first_rows != 1:
+        manifest['selection'] += (
+            f'; retain the first {keep_first_rows} native rows by replacing the nearest non-required selections')
+        manifest['keep_first_rows'] = keep_first_rows
     with tempfile.TemporaryDirectory(prefix='.coupler_downsample_', dir=output.parent) as temporary:
         staged = Path(temporary)/'bank'
         staged.mkdir()
@@ -64,7 +78,7 @@ def export_bank(source, output, points=150):
             if any(len(row) != 101 for row in rows):
                 raise ValueError(f"Invalid data row width: {path}")
             grid = [float(row[0]) for row in rows]
-            indices = select_rows(grid, points)
+            indices = select_rows(grid, points, keep_first_rows=keep_first_rows)
             if manifest['original_grid'] is None:
                 manifest['original_grid'] = grid
                 manifest['selected_row_indices_zero_based'] = indices
@@ -96,8 +110,11 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--points', type=int, default=150)
+    parser.add_argument('--keep-first-rows', type=int, default=1,
+                        help='Retain this many leading native rows; default preserves the original selection.')
     args = parser.parse_args()
-    manifest = export_bank(args.source, args.output, args.points)
+    manifest = export_bank(args.source, args.output, args.points,
+                           keep_first_rows=args.keep_first_rows)
     print(f"Exported {len(manifest['files'])} files, 100 curves/file, {args.points} native samples/curve to {args.output}")
 
 
