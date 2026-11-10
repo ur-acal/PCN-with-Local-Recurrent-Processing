@@ -164,6 +164,9 @@ def parse_args():
         "--full_45_corner_C", type=float, default=1.2e-13)
     parser.add_argument("--base_seed", type=int, default=20260721)
     parser.add_argument("--model_name", default=DEFAULT_MODEL)
+    parser.add_argument("--task", choices=("cifar10", "cifar100"), default=None)
+    parser.add_argument("--img_type", default=None,
+                        help="Explicit input format; omitted preserves legacy model-name inference.")
     parser.add_argument("--ckpt", default="best")
     parser.add_argument("--model_dir", default="saved_ckpt")
     parser.add_argument("--expanded_w_dir", default="expanded_weights")
@@ -284,8 +287,9 @@ def parse_args():
 
 def build_command(args, case_name):
     enabled = CASES[case_name]
-    task = "cifar100" if "C100" in args.model_name else "cifar10"
-    img_type = "CiFAIR" if "cifair" in args.model_name.lower() else "scanGFI"
+    task = getattr(args, "task", None) or ("cifar100" if "C100" in args.model_name else "cifar10")
+    img_type = getattr(args, "img_type", None) or (
+        "CiFAIR" if "cifair" in args.model_name.lower() else "scanGFI")
     ode_block = (
         "ToggleODEXInitFFFB" if args.toggle_level == 2
         else "TogglePulseODEXInitFFFB"

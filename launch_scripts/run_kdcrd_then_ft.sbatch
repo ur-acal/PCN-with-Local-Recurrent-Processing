@@ -610,7 +610,7 @@ eval_one_combo_model() {
   # independent of FINAL_EVAL_ONLY, which controls validation during training.
   local ckpt="${POST_FT_EVAL_CKPT:-last}"
 
-  local test_bs=128
+  local test_bs="${POST_FT_EVAL_BATCH_SIZE:-128}"
 
   if [[ "${TOGGLE_MODE}" != "none" ]]; then
     local eval_corners="${POST_FT_EVAL_CORNER_IDS:-FS_V0_T0 FS_V2_T1}"
@@ -651,6 +651,8 @@ eval_one_combo_model() {
       --n_trials "${POST_FT_EVAL_N_TRIALS:-5}" \
       --base_seed 20260723 \
       --model_name "${name}" \
+      --task "${TASK}" \
+      --img_type "${IMG_TYPE}" \
       --model_dir "${MODEL_DIR}" \
       --ckpt "${ckpt}" \
       --output_dir "${dir}" \
